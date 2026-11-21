@@ -1,0 +1,16 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/upload"
+
+[body]
+type = "multipart"
+
+[[body.parts]]
+name = "description"
+value = "an image"
+
+[[body.parts]]
+name = "image"
+file = "files/pixel.png"
+filename = "avatar.png"
+content_type = "image/png"

@@ -1,0 +1,15 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "text": "from files",
+  "i32": 7
+}
+'''
+
+[schema]
+source = "files"
+files = ["proto/sendito/test/v1/echo.proto"]
+import_paths = ["proto"]

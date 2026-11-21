@@ -1,0 +1,15 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/search"
+
+[[params]]
+name = "q"
+value = "café com açúcar"
+
+[[params]]
+name = "lang"
+value = "日本語"
+
+[[params]]
+name = "emoji"
+value = "🚀✓"

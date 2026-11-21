@@ -1,0 +1,16 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/upload"
+
+[body]
+type = "multipart"
+
+[[body.parts]]
+name = "meta"
+value = "{\"k\":\"v\"}"
+content_type = "application/json"
+
+[[body.parts]]
+name = "notes"
+file = "files/notes.txt"
+content_type = "text/plain"

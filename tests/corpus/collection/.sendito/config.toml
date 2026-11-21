@@ -1,0 +1,4 @@
+# Correctness corpus collection. Secret values are generated at test time.
+
+[collection]
+name = "corpus"

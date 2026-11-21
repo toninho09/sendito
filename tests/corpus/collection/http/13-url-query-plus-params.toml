@@ -1,0 +1,11 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/items?sort=name"
+
+[[params]]
+name = "page"
+value = "2"
+
+[[params]]
+name = "size"
+value = "50"

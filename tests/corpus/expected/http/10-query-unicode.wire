@@ -1,0 +1,5 @@
+GET /search?q=caf%C3%A9%20com%20a%C3%A7%C3%BAcar&lang=%E6%97%A5%E6%9C%AC%E8%AA%9E&emoji=%F0%9F%9A%80%E2%9C%93 HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

@@ -1,0 +1,11 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Bidi"
+message = '''
+[
+  {"text": "a", "i32": 1},
+  {"text": "b", "i32": 2},
+  {"text": "c", "i32": 3}
+]
+'''

@@ -1,0 +1,20 @@
+POST /upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=<boundary>
+Content-Length: 427
+Accept: */*
+Host: 127.0.0.1:<port>
+
+--<boundary>
+Content-Disposition: form-data; name="meta"
+Content-Type: application/json
+
+{"k":"v"}
+--<boundary>
+Content-Disposition: form-data; name="notes"; filename="notes.txt"
+Content-Type: text/plain
+
+plain notes
+second line
+
+--<boundary>--
+### client saw: 200 OK

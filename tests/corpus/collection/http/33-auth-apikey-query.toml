@@ -1,0 +1,13 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/secure"
+
+[[params]]
+name = "v"
+value = "1"
+
+[auth]
+type = "apikey"
+key = "api_key"
+value = "{{keychain_key}}"
+in = "query"

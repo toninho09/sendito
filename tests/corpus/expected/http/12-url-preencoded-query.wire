@@ -1,0 +1,5 @@
+GET /search?q=caf%C3%A9&x=%2B1&raw=a+b HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

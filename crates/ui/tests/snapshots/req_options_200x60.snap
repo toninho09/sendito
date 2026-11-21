@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ GET list users × │ +                                                                                                                                                         env: local ▾  F1 all keys
+╭  Requests  History ────────╮┏ Request · Users/list users.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│▸ Orders/                   │┃ GET    ▾ {{base_url}}/users                                                                                                                                       Send ┃
+│▾ Users/                    │┃ Params (1) │ Headers (1) │ Body │ Auth• │ Scripts │ Options                                                                                                            ┃
+││   POST  create user       │┃Timeout ms    default                                                                                                                                                   ┃
+││   DEL   delete user       │┃Redirects      [x] On  follow 3xx responses (up to 10)                                                                                                                  ┃
+││   GET   list users        │┃Verify TLS     [x] On  turn off for self-signed certificates                                                                                                            ┃
+│  GRPC  echo unary          │┃                                                                                                                                                                        ┃
+│  GET   health              │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┃                                                                                                                                                                        ┃
+│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                            ││ Body │ Headers │ Timing │ Results                                                                                                                                      │
+│                            ││ Press Ctrl+Enter or F5 to send.                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││ The response appears here.                                                                                                                                             │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ Ctrl+Enter/F5 send  Ctrl+S save  Enter/↓ edit  ←→ switch tab  Ctrl+P commands  F1 all keys
+ env: local

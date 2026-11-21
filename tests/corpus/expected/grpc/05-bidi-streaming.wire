@@ -1,0 +1,13 @@
+method: /sendito.test.v1.Echo/Bidi
+metadata received:
+  te: trailers
+  content-type: application/grpc
+  user-agent: sendito/0.1.0 tonic/0.14.9
+messages received: 3
+  json: {"i32":1,"text":"a"}
+  protobuf (base64): CgFhEAE=
+  json: {"i32":2,"text":"b"}
+  protobuf (base64): CgFiEAI=
+  json: {"i32":3,"text":"c"}
+  protobuf (base64): CgFjEAM=
+client: 3 response message(s), status OK (0)

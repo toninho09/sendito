@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                  ┏ HTTP method ━━━━━━━━━━━━━━━━━━━━━┓
+                                                                                  ┃  type to filter                  ┃
+                                                                                  ┃ GET                              ┃
+                                                                                  ┃ POST                             ┃
+                                                                                  ┃ PUT                              ┃
+                                                                                  ┃ PATCH                            ┃
+                                                                                  ┃ DELETE                           ┃
+                                                                                  ┃ HEAD                             ┃
+                                                                                  ┃ OPTIONS                          ┃
+                                                                                  ┃ TRACE                            ┃
+                                                                                  ┃ CONNECT                          ┃
+                                                                                  ┃ Custom…                          ┃
+                                                                                  ┃                                  ┃
+                                                                                  ┃                                  ┃
+                                                                                  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ type filter  ↑↓ move  Enter choose  Esc close
+ env: local │ {{order_id}} undefined

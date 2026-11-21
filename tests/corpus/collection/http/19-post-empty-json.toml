@@ -1,0 +1,7 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/actions/empty"
+
+[body]
+type = "json"
+text = ""

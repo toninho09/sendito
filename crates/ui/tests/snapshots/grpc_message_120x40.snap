@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ GRPC echo unary × │ +                                                                        env: local ▾  F1 all keys
+╭  Requests  History ────────╮┏ Request · echo unary.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│▸ Orders/                   │┃ target {{grpc}}                                           method  Echo/Unary ▾    Send ┃
+│▸ Users/                    │┃ Message │ Metadata │ Auth │ Scripts │ Options                                          ┃
+│  GRPC  echo unary          │┃{                                                                                       ┃
+│  GET   health              │┃  "text": "hello"                                                                       ┃
+│                            │┃}                                                                                       ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
+│                            ││ Body │ Metadata │ Timing │ Log                                                         │
+│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
+│                            ││                                                                                        │
+│                            ││ The response appears here.                                                             │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 all keys
+ env: local

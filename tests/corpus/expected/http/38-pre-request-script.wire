@@ -1,0 +1,7 @@
+GET /echo HTTP/1.1
+X-Request-Id: req-ana-001
+X-Derived: req-ana-001/v1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

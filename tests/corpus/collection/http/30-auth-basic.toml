@@ -1,0 +1,8 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/secure"
+
+[auth]
+type = "basic"
+username = "ana"
+password = "{{basic_password}}"

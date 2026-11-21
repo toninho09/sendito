@@ -1,0 +1,8 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/upload/large"
+
+[body]
+type = "file"
+path = "files/large.bin"
+content_type = "application/octet-stream"

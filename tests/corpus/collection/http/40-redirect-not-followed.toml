@@ -1,0 +1,6 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/redirect/2"
+
+[options]
+follow_redirects = false

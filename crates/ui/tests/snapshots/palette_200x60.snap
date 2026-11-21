@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+                                                  ┏ Command palette ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                                  ┃  type to search actions and requests, or : for commands                                     1/70 ┃
+                                                  ┃                                                                                                  ┃
+                                                  ┃ Show all keys and actions                                                          F1 / Ctrl+W ? ┃
+                                                  ┃ Send the request (or start the gRPC call)                                        Ctrl+Enter / F5 ┃
+                                                  ┃ Cancel the running request or stream                                                    Ctrl+W x ┃
+                                                  ┃ Finish sending on a client/bidi stream (half-close)                                     Ctrl+W d ┃
+                                                  ┃ Save the request to its file (asks for a name if new)                          Ctrl+S / Ctrl+W s ┃
+                                                  ┃ Quit Sendito                                                                   Ctrl+W q / Ctrl+Q ┃
+                                                  ┃ Open a new unsaved HTTP request tab                                            Ctrl+N / Ctrl+W t ┃
+                                                  ┃ Open a new unsaved gRPC request tab                                                     Ctrl+W g ┃
+                                                  ┃ Close the current tab                                                                   Ctrl+W c ┃
+                                                  ┃ Next open request tab                                                   Ctrl+W n / Ctrl+PageDown ┃
+                                                  ┃ Previous open request tab                                                 Ctrl+W p / Ctrl+PageUp ┃
+                                                  ┃ Focus the pane to the left                                                Ctrl+W h / Ctrl+W Left ┃
+                                                  ┃ Focus the pane below                                                      Ctrl+W j / Ctrl+W Down ┃
+                                                  ┃ Focus the pane above                                                        Ctrl+W k / Ctrl+W Up ┃
+                                                  ┃ Focus the pane to the right                                              Ctrl+W l / Ctrl+W Right ┃
+                                                  ┃ Next tab of the focused pane (e.g. Params → Headers)                                    Ctrl+W ] ┃
+                                                  ┃ Previous tab of the focused pane                                                        Ctrl+W [ ┃
+                                                  ┃ Jump to tab 1 of the focused pane                                                          Alt+1 ┃
+                                                  ┃ Jump to tab 2 of the focused pane                                                          Alt+2 ┃
+                                                  ┃ Jump to tab 3 of the focused pane                                                          Alt+3 ┃
+                                                  ┃ Jump to tab 4 of the focused pane                                                          Alt+4 ┃
+                                                  ┃ Jump to tab 5 of the focused pane                                                          Alt+5 ┃
+                                                  ┃ Jump to tab 6 of the focused pane                                                          Alt+6 ┃
+                                                  ┃ Open the command palette                                                                  Ctrl+P ┃
+                                                  ┃ Open settings                                                                           Ctrl+W , ┃
+                                                  ┃ Choose the active environment                                                      F4 / Ctrl+W v ┃
+                                                  ┃ Edit environments and their variables                                                   Ctrl+W V ┃
+                                                  ┃ Show request history in the sidebar (toggle)                                       F7 / Ctrl+W r ┃
+                                                  ┃ Show or hide the sidebar                                                       Ctrl+B / Ctrl+W b ┃
+                                                  ┃ Import a Postman collection or a curl command                                           Ctrl+W i ┃
+                                                  ┃ Copy the request as curl (secrets stay {{placeholders}})                                Ctrl+W u ┃
+                                                  ┃ Pretty-print the JSON body / message                                                    Ctrl+W f ┃
+                                                  ┃ Maximize or restore the focused pane                                                    Ctrl+W z ┃
+                                                  ┃ Widen the sidebar                                                                       Ctrl+W > ┃
+                                                  ┃ Narrow the sidebar                                                                      Ctrl+W < ┃
+                                                  ┃ Give the request editor more height                                                     Ctrl+W + ┃
+                                                  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ 34 more ━┛
+
+
+
+
+
+
+
+
+
+ ↑↓ move  Enter run  : commands  Esc close
+ env: local

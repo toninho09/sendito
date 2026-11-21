@@ -1,0 +1,5 @@
+GET /items?sort=name&page=2&size=50 HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

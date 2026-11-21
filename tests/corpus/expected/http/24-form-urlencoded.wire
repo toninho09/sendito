@@ -1,0 +1,8 @@
+POST /login HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 64
+
+username=ana+silva&password=p%26ss%3Dw%C3%B6rd%2B1&remember=true
+### client saw: 200 OK

@@ -1,0 +1,15 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/upload"
+
+[body]
+type = "multipart"
+
+[[body.parts]]
+name = "doc"
+file = "files/data.json"
+
+[[body.parts]]
+name = "skip"
+value = "x"
+enabled = false

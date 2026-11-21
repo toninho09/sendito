@@ -1,0 +1,5 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Ping"
+message = "{}"

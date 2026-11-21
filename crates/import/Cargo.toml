@@ -1,0 +1,21 @@
+[package]
+name = "sendito-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito import (Postman v2.1, curl) and curl export"
+
+[dependencies]
+sendito-core.workspace = true
+sendito-store.workspace = true
+mime_guess.workspace = true
+serde_json.workspace = true
+shell-words.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

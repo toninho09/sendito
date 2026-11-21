@@ -1,0 +1,31 @@
+[package]
+name = "sendito-grpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito dynamic gRPC client: reflection, .proto files, all call types"
+
+[dependencies]
+sendito-core.workspace = true
+sendito-http.workspace = true
+tonic = { workspace = true }
+tonic-reflection = { workspace = true }
+prost.workspace = true
+prost-types.workspace = true
+prost-reflect.workspace = true
+protox.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+hyper-util.workspace = true
+hyper-rustls.workspace = true
+http.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sendito-testkit.workspace = true

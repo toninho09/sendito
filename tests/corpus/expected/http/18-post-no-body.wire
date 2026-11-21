@@ -1,0 +1,6 @@
+POST /actions/ping HTTP/1.1
+Content-Length: 0
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

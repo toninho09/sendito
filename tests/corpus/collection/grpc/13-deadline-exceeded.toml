@@ -1,0 +1,8 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = "{\"text\": \"slow\", \"delay_ms\": 1000}"
+
+[options]
+deadline_ms = 150

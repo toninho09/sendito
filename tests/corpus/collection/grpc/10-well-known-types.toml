@@ -1,0 +1,17 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "at": "2024-02-29T12:34:56.789Z",
+  "took": "1.5s",
+  "meta": {"k": "v", "n": 1, "list": [true, null]},
+  "any_value": {"nested": ["a", 2]},
+  "maybe_text": "wrapped",
+  "maybe_count": "42",
+  "payload": {"@type": "type.googleapis.com/sendito.test.v1.Inner", "label": "in any"},
+  "mask": "text,inner.label",
+  "opt": ""
+}
+'''

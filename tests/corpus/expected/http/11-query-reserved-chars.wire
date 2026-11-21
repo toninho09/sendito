@@ -1,0 +1,5 @@
+GET /search?a%26b=c%3Dd&pct=100%25&plus=x%2By&space=two%20words&slash=/a/b?c%23d&csv=1,2,3&quote=%22q%22%20%27q%27 HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

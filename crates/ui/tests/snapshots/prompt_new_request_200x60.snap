@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                    ┏ New request ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                                                    ┃                                                              ┃
+                                                                    ┃ Name                                                         ┃
+                                                                    ┃                                                              ┃
+                                                                    ┃ Type       ‹ HTTP ›  ← → change · Space list                 ┃
+                                                                    ┃                                                              ┃
+                                                                    ┃ In folder  ‹ /Orders ›  ← → change · Space list              ┃
+                                                                    ┃                                                              ┃
+                                                                    ┃                                                              ┃
+                                                                    ┃  Create (Enter)    Cancel (Esc)                              ┃
+                                                                    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Enter create  Tab next field  Esc cancel
+ env: local │ {{order_id}} undefined

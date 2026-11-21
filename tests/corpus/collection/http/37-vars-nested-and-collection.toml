@@ -1,0 +1,11 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/{{nested}}"
+
+[[headers]]
+name = "X-Collection"
+value = "{{coll_only}}"
+
+[[headers]]
+name = "X-Path"
+value = "{{api_path}}"

@@ -1,0 +1,11 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/secure"
+
+[[headers]]
+name = "Authorization"
+value = "Custom abc"
+
+[auth]
+type = "bearer"
+token = "{{local_token}}"

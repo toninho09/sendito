@@ -1,0 +1,25 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = "{\"text\": \"metadata\"}"
+
+[[metadata]]
+name = "x-request-id"
+value = "{{user}}-42"
+
+[[metadata]]
+name = "x-trace-bin"
+value = "AAEC"
+
+[[metadata]]
+name = "x-dup"
+value = "1"
+
+[[metadata]]
+name = "x-dup"
+value = "2"
+
+[auth]
+type = "bearer"
+token = "{{local_token}}"

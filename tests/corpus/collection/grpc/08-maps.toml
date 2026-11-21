@@ -1,0 +1,10 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "counts": {"apples": "3", "pears": "-2"},
+  "by_id": {"7": {"label": "seven"}, "-1": {"label": "minus one"}}
+}
+'''

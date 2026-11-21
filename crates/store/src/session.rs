@@ -1,0 +1,103 @@
+//! Session state restored on restart: open tabs, unsaved drafts, layout and the
+//! active environment. Stored in the gitignored `.sendito/session.toml`.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::Result;
+use crate::collection::{META_DIR, write_atomic};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[derive(Default)]
+pub struct Session {
+    pub active_env: Option<String>,
+    pub active_tab: usize,
+    pub tabs: Vec<SessionTab>,
+    pub layout: Layout,
+    /// Folders expanded in the tree.
+    pub expanded: Vec<String>,
+    /// Non-secret runtime variables set by scripts.
+    pub runtime_vars: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SessionTab {
+    /// Relative path of the saved request; `None` for a never-saved request.
+    pub path: Option<String>,
+    /// Display name for unsaved requests.
+    pub name: String,
+    /// Unsaved edits as request TOML (absent when the tab is clean).
+    pub draft: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Layout {
+    pub sidebar_width: u16,
+    pub sidebar_visible: bool,
+    /// Percentage of the main area given to the request editor.
+    pub request_pct: u16,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 30,
+            sidebar_visible: true,
+            request_pct: 50,
+        }
+    }
+}
+
+pub fn session_path(root: &Path) -> PathBuf {
+    root.join(META_DIR).join("session.toml")
+}
+
+/// Loads the session; a missing or unreadable file yields the default.
+pub fn load(path: &Path) -> Session {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| toml::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn save(path: &Path, s: &Session) -> Result<()> {
+    let text = toml::to_string(s).map_err(|e| crate::StoreError::Invalid(e.to_string()))?;
+    if fs::read_to_string(path).ok().as_deref() == Some(text.as_str()) {
+        return Ok(());
+    }
+    write_atomic(path, text.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip() {
+        let d = tempfile::tempdir().unwrap();
+        let p = session_path(d.path());
+        assert_eq!(load(&p), Session::default());
+        let mut s = Session {
+            active_env: Some("dev".into()),
+            tabs: vec![SessionTab {
+                path: Some("a.toml".into()),
+                name: "a".into(),
+                draft: Some("kind = \"http\"\nurl = '''\nx'''\n".into()),
+            }],
+            ..Default::default()
+        };
+        s.runtime_vars.insert("k".into(), "v".into());
+        s.layout.sidebar_width = 40;
+        save(&p, &s).unwrap();
+        save(&p, &s).unwrap();
+        assert_eq!(load(&p), s);
+        fs::write(&p, "garbage [").unwrap();
+        assert_eq!(load(&p), Session::default());
+    }
+}

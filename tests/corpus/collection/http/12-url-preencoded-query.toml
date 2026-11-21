@@ -1,0 +1,3 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/search?q=caf%C3%A9&x=%2B1&raw=a+b"

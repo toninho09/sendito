@@ -1,0 +1,10 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "text": "oneof nested",
+  "nested": {"label": "chosen"}
+}
+'''

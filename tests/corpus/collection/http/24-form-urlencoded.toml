@@ -1,0 +1,18 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/login"
+
+[body]
+type = "form"
+
+[[body.fields]]
+name = "username"
+value = "ana silva"
+
+[[body.fields]]
+name = "password"
+value = "p&ss=wörd+1"
+
+[[body.fields]]
+name = "remember"
+value = "true"

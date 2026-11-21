@@ -1,0 +1,7 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/secure"
+
+[auth]
+type = "bearer"
+token = "{{local_token}}"

@@ -1,0 +1,10 @@
+method: /sendito.test.v1.Echo/Unary
+metadata received:
+  grpc-timeout: 150000u
+  te: trailers
+  content-type: application/grpc
+  user-agent: sendito/0.1.0 tonic/0.14.9
+messages received: 1
+  json: {"delay_ms":1000,"text":"slow"}
+  protobuf (base64): CgRzbG93yALoBw==
+client: 0 response message(s), status DEADLINE_EXCEEDED (4): deadline of 150 ms exceeded

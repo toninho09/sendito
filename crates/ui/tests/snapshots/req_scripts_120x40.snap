@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ GET list users × │ POST create user × │ +                                                    env: local ▾  F1 all keys
+╭  Requests  History ────────╮┏ Request · Users/create user.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│▸ Orders/                   │┃ POST   ▾ {{base_url}}/users                                                       Send ┃
+│▾ Users/                    │┃ Params │ Headers │ Body• │ Auth │ Scripts (1) │ Options                                ┃
+││   POST  create user       │┃Section        After response: assertions (1) ▾  Enter to switch                        ┃
+││   DEL   delete user       │┃From        JSONPath / header              Op           Expected                        ┃
+││   GET   list users        │┃‹status›   │                              │‹==›        │200                           │✕┃
+│  GRPC  echo unary          │┃add from   │                              │            │                                ┃
+│  GET   health              │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┃                                                                                        ┃
+│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
+│                            ││ Body │ Headers │ Timing │ Results                                                      │
+│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
+│                            ││                                                                                        │
+│                            ││ The response appears here.                                                             │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ Ctrl+Enter/F5 send  Ctrl+S save  Enter/↓ edit  ←→ switch tab  Ctrl+P commands  F1 all keys
+ env: local

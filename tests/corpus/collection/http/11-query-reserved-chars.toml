@@ -1,0 +1,31 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/search"
+
+[[params]]
+name = "a&b"
+value = "c=d"
+
+[[params]]
+name = "pct"
+value = "100%"
+
+[[params]]
+name = "plus"
+value = "x+y"
+
+[[params]]
+name = "space"
+value = "two words"
+
+[[params]]
+name = "slash"
+value = "/a/b?c#d"
+
+[[params]]
+name = "csv"
+value = "1,2,3"
+
+[[params]]
+name = "quote"
+value = "\"q\" 'q'"

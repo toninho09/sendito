@@ -1,0 +1,21 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo"
+
+[[params]]
+name = "on"
+value = "1"
+
+[[params]]
+name = "off"
+value = "2"
+enabled = false
+
+[[headers]]
+name = "X-On"
+value = "yes"
+
+[[headers]]
+name = "X-Off"
+value = "no"
+enabled = false

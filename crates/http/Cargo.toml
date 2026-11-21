@@ -1,0 +1,25 @@
+[package]
+name = "sendito-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito HTTP sender with timing breakdown"
+
+[dependencies]
+sendito-core.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-service.workspace = true
+bytes.workspace = true
+mime_guess.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

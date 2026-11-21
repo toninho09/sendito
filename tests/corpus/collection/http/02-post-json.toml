@@ -1,0 +1,13 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/users"
+
+[body]
+type = "json"
+text = '''
+{
+  "name": "Ana",
+  "age": 31,
+  "tags": ["a", "b"]
+}
+'''

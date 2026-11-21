@@ -1,0 +1,7 @@
+kind = "http"
+method = "PUT"
+url = "{{base_url}}/upload/binary"
+
+[body]
+type = "file"
+path = "files/binary.bin"

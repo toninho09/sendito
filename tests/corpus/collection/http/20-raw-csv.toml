@@ -1,0 +1,12 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/import"
+
+[body]
+type = "raw"
+content_type = "text/csv"
+text = '''
+id,name
+1,Ana
+2,Bia
+'''

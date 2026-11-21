@@ -1,0 +1,23 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo"
+
+[[headers]]
+name = "X-Dup"
+value = "first"
+
+[[headers]]
+name = "X-Other"
+value = "o"
+
+[[headers]]
+name = "X-Dup"
+value = "second"
+
+[[headers]]
+name = "Accept"
+value = "application/json"
+
+[[headers]]
+name = "Accept"
+value = "text/plain"

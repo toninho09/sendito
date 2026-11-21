@@ -1,0 +1,13 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "inner": {
+    "label": "outer",
+    "values": [1, 2],
+    "child": {"label": "inner", "child": {"label": "deepest"}}
+  }
+}
+'''

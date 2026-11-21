@@ -1,0 +1,11 @@
+kind = "http"
+method = "OPTIONS"
+url = "{{base_url}}/echo"
+
+[[headers]]
+name = "Access-Control-Request-Method"
+value = "POST"
+
+[[headers]]
+name = "Origin"
+value = "https://app.example.com"

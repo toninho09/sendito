@@ -1,0 +1,7 @@
+kind = "http"
+method = "PATCH"
+url = "{{base_url}}/users/42"
+
+[body]
+type = "json"
+text = "{\"op\":\"replace\",\"path\":\"/name\",\"value\":\"Cris\"}"

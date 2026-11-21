@@ -1,0 +1,7 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo"
+
+[[headers]]
+name = "X-Name"
+value = "José Ñúñez"

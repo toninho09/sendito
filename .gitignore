@@ -1,0 +1,11 @@
+/target
+*.profraw
+/.sendito/secrets.toml
+/.sendito/session.toml
+/.sendito/history.jsonl
+.claude/
+.codegraph/
+/docs/media/recordings/*/
+.DS_Store
+/bench/results/*
+!/bench/results/REPORT.md

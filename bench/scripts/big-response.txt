@@ -1,0 +1,10 @@
+# Send the ~10 MB JSON request, wait for it, scroll through it, search, switch views.
+key f5
+wait 6000
+key ctrl+w j
+repeat 40 key pagedown
+key end
+key home
+key r
+key p
+wait 1000

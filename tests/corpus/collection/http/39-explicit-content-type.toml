@@ -1,0 +1,11 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/data"
+
+[[headers]]
+name = "Content-Type"
+value = "application/vnd.api+json"
+
+[body]
+type = "json"
+text = "{\"data\":{\"type\":\"x\"}}"

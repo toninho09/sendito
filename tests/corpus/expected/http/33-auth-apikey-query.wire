@@ -1,0 +1,5 @@
+GET /secure?v=1&api_key=<secret:keychain_key> HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

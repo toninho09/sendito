@@ -1,0 +1,11 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "ClientStream"
+message = '''
+[
+  {"text": "one"},
+  {"text": "two"},
+  {"text": "three"}
+]
+'''

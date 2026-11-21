@@ -1,0 +1,6 @@
+GET /echo?on=1 HTTP/1.1
+X-On: yes
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

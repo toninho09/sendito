@@ -1,0 +1,1 @@
+curl -X OPTIONS https://api.example.com/users -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: POST'

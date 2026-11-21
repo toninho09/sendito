@@ -1,0 +1,19 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo"
+
+[[headers]]
+name = "X-Request-Id"
+value = "{{req_id}}"
+
+[[headers]]
+name = "X-Derived"
+value = "{{derived}}"
+
+[[scripts.pre]]
+var = "req_id"
+value = "req-{{user}}-001"
+
+[[scripts.pre]]
+var = "derived"
+value = "{{req_id}}/{{api_path}}"

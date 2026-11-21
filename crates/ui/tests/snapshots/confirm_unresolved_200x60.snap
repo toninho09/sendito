@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                     ┏ Undefined variables ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                                                     ┃                                                            ┃
+                                                                     ┃  {{order_id}} not defined in the collection variables or   ┃
+                                                                     ┃  "local". Send anyway sends them as typed, braces          ┃
+                                                                     ┃  included. To define them, cancel and open the             ┃
+                                                                     ┃  environment (Ctrl+W V).                                   ┃
+                                                                     ┃                                                            ┃
+                                                                     ┃                                                            ┃
+                                                                     ┃   Send anyway (y)    Cancel (Esc)                          ┃
+                                                                     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ y send anyway  Enter cancel  ←→ choose  Esc cancel
+ env: local │ {{order_id}} undefined

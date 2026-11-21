@@ -1,0 +1,12 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/text"
+
+[body]
+type = "raw"
+content_type = "text/plain; charset=utf-8"
+text = """
+line one\r
+line two\r
+ção ü\r
+"""

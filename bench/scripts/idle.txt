@@ -1,0 +1,2 @@
+# Open the collection and sit idle for 3 s.
+wait 3000

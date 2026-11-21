@@ -1,0 +1,15 @@
+method: /sendito.test.v1.Echo/Unary
+metadata received:
+  x-request-id: ana-42
+  x-trace-bin: AAEC
+    (binary value; bytes: 00 01 02)
+  x-dup: 1
+  x-dup: 2
+  authorization: Bearer <secret:local_token>
+  te: trailers
+  content-type: application/grpc
+  user-agent: sendito/0.1.0 tonic/0.14.9
+messages received: 1
+  json: {"text":"metadata"}
+  protobuf (base64): CghtZXRhZGF0YQ==
+client: 1 response message(s), status OK (0)

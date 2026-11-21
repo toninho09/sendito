@@ -1,0 +1,7 @@
+GET /secure HTTP/1.1
+Authorization: Custom abc
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK
+### note: auth header 'Authorization' not added: the request already defines it

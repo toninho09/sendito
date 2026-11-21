@@ -1,0 +1,12 @@
+[variables]
+base_url = "http://127.0.0.1:0"
+host_port = "127.0.0.1:0"
+grpc_target = "127.0.0.1:0"
+user = "ana"
+api_path = "v1"
+greeting = "olá mundo"
+nested = "{{api_path}}/nested"
+local_token = { source = "local" }
+basic_password = { source = "local" }
+keychain_key = { source = "keychain" }
+file_secret = { source = "file", path = "secrets/token.txt" }

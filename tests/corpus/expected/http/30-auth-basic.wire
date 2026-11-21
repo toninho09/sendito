@@ -1,0 +1,6 @@
+GET /secure HTTP/1.1
+Authorization: Basic <base64 of "ana:" + secret:basic_password>
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

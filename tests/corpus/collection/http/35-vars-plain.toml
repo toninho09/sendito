@@ -1,0 +1,11 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/{{api_path}}/greet"
+
+[[headers]]
+name = "X-User"
+value = "{{user}}"
+
+[body]
+type = "json"
+text = "{\"user\": \"{{user}}\", \"greeting\": \"{{greeting}}\"}"

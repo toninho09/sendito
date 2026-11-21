@@ -1,0 +1,7 @@
+GET /v1/nested HTTP/1.1
+X-Collection: from-collection
+X-Path: v1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

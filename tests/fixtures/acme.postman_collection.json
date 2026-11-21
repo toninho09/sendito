@@ -1,0 +1,597 @@
+{
+  "info": {
+    "_postman_id": "00000000-0000-0000-0000-000000000000",
+    "name": "Acme API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "console.log('pre')"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base",
+      "value": "https://api.acme.test"
+    },
+    {
+      "key": "from",
+      "value": "2024-01-01"
+    },
+    {
+      "key": "old",
+      "value": "x",
+      "disabled": true
+    }
+  ],
+  "item": [
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/users?page=1&size=20",
+              "protocol": "https",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "debug",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/users/:id",
+              "protocol": "https",
+              "host": [
+                "{{host}}"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "42"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ana\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Replace user",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": "{{base}}/users/42",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Bia\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Patch user",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{base}}/users/42",
+            "body": {
+              "mode": "raw",
+              "raw": "[{\"op\":\"replace\"}]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base}}/users/42"
+          }
+        },
+        {
+          "name": "User avatar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base}}/users/42/avatar",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/tmp/avatar.png"
+                },
+                {
+                  "key": "caption",
+                  "value": "me",
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin",
+          "auth": {
+            "type": "basic",
+            "basic": [
+              {
+                "key": "username",
+                "value": "admin"
+              },
+              {
+                "key": "password",
+                "value": "{{admin_pw}}"
+              }
+            ]
+          },
+          "item": [
+            {
+              "name": "Ban user",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": "{{base}}/admin/users/42/ban"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('ok')"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Audit log",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base}}/admin/audit?from={{from}}",
+                  "protocol": "https",
+                  "host": [
+                    "{{host}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "audit"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "{{from}}"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Purge cache",
+              "request": {
+                "method": "PURGE",
+                "header": [],
+                "url": "{{base}}/admin/cache"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "List orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/orders"
+          }
+        },
+        {
+          "name": "Create order",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base}}/orders",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "item",
+                  "value": "book"
+                },
+                {
+                  "key": "qty",
+                  "value": "2"
+                },
+                {
+                  "key": "note",
+                  "value": "x",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Order receipt",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/pdf"
+              }
+            ],
+            "url": "{{base}}/orders/1/receipt"
+          },
+          "response": [
+            {
+              "name": "example"
+            }
+          ]
+        },
+        {
+          "name": "Upload invoice",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": "{{base}}/orders/1/invoice",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "/tmp/invoice.pdf"
+              }
+            }
+          }
+        },
+        {
+          "name": "Cancel order",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base}}/orders/1",
+            "description": "Cancels the order"
+          }
+        },
+        {
+          "name": "Order HEAD",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": "{{base}}/orders/1"
+          }
+        },
+        {
+          "name": "Order OPTIONS",
+          "request": {
+            "method": "OPTIONS",
+            "header": [],
+            "url": "{{base}}/orders"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base}}/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user\":\"ana\",\"pass\":\"{{password}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Me (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Me (api key header)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/me",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "X-API-Key"
+                },
+                {
+                  "key": "value",
+                  "value": "{{api_key}}"
+                },
+                {
+                  "key": "in",
+                  "value": "header"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Me (api key query)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/me",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "api_key"
+                },
+                {
+                  "key": "value",
+                  "value": "{{api_key}}"
+                },
+                {
+                  "key": "in",
+                  "value": "query"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "OAuth token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base}}/oauth/token",
+            "auth": {
+              "type": "oauth2",
+              "oauth2": []
+            }
+          }
+        },
+        {
+          "name": "Digest login",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/digest",
+            "auth": {
+              "type": "digest",
+              "digest": []
+            }
+          }
+        },
+        {
+          "name": "No auth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base}}/public",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base}}/health"
+      }
+    },
+    {
+      "name": "Version",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Client",
+            "value": "postman"
+          }
+        ],
+        "url": "{{base}}/version"
+      }
+    },
+    {
+      "name": "GraphQL query",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{base}}/graphql",
+        "body": {
+          "mode": "graphql",
+          "graphql": {
+            "query": "{ me { id name } }",
+            "variables": "{\"limit\": 5}"
+          }
+        }
+      }
+    },
+    {
+      "name": "Raw XML",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{base}}/xml",
+        "body": {
+          "mode": "raw",
+          "raw": "<a>1</a>",
+          "options": {
+            "raw": {
+              "language": "xml"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Raw text",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{base}}/text",
+        "body": {
+          "mode": "raw",
+          "raw": "hello"
+        }
+      }
+    },
+    {
+      "name": "Search",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/search?q=caf%C3%A9&tags=a,b",
+          "protocol": "https",
+          "host": [
+            "{{host}}"
+          ],
+          "path": [
+            "search"
+          ],
+          "query": [
+            {
+              "key": "q",
+              "value": "caf%C3%A9"
+            },
+            {
+              "key": "tags",
+              "value": "a,b"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Dynamic id",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Request-Id",
+            "value": "{{$guid}}"
+          },
+          {
+            "key": "X-Time",
+            "value": "{{$timestamp}}"
+          }
+        ],
+        "url": "{{base}}/events"
+      }
+    },
+    {
+      "name": "Random name",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base}}/names/{{$randomFirstName}}"
+      }
+    }
+  ]
+}

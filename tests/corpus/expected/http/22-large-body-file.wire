@@ -1,0 +1,8 @@
+POST /upload/large HTTP/1.1
+Content-Type: application/octet-stream
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 1048576
+
+<1048576 bytes, adler32=023e76c4, first16=00 9e 3c da 78 17 b5 53 f1 8f 2e cc 6a 08 a7 45>
+### client saw: 200 OK

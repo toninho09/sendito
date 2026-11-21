@@ -1,0 +1,7 @@
+kind = "http"
+method = "PUT"
+url = "{{base_url}}/users/42"
+
+[body]
+type = "json"
+text = "{\"name\":\"Bia\"}"

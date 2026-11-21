@@ -1,0 +1,19 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/form"
+
+[body]
+type = "form"
+
+[[body.fields]]
+name = "a"
+value = "1"
+
+[[body.fields]]
+name = "b"
+value = "2"
+enabled = false
+
+[[body.fields]]
+name = "c"
+value = ""

@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                          ┏ Environment ━━━━━━━━━━━━━━━━━━━━━┓
+                                          ┃  type to filter                  ┃
+                                          ┃ (no environment)                 ┃
+                                          ┃ local                            ┃
+                                          ┃ staging                          ┃
+                                          ┃ Manage environments…             ┃
+                                          ┃                                  ┃
+                                          ┃                                  ┃
+                                          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ type filter  ↑↓ move  Enter choose  Esc close
+ env: local

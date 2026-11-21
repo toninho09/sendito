@@ -1,0 +1,11 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "tags": ["x", "y", "z"],
+  "items": [{"label": "i1"}, {"label": "i2", "values": [9]}],
+  "colors": ["RED", "BLUE"]
+}
+'''

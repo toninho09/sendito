@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package sendito.test.v1;
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
+  GREEN = 2;
+  BLUE = 3;
+}
+
+message Inner {
+  string label = 1;
+  repeated int32 values = 2;
+  Inner child = 3;
+}

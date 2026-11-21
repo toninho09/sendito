@@ -1,0 +1,5 @@
+GET /files/my%20file/relat%C3%B3rio%20%C3%A7.txt HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

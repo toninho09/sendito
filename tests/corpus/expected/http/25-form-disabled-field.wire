@@ -1,0 +1,8 @@
+POST /form HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 6
+
+a=1&c=
+### client saw: 200 OK

@@ -1,0 +1,9 @@
+GET /echo HTTP/1.1
+X-Dup: first
+X-Dup: second
+X-Other: o
+Accept: application/json
+Accept: text/plain
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

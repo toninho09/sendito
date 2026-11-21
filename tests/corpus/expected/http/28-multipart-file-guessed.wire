@@ -1,0 +1,14 @@
+POST /upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=<boundary>
+Content-Length: 268
+Accept: */*
+Host: 127.0.0.1:<port>
+
+--<boundary>
+Content-Disposition: form-data; name="doc"; filename="data.json"
+Content-Type: application/json
+
+{"id": 1, "ok": true}
+
+--<boundary>--
+### client saw: 200 OK

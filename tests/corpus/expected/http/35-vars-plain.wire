@@ -1,0 +1,9 @@
+POST /v1/greet HTTP/1.1
+X-User: ana
+Content-Type: application/json
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 41
+
+{"user": "ana", "greeting": "olá mundo"}
+### client saw: 200 OK

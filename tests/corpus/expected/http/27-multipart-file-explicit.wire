@@ -1,0 +1,17 @@
+POST /upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=<boundary>
+Content-Length: 447
+Accept: */*
+Host: 127.0.0.1:<port>
+
+--<boundary>
+Content-Disposition: form-data; name="description"
+
+an image
+--<boundary>
+Content-Disposition: form-data; name="image"; filename="avatar.png"
+Content-Type: image/png
+
+<binary 70 bytes: 89 50 4e 47 0d 0a 1a 0a 00 00 00 0d 49 48 44 52 00 00 00 01 00 00 00 01 08 06 00 00 00 1f 15 c4 89 00 00 00 0d 49 44 41 54 78 9c 63 f8 cf c0 f0 1f 00 05 00 01 ff 89 99 3d 1d 00 00 00 00 49 45 4e 44 ae 42 60 82>
+--<boundary>--
+### client saw: 200 OK

@@ -1,0 +1,14 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/forms"
+
+[body]
+type = "multipart"
+
+[[body.parts]]
+name = "title"
+value = "Relatório"
+
+[[body.parts]]
+name = "count"
+value = "3"
