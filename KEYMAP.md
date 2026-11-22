@@ -151,6 +151,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or the Postman file / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
+| MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
 | Command palette | :<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |
@@ -204,6 +205,9 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:q!` | Quit without saving |
 | `:new` | New HTTP request (Ctrl+N) |
 | `:newgrpc` | New gRPC request (Ctrl+W g) |
+| `:newmcp` | New MCP request |
+| `:mcpservers` | Choose an MCP server |
+| `:mcptools` | Discover and choose an MCP tool |
 | `:import [path]` | Import a Postman collection (path) or paste a curl command |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |

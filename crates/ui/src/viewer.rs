@@ -40,6 +40,8 @@ pub enum Syntax {
     Timing,
     /// Assertions, variables and the gRPC message log.
     Messages,
+    /// Raw JSON-RPC lines (the MCP "Request" tab).
+    Json,
     /// The key list: "── Section ──" and "  keys  description".
     Help,
 }
@@ -1047,6 +1049,7 @@ pub fn syntax_spans(syntax: Syntax, line: &str, theme: &Theme) -> Vec<(usize, us
                 }
             }
         }
+        Syntax::Json => out.extend(crate::editor::json_line_spans(line, theme)),
         Syntax::Timing => {
             let phase = [
                 ("DNS lookup", theme.phase_dns),

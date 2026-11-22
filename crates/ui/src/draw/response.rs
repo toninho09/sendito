@@ -273,6 +273,7 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                 // Line numbers for a body the server sent, not for an error text.
                 v.numbers = resp_tab == 0 && (summary.code.is_some() || summary.ok);
                 v.syntax = match resp_tab {
+                    1 if kind == Kind::Mcp => crate::viewer::Syntax::Json,
                     1 => crate::viewer::Syntax::Headers,
                     2 => crate::viewer::Syntax::Timing,
                     3 => crate::viewer::Syntax::Messages,

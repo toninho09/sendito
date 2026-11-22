@@ -1,6 +1,6 @@
 # Sendito
 
-A terminal API client for **HTTP** and **gRPC**. It runs locally in your terminal,
+A terminal API client for **HTTP**, **gRPC** and **MCP tools**. It runs locally in your terminal,
 works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
 
@@ -16,13 +16,16 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 44 HTTP and 15 gRPC cases is checked byte for byte in CI.
+  A corpus of 44 HTTP, 15 gRPC and 5 MCP cases is checked byte for byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key auth, timeout, redirects,
   TLS verification, and a DNS / connect / TLS / TTFB / download breakdown.
 * **gRPC**: services from server reflection or `.proto` files (compiled in-process,
   no `protoc`), unary, server-, client- and bidi-streaming calls, JSON messages
   with generated templates, metadata, TLS, deadlines, cancellation.
+* **MCP tools**: call tools on stdio or Streamable HTTP servers, discover tools
+  and generate initial arguments from their input schema, with bearer or OAuth
+  authentication for HTTP servers.
 * **Environments** with secrets from four sources: the env file, a gitignored
   secrets file, the OS keychain, or a file. Secrets are masked everywhere.
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
@@ -59,7 +62,7 @@ sendito                    # opens the collection
 
 In the app:
 
-1. Press `n` in the sidebar to create a request (choose HTTP or gRPC and a folder):
+1. Press `n` in the sidebar to create a request (choose HTTP, gRPC or MCP and a folder):
    its file is created at once, empty. `Ctrl+N` instead opens a scratch tab that has
    no file until `Ctrl+S` asks for a name and folder.
 2. Type the URL, e.g. `{{base_url}}/users`, and press **Ctrl+Enter** or **F5**.
@@ -75,8 +78,37 @@ sendito curl "Users/create user" --env local   # print as curl (secrets stay {{p
 sendito import acme.postman_collection.json    # Postman v2.1
 ```
 
-`sendito run` exits with 0 on success, 1 when an assertion fails, 2 when the
-request fails (network error, gRPC status other than OK) and 3 on usage errors.
+`sendito run` exits with 0 on success, 1 when an assertion fails or an MCP tool
+returns `isError: true`, 2 when the request fails (network error, gRPC status other
+than OK) and 3 on usage errors.
+
+### MCP quick start
+
+Configure a server in `.sendito/config.toml`:
+
+```toml
+[mcp.servers.local]
+command = "my-mcp-server"
+args = ["--stdio"]
+
+[mcp.servers.remote]
+url = "https://example.com/mcp"
+[mcp.servers.remote.auth]
+type = "bearer"
+token = "{{token}}"
+```
+
+Create an MCP request with `n` in the tree or `:newmcp` in the palette. Type the
+server and tool names, or use F2 on the server or tool field to choose from the
+configured servers or discover tools. Tool selection fills initial arguments when
+the unchanged editor is empty or contains `{}`. Set the arguments and press F5 to call.
+
+For OAuth instead of bearer, use `type = "oauth"` in the auth table and run
+`sendito mcp login remote` from the collection before calling. The authorization
+URL is printed and a browser is opened when available; the redirect must reach
+Sendito's local loopback listener. Tokens are stored in the OS keychain. Use
+`sendito mcp logout remote` to remove them. See [FORMAT.md](FORMAT.md) for all
+options and [docs/DEBT.md](docs/DEBT.md) for current MCP limitations.
 
 ## The screen
 
@@ -92,7 +124,7 @@ request fails (network error, gRPC status other than OK) and 3 on usage errors.
   counts requests and folders. The sidebar can be on the right and resized.
 * **Request**: the tabs **Params · Headers · Body · Auth · Scripts · Options**
   (gRPC: **Message · Metadata · Auth · Scripts · Options**) sit in the pane's top
-  border, with the folder path of the request (`Users › create user`) on the right.
+  border (MCP: **Tool · Args · Scripts · Options**), with the folder path of the request (`Users › create user`) on the right.
   A tab label shows its number of rows, `Headers 2`, or `•` when Body or Auth is
   set. Editors have line numbers; a JSON body shows `✓ JSON` or
   `✗ JSON: line, col` and the cursor position (`Ln, Col`) in the bottom border.
@@ -265,7 +297,8 @@ cargo clippy --all-targets -- -D warnings && cargo fmt --check
 ```
 
 Crates: `sendito-core` (model, variables, resolution, scripts), `sendito-http`,
-`sendito-grpc`, `sendito-store` (files, environments, secrets, config, history),
+`sendito-grpc`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
+`sendito-store` (files, environments, secrets, config, history),
 `sendito-import` (Postman, curl), `sendito-ui` (terminal UI and the send
 pipeline), `sendito-testkit` (test servers) and the `sendito` binary.
 

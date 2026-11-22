@@ -43,6 +43,170 @@ fn open(h: &mut Harness, name: &str) {
 }
 
 #[test]
+fn flow_mcp_discover_and_call() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            &format!(
+                "[collection]\nname = \"demo\"\n[mcp.servers.echo]\nurl = \"{}/mcp\"\n",
+                echo.url()
+            ),
+        );
+    });
+    h.app.run_command("newmcp");
+    h.key("f2 enter");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
+    h.app.run_command("mcptools");
+    h.wait_for("Choose an MCP tool", 5);
+    h.key("enter");
+    let tab = &h.app.tabs[h.app.active];
+    assert_eq!(tab.ed.mcp_tool.text(), "add");
+    let args: serde_json::Value = serde_json::from_str(&tab.ed.message.text()).must();
+    assert_eq!(args, serde_json::json!({"a": 0, "b": 0}));
+    h.key("f5");
+    h.wait_idle(5);
+    assert!(h.screen().contains("OK"));
+    assert!(
+        echo.captured()
+            .iter()
+            .any(|c| c.method_of_body() == "tools/call")
+    );
+
+    // Secrets echoed by a tool must not reach the UI or history.
+    h.app.set_env(Some("local".into()));
+    let t = &mut h.app.tabs[h.app.active];
+    t.ed.message.set_text(r#"{"a":"{{token}}"}"#);
+    t.refresh_model();
+    h.key("f5");
+    h.wait_idle(5);
+    let response = h.app.tabs[h.app.active].response.as_ref().must();
+    assert!(!response.body.doc.raw.text.contains("s3cr3t-token"));
+    assert!(!response.messages.doc.raw.text.contains("s3cr3t-token"));
+    let history = std::fs::read_to_string(h.dir.path().join(".sendito/history.jsonl")).must();
+    assert!(!history.contains("s3cr3t-token"));
+}
+
+#[test]
+fn mcp_discovery_can_be_cancelled() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let listener = rt
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .must();
+    let addr = listener.local_addr().must();
+    rt.spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let _socket = socket;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            });
+        }
+    });
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            &format!("[mcp.servers.slow]\nurl = \"http://{addr}/mcp\"\n"),
+        );
+    });
+    h.app.run_command("newmcp");
+    h.app.tabs[h.app.active].ed.mcp_server.set_text("slow");
+    h.app.run_command("mcptools");
+    assert!(h.app.is_busy());
+    h.key("ctrl+w x");
+    assert!(!h.app.is_busy());
+    assert!(h.screen().contains("discovery cancelled"));
+}
+
+#[test]
+fn mcp_invalid_arguments_save_and_reopen() {
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+    });
+    h.app.run_command("newmcp");
+    h.app.run_command("saveas");
+    // Name the file at the collection root.
+    h.type_text("half-typed");
+    h.key("enter");
+    let path = h.dir.path().join("half-typed.toml");
+    assert!(path.is_file(), "the save-as dialog must create the file");
+    // A half-typed object must save and reopen: it is a valid draft, only the
+    // send rejects it.
+    h.app.tabs[h.app.active].ed.message.set_text("{\"a\": ");
+    h.app.tabs[h.app.active].refresh_model();
+    h.key("ctrl+s");
+    assert!(path.is_file());
+    let text = std::fs::read_to_string(&path).must();
+    assert!(
+        text.contains("arguments"),
+        "arguments must be written: {text}"
+    );
+    h.key("ctrl+w c");
+    h.key("ctrl+w h");
+    h.app.tree.set_filter("half-typed");
+    h.key("enter");
+    h.app.tree.set_filter("");
+    assert!(
+        h.app.tabs[h.app.active]
+            .ed
+            .message
+            .text()
+            .contains("\"a\":"),
+        "reopening must restore the half-typed arguments"
+    );
+}
+
+#[test]
+fn mcp_success_status_is_not_an_http_error_code() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            &format!("[mcp.servers.echo]\nurl = \"{}/mcp\"\n", echo.url()),
+        );
+    });
+    h.app.run_command("newmcp");
+    let t = &mut h.app.tabs[h.app.active];
+    t.ed.mcp_server.set_text("echo");
+    t.ed.mcp_tool.set_text("add");
+    t.ed.message.set_text("{}");
+    t.refresh_model();
+    h.key("f5");
+    h.wait_idle(5);
+    let summary = h.app.tabs[h.app.active]
+        .response
+        .as_ref()
+        .must()
+        .summary
+        .clone();
+    assert_eq!(summary.status, "OK");
+    assert_eq!(summary.code, None, "MCP must not carry an HTTP status code");
+    assert!(summary.ok);
+}
+
+#[test]
+fn mcp_up_from_tabs_focuses_the_server_bar() {
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+    });
+    h.app.run_command("newmcp");
+    h.app.tabs[h.app.active].ed.mcp_server.set_text("echo");
+    h.app.tabs[h.app.active].refresh_model();
+    h.key("alt+1");
+    // Up from the tabs must land on the only bar part MCP has (the server),
+    // never on the HTTP URL slot it does not draw.
+    h.key("up");
+    assert_eq!(h.app.focus, sendito_ui::app::Focus::Bar(0));
+}
+
+#[test]
 fn flow_create_folder_and_request() {
     let s = servers();
     let mut h = harness(&s, 100, 30);

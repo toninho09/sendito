@@ -671,6 +671,11 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
         "Copy / scroll / close",
     ),
     (
+        "MCP server / tool field",
+        "F2",
+        "Choose a configured server / discover and choose a tool",
+    ),
+    (
         "Command palette",
         ":<command>",
         "Type a command (listed under Commands) or pick from the list",

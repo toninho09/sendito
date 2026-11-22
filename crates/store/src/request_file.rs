@@ -139,6 +139,9 @@ struct RawRequest {
     target: Option<String>,
     service: Option<String>,
     message: Option<String>,
+    server: Option<String>,
+    tool: Option<String>,
+    arguments: Option<String>,
     #[serde(default)]
     options: RawOptions,
     #[serde(default)]
@@ -323,8 +326,21 @@ pub fn parse(text: &str) -> Result<Request, String> {
             },
             scripts: scripts(r.scripts)?,
         })),
+        "mcp" => {
+            // `arguments` is JSON text. It is not validated here: a half-typed
+            // object is a valid draft and saving must never produce a file the
+            // app cannot reopen. `sendito-mcp` rejects a non-object at send time.
+            let arguments = r.arguments.unwrap_or_else(|| "{}".into());
+            Ok(Request::Mcp(McpRequest {
+                server: r.server.unwrap_or_default(),
+                tool: r.tool.unwrap_or_default(),
+                arguments,
+                timeout_ms: r.options.timeout_ms,
+                scripts: scripts(r.scripts)?,
+            }))
+        }
         o => Err(format!(
-            "unknown request kind {o:?} (expected \"http\" or \"grpc\")"
+            "unknown request kind {o:?} (expected \"http\", \"grpc\" or \"mcp\")"
         )),
     }
 }
@@ -512,6 +528,19 @@ pub fn to_toml(req: &Request) -> String {
             write_auth(&mut w, &g.auth);
             write_scripts(&mut w, &g.scripts);
         }
+        Request::Mcp(m) => {
+            w.str("kind", "mcp");
+            w.str("server", &m.server);
+            w.str("tool", &m.tool);
+            if m.arguments != "{}" {
+                w.str("arguments", &m.arguments);
+            }
+            if let Some(t) = m.timeout_ms {
+                w.table("options");
+                w.int("timeout_ms", t);
+            }
+            write_scripts(&mut w, &m.scripts);
+        }
     }
     w.finish()
 }
@@ -543,6 +572,7 @@ pub fn sniff_badge(text: &str) -> Option<String> {
                 .unwrap_or_else(|| "GET".into()),
         ),
         Some("grpc") => Some("GRPC".into()),
+        Some("mcp") => Some("MCP".into()),
         _ => None,
     }
 }
@@ -699,6 +729,42 @@ mod tests {
         let d = Request::new_grpc();
         assert_eq!(parse(&to_toml(&d)).ok(), Some(d));
         assert_eq!(sniff_badge(&t).as_deref(), Some("GRPC"));
+    }
+
+    #[test]
+    fn roundtrip_mcp() {
+        let m = Request::Mcp(McpRequest {
+            server: "github".into(),
+            tool: "create_issue".into(),
+            arguments: "{\n  \"title\": \"{{version}}\"\n}".into(),
+            timeout_ms: Some(150),
+            scripts: Scripts::default(),
+        });
+        let t = to_toml(&m);
+        assert_eq!(parse(&t).ok(), Some(m.clone()));
+        assert_eq!(sniff_badge(&t).as_deref(), Some("MCP"));
+        // The default `{}` arguments and no timeout are omitted.
+        let d = Request::new_mcp();
+        let text = to_toml(&d);
+        assert_eq!(text, "kind = \"mcp\"\nserver = \"\"\ntool = \"\"\n");
+        assert_eq!(parse(&text).ok(), Some(d));
+        // Empty arguments omit the wire property and must survive save/load.
+        for arguments in ["", "  ", " {} "] {
+            let request = Request::Mcp(McpRequest {
+                arguments: arguments.into(),
+                ..McpRequest::default()
+            });
+            assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
+        }
+        // Invalid JSON is kept as written: it must round-trip so a half-typed
+        // object can be saved and reopened; the caller validates before sending.
+        for arguments in ["[1]", "nope", "{\"a\":"] {
+            let request = Request::Mcp(McpRequest {
+                arguments: arguments.into(),
+                ..McpRequest::default()
+            });
+            assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
+        }
     }
 
     #[test]

@@ -1,0 +1,25 @@
+[package]
+name = "sendito-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito MCP client: tools over stdio and streamable HTTP"
+
+[dependencies]
+sendito-http.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+ring.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+sendito-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — MCP tools
+
+* **MCP requests**: a new `kind = "mcp"` request calls one tool on a server from
+  `[mcp.servers]` in the collection config, over a child process (stdio) or
+  Streamable HTTP. `sendito-mcp` speaks JSON-RPC 2.0 (`initialize`,
+  `notifications/initialized`, `tools/list`, `tools/call`), accepts JSON and SSE
+  responses, and follows list cursors.
+* **Discovery**: F2 on the server field picks a configured server; F2 on the tool
+  field lists the server's tools and, when the arguments are still empty or `{}`,
+  fills a template from the tool's input schema.
+* **Auth**: a static bearer (with `{{variables}}`) or OAuth 2.1 with PKCE,
+  discovery and dynamic client registration. `sendito mcp login <server>` /
+  `sendito mcp logout <server>` manage tokens in the OS keychain; a `401` refreshes
+  and retries once.
+* **CLI**: `sendito run` calls the tool and prints the pretty JSON result; exit 0
+  on success, 1 on `isError`, 2 when the call fails. `sendito mcp login|logout`.
+* **Scripts and history** work as for HTTP and gRPC; secrets echoed by a tool are
+  masked in the UI, the body and the history.
+* The wire-level corpus gained 5 MCP cases (JSON, SSE, bearer, empty arguments,
+  `isError` and `tools/list` pagination) checked byte for byte.
+
 ## 0.2.0 — visual redesign
 
 The same features in a new layout, with more themes and room for your own.

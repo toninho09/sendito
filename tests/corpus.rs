@@ -1,7 +1,7 @@
 //! Correctness corpus: every request in `tests/corpus/collection` is sent through
 //! the same pipeline as the app against the echo servers. The exact bytes the
-//! HTTP server received (and the messages the gRPC server decoded) are compared
-//! with the reviewed captures in `tests/corpus/expected`.
+//! HTTP and MCP servers received (and the messages the gRPC server decoded) are
+//! compared with the reviewed captures in `tests/corpus/expected`.
 //!
 //! Secret values are random per run: they never appear in tracked files. In the
 //! captures they are shown as `<secret:NAME>`; the raw value is checked in memory.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use sendito_core::Request;
 use sendito_store::env::{Keychain, MemoryKeychain};
-use sendito_testkit::{grpc_echo, http_echo};
+use sendito_testkit::{grpc_echo, http_echo, mcp_echo};
 use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
 
 /// `unwrap` for test helpers (the workspace denies `unwrap_used`).
@@ -73,6 +73,7 @@ struct Env {
     secrets: BTreeMap<String, String>,
     http: http_echo::HttpEcho,
     grpc: grpc_echo::GrpcEcho,
+    mcp: mcp_echo::McpEcho,
     keychain: Arc<MemoryKeychain>,
 }
 
@@ -82,6 +83,7 @@ async fn setup() -> Env {
     copy_dir(&src, dir.path());
     let http = http_echo::start().await.must();
     let grpc = grpc_echo::start().await.must();
+    let mcp = mcp_echo::start().await.must();
     let env_path = dir.path().join(".sendito/environments/corpus.toml");
     let text = std::fs::read_to_string(&env_path)
         .must()
@@ -94,6 +96,7 @@ async fn setup() -> Env {
             "grpc_target = \"127.0.0.1:0\"",
             &format!("grpc_target = \"{}\"", grpc.target()),
         );
+    let text = format!("{text}\nmcp_url = \"{}\"\n", mcp.url());
     std::fs::write(&env_path, text).must();
     let mut secrets = BTreeMap::new();
     secrets.insert("local_token".to_string(), random_secret("lt"));
@@ -130,6 +133,7 @@ async fn setup() -> Env {
         secrets,
         http,
         grpc,
+        mcp,
         keychain,
     }
 }
@@ -585,6 +589,131 @@ async fn grpc_corpus() {
         names.len(),
         failures.join("\n\n")
     );
+}
+
+fn normalize_mcp(caps: &[mcp_echo::Captured], url: &str) -> String {
+    let sid = caps
+        .get(1)
+        .and_then(|c| c.header("mcp-session-id"))
+        .unwrap_or_default();
+    let mut dump = String::new();
+    for (i, c) in caps.iter().enumerate() {
+        dump.push_str(&format!("### request {}\n{}\r\n", i + 1, c.request_line));
+        for (name, value) in &c.headers {
+            dump.push_str(&format!("{name}: {value}\r\n"));
+        }
+        dump.push_str("\r\n");
+        dump.push_str(&c.body);
+        dump.push('\n');
+    }
+    let host = url.trim_start_matches("http://");
+    let dump = dump.replace(host, "127.0.0.1:<port>");
+    if sid.is_empty() {
+        dump
+    } else {
+        dump.replace(&sid, "<session>")
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_list_corpus() {
+    let echo = mcp_echo::start().await.must();
+    let transport = sendito_mcp::Transport::Http {
+        url: format!("{}/mcp?paginate=1", echo.url()),
+        headers: Vec::new(),
+        verify_tls: true,
+        auth: None,
+    };
+    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let tools = sendito_mcp::list_tools(&transport, &sendito_mcp::Options::default(), tx)
+        .await
+        .must();
+    assert_eq!(
+        tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["add", "greet"]
+    );
+    let caps = echo.captured();
+    assert_eq!(caps.len(), 4);
+    let mut failures = Vec::new();
+    check(
+        "mcp",
+        "list",
+        &normalize_mcp(&caps, &echo.url()),
+        &mut failures,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_corpus() {
+    let e = setup().await;
+    let p = project(&e);
+    let names = cases(e.dir.path(), "mcp");
+    assert!(names.len() >= 3);
+    let mut failures = Vec::new();
+    let mut passed = 0;
+    for file in &names {
+        let case = file.trim_end_matches(".toml");
+        let rel = format!("mcp/{file}");
+        let Request::Mcp(req) = p.coll.load(&rel).must() else {
+            panic!("{rel} is not MCP");
+        };
+        let (scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+        assert!(errors.is_empty(), "{errors:?}");
+        let start = e.mcp.captured().len();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        runner::exec_mcp(
+            &ctx(&e, &p, &rel),
+            &req,
+            scope,
+            vec![],
+            &runner::McpRunInfo::of(&p),
+            tx,
+        )
+        .await;
+        let mut outcome = None;
+        while let Ok(update) = rx.try_recv() {
+            if let runner::McpUpdate::Done {
+                error, is_error, ..
+            } = update
+            {
+                outcome = Some((error, is_error));
+            }
+        }
+        let before = failures.len();
+        let (error, is_error) = outcome.must();
+        if error.is_some() || is_error != (case == "tool-error") {
+            failures.push(format!("{case}: error={error:?}, is_error={is_error}"));
+        }
+        let caps = e.mcp.captured();
+        let caps = &caps[start..];
+        if caps.len() != 3 {
+            failures.push(format!("{case}: expected three POSTs, got {}", caps.len()));
+        }
+        if case == "bearer" {
+            let expected = format!("Bearer {}", e.secrets["local_token"]);
+            if caps
+                .iter()
+                .any(|c| c.header("authorization").as_deref() != Some(expected.as_str()))
+            {
+                failures.push(format!("{case}: bearer header missing or incorrect"));
+            }
+        }
+        let dump = normalize_mcp(caps, &e.mcp.url());
+        check("mcp", case, &mask_secrets(dump, &e.secrets), &mut failures);
+        if failures.len() == before {
+            passed += 1;
+        }
+    }
+    let history = std::fs::read_to_string(e.dir.path().join(".sendito/history.jsonl")).must();
+    for (name, value) in &e.secrets {
+        assert!(
+            !history.contains(value.as_str()),
+            "secret {name} leaked into MCP history"
+        );
+    }
+    write_summary("mcp", names.len(), passed, &failures);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 /// JSON with object keys sorted (map fields have no defined order).

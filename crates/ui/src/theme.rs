@@ -627,6 +627,7 @@ impl Theme {
             "PATCH" => self.patch,
             "DELETE" => self.delete,
             "GRPC" => self.grpc,
+            "MCP" => self.grpc,
             _ => self.other,
         }
     }

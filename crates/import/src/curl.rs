@@ -356,7 +356,7 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
     } else {
         template = match sendito_core::resolve::mask_request(&Request::Http(req.clone()), scope) {
             Request::Http(h) => h,
-            Request::Grpc(_) => req.clone(),
+            _ => req.clone(),
         };
         empty = Scope::new();
         (&template, &empty)

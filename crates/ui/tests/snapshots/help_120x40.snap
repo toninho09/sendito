@@ -4,11 +4,11 @@ expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
 ╭ Req╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮────╮
-│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/203 · ↑↓ PgUp PgDn   ┃    │
+│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/209 · ↑↓ PgUp PgDn   ┃    │
 │▸ Us│                                                                                                            ┃    │
 │  GR│ All keys, including any you changed in the config.                                                         ┃    │
 │  GE│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃    │
-│    │                                                                                                            ┃    │
+│    │                                                                                                            │    │
 │    │ ── Global ──                                                                                               │    │
 │    │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                                   │    │
 │    │   Ctrl+W x                     Cancel the running request or stream                                        │    │

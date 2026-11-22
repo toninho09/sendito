@@ -1,19 +1,25 @@
 //! The request model. These types mirror the on-disk TOML schema (see FORMAT.md)
 //! but carry no serialization logic: `sendito-store` owns the file format.
 
-/// A saved request: either HTTP or gRPC.
+/// A saved request: HTTP, gRPC or MCP.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Http(HttpRequest),
     Grpc(GrpcRequest),
+    Mcp(McpRequest),
 }
 
+/// The auth MCP requests answer with: authentication belongs to the server
+/// definition in the config, not to the request.
+static NO_AUTH: Auth = Auth::None;
+
 impl Request {
-    /// Short label used for tree badges (`GET`, `POST`, `GRPC`).
+    /// Short label used for tree badges (`GET`, `POST`, `GRPC`, `MCP`).
     pub fn badge(&self) -> &str {
         match self {
             Request::Http(h) => &h.method,
             Request::Grpc(_) => "GRPC",
+            Request::Mcp(_) => "MCP",
         }
     }
 
@@ -21,6 +27,7 @@ impl Request {
         match self {
             Request::Http(h) => &h.scripts,
             Request::Grpc(g) => &g.scripts,
+            Request::Mcp(m) => &m.scripts,
         }
     }
 
@@ -28,6 +35,7 @@ impl Request {
         match self {
             Request::Http(h) => &mut h.scripts,
             Request::Grpc(g) => &mut g.scripts,
+            Request::Mcp(m) => &mut m.scripts,
         }
     }
 
@@ -35,13 +43,17 @@ impl Request {
         match self {
             Request::Http(h) => &h.auth,
             Request::Grpc(g) => &g.auth,
+            Request::Mcp(_) => &NO_AUTH,
         }
     }
 
-    pub fn auth_mut(&mut self) -> &mut Auth {
+    /// The auth of an HTTP or gRPC request; `None` for MCP, whose auth lives
+    /// on the server definition in the config.
+    pub fn auth_mut(&mut self) -> Option<&mut Auth> {
         match self {
-            Request::Http(h) => &mut h.auth,
-            Request::Grpc(g) => &mut g.auth,
+            Request::Http(h) => Some(&mut h.auth),
+            Request::Grpc(g) => Some(&mut g.auth),
+            Request::Mcp(_) => None,
         }
     }
 
@@ -51,6 +63,10 @@ impl Request {
 
     pub fn new_grpc() -> Self {
         Request::Grpc(GrpcRequest::default())
+    }
+
+    pub fn new_mcp() -> Self {
+        Request::Mcp(McpRequest::default())
     }
 }
 
@@ -529,6 +545,30 @@ impl Default for GrpcRequest {
     }
 }
 
+/// An MCP call: one tool on one server from the collection config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRequest {
+    /// Server name, a key of `[mcp.servers]` in the collection config.
+    pub server: String,
+    pub tool: String,
+    /// Tool arguments as JSON text. An empty string omits the arguments property.
+    pub arguments: String,
+    pub timeout_ms: Option<u64>,
+    pub scripts: Scripts,
+}
+
+impl Default for McpRequest {
+    fn default() -> Self {
+        Self {
+            server: String::new(),
+            tool: String::new(),
+            arguments: "{}".into(),
+            timeout_ms: None,
+            scripts: Scripts::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SchemaSource {
     #[default]
@@ -593,7 +633,9 @@ mod tests {
     fn request_accessors() {
         let mut r = Request::new_http();
         assert_eq!(r.badge(), "GET");
-        r.auth_mut().clone_from(&Auth::Bearer { token: "t".into() });
+        r.auth_mut()
+            .expect("a new HTTP request has auth")
+            .clone_from(&Auth::Bearer { token: "t".into() });
         assert_eq!(r.auth().kind(), AuthKind::Bearer);
         r.scripts_mut().pre.push(SetVar::default());
         assert!(!r.scripts().is_empty());

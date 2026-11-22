@@ -52,7 +52,7 @@ allows `accept` as a transport header.
   toolchain has been used.
 * **Terminal sizes.** Screenshots, recordings and snapshot tests cover 120×40 and
   200×60. Smaller terminals work (the layout adapts) but are not covered by snapshots.
-* **Coverage** is measured for the non-UI crates only (91.89%); `sendito-ui` is covered
+* **Coverage** is measured for the non-UI crates only (90.72%); `sendito-ui` is covered
   by the 15 flow tests and the snapshot tests, with no line-coverage figure.
 * **The visual redesign was checked in the test backend only.** The cursor shape (bar
   while typing, block in vim NORMAL), the window title push/pop (`CSI 22;0t` /
@@ -69,6 +69,16 @@ allows `accept` as a transport header.
   (reported), and neither are saved example responses.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
+* MCP supports tools only; resources and prompts are not implemented. Each list
+  or call opens a separate session. The legacy HTTP+SSE transport and the
+  server-initiated Streamable HTTP GET stream are not supported. Image and other
+  non-text tool content is shown as JSON, not decoded into a media viewer.
+* An MCP `arguments` value that is not a JSON object is kept as file text and only
+  rejected when the call is sent (so a half-typed object can be saved and
+  reopened); the editor shows `✓ JSON` / `✗ JSON` while typing.
+* MCP OAuth login uses configured URLs and OAuth settings literally, without
+  resolving environment placeholders. The local callback requires a browser able
+  to reach the machine running Sendito.
 * HTTP/3 and WebSocket are not supported.
 * Response bodies are shown as received; there is no automatic decompression.
 * Windows is not a target of this release.
@@ -81,5 +91,5 @@ allows `accept` as a transport header.
 ## 4. Housekeeping
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
-  minimum terminal size of 120×40 and the 40-case corpus, which has grown to 44 HTTP
-  cases.
+  minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
+  44 HTTP, 15 gRPC and 5 MCP cases.

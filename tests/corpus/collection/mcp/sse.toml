@@ -1,0 +1,4 @@
+kind = "mcp"
+server = "echo_sse"
+tool = "add"
+arguments = "{\"a\":1,\"b\":2}"

@@ -2,3 +2,16 @@
 
 [collection]
 name = "corpus"
+
+[mcp.servers.echo]
+url = "{{mcp_url}}/mcp"
+
+[mcp.servers.echo_sse]
+url = "{{mcp_url}}/mcp?format=sse"
+
+[mcp.servers.echo_bearer]
+url = "{{mcp_url}}/mcp"
+
+[mcp.servers.echo_bearer.auth]
+type = "bearer"
+token = "{{local_token}}"

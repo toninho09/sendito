@@ -19,6 +19,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub http: HttpConfig,
     pub grpc: GrpcConfig,
+    pub mcp: McpConfig,
     pub history: HistoryConfig,
     pub collection: CollectionConfig,
     /// `[keymap.<mode>] <action> = "key"` or `["key1", "key2"]`.
@@ -94,6 +95,85 @@ impl Default for HttpConfig {
 pub struct GrpcConfig {
     /// Default deadline when a request sets none (0 = none).
     pub deadline_ms: u64,
+}
+
+/// MCP settings and the servers a request can call (`[mcp.servers.<name>]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpConfig {
+    /// Default call timeout when a request sets none (handshake included).
+    pub timeout_ms: u64,
+    pub servers: BTreeMap<String, McpServer>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,
+            servers: BTreeMap::new(),
+        }
+    }
+}
+
+/// One MCP server: a child process speaking stdio, or an HTTP endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum McpServer {
+    Stdio(McpStdioServer),
+    Http(McpHttpServer),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpStdioServer {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment entries added to the child; values may use `{{variables}}`.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpHttpServer {
+    pub url: String,
+    /// Extra headers sent with every POST; values may use `{{variables}}`.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default = "default_true")]
+    pub verify_tls: bool,
+    #[serde(default)]
+    pub auth: Option<McpServerAuth>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Authentication for an HTTP MCP server. OAuth tokens are kept in the OS
+/// keychain; a static bearer token may reference a secret variable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpServerAuth {
+    Bearer {
+        token: String,
+    },
+    Oauth {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_secret: Option<String>,
+        /// Overrides, for servers where discovery does not work.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorize_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        registration_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scopes: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +309,58 @@ mod tests {
         assert_eq!(c.keymap["normal"]["quit"].keys().len(), 2);
         assert_eq!(c.collection.name.as_deref(), Some("acme"));
         assert_eq!(c.http.timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn mcp_servers_parse() {
+        let text = r#"
+[mcp]
+timeout_ms = 5000
+
+[mcp.servers.files]
+command = "npx"
+args = ["-y", "@mcp/server-fs", "."]
+env = { ROOT = "{{root}}" }
+
+[mcp.servers.remote]
+url = "https://api.example.com/mcp/"
+verify_tls = false
+
+[mcp.servers.remote.headers]
+X-Api-Version = "2"
+
+[mcp.servers.remote.auth]
+type = "oauth"
+scopes = ["read"]
+"#;
+        let c: Config = toml::from_str(text).unwrap();
+        assert_eq!(c.mcp.timeout_ms, 5000);
+        let Some(McpServer::Stdio(s)) = c.mcp.servers.get("files") else {
+            panic!("files must be stdio");
+        };
+        assert_eq!(s.command, "npx");
+        assert_eq!(s.args.len(), 3);
+        assert_eq!(s.env.get("ROOT").map(String::as_str), Some("{{root}}"));
+        let Some(McpServer::Http(h)) = c.mcp.servers.get("remote") else {
+            panic!("remote must be http");
+        };
+        assert!(!h.verify_tls);
+        assert_eq!(
+            h.headers.get("X-Api-Version").map(String::as_str),
+            Some("2")
+        );
+        assert!(matches!(
+            &h.auth,
+            Some(McpServerAuth::Oauth { scopes, .. }) if scopes == &vec!["read".to_string()]
+        ));
+        // Defaults: bearer auth, TLS on, no scopes.
+        let bearer = "[mcp.servers.b]\nurl = \"https://x\"\n[mcp.servers.b.auth]\ntype = \"bearer\"\ntoken = \"{{t}}\"\n";
+        let c: Config = toml::from_str(bearer).unwrap();
+        let Some(McpServer::Http(h)) = c.mcp.servers.get("b") else {
+            panic!();
+        };
+        assert!(h.verify_tls);
+        assert!(matches!(&h.auth, Some(McpServerAuth::Bearer { token }) if token == "{{t}}"));
     }
 
     #[test]

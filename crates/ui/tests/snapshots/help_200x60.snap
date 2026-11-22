@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/203 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/209 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
 │  G│ All keys, including any you changed in the config.                                           │   Delete, x                    Delete the selected item (asks first)                          ┃   │
 │  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   m                            Move the selected item to another folder                       ┃   │
@@ -28,7 +28,7 @@ expression: screen
 │   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │   Enter                        Edit the next cell (name → value → next row)                   ┃   │
 │   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Ctrl+T                       Enable or disable the row                                      ┃   │
 │   │   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+D                       Delete the row                                                 ┃   │
-│   │   Alt+1                        Jump to tab 1 of the focused pane                             │                                                                                               ┃   │
+│   │   Alt+1                        Jump to tab 1 of the focused pane                             │                                                                                               │   │
 │   │   Alt+2                        Jump to tab 2 of the focused pane                             │ ── Response viewer ──                                                                         │   │
 │   │   Alt+3                        Jump to tab 3 of the focused pane                             │   Up                           Move up                                                        │   │
 │   │   Alt+4                        Jump to tab 4 of the focused pane                             │   Down                         Move down                                                      │   │

@@ -1,4 +1,4 @@
-//! `sendito` — terminal API client for HTTP and gRPC.
+//! `sendito` — terminal API client for HTTP, gRPC and MCP tools.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
 #[command(
     name = "sendito",
     version,
-    about = "Terminal API client for HTTP and gRPC",
+    about = "Terminal API client for HTTP, gRPC and MCP tools",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -41,7 +41,8 @@ enum Cmd {
     /// Send one request without the UI and print the response.
     ///
     /// The body goes to stdout; status, timing and assertion results go to stderr.
-    /// Exit codes: 0 success, 1 failed assertion, 2 request failed, 3 usage error.
+    /// Exit codes: 0 success, 1 failed assertion or MCP tool error, 2 request
+    /// failed, 3 usage error.
     Run {
         /// Request file, relative to the collection or the current directory (`.toml` optional).
         request: PathBuf,
@@ -67,6 +68,11 @@ enum Cmd {
         #[arg(long)]
         include_secrets: bool,
     },
+    /// Sign an HTTP MCP server in (OAuth) or out.
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
     /// List color themes or print one as a theme file to start your own.
     Theme {
         #[command(subcommand)]
@@ -80,6 +86,15 @@ enum Cmd {
         #[arg(long, default_value = "")]
         into: String,
     },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Run the OAuth login for a server from `[mcp.servers]` (opens a browser;
+    /// the URL is also printed, for remote sessions).
+    Login { server: String },
+    /// Forget the stored tokens of a server.
+    Logout { server: String },
 }
 
 #[derive(Subcommand)]
@@ -180,6 +195,7 @@ fn main() -> ExitCode {
             include_secrets,
         }) => curl(&request, env, include_secrets),
         Some(Cmd::Import { file, into }) => import(&file, &into),
+        Some(Cmd::Mcp { cmd }) => rt.block_on(mcp(cmd)),
         Some(Cmd::Theme { cmd }) => theme(cmd),
         None => {
             let root = find_collection(cli.path.as_deref());
@@ -464,6 +480,56 @@ async fn run(
                 ExitCode::SUCCESS
             }
         }
+        Request::Mcp(m) => {
+            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+            let info = runner::McpRunInfo::of(&project);
+            let run = runner::exec_mcp(&ctx, &m, scope, errors, &info, utx);
+            let mut code = 0u8;
+            let mut fails = 0;
+            let print = async {
+                let mut out = std::io::stdout().lock();
+                while let Some(u) = urx.recv().await {
+                    match u {
+                        runner::McpUpdate::Event(_) => {}
+                        runner::McpUpdate::Done {
+                            error,
+                            is_error,
+                            result,
+                            scripts,
+                            // Already printed once when the scope was built.
+                            scope_errors: _,
+                        } => {
+                            if let Some(e) = error {
+                                eprintln!("sendito: {e}");
+                                code = 2;
+                            } else {
+                                if is_error {
+                                    // The tool answered isError: the call went
+                                    // through, the tool failed (decision: exit 1).
+                                    code = 1;
+                                    eprintln!("sendito: the tool reported an error");
+                                }
+                                if let Some(b) = result {
+                                    let _ = out.write_all(&b);
+                                    if !b.ends_with(b"\n") {
+                                        let _ = out.write_all(b"\n");
+                                    }
+                                }
+                                fails = print_scripts(&scripts);
+                            }
+                        }
+                    }
+                }
+            };
+            tokio::join!(run, print);
+            if code != 0 {
+                ExitCode::from(code)
+            } else if fails > 0 {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
     }
 }
 
@@ -551,6 +617,101 @@ fn import(file: &Path, into: &str) -> ExitCode {
         Err(e) => {
             eprintln!("sendito: {e}");
             ExitCode::from(3)
+        }
+    }
+}
+
+/// `sendito mcp login|logout <server>`: OAuth for HTTP MCP servers.
+async fn mcp(cmd: McpCmd) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(root) = sendito_store::init::find_root(&cwd) else {
+        eprintln!("sendito: no collection here (no .sendito directory found upwards)");
+        return ExitCode::from(3);
+    };
+    let project = Project::open(&root, runner::default_keychain());
+    for w in &project.warnings {
+        eprintln!("warning: {w}");
+    }
+    match cmd {
+        McpCmd::Logout { server } => {
+            let account = runner::mcp_token_account(&project.name, &server);
+            match project.envs.keychain.delete(&account) {
+                Ok(()) => {
+                    println!("forgot the tokens of {server:?}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("sendito: {e}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        McpCmd::Login { server } => {
+            let Some(sendito_store::config::McpServer::Http(h)) =
+                project.config.mcp.servers.get(&server)
+            else {
+                eprintln!("sendito: server {server:?} is not an HTTP entry of [mcp.servers]");
+                return ExitCode::from(3);
+            };
+            let settings = match &h.auth {
+                Some(sendito_store::config::McpServerAuth::Oauth {
+                    client_id,
+                    client_secret,
+                    authorize_url,
+                    token_url,
+                    registration_url,
+                    scopes,
+                }) => sendito_mcp::oauth::OAuthSettings {
+                    client_id: client_id.clone(),
+                    client_secret: client_secret.clone(),
+                    authorize_url: authorize_url.clone(),
+                    token_url: token_url.clone(),
+                    registration_url: registration_url.clone(),
+                    scopes: scopes.clone(),
+                },
+                _ => {
+                    eprintln!(
+                        "sendito: server {server:?} has no [mcp.servers.{server}.auth] type = \"oauth\""
+                    );
+                    return ExitCode::from(3);
+                }
+            };
+            let url = h.url.clone();
+            let account = runner::mcp_token_account(&project.name, &server);
+            let keychain = project.envs.keychain.clone();
+            let opener = |url: &str| -> bool {
+                let program = if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                };
+                std::process::Command::new(program).arg(url).spawn().is_ok()
+            };
+            let note = |n: String| eprintln!("{n}");
+            match sendito_mcp::oauth::login(
+                &url,
+                &settings,
+                std::time::Duration::from_secs(300),
+                &opener,
+                &note,
+            )
+            .await
+            {
+                Ok(tokens) => match keychain.set(&account, &tokens.to_json()) {
+                    Ok(()) => {
+                        println!("signed in to {server:?} (tokens in the OS keychain)");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("sendito: cannot store the tokens: {e}");
+                        ExitCode::from(2)
+                    }
+                },
+                Err(e) => {
+                    eprintln!("sendito: login failed: {e}");
+                    ExitCode::from(2)
+                }
+            }
         }
     }
 }

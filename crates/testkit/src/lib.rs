@@ -2,3 +2,5 @@
 
 pub mod grpc_echo;
 pub mod http_echo;
+pub mod mcp_auth;
+pub mod mcp_echo;

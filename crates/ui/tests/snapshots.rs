@@ -206,6 +206,21 @@ fn grpc_request() {
 }
 
 #[test]
+fn mcp_request() {
+    each(|h| {
+        h.app.run_command("newmcp");
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.mcp_server.set_text("example");
+        t.ed.mcp_tool.set_text("search");
+        t.ed.message.set_text("{\"query\":\"hello\"}");
+        t.refresh_model();
+        snap("mcp_tool", h);
+        h.key("alt+2");
+        snap("mcp_args", h);
+    });
+}
+
+#[test]
 fn response_views() {
     each(|h| {
         open(h, "list users");

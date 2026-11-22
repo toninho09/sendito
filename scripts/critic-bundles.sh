@@ -6,16 +6,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?usage: critic-bundles.sh OUTDIR}
 C="$OUT/correctness"; U="$OUT/ux"
-rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,environment,files,import} "$U"/{recordings,screenshots}
+rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,mcp,environment,files,import} "$U"/{recordings,screenshots}
 
 # --- correctness: wire captures next to the request files and import inputs
-for kind in http grpc; do
+for kind in http grpc mcp; do
   for f in tests/corpus/collection/$kind/*.toml; do
     n=$(basename "$f" .toml)
     cp "$f" "$C/$kind/$n.toml"
     cp "target/corpus/captures/$kind/$n.wire" "$C/$kind/$n.wire"
   done
 done
+cp target/corpus/captures/mcp/list.wire "$C/mcp/list.wire"
+cp tests/corpus/collection/.sendito/config.toml "$C/environment/config.toml"
 cp tests/corpus/collection/.sendito/collection.toml "$C/environment/collection.toml"
 cp tests/corpus/collection/.sendito/environments/corpus.toml "$C/environment/corpus.toml"
 cp tests/corpus/collection/files/data.json tests/corpus/collection/files/notes.txt "$C/files/"
@@ -50,11 +52,23 @@ grpc/NAME.wire   what the gRPC echo server received for the call: the method pat
                  in proto/ (JSON, proto field names, keys sorted, default values omitted)
                  followed by the exact protobuf bytes of the message in base64. The last
                  line is what the client observed.
+mcp/NAME.toml    a saved MCP tool call; server definitions are in environment/config.toml.
+mcp/NAME.wire    the HTTP request lines, headers and compact JSON-RPC bodies received
+                 by the echo server. The dynamically assigned port and session ID are
+                 replaced with <port> and <session>; the response is not included.
+                 {{mcp_url}} is the local echo server URL.
+mcp/list.wire    a tools/list session over HTTP; the echo server returns a second
+                 page with cursor "page-two".
 
 Deliberate behaviour (documented in the application's FORMAT.md). The rules
 below are design decisions, not defects: check that every capture follows them
 and report any case that does not, but do not report the rules themselves or
 ask for them to be removed.
+
+MCP: every call starts a session with initialize, notifications/initialized, then
+tools/call. The first request proposes protocol version 2025-06-18; subsequent
+requests carry the negotiated Mcp-Protocol-Version and any Mcp-Session-Id. A missing
+arguments field in a request file defaults to {}, which is sent as an object.
 
 Request format rules that matter here: on HTTP/1 header names are written in
 Title-Case ("x-api-key" is sent as "X-Api-Key"; names are case-insensitive), the

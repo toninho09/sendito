@@ -369,6 +369,32 @@ pub struct ResolvedGrpc {
     pub unresolved: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedMcp {
+    pub server: String,
+    pub tool: String,
+    /// Argument JSON text as written, variables rendered.
+    pub arguments: String,
+    pub timeout_ms: Option<u64>,
+    pub unresolved: Vec<String>,
+}
+
+/// Resolves an MCP request. The server name must match a `[mcp.servers]`
+/// entry of the collection config (checked by the sender).
+pub fn resolve_mcp(req: &McpRequest, scope: &Scope) -> ResolvedMcp {
+    let mut ctx = Ctx {
+        scope,
+        unresolved: Vec::new(),
+    };
+    ResolvedMcp {
+        server: ctx.r(req.server.trim()),
+        tool: ctx.r(req.tool.trim()),
+        arguments: ctx.r(&req.arguments),
+        timeout_ms: req.timeout_ms,
+        unresolved: ctx.unresolved,
+    }
+}
+
 /// Resolves a gRPC request. A target scheme (`https://`/`http://`) overrides `tls`.
 pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
     let mut ctx = Ctx {
@@ -431,6 +457,7 @@ pub fn unresolved_vars(req: &Request, scope: &Scope) -> Vec<String> {
     match req {
         Request::Http(h) => resolve_http(h, scope, Path::new(".")).unresolved,
         Request::Grpc(g) => resolve_grpc(g, scope).unresolved,
+        Request::Mcp(m) => resolve_mcp(m, scope).unresolved,
     }
 }
 
@@ -530,6 +557,13 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             deadline_ms: g.deadline_ms,
             schema: g.schema.clone(),
             scripts: g.scripts.clone(),
+        }),
+        Request::Mcp(m) => Request::Mcp(McpRequest {
+            server: s.render_masked(&m.server),
+            tool: m.tool.clone(),
+            arguments: s.render_masked(&m.arguments),
+            timeout_ms: m.timeout_ms,
+            scripts: m.scripts.clone(),
         }),
     }
 }

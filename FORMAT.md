@@ -24,7 +24,7 @@ my-api/
 * The collection root is the directory that contains `.sendito/`. `sendito` with
   no argument searches upward from the current directory.
 * Every `*.toml` file under the root whose first keys include `kind = "http"` or
-  `kind = "grpc"` is a request. Other `.toml` files (e.g. `Cargo.toml`) are ignored.
+  `kind = "grpc"` or `kind = "mcp"` is a request. Other `.toml` files (e.g. `Cargo.toml`) are ignored.
 * Hidden entries (starting with `.`) and the directories listed in
   `[collection] ignore` are skipped. Folders that only contain unrelated files are
   hidden; empty folders are shown (they are folders you created).
@@ -218,6 +218,64 @@ value = "Ana"
   also sends `content-type: application/grpc`, `te: trailers`,
   `user-agent: sendito/<version> tonic/<version>` and, with a deadline, `grpc-timeout`.
 
+## MCP request
+
+An MCP request calls one tool on a server configured in `[mcp.servers]`:
+
+```toml
+kind = "mcp"
+server = "remote"
+tool = "search"
+arguments = '''
+{"query":"{{query}}"}
+'''
+
+[options]
+timeout_ms = 5000
+
+[[scripts.assert]]
+from = "jsonpath"
+expr = "$.structuredContent.ok"
+op = "eq"
+value = "true"
+```
+
+`arguments` is JSON text and must be an object or empty. When omitted it defaults
+to `{}`; an explicitly empty string omits the `arguments` property on the wire.
+The text is stored and read as written (a half-typed object is a valid file) and
+is rejected only when the call is sent. Server, tool and arguments are rendered
+with the active scope. Authentication is configured on the server, not on the
+request. The timeout covers the entire session; it defaults to `[mcp] timeout_ms`
+(30000 ms). Scripts see the full tool result as JSON; status is 0 for success or
+1 for `isError: true`.
+
+### What goes on the wire
+
+Each list or call opens a separate session. Sendito sends compact JSON-RPC 2.0:
+`initialize` (ID 1, proposed protocol version `2025-06-18`, empty capabilities
+and client name/version), `notifications/initialized` (no ID), then `tools/list`
+or `tools/call` (ID 2). List pagination sends additional requests with increasing
+IDs and the returned cursor. Tool arguments are parsed and serialized as JSON,
+not sent byte-for-byte as written. The client recognizes `2024-11-05`,
+`2025-03-26` and `2025-06-18`; other versions produce a warning.
+
+* **stdio:** one UTF-8 JSON object and newline per message on the child process's
+  stdin/stdout. The child inherits the process environment with configured `env`
+  entries added; stderr is reported in the log.
+* **Streamable HTTP:** a POST per message with `Content-Type: application/json`
+  and `Accept: application/json, text/event-stream`, plus configured headers and
+  HTTP framing headers. After initialization, a returned `Mcp-Session-Id` and
+  the negotiated `Mcp-Protocol-Version` are sent on subsequent POSTs. JSON and
+  SSE response bodies are accepted. Bearer or OAuth authentication adds an
+  `Authorization` header. OAuth retries once after a 401 and token refresh.
+  MCP and OAuth HTTP requests do not follow redirects and advertise `h2` and
+  `http/1.1` via ALPN, as the HTTP client does. OAuth endpoints and the protected
+  resource URL require HTTPS except for loopback HTTP. Authorization, token
+  exchange and refresh send the MCP server URL as the `resource` parameter.
+
+The client supports tools only; it does not consume a server-initiated GET stream
+or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
+
 ## Environment files
 
 `.sendito/environments/<name>.toml` and `.sendito/collection.toml`:
@@ -291,6 +349,23 @@ max_body_mb = 100        # larger bodies are truncated (a warning is shown)
 [grpc]
 deadline_ms = 0          # default deadline when a request sets none; 0 = none
 
+[mcp]
+timeout_ms = 30000
+
+[mcp.servers.local]
+command = "my-mcp-server"
+args = ["--stdio"]
+env = { ROOT = "{{root}}" }
+
+[mcp.servers.remote]
+url = "https://example.com/mcp"
+verify_tls = true
+headers = { X-Client = "sendito" }
+
+[mcp.servers.remote.auth]
+type = "bearer"          # or "oauth"
+token = "{{token}}"
+
 [history]
 enabled = true
 max_entries = 10000
@@ -298,6 +373,15 @@ max_entries = 10000
 [keymap.all]             # see KEYMAP.md
 send = ["f9", "ctrl+w e"]
 ```
+
+For OAuth, replace the bearer auth table with `type = "oauth"`. Optional fields
+are `client_id`, `client_secret`, `authorize_url`, `token_url`,
+`registration_url` and `scopes` (an array). Run `sendito mcp login <server>`
+from the collection to authorize; `sendito mcp logout <server>` deletes its
+tokens. Tokens are stored in the OS keychain under `<collection>/mcp/<server>`.
+Do not put client secrets directly in versioned config. Server command, arguments,
+environment values, URL, headers and bearer token are rendered when calling a
+tool. OAuth login currently uses the configured URL and OAuth settings literally.
 
 `NO_COLOR` (any non-empty value) disables colors regardless of the theme.
 `auto` picks `daylight` when `COLORFGBG` reports a light background, else `dusk`.

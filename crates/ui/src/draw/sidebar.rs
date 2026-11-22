@@ -484,9 +484,18 @@ pub(super) fn draw_history(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
                 .add_modifier(Modifier::BOLD),
         );
         x = put(buf, x, y, " ", 1, base);
+        let non_http = matches!(e.badge.as_str(), "GRPC" | "MCP");
         let status = match (e.status, &e.error) {
-            (_, Some(err)) if e.badge != "GRPC" || e.status.is_none() => {
+            (_, Some(err)) if !non_http || e.status.is_none() => {
                 format!("ERR {}", truncate(err, 20))
+            }
+            // An MCP call records 0 (success) or 1 (isError), never an HTTP code.
+            (Some(s), _) if e.badge == "MCP" => {
+                if s == 0 {
+                    "OK".into()
+                } else {
+                    "ERR".into()
+                }
             }
             (Some(s), _) => s.to_string(),
             (None, Some(err)) => format!("ERR {}", truncate(err, 20)),
@@ -495,7 +504,7 @@ pub(super) fn draw_history(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         let sc = e
             .status
             .map(|s| {
-                if e.badge == "GRPC" {
+                if non_http {
                     if s == 0 { theme.ok } else { theme.err }
                 } else {
                     theme.status_color(s as u16)

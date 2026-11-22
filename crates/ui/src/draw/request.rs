@@ -35,6 +35,8 @@ pub(super) fn short_label(f: Field) -> &'static str {
         Field::Tls => "Use TLS",
         Field::Deadline => "Deadline ms",
         Field::ScriptSection => "Section",
+        Field::McpServer => "Server",
+        Field::McpTool => "Tool",
         Field::ScriptPre | Field::ScriptExtract | Field::ScriptAssert => "",
         _ => "",
     }
@@ -194,6 +196,7 @@ pub(super) fn draw_url_strip(
     // A gRPC call needs a method first; until then Send is shown disabled.
     let has_method = match &app.tabs[app.active].model {
         sendito_core::Request::Grpc(g) => !g.service.is_empty() && !g.method.is_empty(),
+        sendito_core::Request::Mcp(m) => !m.server.is_empty() && !m.tool.is_empty(),
         sendito_core::Request::Http(_) => true,
     };
     let send_text = if streaming {
@@ -284,6 +287,39 @@ pub(super) fn draw_url_strip(
             };
             put(buf, mx, y, &truncate(&ml, mw as usize), mw, mst);
             app.hits.push((Rect::new(mx, y, mw, 1), Hit::Bar(1)));
+        }
+        Kind::Mcp => {
+            let server = app.tabs[app.active].ed.mcp_server.text();
+            let tool = app.tabs[app.active].ed.mcp_tool.text();
+            let ml = if server.is_empty() {
+                " server ".to_string()
+            } else if tool.is_empty() {
+                format!(" {server} ")
+            } else {
+                format!(" {server}/{tool} ")
+            };
+            let label_st = theme.fg(theme.grpc).add_modifier(Modifier::BOLD);
+            let label = format!("{}mcp ", Icons::pre(icons.grpc));
+            let lw = label.width() as u16;
+            put(buf, x0, y, &label, lw, label_st);
+            let mlw = (ml.width() as u16).min(28);
+            put(buf, x0 + lw, y, &ml, mlw, label_st);
+            let avail = send_x.saturating_sub(x0 + lw + mlw + 2);
+            let tr = input_box(
+                buf,
+                Rect::new(x0 + lw + mlw + 1, y, avail, 1),
+                focus == Focus::Bar(0),
+                theme,
+            );
+            let tab = &mut app.tabs[app.active];
+            if let Some(c) =
+                tab.ed
+                    .mcp_server
+                    .render(tr, buf, theme, focus == Focus::Bar(0), &is_def)
+            {
+                cursor = Some(c);
+            }
+            app.hits.push((tr, Hit::Bar(0)));
         }
     }
     let send_st = if !has_method {
@@ -399,6 +435,12 @@ pub(super) fn draw_request(
                 0,
                 table_count(&e.metadata),
                 usize::from(e.auth_kind != sendito_core::AuthKind::None),
+                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                0,
+            ],
+            Kind::Mcp => vec![
+                0,
+                0,
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],

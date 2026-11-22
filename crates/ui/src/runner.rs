@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sendito_core::model::*;
-use sendito_core::resolve::{ResolvedGrpc, ResolvedHttp, mask_request, resolve_grpc, resolve_http};
+use sendito_core::resolve::{
+    ResolvedGrpc, ResolvedHttp, mask_request, resolve_grpc, resolve_http, resolve_mcp,
+};
 use sendito_core::script::{self, AssertResult, ExtractResult, RUNTIME_LAYER, ResponseView};
 use sendito_core::vars::{Scope, VarValue};
 use sendito_grpc::{Event, Schema};
@@ -221,6 +223,7 @@ fn history_entry(
         template: match template {
             Request::Http(h) => h.url.clone(),
             Request::Grpc(g) => format!("{}/{}/{}", g.target, g.service, g.method),
+            Request::Mcp(m) => format!("{}/{}", m.server, m.tool),
         },
         request: sendito_store::request_file::to_toml(template),
         status,
@@ -315,7 +318,7 @@ pub async fn exec_http(
     let template = Request::Http(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Http(h) => sendito_core::resolve::normalize_url(&h.url),
-        Request::Grpc(_) => String::new(),
+        _ => String::new(),
     };
     let start = std::time::Instant::now();
     let sent = sendito_http::send(&resolved, &ctx.send).await;
@@ -513,7 +516,7 @@ pub async fn exec_grpc(
             resolved.service,
             resolved.method
         ),
-        Request::Http(_) => String::new(),
+        _ => String::new(),
     };
     let fail = |msg: String, results: ScriptResults| {
         let entry = history_entry(
@@ -634,6 +637,254 @@ pub async fn exec_grpc(
         scripts: results,
         scope_errors,
     });
+}
+
+// ----- MCP -----------------------------------------------------------
+
+/// Re-export so the UI can name the event type without depending on the crate.
+pub use sendito_mcp::Event as McpEvent;
+
+/// MCP run settings taken from the project: the `[mcp]` config section, the
+/// keychain (OAuth tokens) and the collection name (keychain accounts).
+pub struct McpRunInfo {
+    pub timeout_ms: u64,
+    pub servers: BTreeMap<String, sendito_store::config::McpServer>,
+    pub keychain: Arc<dyn Keychain>,
+    pub collection: String,
+}
+
+impl McpRunInfo {
+    pub fn of(p: &Project) -> Self {
+        Self {
+            timeout_ms: p.config.mcp.timeout_ms,
+            servers: p.config.mcp.servers.clone(),
+            keychain: p.envs.keychain.clone(),
+            collection: p.name.clone(),
+        }
+    }
+}
+
+/// The keychain account an MCP server's tokens live under.
+pub fn mcp_token_account(collection: &str, server: &str) -> String {
+    format!("{collection}/mcp/{server}")
+}
+
+/// Bridges the store's keychain to the MCP crate's token store.
+struct KeychainStore(Arc<dyn Keychain>);
+
+impl sendito_mcp::oauth::TokenStore for KeychainStore {
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        self.0.get(account)
+    }
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        self.0.set(account, value)
+    }
+    fn delete(&self, account: &str) -> Result<(), String> {
+        self.0.delete(account)
+    }
+}
+
+/// Builds the transport for a server, rendering `{{variables}}` in its
+/// command, arguments, environment, URL and headers.
+pub fn mcp_transport(
+    info: &McpRunInfo,
+    server: &str,
+    scope: &Scope,
+) -> Result<sendito_mcp::Transport, String> {
+    let r = |s: &str| scope.render(s).text;
+    let cfg = info.servers.get(server).ok_or_else(|| {
+        format!("server {server:?} is not defined in [mcp.servers] of the config")
+    })?;
+    Ok(match cfg {
+        sendito_store::config::McpServer::Stdio(s) => sendito_mcp::Transport::Stdio {
+            command: r(&s.command),
+            args: s.args.iter().map(|a| r(a)).collect(),
+            env: s.env.iter().map(|(k, v)| (k.clone(), r(v))).collect(),
+        },
+        sendito_store::config::McpServer::Http(h) => {
+            let mut headers: Vec<(String, String)> =
+                h.headers.iter().map(|(k, v)| (k.clone(), r(v))).collect();
+            let auth = match &h.auth {
+                Some(sendito_store::config::McpServerAuth::Bearer { token }) => {
+                    headers.push(("Authorization".into(), format!("Bearer {}", r(token))));
+                    None
+                }
+                Some(sendito_store::config::McpServerAuth::Oauth {
+                    client_id,
+                    client_secret,
+                    authorize_url,
+                    token_url,
+                    registration_url,
+                    scopes,
+                }) => Some(Arc::new(sendito_mcp::RefreshingProvider::new(
+                    Arc::new(KeychainStore(info.keychain.clone())),
+                    mcp_token_account(&info.collection, server),
+                    r(&h.url),
+                    sendito_mcp::oauth::OAuthSettings {
+                        client_id: client_id.clone(),
+                        client_secret: client_secret.clone(),
+                        authorize_url: authorize_url.clone(),
+                        token_url: token_url.clone(),
+                        registration_url: registration_url.clone(),
+                        scopes: scopes.clone(),
+                    },
+                )) as Arc<dyn sendito_mcp::TokenProvider>),
+                None => None,
+            };
+            sendito_mcp::Transport::Http {
+                url: r(&h.url),
+                headers,
+                verify_tls: h.verify_tls,
+                auth,
+            }
+        }
+    })
+}
+
+/// Progress of an MCP call, forwarded to the UI as it happens.
+#[derive(Debug, Clone)]
+pub enum McpUpdate {
+    Event(sendito_mcp::Event),
+    Done {
+        error: Option<String>,
+        /// The tool answered `isError: true` (a result, not a failure).
+        is_error: bool,
+        /// Pretty JSON of the whole `tools/call` result, for the body viewer
+        /// and for scripts (JSONPath over `$.content`, `$.structuredContent`).
+        result: Option<Vec<u8>>,
+        scripts: ScriptResults,
+        scope_errors: Vec<String>,
+    },
+}
+
+fn scrub_mcp_event(ev: sendito_mcp::Event, secrets: &[String]) -> sendito_mcp::Event {
+    use sendito_core::vars::scrub;
+    match ev {
+        sendito_mcp::Event::Sent { json, at, wall } => sendito_mcp::Event::Sent {
+            json: scrub(&json, secrets),
+            at,
+            wall,
+        },
+        sendito_mcp::Event::Received { json, at, wall } => sendito_mcp::Event::Received {
+            json: scrub(&json, secrets),
+            at,
+            wall,
+        },
+        sendito_mcp::Event::Log { line, at } => sendito_mcp::Event::Log {
+            line: scrub(&line, secrets),
+            at,
+        },
+        sendito_mcp::Event::Finished { ok, message, at } => sendito_mcp::Event::Finished {
+            ok,
+            message: scrub(&message, secrets),
+            at,
+        },
+    }
+}
+
+/// Runs one MCP call end to end. `0` is recorded as the status on success,
+/// `1` when the tool answers `isError`.
+pub async fn exec_mcp(
+    ctx: &RunCtx,
+    req: &McpRequest,
+    mut scope: Scope,
+    scope_errors: Vec<String>,
+    info: &McpRunInfo,
+    updates: mpsc::UnboundedSender<McpUpdate>,
+) {
+    let mut results = ScriptResults {
+        pre: script::run_pre(&req.scripts.pre, &mut scope),
+        ..Default::default()
+    };
+    let resolved = resolve_mcp(req, &scope);
+    let template = Request::Mcp(req.clone());
+    let target = match mask_request(&template, &scope) {
+        Request::Mcp(m) => format!("{}/{}", m.server, m.tool),
+        _ => String::new(),
+    };
+    let secrets = scope.secret_values();
+    let started = std::time::Instant::now();
+    let fail = |msg: String, results: ScriptResults| {
+        let msg = sendito_core::vars::scrub(&msg, &secrets);
+        let entry = history_entry(
+            ctx,
+            &template,
+            target.clone(),
+            None,
+            started.elapsed().as_millis() as u64,
+            0,
+            Some(msg.clone()),
+        );
+        write_history(ctx, &entry);
+        let _ = updates.send(McpUpdate::Done {
+            error: Some(msg),
+            is_error: false,
+            result: None,
+            scripts: results,
+            scope_errors: scope_errors.clone(),
+        });
+    };
+    if resolved.server.is_empty() || resolved.tool.is_empty() {
+        return fail("choose a server and tool first".into(), results);
+    }
+    let transport = match mcp_transport(info, &resolved.server, &scope) {
+        Ok(t) => t,
+        Err(e) => return fail(e, results),
+    };
+    let timeout = resolved.timeout_ms.unwrap_or(info.timeout_ms);
+    let opts = sendito_mcp::Options {
+        timeout: Duration::from_millis(timeout.max(1)),
+    };
+    let (etx, mut erx) = mpsc::unbounded_channel();
+    let call = sendito_mcp::call_tool(&transport, &resolved.tool, &resolved.arguments, &opts, etx);
+    let forward = async {
+        while let Some(ev) = erx.recv().await {
+            let scr = if ctx.mask_echoed_secrets {
+                scrub_mcp_event(ev, &secrets)
+            } else {
+                ev
+            };
+            let _ = updates.send(McpUpdate::Event(scr));
+        }
+    };
+    let (outcome, _) = tokio::join!(call, forward);
+    match outcome {
+        Ok(r) => {
+            let pretty = serde_json::to_string_pretty(&r.raw).unwrap_or_else(|_| "{}".into());
+            let body = pretty.into_bytes();
+            let view = ResponseView {
+                status: u16::from(r.is_error),
+                headers: &[],
+                body: &body,
+            };
+            results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
+            results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+            let size = body.len() as u64;
+            let entry = history_entry(
+                ctx,
+                &template,
+                target,
+                Some(i64::from(r.is_error)),
+                started.elapsed().as_millis() as u64,
+                size,
+                None,
+            );
+            write_history(ctx, &entry);
+            let body = if ctx.mask_echoed_secrets {
+                sendito_core::vars::scrub_bytes(&body, &secrets).unwrap_or(body)
+            } else {
+                body
+            };
+            let _ = updates.send(McpUpdate::Done {
+                error: None,
+                is_error: r.is_error,
+                result: Some(body),
+                scripts: results,
+                scope_errors,
+            });
+        }
+        Err(e) => fail(e.to_string(), results),
+    }
 }
 
 #[cfg(test)]

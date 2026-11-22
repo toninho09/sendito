@@ -36,6 +36,8 @@ pub enum PickAction {
     Env,
     Method,
     GrpcMethod,
+    McpServer,
+    McpTool,
     MoveTo(String),
     Choice(crate::tab::Field),
     RequestKind,
@@ -163,6 +165,9 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":q!", "Quit without saving"),
     (":new", "New HTTP request (Ctrl+N)"),
     (":newgrpc", "New gRPC request (Ctrl+W g)"),
+    (":newmcp", "New MCP request"),
+    (":mcpservers", "Choose an MCP server"),
+    (":mcptools", "Discover and choose an MCP tool"),
     (
         ":import [path]",
         "Import a Postman collection (path) or paste a curl command",

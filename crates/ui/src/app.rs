@@ -143,6 +143,16 @@ pub enum AppMsg {
         tab: u64,
         update: GrpcUpdate,
     },
+    Mcp {
+        tab: u64,
+        update: runner::McpUpdate,
+    },
+    McpTools {
+        job: u64,
+        tab: u64,
+        server: String,
+        result: Result<Vec<sendito_mcp::Tool>, String>,
+    },
     Schema {
         tab: u64,
         result: Result<Vec<sendito_grpc::ServiceInfo>, String>,
@@ -167,6 +177,12 @@ pub enum ScopeThen {
     Grpc {
         tab: u64,
         req: Box<GrpcRequest>,
+        name: String,
+        path: Option<String>,
+    },
+    Mcp {
+        tab: u64,
+        req: Box<McpRequest>,
         name: String,
         path: Option<String>,
     },
@@ -233,6 +249,8 @@ pub struct App {
     pub last_session_save: Instant,
     pub next_id: u64,
     pub schemas: SchemaCache,
+    mcp_discovery: Option<(u64, tokio::task::JoinHandle<()>)>,
+    mcp_discovery_seq: u64,
     pub filter: TextEditor,
     pub osc52: Vec<String>,
     pub size: (u16, u16),
@@ -336,6 +354,8 @@ impl App {
             last_session_save: Instant::now(),
             next_id: 1,
             schemas: SchemaCache::default(),
+            mcp_discovery: None,
+            mcp_discovery_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
             osc52: Vec::new(),
             size: (80, 24),
@@ -388,7 +408,7 @@ impl App {
         }
         self.active = s.active_tab.min(self.tabs.len().saturating_sub(1));
         if !self.tabs.is_empty() {
-            self.focus = Focus::Bar(1);
+            self.focus = self.top_bar_focus();
         }
     }
 
@@ -479,6 +499,7 @@ impl App {
         match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(tab.ed.url.vim),
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(tab.ed.target.vim),
+            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(tab.ed.mcp_server.vim),
             Focus::ReqBody => match tab.current_field() {
                 Some(f) if f.is_table() => tab
                     .ed
@@ -500,7 +521,7 @@ impl App {
     }
 
     pub fn is_busy(&self) -> bool {
-        self.tabs.iter().any(|t| t.running.is_some())
+        self.mcp_discovery.is_some() || self.tabs.iter().any(|t| t.running.is_some())
     }
 
     // ----- events -------------------------------------------------------
@@ -569,6 +590,7 @@ impl App {
         match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(&mut tab.ed.url),
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.target),
+            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(&mut tab.ed.mcp_server),
             Focus::ReqBody => {
                 let f = tab.current_field()?;
                 tab.ed.text_mut(f)
@@ -620,6 +642,7 @@ impl App {
         let ed = match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => &mut tab.ed.url,
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => &mut tab.ed.target,
+            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => &mut tab.ed.mcp_server,
             Focus::ReqBody => {
                 let fld = tab.current_field()?;
                 tab.ed.text_mut(fld)?
@@ -733,8 +756,8 @@ impl App {
                 KeyCode::Char('l') if vim => self.subtab(1),
                 KeyCode::Enter | KeyCode::Down => self.enter_req_body(0),
                 KeyCode::Char('j') if vim => self.enter_req_body(0),
-                KeyCode::Up => self.focus = Focus::Bar(1),
-                KeyCode::Char('k') if vim => self.focus = Focus::Bar(1),
+                KeyCode::Up => self.focus = self.top_bar_focus(),
+                KeyCode::Char('k') if vim => self.focus = self.top_bar_focus(),
                 _ => {}
             },
             Focus::ReqBody => self.req_body_key(key),
@@ -762,8 +785,13 @@ impl App {
         let Some(kind) = self.tab().map(|t| t.ed.kind) else {
             return;
         };
+        if kind == Kind::Mcp && part == 0 && key.code == KeyCode::F(2) {
+            self.open_mcp_server_picker();
+            return;
+        }
         let vim = self.vim;
-        let is_text = (kind == Kind::Http && part == 1) || (kind == Kind::Grpc && part == 0);
+        let is_text = (kind == Kind::Http && part == 1)
+            || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0);
         if is_text {
             let Some(out) = self.with_text(|e, cb| e.handle_key(&key, vim, cb)) else {
                 return;
@@ -773,6 +801,8 @@ impl App {
                 Outcome::Submit => {
                     if kind == Kind::Http {
                         self.dispatch(Action::Send);
+                    } else if kind == Kind::Mcp {
+                        self.focus = Focus::ReqTabs;
                     } else {
                         self.focus = Focus::Bar(1);
                     }
@@ -821,6 +851,19 @@ impl App {
             self.focus = Focus::ReqTabs;
             return;
         };
+        if key.code == KeyCode::F(2) {
+            match field {
+                Field::McpServer => {
+                    self.open_mcp_server_picker();
+                    return;
+                }
+                Field::McpTool => {
+                    self.load_mcp_tools();
+                    return;
+                }
+                _ => {}
+            }
+        }
         if field.is_table() {
             let Some(out) = self.with_table(|t, cb| t.handle_key(&key, vim, cb)) else {
                 return;
@@ -1011,7 +1054,7 @@ impl App {
                 if !self.layout.sidebar_visible
                     && matches!(self.focus, Focus::Sidebar | Focus::Filter)
                 {
-                    self.focus = Focus::Bar(1);
+                    self.focus = self.top_bar_focus();
                 }
                 self.session_dirty = true;
             }
@@ -1155,15 +1198,27 @@ impl App {
         self.session_dirty = true;
     }
 
+    /// The top bar part to focus for the active tab: HTTP has a method chip
+    /// (part 0) and a URL (part 1); gRPC and MCP only have the address/server.
+    fn top_bar_focus(&self) -> Focus {
+        if self.tab().is_some_and(|t| t.ed.kind == Kind::Http) {
+            Focus::Bar(1)
+        } else {
+            Focus::Bar(0)
+        }
+    }
+
     fn focus_order(&self) -> Vec<Focus> {
         let mut v = Vec::new();
         if self.layout.sidebar_visible {
             v.push(Focus::Sidebar);
         }
         if !self.tabs.is_empty() {
+            v.push(Focus::Bar(0));
+            if self.tab().is_some_and(|t| t.ed.kind != Kind::Mcp) {
+                v.push(Focus::Bar(1));
+            }
             v.extend([
-                Focus::Bar(0),
-                Focus::Bar(1),
                 Focus::Bar(2),
                 Focus::ReqTabs,
                 Focus::ReqBody,
@@ -1224,9 +1279,18 @@ impl App {
             if toward_sidebar && !in_sidebar && self.layout.sidebar_visible {
                 self.focus = Focus::Sidebar;
             } else if !toward_sidebar && in_sidebar && !self.tabs.is_empty() {
-                self.focus = Focus::Bar(1);
+                self.focus = Focus::Bar(if self.tab().is_some_and(|t| t.ed.kind != Kind::Http) {
+                    0
+                } else {
+                    1
+                });
             } else if let Focus::Bar(p) = self.focus {
-                self.focus = Focus::Bar((p as i32 + dx).clamp(0, 2) as usize);
+                let mcp = self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp);
+                self.focus = Focus::Bar(if mcp {
+                    if dx < 0 { 0 } else { 2 }
+                } else {
+                    (p as i32 + dx).clamp(0, 2) as usize
+                });
             }
             return;
         }
@@ -1237,8 +1301,8 @@ impl App {
         if dy > 0 && in_request {
             self.focus = Focus::RespBody;
         } else if dy < 0 && !in_request {
-            let grpc = self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc);
-            self.focus = Focus::Bar(if grpc { 0 } else { 1 });
+            let non_http = self.tab().is_some_and(|t| t.ed.kind != Kind::Http);
+            self.focus = Focus::Bar(if non_http { 0 } else { 1 });
         }
     }
 
@@ -1296,7 +1360,8 @@ impl App {
         } else {
             format!("untitled {n}")
         };
-        let blank = req == Request::new_http() || req == Request::new_grpc();
+        let blank =
+            req == Request::new_http() || req == Request::new_grpc() || req == Request::new_mcp();
         let mut tab = Tab::new(id, None, name, &req, None);
         tab.ed.set_vim(self.vim);
         tab.refresh_model();
@@ -1307,7 +1372,7 @@ impl App {
         }
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
-        self.focus = if matches!(req, Request::Grpc(_)) {
+        self.focus = if matches!(req, Request::Grpc(_) | Request::Mcp(_)) {
             Focus::Bar(0)
         } else {
             Focus::Bar(1)
@@ -1323,7 +1388,11 @@ impl App {
             .position(|t| t.path.as_deref() == Some(rel))
         {
             self.active = i;
-            self.focus = Focus::Bar(1);
+            self.focus = Focus::Bar(if self.tabs[i].ed.kind == Kind::Http {
+                1
+            } else {
+                0
+            });
             return;
         }
         match self.project.coll.load(rel) {
@@ -1338,10 +1407,10 @@ impl App {
                 );
                 tab.ed.set_vim(self.vim);
                 tab.refresh_model();
-                let is_grpc = tab.ed.kind == Kind::Grpc;
+                let non_http = tab.ed.kind != Kind::Http;
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
-                self.focus = if is_grpc {
+                self.focus = if non_http {
                     Focus::Bar(0)
                 } else {
                     Focus::Bar(1)
@@ -1536,6 +1605,16 @@ impl App {
             );
             return;
         }
+        if let Request::Mcp(m) = &req
+            && (m.server.trim().is_empty() || m.tool.trim().is_empty())
+        {
+            self.focus = Focus::ReqTabs;
+            self.set_status(
+                "choose a server and a tool first: F2 on each field lists them",
+                StatusKind::Warn,
+            );
+            return;
+        }
         if !confirmed {
             let un = runner::unresolved(&req, &self.names);
             let empty = !sendito_core::template::empty_placeholders(
@@ -1606,6 +1685,12 @@ impl App {
             Request::Grpc(g) => ScopeThen::Grpc {
                 tab: id,
                 req: Box::new(g),
+                name,
+                path,
+            },
+            Request::Mcp(m) => ScopeThen::Mcp {
+                tab: id,
+                req: Box::new(m),
                 name,
                 path,
             },
@@ -1706,10 +1791,43 @@ impl App {
                     r.control = Some(ctx_tx);
                 }
             }
+            ScopeThen::Mcp {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let info = runner::McpRunInfo::of(&self.project);
+                let (utx, mut urx) = mpsc::unbounded_channel::<runner::McpUpdate>();
+                let fwd = tx.clone();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_mcp(&ctx, &req, scope, errors, &info, utx);
+                    let forward = async {
+                        while let Some(u) = urx.recv().await {
+                            let _ = fwd.send(AppMsg::Mcp { tab, update: u });
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                }
+            }
         }
     }
 
     fn cancel(&mut self) {
+        if let Some((_, task)) = self.mcp_discovery.take() {
+            task.abort();
+            self.set_status("MCP tool discovery cancelled", StatusKind::Info);
+            return;
+        }
         let Some(t) = self.tab_mut() else { return };
         let Some(r) = &t.running else {
             self.set_status("nothing is running", StatusKind::Info);
@@ -1752,6 +1870,53 @@ impl App {
             }
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
+            AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
+            AppMsg::McpTools {
+                job,
+                tab,
+                server,
+                result,
+            } => {
+                if !self
+                    .mcp_discovery
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == job)
+                {
+                    return;
+                }
+                self.mcp_discovery = None;
+                let active = self.tab().is_some_and(|t| {
+                    t.id == tab && t.ed.kind == Kind::Mcp && t.ed.mcp_server.text() == server
+                });
+                if active && self.overlay.is_none() {
+                    match result {
+                        Ok(tools) if tools.is_empty() => {
+                            self.set_status("the server has no tools", StatusKind::Info)
+                        }
+                        Ok(tools) => {
+                            let items: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
+                            let details = tools
+                                .iter()
+                                .map(|t| t.description.clone().unwrap_or_default())
+                                .collect();
+                            let current = self.tab().and_then(|t| {
+                                items.iter().position(|name| *name == t.ed.mcp_tool.text())
+                            });
+                            if let Some(t) = self.tab_mut() {
+                                t.mcp_tools = tools;
+                            }
+                            self.overlay = Some(Overlay::Picker(Picker::new(
+                                "Choose an MCP tool",
+                                items,
+                                details,
+                                PickAction::McpTool,
+                                current,
+                            )));
+                        }
+                        Err(e) => self.set_status(format!("tools: {e}"), StatusKind::Error),
+                    }
+                }
+            }
             AppMsg::Schema {
                 tab,
                 result,
@@ -2069,6 +2234,200 @@ impl App {
         if let Some((s, k)) = status {
             self.set_status(s, k);
         }
+    }
+
+    fn on_mcp(&mut self, tab_id: u64, u: runner::McpUpdate) {
+        let mut status: Option<(String, StatusKind)> = None;
+        let mut updates = Vec::new();
+        let Some(t) = self.tab_by_id(tab_id) else {
+            return;
+        };
+        let resp = t.response.get_or_insert_with(Response::new);
+        match u {
+            runner::McpUpdate::Event(ev) => {
+                if let Some(json) = mcp_sent_line(&ev) {
+                    resp.headers.doc.append_text(&format!("{json}\n"));
+                }
+                let line = mcp_event_text(&ev);
+                resp.messages.doc.append_text(&line);
+                resp.messages.bottom();
+            }
+            runner::McpUpdate::Done {
+                error,
+                is_error,
+                result,
+                scripts,
+                scope_errors,
+            } => {
+                let time_ms = t
+                    .running
+                    .as_ref()
+                    .map(|r| r.started.elapsed().as_secs_f64() * 1000.0);
+                t.running = None;
+                let size = result.as_ref().map(|b| b.len() as u64);
+                if let Some(ms) = time_ms {
+                    resp.timing = crate::tab::wrapped(Doc::text(&format!(
+                        "Total: {:.1} ms\nIncludes scope preparation, handshake and tool call.\n",
+                        ms
+                    )));
+                }
+                // MCP has no HTTP status: `code` stays `None` so the border and
+                // the chrome colour by `ok`/`error` instead of a status class.
+                resp.summary = match (&error, is_error) {
+                    (Some(e), _) => Summary {
+                        status: "error".into(),
+                        code: None,
+                        ok: false,
+                        time_ms,
+                        size,
+                        error: Some(e.clone()),
+                    },
+                    (None, true) => Summary {
+                        status: "TOOL ERROR".into(),
+                        code: None,
+                        ok: false,
+                        time_ms,
+                        size,
+                        error: None,
+                    },
+                    (None, false) => Summary {
+                        status: "OK".into(),
+                        code: None,
+                        ok: true,
+                        time_ms,
+                        size,
+                        error: None,
+                    },
+                };
+                if let Some(body) = result {
+                    resp.body = Viewer::new(Doc::from_bytes(body, Some("application/json")));
+                } else if let Some(e) = &error {
+                    resp.body = crate::tab::wrapped(Doc::text(&format!("Call failed:\n\n{e}\n")));
+                }
+                let text = messages_text(&scripts, &scope_errors, &[]);
+                if !text.trim().is_empty() {
+                    resp.messages.doc.append_text(&format!("\n{text}"));
+                }
+                updates = scripts.updates();
+                let fails = scripts.failed_asserts();
+                let result_line = if let Some(e) = &error {
+                    format!("call failed: {e}")
+                } else if is_error {
+                    "tool reported an error (isError)".to_string()
+                } else {
+                    "call finished".to_string()
+                };
+                status = Some(if scripts.asserts.is_empty() {
+                    (
+                        result_line,
+                        if error.is_none() && !is_error {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else if fails == 0 {
+                    (
+                        format!(
+                            "{result_line} · {} passed",
+                            assertions(scripts.asserts.len())
+                        ),
+                        if error.is_none() && !is_error {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else {
+                    (
+                        format!(
+                            "{result_line} · {fails} of {} failed (see Log)",
+                            assertions(scripts.asserts.len())
+                        ),
+                        StatusKind::Error,
+                    )
+                });
+            }
+        }
+        self.apply_updates(updates);
+        if let Some((s, k)) = status {
+            self.set_status(s, k);
+        }
+    }
+
+    // ----- MCP discovery ------------------------------------------------
+
+    fn open_mcp_server_picker(&mut self) {
+        let Some(t) = self.tab().filter(|t| t.ed.kind == Kind::Mcp) else {
+            return;
+        };
+        let current = t.ed.mcp_server.text();
+        let items: Vec<String> = self.project.config.mcp.servers.keys().cloned().collect();
+        if items.is_empty() {
+            self.set_status("no servers configured in [mcp.servers]", StatusKind::Warn);
+            return;
+        }
+        let selected = items.iter().position(|name| *name == current);
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "Choose an MCP server",
+            items,
+            vec![],
+            PickAction::McpServer,
+            selected,
+        )));
+    }
+
+    fn load_mcp_tools(&mut self) {
+        let Some(t) = self.tab().filter(|t| t.ed.kind == Kind::Mcp) else {
+            return;
+        };
+        let tab = t.id;
+        let server = t.ed.mcp_server.text();
+        if server.trim().is_empty() {
+            self.set_status("choose an MCP server first", StatusKind::Warn);
+            return;
+        }
+        let info = runner::McpRunInfo::of(&self.project);
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let tx = self.tx.clone();
+        let server2 = server.clone();
+        if let Some((_, task)) = self.mcp_discovery.take() {
+            task.abort();
+        }
+        self.mcp_discovery_seq = self.mcp_discovery_seq.wrapping_add(1);
+        let job = self.mcp_discovery_seq;
+        self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
+        let task = self.rt.spawn(async move {
+            let result = async {
+                let (scope, errors) = tokio::task::spawn_blocking(move || {
+                    runner::build_scope(&envs, env.as_deref(), &runtime)
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                if !errors.is_empty() {
+                    return Err(errors.join("; "));
+                }
+                let name = scope.render(&server2).text;
+                let transport = runner::mcp_transport(&info, &name, &scope)?;
+                let opts = sendito_mcp::Options {
+                    timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
+                };
+                let (events, _rx) = mpsc::unbounded_channel();
+                sendito_mcp::list_tools(&transport, &opts, events)
+                    .await
+                    .map_err(|e| sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()))
+            }
+            .await;
+            let _ = tx.send(AppMsg::McpTools {
+                job,
+                tab,
+                server,
+                result,
+            });
+        });
+        self.mcp_discovery = Some((job, task));
     }
 
     // ----- gRPC schema --------------------------------------------------
@@ -2404,7 +2763,11 @@ impl App {
             label: "Name".into(),
             input: TextEditor::single(""),
             choices: vec![
-                ("Type".into(), vec!["HTTP".into(), "gRPC".into()], 0),
+                (
+                    "Type".into(),
+                    vec!["HTTP".into(), "gRPC".into(), "MCP".into()],
+                    0,
+                ),
                 self.folder_choice(),
             ],
             focus: 0,
@@ -2918,7 +3281,7 @@ impl App {
 
     fn format_body(&mut self) {
         let Some(t) = self.tab_mut() else { return };
-        let ed = if t.ed.kind == Kind::Grpc {
+        let ed = if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp) {
             &mut t.ed.message
         } else {
             &mut t.ed.body_text
@@ -3055,6 +3418,9 @@ impl App {
             "q!" | "quit!" => self.quit = true,
             "new" => self.new_tab(Request::new_http()),
             "newgrpc" => self.new_tab(Request::new_grpc()),
+            "newmcp" => self.new_tab(Request::new_mcp()),
+            "mcpservers" => self.open_mcp_server_picker(),
+            "mcptools" => self.load_mcp_tools(),
             "import" => {
                 if arg.is_empty() {
                     self.open_import("");
@@ -3508,6 +3874,15 @@ impl App {
                         ("Enter/↓".into(), "edit".into()),
                         ("←→".into(), "switch tab".into()),
                     ]),
+                    (Focus::ReqBody, Some(Field::McpServer)) => {
+                        v.push(("F2".into(), "choose server".into()))
+                    }
+                    (Focus::ReqBody, Some(Field::McpTool)) => {
+                        v.push(("F2".into(), "choose tool".into()))
+                    }
+                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
+                        v.push(("F2".into(), "choose server".into()))
+                    }
                     (Focus::ReqBody, Some(f)) if f.is_table() => {
                         // A choice column (e.g. a multipart part's kind).
                         let choice = self
@@ -3893,6 +4268,80 @@ fn clock(t: std::time::SystemTime) -> String {
         dt.second(),
         dt.millisecond()
     )
+}
+
+fn mcp_argument_template(schema: &serde_json::Value) -> String {
+    fn sample(schema: &serde_json::Value, depth: usize) -> serde_json::Value {
+        if let Some(value) = schema.get("default").or_else(|| {
+            schema
+                .get("enum")
+                .and_then(|v| v.as_array())
+                .and_then(|v| v.first())
+        }) {
+            return value.clone();
+        }
+        if depth >= 8 {
+            return serde_json::Value::Null;
+        }
+        match schema.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {
+                let mut out = serde_json::Map::new();
+                if let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) {
+                    for (name, value) in properties {
+                        out.insert(name.clone(), sample(value, depth + 1));
+                    }
+                }
+                serde_json::Value::Object(out)
+            }
+            Some("array") => serde_json::json!([]),
+            Some("string") => serde_json::json!(""),
+            Some("integer" | "number") => serde_json::json!(0),
+            Some("boolean") => serde_json::json!(false),
+            _ => serde_json::Value::Null,
+        }
+    }
+    let value = sample(schema, 0);
+    if value.is_object() {
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+    } else {
+        "{}".into()
+    }
+}
+
+/// One MCP event's log line (the Response "Log" tab).
+pub fn mcp_event_text(e: &runner::McpEvent) -> String {
+    use runner::McpEvent::*;
+    match e {
+        Sent { json, at, wall } => format!(
+            "{} +{:>8.3}s  \u{2192} sent      {json}\n",
+            clock(*wall),
+            at.as_secs_f64()
+        ),
+        Received { json, at, wall } => format!(
+            "{} +{:>8.3}s  \u{2190} received  {json}\n",
+            clock(*wall),
+            at.as_secs_f64()
+        ),
+        Log { line, at } => format!("{:12} +{:>8.3}s  \u{2502} {line}\n", "", at.as_secs_f64()),
+        Finished { ok, message, at } => {
+            let tail = if *ok {
+                String::new()
+            } else if message.is_empty() {
+                "failed".into()
+            } else {
+                format!("failed: {message}")
+            };
+            format!("{:12} +{:>8.3}s  \u{25a0} {tail}\n", "", at.as_secs_f64())
+        }
+    }
+}
+
+/// The JSON-RPC line `on_mcp` keeps on the "Request" tab, if this event sent one.
+pub fn mcp_sent_line(e: &runner::McpEvent) -> Option<&str> {
+    match e {
+        runner::McpEvent::Sent { json, .. } => Some(json),
+        _ => None,
+    }
 }
 
 pub fn event_text(e: &sendito_grpc::Event) -> String {
@@ -4679,6 +5128,28 @@ impl App {
                     }
                 }
             }
+            PickAction::McpServer => {
+                if let Some(t) = self.tab_mut() {
+                    t.ed.mcp_server.set_text(item);
+                }
+                self.changed();
+            }
+            PickAction::McpTool => {
+                if let Some(t) = self.tab_mut() {
+                    t.ed.mcp_tool.set_text(item);
+                    let args = t.ed.message.text();
+                    let unchanged =
+                        matches!(&t.saved, Some(Request::Mcp(saved)) if saved.arguments == args);
+                    if unchanged
+                        && (args.trim().is_empty() || args.trim() == "{}")
+                        && let Some(tool) = t.mcp_tools.get(index)
+                    {
+                        let template = mcp_argument_template(&tool.input_schema);
+                        t.ed.message.replace_all(&template);
+                    }
+                }
+                self.changed();
+            }
             PickAction::MoveTo(rel) => {
                 let folder = detail.unwrap_or_default();
                 self.move_node(&rel, &folder);
@@ -4708,10 +5179,10 @@ impl App {
                 let folder = folder_choice
                     .and_then(|i| self.tree.all_folders().get(i).cloned())
                     .unwrap_or(folder);
-                let req = if choice == 1 {
-                    Request::new_grpc()
-                } else {
-                    Request::new_http()
+                let req = match choice {
+                    1 => Request::new_grpc(),
+                    2 => Request::new_mcp(),
+                    _ => Request::new_http(),
                 };
                 let rel = self
                     .project

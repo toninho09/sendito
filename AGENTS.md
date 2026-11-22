@@ -17,10 +17,11 @@ Instructions for AI coding agents working in this repository.
 
 ## Project
 
-Sendito is a terminal API client for HTTP and gRPC (Rust, edition 2024). Workspace
-crates: `core` (model, variables, scripts), `http`, `grpc`, `store` (files,
-environments, config, history), `import` (Postman, curl), `ui` (ratatui TUI and the
-send pipeline), `testkit` (echo servers), plus the `sendito` binary in `src/`.
+Sendito is a terminal API client for HTTP, gRPC and MCP tools (Rust, edition 2024).
+Workspace crates: `core` (model, variables, scripts), `http`, `grpc`, `mcp` (MCP
+client: stdio and Streamable HTTP, OAuth), `store` (files, environments, config,
+history), `import` (Postman, curl), `ui` (ratatui TUI and the send pipeline),
+`testkit` (echo servers), plus the `sendito` binary in `src/`.
 
 Read before changing behaviour: `README.md`, `FORMAT.md` (request file format and
 exact wire rules), `KEYMAP.md` (generated), `docs/DEBT.md` (known limits),
@@ -41,8 +42,8 @@ cargo deny check
 Run one heavy job at a time (workspace tests, media generation, benchmarks and
 coverage must not run together).
 
-* **Wire corpus**: `tests/corpus.rs` sends 44 HTTP and 15 gRPC requests to the echo
-  servers and compares the exact bytes with `tests/corpus/expected`.
+* **Wire corpus**: `tests/corpus.rs` sends 44 HTTP, 15 gRPC and 5 MCP requests to
+  the echo servers and compares the exact bytes with `tests/corpus/expected`.
   `UPDATE_CORPUS=1 cargo test --test corpus` rewrites the goldens; read the diff.
 * **UI**: `crates/ui/tests/flows.rs` (scripted key/mouse flows) and `snapshots.rs`
   (insta; `INSTA_UPDATE=always` accepts new snapshots). Snapshots are 120×40 and 200×60.

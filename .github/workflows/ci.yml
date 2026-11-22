@@ -40,7 +40,7 @@ jobs:
         run: cargo test --workspace --no-fail-fast
       - name: Corpus summary
         if: always()
-        run: cat target/corpus/http-summary.txt target/corpus/grpc-summary.txt
+        run: cat target/corpus/http-summary.txt target/corpus/grpc-summary.txt target/corpus/mcp-summary.txt
       - name: OS keychain (Linux, Secret Service)
         if: runner.os == 'Linux'
         run: |
@@ -68,7 +68,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Line coverage ≥ 80%
         run: |
-          cargo llvm-cov -p sendito-core -p sendito-http -p sendito-grpc -p sendito-store -p sendito-import \
+          cargo llvm-cov -p sendito-core -p sendito-http -p sendito-grpc -p sendito-store -p sendito-import -p sendito-mcp \
             --fail-under-lines 80 --summary-only | tee coverage.txt
       - uses: actions/upload-artifact@v4
         with:

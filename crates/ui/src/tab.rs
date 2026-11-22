@@ -10,14 +10,16 @@ use crate::viewer::{Doc, Viewer};
 
 pub const HTTP_TABS: &[&str] = &["Params", "Headers", "Body", "Auth", "Scripts", "Options"];
 pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options"];
+pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
 pub const RESP_TABS: &[&str] = &["Body", "Headers", "Timing", "Results"];
 
 /// Response tab names: the fourth holds assertions, extracted variables and
-/// notes ("Results"); for gRPC it also holds the message log ("Log").
+/// notes ("Results"); for gRPC and MCP it also holds the message log ("Log").
 pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     match kind {
         Kind::Http => ["Body", "Headers", "Timing", "Results"],
         Kind::Grpc => ["Body", "Metadata", "Timing", "Log"],
+        Kind::Mcp => ["Body", "Request", "Timing", "Log"],
     }
 }
 
@@ -72,6 +74,8 @@ pub enum Field {
     Tls,
     GrpcVerify,
     Deadline,
+    McpServer,
+    McpTool,
 }
 
 impl Field {
@@ -110,6 +114,8 @@ impl Field {
             Field::Tls => "Use TLS",
             Field::GrpcVerify => "Verify TLS certificates",
             Field::Deadline => "Deadline (ms, empty = none)",
+            Field::McpServer => "Server (a [mcp.servers] entry of the config)",
+            Field::McpTool => "Tool",
         }
     }
 
@@ -148,6 +154,8 @@ impl Field {
                 | Field::ProtoFiles
                 | Field::ImportPaths
                 | Field::Deadline
+                | Field::McpServer
+                | Field::McpTool
         )
     }
 
@@ -175,6 +183,7 @@ impl Field {
 pub enum Kind {
     Http,
     Grpc,
+    Mcp,
 }
 
 /// Editor widgets for every field of a request.
@@ -216,6 +225,8 @@ pub struct Editors {
     pub schema_files: bool,
     pub proto_files: TextEditor,
     pub import_paths: TextEditor,
+    pub mcp_server: TextEditor,
+    pub mcp_tool: TextEditor,
     /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
     pub script_section: usize,
 }
@@ -395,6 +406,8 @@ impl Editors {
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
+            mcp_server: TextEditor::single("").with_placeholder("server name from [mcp.servers]"),
+            mcp_tool: TextEditor::single("").with_placeholder("tool name"),
             script_section: 0,
         };
         let scripts = req.scripts();
@@ -496,6 +509,13 @@ impl Editors {
                     e.proto_files.set_text(&list_text(files));
                     e.import_paths.set_text(&list_text(import_paths));
                 }
+            }
+            Request::Mcp(m) => {
+                e.kind = Kind::Mcp;
+                e.mcp_server.set_text(&m.server);
+                e.mcp_tool.set_text(&m.tool);
+                e.message.set_text(&m.arguments);
+                e.timeout.set_text(&ms_text(m.timeout_ms));
             }
         }
         e
@@ -659,6 +679,13 @@ impl Editors {
                 },
                 scripts: self.scripts(),
             }),
+            Kind::Mcp => Request::Mcp(McpRequest {
+                server: self.mcp_server.text(),
+                tool: self.mcp_tool.text(),
+                arguments: self.message.text(),
+                timeout_ms: parse_ms(&self.timeout.text()),
+                scripts: self.scripts(),
+            }),
         }
     }
 
@@ -706,6 +733,12 @@ impl Editors {
                     v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
                 }
             },
+            Kind::Mcp => match tab {
+                0 => v.extend([Field::McpServer, Field::McpTool]),
+                1 => v.push(Field::Message),
+                2 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.push(Field::Timeout),
+            },
         }
         v
     }
@@ -733,6 +766,7 @@ impl Editors {
         match self.kind {
             Kind::Http => HTTP_TABS,
             Kind::Grpc => GRPC_TABS,
+            Kind::Mcp => MCP_TABS,
         }
     }
 
@@ -752,6 +786,8 @@ impl Editors {
             Field::ProtoFiles => &mut self.proto_files,
             Field::ImportPaths => &mut self.import_paths,
             Field::Deadline => &mut self.deadline,
+            Field::McpServer => &mut self.mcp_server,
+            Field::McpTool => &mut self.mcp_tool,
             _ => return None,
         })
     }
@@ -1090,6 +1126,7 @@ pub struct Tab {
     pub response: Option<Response>,
     pub running: Option<Running>,
     pub services: Option<Vec<ServiceInfo>>,
+    pub mcp_tools: Vec<sendito_mcp::Tool>,
     pub schema_error: Option<String>,
     /// Cached model built from the editors (refreshed after each change).
     pub model: Request,
@@ -1122,6 +1159,7 @@ impl Tab {
             response: None,
             running: None,
             services: None,
+            mcp_tools: Vec::new(),
             schema_error: None,
             model: req.clone(),
             origin: None,
