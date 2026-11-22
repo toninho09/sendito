@@ -407,7 +407,7 @@ fn flow_unary_grpc_reflection() {
     assert!(sc.contains("sendito.test.v1.Echo/Bidi"), "{sc}");
     h.type_text("ServerStream");
     h.key("enter");
-    assert_eq!(h.app.tabs[h.app.active].ed.grpc_method, "ServerStream");
+    assert_eq!(h.app.tabs[h.app.active].ed.method(), "ServerStream");
 }
 
 #[test]
@@ -866,4 +866,318 @@ fn flow_watch_repeats_and_stops() {
     assert!(h.app.tabs[h.app.active].watch.is_some());
     h.key("ctrl+w m");
     assert!(h.app.tabs[h.app.active].watch.is_none());
+}
+
+/// Field names of the message come from the gRPC schema; accepting one inserts
+/// a valid pair and leaves the cursor inside it.
+#[test]
+fn flow_grpc_message_completion() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    // Load the schema.
+    h.key("ctrl+w k");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("enter");
+    let _ = h.wait_for("Choose a gRPC method", 5);
+    h.key("esc");
+    // An empty message body with the cursor on its own line.
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+    }
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.type_text("\"tex");
+    assert!(h.app.complete.is_some(), "popup opens on a key position");
+    assert!(!h.app.complete.as_ref().must().items.is_empty());
+    h.key("enter");
+    // The cursor rests inside the new value.
+    h.type_text("hi");
+    let text = h.app.tabs[h.app.active].ed.message.text();
+    let v: serde_json::Value = serde_json::from_str(&text).must();
+    assert_eq!(v, serde_json::json!({"text": "hi"}));
+    h.key("f5");
+    h.wait_idle(10);
+    let caps = s.grpc.take();
+    let call = caps.iter().find(|c| c.method == "Unary").must();
+    assert_eq!(call.messages, vec!["{\"text\":\"hi\"}".to_string()]);
+}
+
+/// The method chip is editable and the schema completes it inline.
+#[test]
+fn flow_grpc_method_completion() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.key("ctrl+w k");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("enter");
+    let _ = h.wait_for("Choose a gRPC method", 5);
+    h.key("esc");
+    h.key("ctrl+a");
+    h.type_text("sendito.test.v1.Echo/Ser");
+    assert!(h.app.complete.is_some(), "popup opens on the method field");
+    h.key("tab");
+    let t = &h.app.tabs[h.app.active];
+    assert_eq!(t.ed.service(), "sendito.test.v1.Echo");
+    assert_eq!(t.ed.method(), "ServerStream");
+    // The caret rests at the end of the accepted name.
+    let mt = &t.ed.grpc_method_text;
+    assert_eq!(
+        (mt.cursor.row, mt.cursor.col),
+        (0, mt.text().chars().count())
+    );
+}
+
+/// Tools and their argument keys are completed from `tools/list`.
+#[test]
+fn flow_mcp_completion() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            &format!(
+                "[collection]\nname = \"demo\"\n[mcp.servers.echo]\nurl = \"{}/mcp\"\n",
+                echo.url()
+            ),
+        );
+    });
+    h.app.run_command("newmcp");
+    h.key("f2 enter");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
+    // The tool field pulls the tool list in the background, then filters it.
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 1;
+    h.type_text("ad");
+    let start = std::time::Instant::now();
+    while h.app.complete.as_ref().is_none_or(|c| c.items.is_empty()) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "tool list did not arrive; tools={:?}",
+            h.app.tabs[h.app.active].mcp_tools.len()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.pump();
+    }
+    h.key("enter");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_tool.text(), "add");
+    // Argument keys come from the tool's inputSchema.
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.req_tab = 1;
+        t.field = 0;
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+    }
+    h.type_text("\"b");
+    assert!(h.app.complete.is_some(), "popup opens on the args editor");
+    h.key("enter");
+    let args: serde_json::Value =
+        serde_json::from_str(&h.app.tabs[h.app.active].ed.message.text()).must();
+    assert_eq!(args, serde_json::json!({ "b": 0 }));
+}
+
+/// Esc and a click elsewhere close the popup without touching the text.
+#[test]
+fn flow_completion_closes() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.key("ctrl+w k");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("enter");
+    let _ = h.wait_for("Choose a gRPC method", 5);
+    h.key("esc");
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.key("ctrl+a");
+    h.type_text("{");
+    assert!(h.app.complete.is_some());
+    h.key("esc");
+    assert!(h.app.complete.is_none(), "Esc closes it");
+    // A cursor move closes it too (its replacement span would be stale).
+    h.type_text("{");
+    assert!(h.app.complete.is_some());
+    h.key("left");
+    assert!(h.app.complete.is_none(), "a cursor move closes it");
+    let before = h.app.tabs[h.app.active].ed.message.text();
+    h.type_text("{");
+    assert!(h.app.complete.is_some());
+    h.click(1, 1);
+    assert!(h.app.complete.is_none(), "a click elsewhere closes it");
+    assert_eq!(h.app.tabs[h.app.active].ed.message.text(), before + "{");
+}
+
+/// Without a loaded schema the popup opens with a spinner and fills once the
+/// background load finishes.
+#[test]
+fn flow_completion_fetches_schema() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        assert!(t.services.is_none());
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+    }
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.type_text("\"");
+    assert_eq!(h.app.complete.as_ref().must().loading, Some("schema"));
+    // The list fills when the schema arrives, still filtered by nothing.
+    let start = std::time::Instant::now();
+    while h.app.complete.as_ref().is_none_or(|c| c.items.is_empty()) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "schema did not fill the popup"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.pump();
+    }
+    let c = h.app.complete.as_ref().must();
+    assert!(c.loading.is_none());
+    assert!(c.items.iter().any(|i| i.name == "text"));
+    assert!(h.screen().contains("insert"), "the hint row describes it");
+}
+
+/// A schema that fails to load is reported in the popup and status, and is not
+/// retried in the background.
+#[test]
+fn flow_completion_schema_failure() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    // A dead port: reflection fails fast (connection refused).
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.target.set_text("127.0.0.1:9");
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+    }
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.type_text("\"");
+    assert_eq!(h.app.complete.as_ref().must().loading, Some("schema"));
+    let start = std::time::Instant::now();
+    while h.app.complete.as_ref().is_none_or(|c| c.failed.is_none()) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "schema failure did not reach the popup"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.pump();
+    }
+    let c = h.app.complete.as_ref().must();
+    assert_eq!(c.failed, Some("schema"));
+    assert!(c.loading.is_none());
+    assert!(h.app.tabs[h.app.active].schema_error.is_some());
+    assert!(h.screen().contains("schema failed"));
+    assert!(!h.app.is_busy(), "no load is left running");
+    // Asking for the list again shows the failure; it does not refetch.
+    h.key("esc");
+    h.key("ctrl+space");
+    let c = h.app.complete.as_ref().must();
+    assert_eq!(c.failed, Some("schema"));
+    assert!(c.loading.is_none());
+    assert!(!h.app.is_busy(), "the dead server is not retried");
+}
+
+/// A tools/list that fails is reported once and not retried in the background.
+#[test]
+fn flow_completion_tools_failure() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            &format!(
+                "[collection]\nname = \"demo\"\n[mcp.servers.echo]\nurl = \"{}/mcp\"\n[mcp.servers.dead]\nurl = \"http://127.0.0.1:9/mcp\"\n",
+                echo.url()
+            ),
+        );
+    });
+    h.app.run_command("newmcp");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.mcp_server.set_text("dead");
+        t.refresh_model();
+    }
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 1;
+    h.type_text("a");
+    assert_eq!(h.app.complete.as_ref().must().loading, Some("tools"));
+    let start = std::time::Instant::now();
+    while h.app.complete.as_ref().is_none_or(|c| c.failed.is_none()) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "tools failure did not reach the popup"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.pump();
+    }
+    let c = h.app.complete.as_ref().must();
+    assert_eq!(c.failed, Some("tools"));
+    assert!(c.loading.is_none());
+    let t = &h.app.tabs[h.app.active];
+    assert_eq!(t.mcp_tools_server, "dead");
+    assert!(t.mcp_tools_error.is_some());
+    assert!(h.screen().contains("tools failed"));
+    assert!(!h.app.is_busy(), "no discovery is left running");
+    // Asking for the list again shows the failure; it does not refetch.
+    h.key("esc");
+    h.key("ctrl+space");
+    let c = h.app.complete.as_ref().must();
+    assert_eq!(c.failed, Some("tools"));
+    assert!(c.loading.is_none());
+    assert!(!h.app.is_busy(), "the dead server is not retried");
+}
+
+/// Moving focus, switching tabs or opening a dialog closes the popup, so its
+/// keys stop applying elsewhere.
+#[test]
+fn flow_completion_closes_on_navigation() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.key("ctrl+w k");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("enter");
+    let _ = h.wait_for("Choose a gRPC method", 5);
+    h.key("esc");
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.key("ctrl+a");
+    h.type_text("{");
+    assert!(h.app.complete.is_some());
+    // Focus elsewhere: the popup goes with it.
+    h.key("ctrl+w j");
+    assert!(h.app.complete.is_none(), "focus change closes it");
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.key("ctrl+space");
+    assert!(h.app.complete.is_some());
+    // Another tab: same.
+    h.key("ctrl+w n");
+    assert!(h.app.complete.is_none(), "tab switch closes it");
+    // The global chords keep working while it is open.
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.key("ctrl+space");
+    assert!(h.app.complete.is_some());
+    h.key("ctrl+p");
+    assert!(h.app.complete.is_none(), "the palette closes it");
+    assert!(
+        h.app.overlay.is_some(),
+        "Ctrl+P opened the palette, not the list"
+    );
 }

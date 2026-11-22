@@ -333,3 +333,56 @@ fn nerd_icons() {
         snap("nerd_main", h);
     });
 }
+
+/// A completion popup over the gRPC message editor, from a fabricated schema
+/// (no reflection round-trip, so the frame is deterministic).
+#[test]
+fn completion_popup() {
+    use sendito_core::complete::FieldNode;
+    use sendito_grpc::{CallKind, MethodInfo, ServiceInfo};
+    each(|h| {
+        open(h, "echo unary");
+        let mut inner = FieldNode::new("inner", "sendito.test.v1.Inner", "{}");
+        inner.children.push(FieldNode::new("count", "int32", "0"));
+        let mut fields = FieldNode::new("sendito.test.v1.EchoRequest", "", "{}");
+        fields
+            .children
+            .push(FieldNode::new("text", "string", "\"\""));
+        fields.children.push(FieldNode::new("i32", "int32", "0"));
+        fields.children.push(inner);
+        fields
+            .children
+            .push(FieldNode::new("tags", "repeated string", "[]"));
+        let svc = ServiceInfo {
+            name: "sendito.test.v1.Echo".into(),
+            methods: vec![MethodInfo {
+                name: "Unary".into(),
+                kind: CallKind::Unary,
+                input: "sendito.test.v1.EchoRequest".into(),
+                output: "sendito.test.v1.EchoResponse".into(),
+                input_fields: fields,
+            }],
+        };
+        let t = &mut h.app.tabs[h.app.active];
+        t.services = Some(vec![svc]);
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        h.app.tabs[h.app.active].field = 0;
+        h.type_text("\"");
+        snap("grpc_field_completion", h);
+        h.type_text("in");
+        snap("grpc_field_completion_filtered", h);
+        h.key("esc");
+        // The method field completes from the same schema.
+        h.app.focus = Focus::Bar(1);
+        h.app.tabs[h.app.active]
+            .ed
+            .grpc_method_text
+            .set_text("sendito.test.v1.Echo/");
+        h.app.tabs[h.app.active].ed.grpc_method_text.move_to_end();
+        h.key("ctrl+space");
+        snap("grpc_method_completion", h);
+    });
+}

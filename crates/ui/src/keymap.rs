@@ -130,6 +130,7 @@ actions! {
     Copy => "copy", "Copy selection (whole field if nothing selected)";
     Cut => "cut", "Cut selection";
     Paste => "paste", "Paste";
+    Complete => "complete", "Show completion suggestions at the cursor";
 }
 
 /// One key press: a key and modifiers.
@@ -414,6 +415,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Copy, Editor, Conventional, &["ctrl+c"]),
         (Cut, Editor, Conventional, &["ctrl+x"]),
         (Paste, Editor, Conventional, &["ctrl+v"]),
+        (Complete, Global, Both, &["ctrl+space"]),
     ]
 };
 

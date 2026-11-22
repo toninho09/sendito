@@ -1,6 +1,7 @@
 //! Sendito terminal UI.
 
 pub mod app;
+pub mod complete;
 pub mod draw;
 pub mod editor;
 pub mod form;

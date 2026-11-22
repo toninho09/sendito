@@ -239,15 +239,6 @@ pub(super) fn draw_url_strip(
             app.hits.push((tr, Hit::Bar(1)));
         }
         Kind::Grpc => {
-            let (svc, m) = (
-                app.tabs[app.active].ed.service.clone(),
-                app.tabs[app.active].ed.grpc_method.clone(),
-            );
-            let ml = if svc.is_empty() {
-                " none ▾ ".to_string()
-            } else {
-                format!(" {}/{} ▾ ", svc.rsplit('.').next().unwrap_or(&svc), m)
-            };
             let label_st = theme.fg(theme.grpc).add_modifier(Modifier::BOLD);
             // "target" labels the address field, as the method menu does for HTTP.
             let label = format!("{}target ", Icons::pre(icons.grpc));
@@ -258,7 +249,7 @@ pub(super) fn draw_url_strip(
             let avail = send_x.saturating_sub(x0 + lw + 2);
             let mlw = if avail > 40 { mlabel.width() as u16 } else { 0 };
             let avail = avail.saturating_sub(mlw);
-            let mw = (ml.width() as u16).min(avail / 2).max(10);
+            let mw = (avail / 3).clamp(10, 40);
             let tw = avail.saturating_sub(mw);
             let tr = input_box(
                 buf,
@@ -282,12 +273,47 @@ pub(super) fn draw_url_strip(
             } else {
                 mx += 1;
             }
-            let mst = if focus == Focus::Bar(1) {
-                theme.chip(theme.grpc)
+            // The method field is editable: the schema completes it inline.
+            // Unfocused it shows the short form (`Echo/Unary`), because a fully
+            // qualified service does not fit; focused it scrolls to the cursor.
+            let focused = focus == Focus::Bar(1);
+            let mr = input_box(
+                buf,
+                Rect::new(mx, y, mw.saturating_sub(2), 1),
+                focused,
+                theme,
+            );
+            let mut shown = None;
+            if focused {
+                if let Some(tab) = app.tabs.get_mut(app.active) {
+                    shown = tab
+                        .ed
+                        .grpc_method_text
+                        .render(mr, buf, theme, true, &is_def);
+                }
             } else {
-                theme.badge(theme.grpc)
-            };
-            put(buf, mx, y, &truncate(&ml, mw as usize), mw, mst);
+                let t = &app.tabs[app.active];
+                let (svc, m) = (t.ed.service(), t.ed.method());
+                let short = if svc.is_empty() {
+                    "none".to_string()
+                } else {
+                    format!("{}/{}", svc.rsplit('.').next().unwrap_or(&svc), m)
+                };
+                put(
+                    buf,
+                    mr.x,
+                    y,
+                    &truncate(&short, mr.width as usize),
+                    mr.width,
+                    theme.badge(theme.grpc),
+                );
+            }
+            let suffix = mx + mw.saturating_sub(2);
+            put(buf, suffix, y, " ▾ ", 3, theme.badge(theme.grpc));
+            if let Some(c) = shown {
+                app.areas.caret = Some(c);
+                cursor = Some(c);
+            }
             app.hits.push((Rect::new(mx, y, mw, 1), Hit::Bar(1)));
         }
         Kind::Mcp => {
@@ -656,6 +682,7 @@ pub(super) fn draw_fields(
             if let Some(ed) = ed {
                 ed.gutter = true;
                 if let Some(c) = ed.render(rect, buf, theme, is_sel, is_def) {
+                    app.areas.caret = Some(c);
                     cursor = Some(c);
                 }
             }
@@ -740,6 +767,7 @@ pub(super) fn draw_fields(
             } else if let Some(ed) = tab.ed.text_mut(*f) {
                 let tr = input_box(buf, vr, is_sel, theme);
                 if let Some(c) = ed.render(tr, buf, theme, is_sel, is_def) {
+                    app.areas.caret = Some(c);
                     cursor = Some(c);
                 }
                 app.hits.push((tr, Hit::TextArea { field: i }));

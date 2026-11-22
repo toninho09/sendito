@@ -369,13 +369,22 @@ impl TextEditor {
         if self.read_only {
             return;
         }
-        let text = if self.single_line {
+        let text = self.normalize(text);
+        self.snapshot();
+        self.delete_selection();
+        self.put_at_cursor(&text);
+    }
+
+    /// Folds newlines to spaces in single-line editors (and CRLF to LF otherwise).
+    pub fn normalize(&self, text: &str) -> String {
+        if self.single_line {
             text.replace("\r\n", " ").replace(['\r', '\n'], " ")
         } else {
             text.replace("\r\n", "\n").replace('\r', "\n")
-        };
-        self.snapshot();
-        self.delete_selection();
+        }
+    }
+
+    fn put_at_cursor(&mut self, text: &str) {
         let line = &self.lines[self.cursor.row];
         let b = char_to_byte(line, self.cursor.col);
         let tail = line[b..].to_string();
@@ -383,7 +392,7 @@ impl TextEditor {
         let parts: Vec<&str> = text.split('\n').collect();
         if parts.len() == 1 {
             self.lines[self.cursor.row] = format!("{head}{text}{tail}");
-            self.cursor.col += char_len(&text);
+            self.cursor.col += char_len(text);
         } else {
             self.lines[self.cursor.row] = format!("{head}{}", parts[0]);
             let mut row = self.cursor.row;
@@ -400,6 +409,25 @@ impl TextEditor {
             };
         }
         self.preferred_col = None;
+    }
+
+    /// Replaces the text between two positions, as one undo step.
+    pub fn replace_span(&mut self, start: Pos, end: Pos, text: &str) {
+        if self.read_only || start > end {
+            return;
+        }
+        let end = Pos {
+            row: end.row.min(self.lines.len().saturating_sub(1)),
+            col: end.col,
+        };
+        let start = Pos {
+            row: start.row.min(end.row),
+            col: start.col,
+        };
+        let text = self.normalize(text);
+        self.snapshot();
+        self.delete_range(start, end);
+        self.put_at_cursor(&text);
     }
 
     fn type_char(&mut self, c: char) {

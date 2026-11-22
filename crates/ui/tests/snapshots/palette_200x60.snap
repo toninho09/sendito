@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/71   ┃                                                 │
+│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/72   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -47,7 +47,7 @@ expression: screen
 │                            ││                   │  Maximize or restore the focused pane                                                  Ctrl+W z  │                                                 │
 │                            ││                   │  Widen the sidebar                                                                     Ctrl+W >  │                                                 │
 │                            ││                   │  Narrow the sidebar                                                                    Ctrl+W <  │                                                 │
-│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 35 more ─╯                                                 │
+│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 36 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

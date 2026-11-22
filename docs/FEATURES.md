@@ -374,6 +374,17 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   `Tool · Args · Scripts · Options`. The request's folder path is on the right;
   a tab shows its row count or `•` when set; editors have line numbers and JSON
   shows `✓ JSON` / `✗ JSON: line, col` plus `Ln, Col`.
+* **Completion** (`Ctrl+Space`, or automatically while typing at a key position):
+  a small list under the cursor suggests the object keys of the gRPC message
+  (from the schema) and of the MCP tool arguments (from the tool's `inputSchema`),
+  aware of the nesting level and hiding the keys already present. It also
+  completes the gRPC method (`Service/Method`, typed into the method field) and
+  the MCP server and tool names. Type to filter, `↑↓` move, `Enter`/`Tab`
+  insert one key with a value placeholder, `Esc` closes (so does moving the
+  cursor or the focus away, or opening a dialog). A missing schema or tool list is fetched in the
+  background as the list opens; a failed load is reported in the list and in the
+  status line, and retried only when asked. Nothing is sent until you send the
+  request.
 * **Response tabs**: HTTP `Body · Headers · Timing · Results`; gRPC
   `Body · Metadata · Timing · Log`; MCP `Body · Request · Timing · Log`.
 * **Start screen** (no tab open): a pixel wordmark, a collection summary, the

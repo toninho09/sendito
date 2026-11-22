@@ -58,6 +58,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `shrink_sidebar` | `Ctrl+W <` | `Ctrl+W <` | Narrow the sidebar |
 | `grow_request` | `Ctrl+W +` | `Ctrl+W +` | Give the request editor more height |
 | `shrink_request` | `Ctrl+W -` | `Ctrl+W -` | Give the response more height |
+| `complete` | `Ctrl+Space` | `Ctrl+Space` | Show completion suggestions at the cursor |
 
 ## Sidebar tree
 

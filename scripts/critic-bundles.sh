@@ -134,6 +134,9 @@ would make it clear.
 - Scripts, assertions and extracted variables (Results tab).
 - gRPC: schema from reflection or .proto files, a message template, streaming with a
   Log tab (message log, legend pinned above it), several messages per stream, end of stream.
+- Completion (Ctrl+Space, or automatic at a key position): gRPC message keys and MCP
+  argument keys, the gRPC method and the MCP server/tool names; type to filter,
+  Enter/Tab inserts, Esc closes, the hint row describes the open list.
 - Optional vim mode, mouse support (click, hover, drag in the tree, drag pane
   borders), sidebar on either side, pane zoom.
 - Seven themes (auto, dusk, daylight, ember, linen, contrast, ansi) plus user themes

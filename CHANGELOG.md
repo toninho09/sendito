@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — completion
+
+* **Autocomplete for gRPC and MCP.** The message editor (`Message` for gRPC, `Args`
+  for MCP) suggests the object keys at the cursor — from the proto descriptors or
+  from the tool's `inputSchema` — aware of the nesting level and skipping keys that
+  are already present; the gRPC method field (now editable, `Service/Method`) and the
+  MCP server and tool fields complete their names too. It opens on `Ctrl+Space` or by
+  itself at a key position, filters as you type, inserts with `Enter`/`Tab` (inside
+  the new value) and closes with `Esc` (or when the cursor or the focus moves
+  away, or a dialog opens). A schema or tool list that is not loaded yet is fetched in the
+  background; a load that fails is reported in the popup and the status line and
+  is only retried when asked. `KEYMAP.md` gains the `complete` action; the wire is
+  unchanged.
+
 ## Unreleased — documentation
 
 * **Rewritten documentation.** The README is now a showcase with the hero image,

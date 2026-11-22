@@ -224,8 +224,8 @@ pub struct Editors {
     /// `[options] cookies`: `None` follows the `[http] cookie_jar` config.
     pub cookies: Option<bool>,
     pub target: TextEditor,
-    pub service: String,
-    pub grpc_method: String,
+    /// `Service/Method`, typed or picked from the schema.
+    pub grpc_method_text: TextEditor,
     pub message: TextEditor,
     pub metadata: Table,
     pub tls: bool,
@@ -257,6 +257,28 @@ fn parse_list(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
+}
+
+/// `Service/Method` as shown in the method field.
+fn grpc_method_label(service: &str, method: &str) -> String {
+    if service.is_empty() && method.is_empty() {
+        String::new()
+    } else if method.is_empty() {
+        service.to_string()
+    } else {
+        format!("{service}/{method}")
+    }
+}
+
+/// Splits the method field into (service, method). A value without a slash is
+/// the service only: the last dot-separated segment may also be a method, but
+/// guessing there would turn a half-typed service into a wrong call.
+fn split_method(text: &str) -> (String, String) {
+    let text = text.trim();
+    match text.rsplit_once('/') {
+        Some((s, m)) => (s.trim().to_string(), m.trim().to_string()),
+        None => (text.to_string(), String::new()),
+    }
 }
 
 fn kv_table(name: &'static str, value: &'static str, rows: &[KeyValue]) -> Table {
@@ -407,8 +429,8 @@ impl Editors {
             verify: true,
             cookies: None,
             target: TextEditor::single("").with_placeholder("localhost:50051  (https:// for TLS)"),
-            service: String::new(),
-            grpc_method: String::new(),
+            grpc_method_text: TextEditor::single("")
+                .with_placeholder("Service/Method  (Enter lists the schema)"),
             message: TextEditor::multi("{}").with_highlight(Highlight::Json),
             metadata: Table::kv("Key", "Value"),
             tls: false,
@@ -505,8 +527,8 @@ impl Editors {
             Request::Grpc(g) => {
                 e.kind = Kind::Grpc;
                 e.target.set_text(&g.target);
-                e.service = g.service.clone();
-                e.grpc_method = g.method.clone();
+                e.grpc_method_text
+                    .set_text(&grpc_method_label(&g.service, &g.method));
                 e.message.set_text(&g.message);
                 e.metadata = kv_table("Key", "Value", &g.metadata);
                 e.tls = g.tls;
@@ -612,6 +634,18 @@ impl Editors {
         }
     }
 
+    /// The gRPC service part of `Service/Method`.
+    pub fn service(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).0
+    }
+
+    /// The gRPC method part of `Service/Method`.
+    pub fn method(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).1
+    }
+
     pub fn to_request(&self) -> Request {
         match self.kind {
             Kind::Http => {
@@ -678,8 +712,8 @@ impl Editors {
             }
             Kind::Grpc => Request::Grpc(GrpcRequest {
                 target: self.target.text(),
-                service: self.service.clone(),
-                method: self.grpc_method.clone(),
+                service: self.service(),
+                method: self.method(),
                 message: self.message.text(),
                 metadata: kv_rows(&self.metadata),
                 auth: self.auth(),
@@ -1224,6 +1258,11 @@ pub struct Tab {
     pub watch: Option<Watch>,
     pub services: Option<Vec<ServiceInfo>>,
     pub mcp_tools: Vec<sendito_mcp::Tool>,
+    /// The server `mcp_tools` was loaded from; the list is stale for any other.
+    pub mcp_tools_server: String,
+    /// Why listing `mcp_tools_server`'s tools failed; completion does not
+    /// retry a dead server by itself.
+    pub mcp_tools_error: Option<String>,
     pub schema_error: Option<String>,
     /// Cached model built from the editors (refreshed after each change).
     pub model: Request,
@@ -1258,6 +1297,8 @@ impl Tab {
             watch: None,
             services: None,
             mcp_tools: Vec::new(),
+            mcp_tools_server: String::new(),
+            mcp_tools_error: None,
             schema_error: None,
             model: req.clone(),
             origin: None,

@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GRPC echo unary ×    +                                                                                                                                              ● local ▾   F1  all keys
-╭ Requests  History ─────────╮ target  {{grpc}}                                                                                                                           method  Echo/Unary ▾    Send
+╭ Requests  History ─────────╮ target  {{grpc}}                                                                                                 method  Echo/Unary                            ▾   Send
 │▸ Orders/                   │╭─ Message  Metadata  Auth  Scripts  Options ─────────────────────────────────────────────────────────────────────────────────────────────────────────────── echo unary ─╮
 │▸ Users/                    ││ Schema         Server reflection ▾  reflection asks the server; proto files are compiled locally                                                                       │
 │  GRPC  echo unary          ││ Use TLS        [ ] Off  or prefix the target with https://                                                                                                             │

@@ -8,6 +8,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use sendito_core::complete::FieldNode;
 use sendito_core::model::*;
 use sendito_core::vars::{Scope, VarValue};
 use sendito_store::collection::{name_of, parent_rel};
@@ -16,6 +17,7 @@ use sendito_store::history::HistoryEntry;
 use sendito_store::session::{Layout, Session, SessionTab};
 use tokio::sync::mpsc;
 
+use crate::complete::{CompleteKind, Completion};
 use crate::editor::{Clipboard, Outcome, TextEditor, VimMode};
 use crate::form::TableOutcome;
 use crate::keymap::{Action, Chord, Ctx, Keymap, Lookup};
@@ -93,6 +95,8 @@ pub enum Hit {
     SidebarBorder,
     SplitBorder,
     Overlay(OverlayHit),
+    /// A row of the completion popup.
+    CompleteItem(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,10 +167,14 @@ pub enum AppMsg {
         job: u64,
         tab: u64,
         server: String,
+        /// Open the picker; a false value only fills the tab's tool list
+        /// (completion pulls it in the background).
+        open_picker: bool,
         result: Result<Vec<sendito_mcp::Tool>, String>,
     },
     Schema {
         tab: u64,
+        job: u64,
         result: Result<Vec<sendito_grpc::ServiceInfo>, String>,
         open_picker: bool,
         template: Option<String>,
@@ -220,6 +228,8 @@ pub struct Areas {
     pub resp_body: Rect,
     pub field_rects: Vec<Rect>,
     pub bar_url: Rect,
+    /// Where the focused editor's cursor was drawn last frame.
+    pub caret: Option<(u16, u16)>,
 }
 
 pub struct App {
@@ -251,6 +261,8 @@ pub struct App {
     pub clipboard: Clipboard,
     pub pending: Vec<Chord>,
     pub overlay: Option<Overlay>,
+    /// Inline completion popup; not an overlay: it does not dim or block.
+    pub complete: Option<crate::complete::Completion>,
     pub status: Option<(String, StatusKind, Instant)>,
     /// Home directory, shown as `~` in paths.
     pub home: Option<PathBuf>,
@@ -269,6 +281,8 @@ pub struct App {
     pub last_session_save: Instant,
     pub next_id: u64,
     pub schemas: SchemaCache,
+    schema_job: Option<(u64, tokio::task::JoinHandle<()>)>,
+    schema_seq: u64,
     mcp_discovery: Option<(u64, tokio::task::JoinHandle<()>)>,
     mcp_discovery_seq: u64,
     oauth_login: Option<(u64, tokio::task::JoinHandle<()>)>,
@@ -378,6 +392,8 @@ impl App {
             last_session_save: Instant::now(),
             next_id: 1,
             schemas: SchemaCache::default(),
+            schema_job: None,
+            schema_seq: 0,
             mcp_discovery: None,
             mcp_discovery_seq: 0,
             oauth_login: None,
@@ -390,6 +406,7 @@ impl App {
             parked_env: None,
             last_report: None,
             cursor: None,
+            complete: None,
         };
         app.restore_tabs(&session);
         if app.tabs.is_empty() {
@@ -638,6 +655,7 @@ impl App {
 
     pub fn is_busy(&self) -> bool {
         self.mcp_discovery.is_some()
+            || self.schema_job.is_some()
             || self.oauth_login.is_some()
             || self.tabs.iter().any(|t| t.running.is_some())
     }
@@ -709,6 +727,7 @@ impl App {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(&mut tab.ed.url),
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.target),
             Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(&mut tab.ed.mcp_server),
+            Focus::Bar(1) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.grpc_method_text),
             Focus::ReqBody => {
                 let f = tab.current_field()?;
                 tab.ed.text_mut(f)
@@ -761,6 +780,7 @@ impl App {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => &mut tab.ed.url,
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => &mut tab.ed.target,
             Focus::Bar(0) if tab.ed.kind == Kind::Mcp => &mut tab.ed.mcp_server,
+            Focus::Bar(1) if tab.ed.kind == Kind::Grpc => &mut tab.ed.grpc_method_text,
             Focus::ReqBody => {
                 let fld = tab.current_field()?;
                 tab.ed.text_mut(fld)?
@@ -790,7 +810,13 @@ impl App {
         // errors stay until replaced.
         self.clear_transient_status();
         if self.overlay.is_some() {
+            self.complete = None;
             self.overlay_key(key);
+            return;
+        }
+        // The popup sees its own keys (and Enter/Tab acceptance) before the
+        // editor or the keymap does.
+        if self.complete.is_some() && self.complete_key(key) {
             return;
         }
         let chord = Chord::from_event(&key);
@@ -829,6 +855,10 @@ impl App {
             Lookup::Action(a) => {
                 self.pending.clear();
                 self.dispatch(a);
+                // An overlay takes the screen; the popup does not outlive it.
+                if self.overlay.is_some() {
+                    self.complete = None;
+                }
             }
             Lookup::Prefix => {
                 self.pending = seq;
@@ -909,29 +939,43 @@ impl App {
         }
         let vim = self.vim;
         let is_text = (kind == Kind::Http && part == 1)
-            || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0);
+            || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0)
+            || (kind == Kind::Grpc && part == 1);
         if is_text {
             let Some(out) = self.with_text(|e, cb| e.handle_key(&key, vim, cb)) else {
                 return;
             };
             match out {
-                Outcome::Changed => self.changed(),
+                Outcome::Changed => {
+                    self.changed();
+                    if self.complete.is_some() {
+                        self.complete_typed();
+                    } else {
+                        self.refresh_complete();
+                    }
+                }
                 Outcome::Submit => {
+                    self.complete = None;
                     if kind == Kind::Http {
                         self.dispatch(Action::Send);
                     } else if kind == Kind::Mcp {
                         self.focus = Focus::ReqTabs;
+                    } else if part == 1 {
+                        // Enter on the method field opens the full list.
+                        self.open_grpc_method_picker();
                     } else {
                         self.focus = Focus::Bar(1);
                     }
                 }
-                Outcome::Leave => {}
+                Outcome::Leave => self.complete = None,
                 Outcome::Ignored => {
                     if matches!(key.code, KeyCode::Down) {
                         self.focus = Focus::ReqTabs;
                     }
                 }
-                Outcome::Handled => {}
+                // A cursor move (Handled, not Changed) leaves the key
+                // position: the popup's span would be stale.
+                Outcome::Handled => self.complete = None,
             }
             return;
         }
@@ -955,9 +999,7 @@ impl App {
                 }
                 self.changed();
             }
-            (1, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Down) if kind == Kind::Grpc => {
-                self.open_grpc_method_picker()
-            }
+            (1, KeyCode::Char(' ')) if kind == Kind::Grpc => self.open_grpc_method_picker(),
             (_, KeyCode::Down) => self.focus = Focus::ReqTabs,
             _ => {}
         }
@@ -976,7 +1018,7 @@ impl App {
                     return;
                 }
                 Field::McpTool => {
-                    self.load_mcp_tools();
+                    self.load_mcp_tools(true);
                     return;
                 }
                 _ => {}
@@ -1048,11 +1090,22 @@ impl App {
             return;
         };
         match out {
-            Outcome::Changed => self.changed(),
+            Outcome::Changed => {
+                self.changed();
+                if self.complete.is_some() {
+                    self.complete_typed();
+                } else {
+                    self.refresh_complete();
+                }
+            }
             Outcome::Submit => {
+                self.complete = None;
                 self.next_field(false);
             }
-            Outcome::Leave => self.focus = Focus::ReqTabs,
+            Outcome::Leave => {
+                self.complete = None;
+                self.focus = Focus::ReqTabs;
+            }
             Outcome::Ignored => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => self.prev_field(),
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -1060,11 +1113,14 @@ impl App {
                 }
                 _ => {}
             },
-            Outcome::Handled => {}
+            // A cursor move (Handled, not Changed) leaves the key position:
+            // the popup's span would be stale.
+            Outcome::Handled => self.complete = None,
         }
     }
 
     fn prev_field(&mut self) {
+        self.complete = None;
         if let Some(t) = self.tab_mut()
             && t.field > 0
         {
@@ -1076,6 +1132,7 @@ impl App {
 
     /// Moves to the next field; at the end, to the response (when `wrap`).
     fn next_field(&mut self, wrap: bool) -> bool {
+        self.complete = None;
         if let Some(t) = self.tab_mut()
             && t.field + 1 < t.fields().len()
         {
@@ -1091,6 +1148,331 @@ impl App {
             self.focus = Focus::RespTabs;
         }
         false
+    }
+
+    // ----- completion ---------------------------------------------------
+
+    /// Which completion belongs to the focused widget, if any.
+    fn complete_kind(&self) -> Option<CompleteKind> {
+        let t = self.tab()?;
+        if self.focus == Focus::Bar(1) && t.ed.kind == Kind::Grpc {
+            return Some(CompleteKind::GrpcMethod);
+        }
+        if self.focus != Focus::ReqBody {
+            return None;
+        }
+        match t.current_field()? {
+            Field::Message if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp) => {
+                Some(CompleteKind::Fields)
+            }
+            Field::McpServer => Some(CompleteKind::McpServer),
+            Field::McpTool => Some(CompleteKind::McpTool),
+            _ => None,
+        }
+    }
+
+    /// The input tree of the message/tool being edited.
+    fn complete_tree(&self) -> Option<FieldNode> {
+        let t = self.tab()?;
+        match t.ed.kind {
+            Kind::Grpc => {
+                let svcs = t.services.as_ref()?;
+                let (svc, m) = (t.ed.service(), t.ed.method());
+                svcs.iter()
+                    .find(|s| s.name == svc)
+                    .and_then(|s| s.methods.iter().find(|mi| mi.name == m))
+                    .map(|mi| mi.input_fields.clone())
+            }
+            Kind::Mcp => {
+                let tools = self.mcp_tools(t);
+                tools
+                    .iter()
+                    .find(|tool| tool.name == t.ed.mcp_tool.text())
+                    .map(|tool| crate::complete::schema_node(&tool.input_schema, &tool.name))
+            }
+            Kind::Http => None,
+        }
+    }
+
+    /// The tool list of a tab, when it belongs to the server it was loaded from.
+    fn mcp_tools(&self, t: &Tab) -> Vec<sendito_mcp::Tool> {
+        if t.mcp_tools_server == t.ed.mcp_server.text() {
+            t.mcp_tools.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The list of names a popup kind offers, with a detail column.
+    fn complete_pool(&self, kind: CompleteKind, t: &Tab) -> Option<Vec<(String, String)>> {
+        match kind {
+            CompleteKind::GrpcMethod => t.services.as_ref().map(|svcs| {
+                svcs.iter()
+                    .flat_map(|s| {
+                        s.methods.iter().map(|m| {
+                            (
+                                format!("{}/{}", s.name, m.name),
+                                format!("{} · {} → {}", m.kind.label(), m.input, m.output),
+                            )
+                        })
+                    })
+                    .collect()
+            }),
+            CompleteKind::McpServer => Some(
+                self.project
+                    .config
+                    .mcp
+                    .servers
+                    .iter()
+                    .map(|(name, cfg)| match cfg {
+                        sendito_store::config::McpServer::Stdio(s) => {
+                            (name.clone(), s.command.clone())
+                        }
+                        sendito_store::config::McpServer::Http(h) => (name.clone(), h.url.clone()),
+                    })
+                    .collect(),
+            ),
+            CompleteKind::McpTool => {
+                let tools = self.mcp_tools(t);
+                if tools.is_empty() {
+                    None
+                } else {
+                    Some(
+                        tools
+                            .iter()
+                            .map(|tool| {
+                                (
+                                    tool.name.clone(),
+                                    tool.description.clone().unwrap_or_default(),
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+            }
+            CompleteKind::Fields => None,
+        }
+    }
+
+    /// Rebuilds the popup from the cursor position, or closes it when the cursor
+    /// is not on a key. Starts the missing schema/tools load in the background.
+    fn refresh_complete(&mut self) {
+        // A load already in flight keeps its row: the list fills when it lands;
+        // a failed one keeps its message instead of being retried.
+        let (loading, failed) = self
+            .complete
+            .as_ref()
+            .map_or((None, None), |c| (c.loading, c.failed));
+        self.complete = None;
+        let Some(kind) = self.complete_kind() else {
+            return;
+        };
+        let Some(t) = self.tab() else {
+            return;
+        };
+        let (id, field) = (t.id, t.current_field());
+        if kind == CompleteKind::Fields {
+            let Some(ctx) =
+                crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
+            else {
+                return;
+            };
+            let Some(tree) = self.complete_tree() else {
+                let mut c = Completion::new(kind, id, field);
+                c.loading = loading;
+                c.failed = failed;
+                self.complete = Some(c);
+                self.start_complete_fetch(kind);
+                return;
+            };
+            let mut c = Completion::new(kind, id, field);
+            c.start = ctx.start;
+            c.quoted = ctx.quoted;
+            c.set_pool(
+                crate::complete::field_candidates(&tree, &ctx, ""),
+                ctx.prefix,
+            );
+            self.complete = Some(c);
+            return;
+        }
+        let query = match kind {
+            CompleteKind::GrpcMethod => t.ed.grpc_method_text.text(),
+            CompleteKind::McpServer => t.ed.mcp_server.text(),
+            _ => t.ed.mcp_tool.text(),
+        };
+        let Some(pool) = self.complete_pool(kind, t) else {
+            let mut c = Completion::new(kind, id, field);
+            c.loading = loading;
+            c.failed = failed;
+            self.complete = Some(c);
+            self.start_complete_fetch(kind);
+            return;
+        };
+        let mut c = Completion::new(kind, id, field);
+        c.set_pool(crate::complete::plain_candidates(pool, ""), query);
+        self.complete = Some(c);
+    }
+
+    /// Loads the schema or tools a missing completion needs, without opening a
+    /// picker when they arrive. While one is in flight, typing does not start
+    /// another, and a load that already failed is not retried here (Enter on
+    /// the method field or F2 on the tool field asks again).
+    fn start_complete_fetch(&mut self, kind: CompleteKind) {
+        let Some(t) = self.tab() else {
+            return;
+        };
+        // (what it waits for, a load is in flight, a load already failed)
+        let wait: Option<(&'static str, bool, bool)> = match kind {
+            CompleteKind::Fields | CompleteKind::GrpcMethod
+                if t.ed.kind == Kind::Grpc && t.services.is_none() =>
+            {
+                Some((
+                    "schema",
+                    self.schema_job.is_some(),
+                    t.schema_error.is_some(),
+                ))
+            }
+            CompleteKind::Fields | CompleteKind::McpTool
+                if t.ed.kind == Kind::Mcp
+                    && self.mcp_tools(t).is_empty()
+                    && !t.ed.mcp_server.text().trim().is_empty() =>
+            {
+                Some((
+                    "tools",
+                    self.mcp_discovery.is_some(),
+                    t.mcp_tools_error.is_some() && t.mcp_tools_server == t.ed.mcp_server.text(),
+                ))
+            }
+            _ => None,
+        };
+        let Some((what, busy, failed)) = wait else {
+            return;
+        };
+        if busy || failed {
+            if let Some(c) = &mut self.complete {
+                if busy {
+                    c.loading = Some(what);
+                } else {
+                    c.loading = None;
+                    c.failed = Some(what);
+                }
+            }
+            return;
+        }
+        if let Some(c) = &mut self.complete {
+            c.loading = Some(what);
+        }
+        match what {
+            "schema" => self.load_schema(false, false, false),
+            _ => self.load_mcp_tools(false),
+        }
+    }
+
+    /// Handles the keys the popup owns. Returns `false` for anything else, so
+    /// typing keeps filtering and global chords (Ctrl+P palette, Ctrl+N new
+    /// tab) still work while it is open.
+    fn complete_key(&mut self, key: KeyEvent) -> bool {
+        let Some(c) = self.complete.as_mut() else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => self.complete = None,
+            KeyCode::Up => c.up(),
+            KeyCode::Down => c.down(),
+            KeyCode::PageUp => c.page_up(),
+            KeyCode::PageDown => c.page_down(),
+            KeyCode::Enter | KeyCode::Tab => {
+                if !self.complete_accept() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// While the popup is open, typing narrows the list; a key that leaves the
+    /// key position closes it.
+    fn complete_typed(&mut self) {
+        let Some(c) = self.complete.as_ref() else {
+            return;
+        };
+        let (kind, tab) = (c.kind, c.tab);
+        let Some(t) = self.tab() else {
+            self.complete = None;
+            return;
+        };
+        if t.id != tab {
+            self.complete = None;
+            return;
+        }
+        if kind == CompleteKind::Fields {
+            let Some(ctx) =
+                crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
+            else {
+                self.complete = None;
+                return;
+            };
+            if let Some(c) = &mut self.complete {
+                if c.start != ctx.start {
+                    self.complete = None;
+                    return;
+                }
+                c.filter(ctx.prefix);
+            }
+            return;
+        }
+        let query = match kind {
+            CompleteKind::GrpcMethod => t.ed.grpc_method_text.text(),
+            CompleteKind::McpServer => t.ed.mcp_server.text(),
+            _ => t.ed.mcp_tool.text(),
+        };
+        if let Some(c) = &mut self.complete {
+            c.filter(query);
+        }
+    }
+
+    /// Inserts the selected candidate over the key typed so far.
+    fn complete_accept(&mut self) -> bool {
+        let Some(c) = self.complete.take() else {
+            return false;
+        };
+        let Some(cand) = c.selected().cloned() else {
+            return false;
+        };
+        let Some(t) = self.tab_mut() else {
+            return false;
+        };
+        if t.id != c.tab {
+            return false;
+        }
+        let ed = match c.kind {
+            CompleteKind::Fields => t.ed.text_mut(Field::Message),
+            CompleteKind::GrpcMethod => Some(&mut t.ed.grpc_method_text),
+            CompleteKind::McpServer => Some(&mut t.ed.mcp_server),
+            CompleteKind::McpTool => Some(&mut t.ed.mcp_tool),
+        };
+        let Some(ed) = ed else {
+            return false;
+        };
+        match c.kind {
+            // The key is replaced in place; the rest of the JSON stays.
+            CompleteKind::Fields => {
+                let insert = cand.insert(c.quoted);
+                ed.replace_span(c.start, ed.cursor, &insert);
+                if cand.cursor_back > 0 {
+                    let back = cand.cursor_back as usize;
+                    ed.cursor.col = ed.cursor.col.saturating_sub(back);
+                }
+            }
+            // Single-line name fields take the whole suggestion.
+            _ => {
+                ed.set_text(&cand.name);
+                ed.move_to_end();
+            }
+        }
+        self.changed();
+        true
     }
 
     fn sidebar_key(&mut self, key: KeyEvent) {
@@ -1163,6 +1545,7 @@ impl App {
                 self.set_subtab(i);
             }
             Action::Palette => self.open_palette(""),
+            Action::Complete => self.refresh_complete(),
             Action::Help => self.open_help(),
             Action::Settings => self.overlay = Some(Overlay::Settings { sel: 0 }),
             Action::SelectEnv => self.open_env_picker(),
@@ -1349,6 +1732,7 @@ impl App {
     }
 
     pub fn focus_cycle(&mut self, dir: isize) {
+        self.complete = None;
         // Inside the request body, Tab walks through the fields first.
         if self.focus == Focus::ReqBody {
             if dir > 0 && self.next_field(false) {
@@ -1391,6 +1775,7 @@ impl App {
     }
 
     fn focus_dir(&mut self, dx: i32, dy: i32) {
+        self.complete = None;
         let right_sidebar = self.project.config.ui.sidebar == "right";
         let in_sidebar = matches!(self.focus, Focus::Sidebar | Focus::Filter);
         if dx != 0 {
@@ -1426,6 +1811,7 @@ impl App {
     }
 
     fn subtab(&mut self, dir: isize) {
+        self.complete = None;
         let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
         let Some(t) = self.tab_mut() else { return };
         if resp {
@@ -1443,6 +1829,7 @@ impl App {
     }
 
     fn set_subtab(&mut self, i: usize) {
+        self.complete = None;
         let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
         let Some(t) = self.tab_mut() else { return };
         if resp {
@@ -1462,6 +1849,7 @@ impl App {
     }
 
     fn switch_tab(&mut self, dir: isize) {
+        self.complete = None;
         if self.tabs.is_empty() {
             return;
         }
@@ -1471,6 +1859,7 @@ impl App {
     }
 
     pub fn new_tab(&mut self, req: Request) {
+        self.complete = None;
         self.clear_transient_status();
         let id = self.alloc_id();
         let n = self.tabs.iter().filter(|t| t.path.is_none()).count() + 1;
@@ -1500,6 +1889,7 @@ impl App {
     }
 
     pub fn open_request(&mut self, rel: &str) {
+        self.complete = None;
         self.clear_transient_status();
         if let Some(i) = self
             .tabs
@@ -1541,6 +1931,7 @@ impl App {
     }
 
     fn close_tab(&mut self, force: bool) {
+        self.complete = None;
         let Some(t) = self.tab() else { return };
         if t.dirty() && !force {
             let id = t.id;
@@ -1975,6 +2366,11 @@ impl App {
             self.set_status("MCP tool discovery cancelled", StatusKind::Info);
             return;
         }
+        if let Some((_, task)) = self.schema_job.take() {
+            task.abort();
+            self.set_status("schema load cancelled", StatusKind::Info);
+            return;
+        }
         let Some(t) = self.tab_mut() else { return };
         let Some(r) = &t.running else {
             let watched = t.watch.take().is_some();
@@ -2094,6 +2490,7 @@ impl App {
                 job,
                 tab,
                 server,
+                open_picker,
                 result,
             } => {
                 if !self
@@ -2107,43 +2504,70 @@ impl App {
                 let active = self.tab().is_some_and(|t| {
                     t.id == tab && t.ed.kind == Kind::Mcp && t.ed.mcp_server.text() == server
                 });
-                if active && self.overlay.is_none() {
+                if active {
                     match result {
-                        Ok(tools) if tools.is_empty() => {
-                            self.set_status("the server has no tools", StatusKind::Info)
-                        }
                         Ok(tools) => {
-                            let items: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
-                            let details = tools
-                                .iter()
-                                .map(|t| t.description.clone().unwrap_or_default())
-                                .collect();
-                            let current = self.tab().and_then(|t| {
-                                items.iter().position(|name| *name == t.ed.mcp_tool.text())
-                            });
                             if let Some(t) = self.tab_mut() {
                                 t.mcp_tools = tools;
+                                t.mcp_tools_server = server.clone();
+                                t.mcp_tools_error = None;
                             }
-                            self.overlay = Some(Overlay::Picker(Picker::new(
-                                "Choose an MCP tool",
-                                items,
-                                details,
-                                PickAction::McpTool,
-                                current,
-                            )));
+                            if self.complete.is_some() {
+                                self.refresh_complete();
+                            } else if open_picker {
+                                let empty = self.tab().is_some_and(|t| t.mcp_tools.is_empty());
+                                if empty {
+                                    self.set_status("the server has no tools", StatusKind::Info);
+                                } else if let Some(t) = self.tab() {
+                                    let items: Vec<_> =
+                                        t.mcp_tools.iter().map(|t| t.name.clone()).collect();
+                                    let details: Vec<_> = t
+                                        .mcp_tools
+                                        .iter()
+                                        .map(|tool| tool.description.clone().unwrap_or_default())
+                                        .collect();
+                                    let current =
+                                        items.iter().position(|name| *name == t.ed.mcp_tool.text());
+                                    self.overlay = Some(Overlay::Picker(Picker::new(
+                                        "Choose an MCP tool",
+                                        items,
+                                        details,
+                                        PickAction::McpTool,
+                                        current,
+                                    )));
+                                }
+                            }
                         }
-                        Err(e) => self.set_status(format!("tools: {e}"), StatusKind::Error),
+                        Err(e) => {
+                            if let Some(t) = self.tab_mut() {
+                                t.mcp_tools_error = Some(e.clone());
+                                t.mcp_tools_server = server.clone();
+                            }
+                            if let Some(c) = &mut self.complete {
+                                // The popup reports the failure; it is not
+                                // retried until asked.
+                                c.loading = None;
+                                c.failed = Some("tools");
+                            }
+                            self.set_status(format!("tools: {e}"), StatusKind::Error);
+                        }
                     }
                 }
             }
             AppMsg::Schema {
                 tab,
+                job,
                 result,
                 open_picker,
                 template,
             } => {
+                if !self.schema_job.as_ref().is_some_and(|(id, _)| *id == job) {
+                    return;
+                }
+                self.schema_job = None;
                 let mut status = None;
                 let mut status_ok: Option<String> = None;
+                let mut failed = false;
                 if let Some(t) = self.tab_by_id(tab) {
                     match result {
                         Ok(svcs) => {
@@ -2174,8 +2598,16 @@ impl App {
                         Err(e) => {
                             status = Some(format!("schema: {e}"));
                             t.schema_error = Some(e);
+                            failed = true;
                         }
                     }
+                }
+                if failed && let Some(c) = &mut self.complete {
+                    // The popup reports the failure; it is not retried until asked.
+                    c.loading = None;
+                    c.failed = Some("schema");
+                } else if self.complete.is_some() {
+                    self.refresh_complete();
                 }
                 if let Some(s) = status {
                     self.set_status(s, StatusKind::Error);
@@ -2618,7 +3050,9 @@ impl App {
         )));
     }
 
-    fn load_mcp_tools(&mut self) {
+    /// Lists a server's tools. `open_picker` also shows the choose dialog;
+    /// completion passes `false` and only fills the tab's list.
+    fn load_mcp_tools(&mut self, open_picker: bool) {
         let Some(t) = self.tab().filter(|t| t.ed.kind == Kind::Mcp) else {
             return;
         };
@@ -2639,7 +3073,9 @@ impl App {
         }
         self.mcp_discovery_seq = self.mcp_discovery_seq.wrapping_add(1);
         let job = self.mcp_discovery_seq;
-        self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
+        if open_picker || self.complete.is_none() {
+            self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
+        }
         let task = self.rt.spawn(async move {
             let result = async {
                 let (scope, errors) = tokio::task::spawn_blocking(move || {
@@ -2665,6 +3101,7 @@ impl App {
                 job,
                 tab,
                 server,
+                open_picker,
                 result,
             });
         });
@@ -2690,18 +3127,25 @@ impl App {
         let tx = self.tx.clone();
         let svc = g.service.clone();
         let method = g.method.clone();
-        self.set_status(
-            format!(
-                "loading schema from {}…",
-                if matches!(g.schema, SchemaSource::Reflection) {
-                    resolved.uri.clone()
-                } else {
-                    "proto files".into()
-                }
-            ),
-            StatusKind::Info,
-        );
-        self.rt.spawn(async move {
+        if open_picker || self.complete.is_none() {
+            self.set_status(
+                format!(
+                    "loading schema from {}…",
+                    if matches!(g.schema, SchemaSource::Reflection) {
+                        resolved.uri.clone()
+                    } else {
+                        "proto files".into()
+                    }
+                ),
+                StatusKind::Info,
+            );
+        }
+        if let Some((_, task)) = self.schema_job.take() {
+            task.abort();
+        }
+        self.schema_seq = self.schema_seq.wrapping_add(1);
+        let job = self.schema_seq;
+        let task = self.rt.spawn(async move {
             let r = runner::load_schema(&root, &resolved, &g.schema, &cache, refresh, &tls).await;
             let template = match (&r, template) {
                 (Ok(s), true) => s.template(&svc, &method).ok(),
@@ -2709,11 +3153,13 @@ impl App {
             };
             let _ = tx.send(AppMsg::Schema {
                 tab: id,
+                job,
                 result: r.map(|s| s.services()),
                 open_picker,
                 template,
             });
         });
+        self.schema_job = Some((job, task));
     }
 
     fn open_grpc_method_picker(&mut self) {
@@ -2722,7 +3168,7 @@ impl App {
             self.load_schema(true, false, false);
             return;
         };
-        let current = format!("{}/{}", t.ed.service, t.ed.grpc_method);
+        let current = format!("{}/{}", t.ed.service(), t.ed.method());
         let mut items = Vec::new();
         let mut details = Vec::new();
         for s in &svcs {
@@ -3915,7 +4361,7 @@ impl App {
             "newgrpc" => self.new_tab(Request::new_grpc()),
             "newmcp" => self.new_tab(Request::new_mcp()),
             "mcpservers" => self.open_mcp_server_picker(),
-            "mcptools" => self.load_mcp_tools(),
+            "mcptools" => self.load_mcp_tools(true),
             "import" => {
                 if arg.is_empty() {
                     self.open_import("");
@@ -4177,6 +4623,17 @@ impl App {
     pub fn hints(&mut self) -> Vec<(String, String)> {
         let k = |s: &Self, a: Action| s.keymap.hint(a, s.vim);
         let mut v: Vec<(String, String)> = Vec::new();
+        if self.complete.is_some() && self.overlay.is_none() {
+            v.extend([
+                ("type".into(), "filter".into()),
+                ("↑↓".into(), "move".into()),
+                ("Enter/Tab".into(), "insert".into()),
+                ("Esc".into(), "close".into()),
+            ]);
+            v.push((k(self, Action::Palette), "commands".into()));
+            v.push((k(self, Action::Help), "all keys".into()));
+            return v;
+        }
         if let Some(ov) = &self.overlay {
             match ov {
                 Overlay::Palette(_) => v.extend([
@@ -5659,9 +6116,10 @@ impl App {
                 if let Some((svc, m)) = item.rsplit_once('/') {
                     let mut fill = false;
                     if let Some(t) = self.tab_mut() {
-                        let changed = t.ed.service != svc || t.ed.grpc_method != m;
-                        t.ed.service = svc.to_string();
-                        t.ed.grpc_method = m.to_string();
+                        let label = format!("{svc}/{m}");
+                        let changed = t.ed.grpc_method_text.text() != label;
+                        t.ed.grpc_method_text.set_text(&label);
+                        t.ed.grpc_method_text.move_to_end();
                         let msg = t.ed.message.text();
                         fill = changed && (msg.trim().is_empty() || msg.trim() == "{}");
                     }
@@ -6060,6 +6518,15 @@ impl App {
             }
             return;
         }
+        if let Hit::CompleteItem(i) = hit {
+            if let Some(c) = &mut self.complete {
+                // The list may have re-filtered since the frame was drawn.
+                c.sel = i.min(c.items.len().saturating_sub(1));
+            }
+            self.complete_accept();
+            return;
+        }
+        self.complete = None;
         match hit {
             Hit::Tab(i) => {
                 self.active = i;
@@ -6250,6 +6717,8 @@ impl App {
             Hit::SidebarBorder => self.drag = Some(Drag::Sidebar),
             Hit::SplitBorder => self.drag = Some(Drag::Split),
             Hit::Overlay(_) => {}
+            // Handled at the top of `click`, before the panes.
+            Hit::CompleteItem(_) => {}
         }
     }
 

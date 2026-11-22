@@ -8,6 +8,7 @@ use crate::app::*;
 use crate::theme::Theme;
 
 mod chrome;
+mod complete;
 mod kit;
 mod overlay;
 mod request;
@@ -16,6 +17,7 @@ mod sidebar;
 mod welcome;
 
 use chrome::*;
+use complete::*;
 use kit::*;
 use overlay::*;
 use request::*;
@@ -27,6 +29,7 @@ pub use kit::short_method;
 
 pub fn draw(app: &mut App, f: &mut Frame) {
     app.hits.clear();
+    app.areas.caret = None;
     let area = f.area();
     app.size = (area.width, area.height);
     let theme = app.theme.clone();
@@ -95,6 +98,9 @@ pub fn draw(app: &mut App, f: &mut Frame) {
     }
     if !zoom_side {
         draw_main(app, buf, main, &theme);
+    }
+    if app.overlay.is_none() {
+        draw_complete(app, buf, area, &theme);
     }
     draw_hints(app, buf, hint, &theme);
     let cursor = draw_status(app, buf, status, &theme);
