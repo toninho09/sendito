@@ -4,7 +4,8 @@ Everything Sendito does, grouped by area. Each section says where the feature
 lives (key, command, flag or config table) and links to the deeper document.
 Screenshots and recordings are in [media/](media/README.md).
 
-Sendito is a terminal API client for **HTTP**, **gRPC** and **MCP tools**. It
+Sendito is a terminal API client for **HTTP**, **gRPC**, **WebSocket** and
+**MCP tools**. It
 runs locally, works with the mouse, conventional keys or vim keys, and keeps
 requests as plain TOML files that you can version in git.
 
@@ -14,6 +15,7 @@ requests as plain TOML files that you can version in git.
 |---|---|---|---|
 | HTTP requests | yes | `sendito run` | [HTTP](#http) |
 | gRPC calls | yes | `sendito run` | [gRPC](#grpc) |
+| WebSocket sessions | yes | `sendito run` | [WebSocket](#websocket) |
 | MCP tool calls | yes | `sendito run` | [MCP](#mcp) |
 | Environments and secrets | yes | `--env`, `run` | [Variables and secrets](#variables-and-secrets) |
 | Scripts (set / extract / assert) | yes | `run` | [Scripts](#scripts) |
@@ -193,6 +195,52 @@ A request is one TOML file with `kind = "grpc"` ([FORMAT.md](../FORMAT.md#grpc-r
 ![A bidi stream: several messages sent and received](media/recordings/06-grpc-bidi-stream.gif)
 
 ![A gRPC request at 200×60](media/screenshots/200x60-dusk-grpc-unary.png)
+
+---
+
+## WebSocket
+
+A WebSocket request (`kind = "websocket"`) opens one session: the handshake, the
+frames in both directions, and the close. It is a request type of its own, like
+HTTP and gRPC ([FORMAT](../FORMAT.md#websocket-request)).
+
+* **URL**: `ws://` or `wss://` (`http://`/`https://` are accepted); a URL with no
+  scheme uses the Options tab's *Use TLS* toggle.
+* **Headers**: sent with the handshake, in file order. The upgrade headers
+  (`Connection`, `Upgrade`, `Sec-WebSocket-Version`, `Sec-WebSocket-Key`, `Host`)
+  are added by the client and shown in the Handshake tab of the response.
+* **Subprotocols**: offered in order; the server's choice is reported in the
+  response status and in the Log.
+* **Messages**: a JSON document of strings (text frames) and
+  `{ "binary": "base64" }` objects (binary frames), sent right after the
+  handshake. The editor validates the JSON as you type and never refuses to save
+  a half-typed document.
+* **Live session**: while the session is open, Send pushes the message editor's
+  content as one more frame, `Ctrl+W d` starts the close handshake and `Ctrl+W x`
+  aborts it. Frames the server sends appear as they arrive, and the last text
+  frame becomes the Body.
+* **Timing**: handshake, first frame and close, plus frame counters per
+  direction.
+* **Scripts**: assertions see the handshake headers (`header`), the close code
+  (`status`) and the last text frame received (`jsonpath`).
+* **Auth**: bearer, basic and API key (header or query), as for HTTP. OAuth 2 is
+  HTTP-only.
+* **TLS**: `[http.tls]` (custom CA, client certificate) and *Verify TLS* apply to
+  `wss://`, exactly as for HTTP.
+* **Proxy**: `[http] proxy` applies when it is an `http://` or `https://` URL,
+  tunnelled with `CONNECT`; an `https://` proxy is reached over TLS, verified
+  against `[http.tls] ca` when set.
+* **Deadline**: `[options] deadline_ms` ends the session after that time; the
+  handshake timeout comes from `[options] timeout_ms` or `[websocket]
+  timeout_ms`.
+* **Cookie jar**: optional; the jar's cookies go with the handshake and the
+  response's `Set-Cookie` headers are stored.
+
+`sendito run` on a WebSocket request opens the session, sends the message
+document, prints the text frames it receives on stdout and the handshake, the
+close code and the assertions on stderr. The exit code is 0 for a clean close
+(1000) with passing assertions, 1 for a failed assertion and 2 for a failed
+session.
 
 ---
 
@@ -546,7 +594,9 @@ knowing up front:
 * HTTP library differences: `Accept: */*` is added when you define none, HTTP/1
   header names go out Title-Case, and header order between different names may
   differ.
-* No JavaScript scripts; no HTTP/3 or WebSocket; no gRPC-Web.
+* No JavaScript scripts; no HTTP/3 or gRPC-Web.
+* WebSocket: HTTP(S) CONNECT proxies only (no SOCKS, no `proxy = "env"`), no
+  `permessage-deflate`, and `curl ws://…` is refused rather than imported.
 * gRPC ignores `[http] proxy`; OAuth endpoints ignore `[http.tls]` and the proxy.
 * Redirects are not followed while the cookie jar is enabled.
 * `zstd` and stacked `Content-Encoding` are shown as received.
@@ -570,6 +620,7 @@ place. `—` means it is described only here.
 | Cookie jar | [HTTP](#http) | [`--no-cookies`](CLI.md#sendito-run-request) | [FORMAT §jar](../FORMAT.md#cookie-jar) | `:cookies` |
 | Watch | [HTTP](#http) | — | `ui.watch_interval_s` | `Ctrl+W m`, `:watch` |
 | gRPC | [gRPC](#grpc) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §gRPC](../FORMAT.md#grpc-request) | `Ctrl+W d` |
+| WebSocket | [WebSocket](#websocket) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §WS](../FORMAT.md#websocket-request) | `Ctrl+W y`, `Ctrl+W d` |
 | MCP | [MCP](#mcp) | [CLI mcp](CLI.md#sendito-mcp-login-server--logout) | [FORMAT §MCP](../FORMAT.md#mcp-request) | F2, `:mcptools` |
 | MCP / HTTP OAuth | [MCP](#mcp) | [CLI auth](CLI.md#sendito-auth-login-identity--logout) | [FORMAT §config](../FORMAT.md#project-and-global-config) | `:auth login` |
 | Variables and secrets | [Variables](#variables-and-secrets) | [`--env`](CLI.md#sendito-run-request) | [FORMAT §vars](../FORMAT.md#variables) | `F4`, `Ctrl+W V` |

@@ -11,6 +11,7 @@ sendito-core.workspace = true
 sendito-http.workspace = true
 sendito-grpc.workspace = true
 sendito-mcp.workspace = true
+sendito-ws.workspace = true
 sendito-store.workspace = true
 sendito-import.workspace = true
 ratatui.workspace = true

@@ -59,6 +59,7 @@ actions! {
     Quit => "quit", "Quit Sendito";
     NewRequest => "new_request", "Open a new unsaved HTTP request tab";
     NewGrpcRequest => "new_grpc_request", "Open a new unsaved gRPC request tab";
+    NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
@@ -321,6 +322,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Quit, Global, Both, &["ctrl+w q", "ctrl+q"]),
         (NewRequest, Global, Both, &["ctrl+n", "ctrl+w t"]),
         (NewGrpcRequest, Global, Both, &["ctrl+w g"]),
+        (NewWsRequest, Global, Both, &["ctrl+w y"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
@@ -732,8 +734,8 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     ),
     ("…", "text cut short"),
     (
-        "→ ← ■ + in the gRPC Log tab",
-        "sent, received, final status, seconds since the call started",
+        "→ ← ■ + in the gRPC and WebSocket Log tabs",
+        "sent, received, final status, seconds since the session started",
     ),
     (
         "Headers (2)",
@@ -935,6 +937,27 @@ mod tests {
             km.keys_for(Action::TreeDelete, false)
                 .contains(&"Delete".to_string())
         );
+    }
+
+    #[test]
+    fn no_key_is_bound_twice() {
+        // A duplicate would silently shadow the earlier action in `lookup`.
+        let km = Keymap::defaults();
+        let mut seen: Vec<(Ctx, ModeSet, KeySeq)> = Vec::new();
+        for b in &km.bindings {
+            for k in &b.keys {
+                if let Some((ctx, modes, _)) = seen
+                    .iter()
+                    .find(|(c, m, s)| *c == b.ctx && *m == b.modes && s == k)
+                {
+                    panic!(
+                        "{k} is bound to two actions in {ctx:?} ({modes:?}): {:?}",
+                        b.action
+                    );
+                }
+                seen.push((b.ctx, b.modes, k.clone()));
+            }
+        }
     }
 
     #[test]

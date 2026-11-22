@@ -1,0 +1,10 @@
+### close: 4001 server closing
+GET /close/4001/server%20closing HTTP/1.1
+Host: 127.0.0.1:<port>
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: <sec-websocket-key>
+
+< text 7 trigger
+> close 19 4001 server closing

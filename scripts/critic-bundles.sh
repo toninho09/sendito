@@ -6,10 +6,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?usage: critic-bundles.sh OUTDIR}
 C="$OUT/correctness"; U="$OUT/ux"
-rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,mcp,environment,files,import} "$U"/{recordings,screenshots}
+rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,ws,mcp,environment,files,import} "$U"/{recordings,screenshots}
 
 # --- correctness: wire captures next to the request files and import inputs
-for kind in http grpc mcp; do
+for kind in http grpc ws mcp; do
   for f in tests/corpus/collection/$kind/*.toml; do
     n=$(basename "$f" .toml)
     cp "$f" "$C/$kind/$n.toml"
@@ -52,6 +52,13 @@ grpc/NAME.wire   what the gRPC echo server received for the call: the method pat
                  in proto/ (JSON, proto field names, keys sorted, default values omitted)
                  followed by the exact protobuf bytes of the message in base64. The last
                  line is what the client observed.
+ws/NAME.toml     a saved WebSocket request.
+ws/NAME.wire     the handshake head the WebSocket echo server received verbatim (the
+                 random Sec-WebSocket-Key and the generated x-request-id appear as
+                 <sec-websocket-key> and <x-request-id>; the port as <port>), then one
+                 line per frame: "<" received by the server, ">" sent by it, the frame
+                 kind, the payload length and the payload (text as text, binary as
+                 base64). The first line is the close code the client ended with.
 mcp/NAME.toml    a saved MCP tool call; server definitions are in environment/config.toml.
 mcp/NAME.wire    the HTTP request lines, headers and compact JSON-RPC bodies received
                  by the echo server. The dynamically assigned port and session ID are
@@ -100,6 +107,18 @@ hold random values generated for each run; in the captures they appear as
 <base64 of "ana:" + secret:NAME>. Paths in requests are relative to the collection
 root, whose files/ directory is copied here (binary files as hex).
 
+WebSocket rules that matter here: the handshake is one HTTP/1.1 GET with the
+upgrade headers written by the library (Host, Connection: Upgrade, Upgrade:
+websocket, Sec-WebSocket-Version: 13, a random Sec-WebSocket-Key), then the
+request's headers in file order and Sec-WebSocket-Protocol when subprotocols are
+set. The message document is sent right after the handshake, in order, with its
+{{variables}} rendered; text frames carry the UTF-8 of the string and binary
+frames the decoded base64. Server pings are answered with a pong carrying the
+same payload. The client closes with code 1000 and waits at most 5 s for the
+peer's answer; a session deadline also closes with 1000, with a
+"deadline … reached" reason. Every string field may hold {{placeholders}},
+which are rendered when the session opens.
+
 import/postman/input.json                a Postman collection that was imported;
 import/postman/output/                    the request files it produced (one per request);
 import/postman/collection-variables.toml  the collection variables it produced;
@@ -134,6 +153,9 @@ would make it clear.
 - Scripts, assertions and extracted variables (Results tab).
 - gRPC: schema from reflection or .proto files, a message template, streaming with a
   Log tab (message log, legend pinned above it), several messages per stream, end of stream.
+- WebSocket: one session per request (handshake, headers, subprotocols, a JSON message
+  document, live frames in both directions, close code), a Handshake tab and a Log tab;
+  Send on an open session pushes one more frame and Ctrl+W d closes it.
 - Completion (Ctrl+Space, or automatic at a key position): gRPC message keys and MCP
   argument keys, the gRPC method and the MCP server/tool names; type to filter,
   Enter/Tab inserts, Esc closes, the hint row describes the open list.

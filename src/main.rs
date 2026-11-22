@@ -15,7 +15,7 @@ use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
 #[command(
     name = "sendito",
     version,
-    about = "Terminal API client for HTTP, gRPC and MCP tools",
+    about = "Terminal API client for HTTP, gRPC, WebSocket and MCP tools",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -518,6 +518,7 @@ fn ctx_for(
         env: env.clone(),
         schemas,
         grpc_deadline_ms: project.config.grpc.deadline_ms,
+        ws_timeout_ms: project.config.websocket.timeout_ms,
         mask_echoed_secrets: false,
         cookie_jar: project.config.http.cookie_jar && !no_cookies,
         oauth: Some(runner::OAuthRunInfo::of(project)),
@@ -730,6 +731,85 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                 ExitCode::SUCCESS
             }
         }
+        Request::Ws(w) => {
+            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
+            drop(ctl_tx);
+            // Secrets in the resolved URL (an API key in the query) must not
+            // reach the log; `scope` itself moves into the session.
+            let url_secrets = scope.secret_values();
+            let run = runner::exec_ws(&ctx, &w, scope, errors, utx, ctl_rx);
+            let mut code = 1006i64;
+            let mut fails = 0;
+            let print = async {
+                while let Some(u) = urx.recv().await {
+                    match u {
+                        runner::WsUpdate::Started { resolved } => {
+                            eprintln!(
+                                "connecting to {}",
+                                sendito_core::vars::scrub(&resolved.url, &url_secrets)
+                            );
+                        }
+                        runner::WsUpdate::Event(sendito_ws::Event::Handshake {
+                            status,
+                            ref headers,
+                            ..
+                        }) => {
+                            eprintln!("handshake {status}");
+                            if include {
+                                for (k, v) in headers {
+                                    eprintln!("{k}: {v}");
+                                }
+                                eprintln!();
+                            }
+                        }
+                        runner::WsUpdate::Event(sendito_ws::Event::Received {
+                            kind,
+                            preview,
+                            ..
+                        }) => match kind {
+                            sendito_ws::FrameKind::Text => {
+                                let _ = out.write_all(preview.as_bytes());
+                                if !preview.ends_with('\n') {
+                                    let _ = out.write_all(b"\n");
+                                }
+                            }
+                            _ => eprintln!("{} frame: {preview}", kind.as_str()),
+                        },
+                        runner::WsUpdate::Event(sendito_ws::Event::Finished {
+                            code: c,
+                            reason,
+                            ..
+                        }) => {
+                            code = c as i64;
+                            eprintln!(
+                                "close {c}{}",
+                                if reason.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {reason}")
+                                }
+                            );
+                        }
+                        runner::WsUpdate::Event(sendito_ws::Event::Sent { kind, size, .. }) => {
+                            eprintln!("sent {} frame ({size} B)", kind.as_str());
+                        }
+                        runner::WsUpdate::Error(e) => {
+                            eprintln!("sendito: session failed: {e}");
+                        }
+                        runner::WsUpdate::Done { scripts, .. } => fails = print_scripts(&scripts),
+                    }
+                }
+            };
+            tokio::join!(run, print);
+            if code != 1000 {
+                return ExitCode::from(2);
+            }
+            if fails > 0 {
+                return ExitCode::from(1);
+            }
+            ExitCode::SUCCESS
+        }
         Request::Mcp(m) => {
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
             let info = runner::McpRunInfo::of(&project);
@@ -874,6 +954,7 @@ async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCo
         let kind = match &req {
             Request::Http(_) => "http",
             Request::Grpc(_) => "grpc",
+            Request::Ws(_) => "websocket",
             Request::Mcp(_) => "mcp",
         };
         let un = runner::unresolved(&req, &scope);
@@ -1054,6 +1135,61 @@ async fn run_one(
                 let fails = scripts.failed_asserts();
                 Ran {
                     outcome: if fails > 0 { "fail" } else { "pass" },
+                    label,
+                    scripts,
+                }
+            }
+        }
+        Request::Ws(w) => {
+            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
+            drop(ctl_tx);
+            let run = runner::exec_ws(ctx, w, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
+            let mut code = 1006i64;
+            let mut label = String::from("close 1006");
+            let mut error: Option<String> = None;
+            let mut scripts = runner::ScriptResults::default();
+            let collect = async {
+                while let Some(u) = urx.recv().await {
+                    match u {
+                        runner::WsUpdate::Event(sendito_ws::Event::Finished {
+                            code: c,
+                            reason,
+                            ..
+                        }) => {
+                            code = c as i64;
+                            label = if reason.is_empty() {
+                                format!("close {c}")
+                            } else {
+                                format!("close {c}: {reason}")
+                            };
+                        }
+                        runner::WsUpdate::Error(e) => {
+                            error = Some(e.clone());
+                            label = e;
+                        }
+                        runner::WsUpdate::Done { scripts: s, .. } => scripts = s,
+                        _ => {}
+                    }
+                }
+            };
+            tokio::join!(run, collect);
+            if let Some(e) = error {
+                Ran {
+                    outcome: "error",
+                    label: e,
+                    scripts,
+                }
+            } else if code != 1000 {
+                Ran {
+                    outcome: "error",
+                    label,
+                    scripts,
+                }
+            } else {
+                let failed_asserts = scripts.failed_asserts();
+                Ran {
+                    outcome: if failed_asserts > 0 { "fail" } else { "pass" },
                     label,
                     scripts,
                 }

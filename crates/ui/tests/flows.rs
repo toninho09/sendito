@@ -4,25 +4,28 @@
 mod common;
 
 use common::{Harness, Must};
-use sendito_testkit::{grpc_echo, http_echo};
+use sendito_testkit::{grpc_echo, http_echo, ws_echo};
 
 struct Servers {
     http: http_echo::HttpEcho,
     grpc: grpc_echo::GrpcEcho,
+    ws: ws_echo::WsEcho,
     _rt: tokio::runtime::Runtime,
 }
 
 fn servers() -> Servers {
     let rt = tokio::runtime::Runtime::new().must();
-    let (http, grpc) = rt.block_on(async {
+    let (http, grpc, ws) = rt.block_on(async {
         (
             http_echo::start().await.must(),
             grpc_echo::start().await.must(),
+            ws_echo::start().await.must(),
         )
     });
     Servers {
         http,
         grpc,
+        ws,
         _rt: rt,
     }
 }
@@ -1241,4 +1244,67 @@ fn flow_completion_closes_on_navigation() {
         h.app.overlay.is_some(),
         "Ctrl+P opened the palette, not the list"
     );
+}
+
+#[test]
+fn flow_websocket_session() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    // A WebSocket tab from the palette, then the URL and the opening message.
+    h.key("ctrl+p");
+    h.type_text(":newws");
+    h.key("enter");
+    assert_eq!(h.app.tabs[h.app.active].ed.kind, sendito_ui::tab::Kind::Ws);
+    h.type_text(&s.ws.url("/echo"));
+    h.key("f5");
+    h.wait_for("101 Switching Protocols", 10);
+    // The editor holds the message document; sending pushes one more frame.
+    h.key("alt+2 ctrl+w k enter");
+    h.key("ctrl+a");
+    h.type_text("\"from the editor\"");
+    h.key("f5");
+    // The status line confirms the frame; the server capture proves the payload.
+    h.wait_for("frame 1 sent", 10);
+    h.key("ctrl+w d");
+    h.wait_idle(10);
+    let caps = s.ws.take();
+    let cap = caps.first().expect("a session reached the server");
+    assert!(cap.head().starts_with("GET /echo HTTP/1.1"));
+    let sent: Vec<&Vec<u8>> = cap
+        .frames
+        .iter()
+        .filter(|(out, k, _)| !out && k == "text")
+        .map(|(_, _, p)| p)
+        .collect();
+    // The editor content is the frame, sent verbatim (quotes included).
+    assert_eq!(sent, vec![&b"\"from the editor\"".to_vec()]);
+    // The close handshake reached the server with 1000.
+    let closed = cap
+        .frames
+        .iter()
+        .any(|(out, k, p)| !out && k == "close" && String::from_utf8_lossy(p).starts_with("1000"));
+    assert!(closed, "{:?}", cap.frames);
+}
+
+#[test]
+fn flow_websocket_snapshot_state() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.key("ctrl+p");
+    h.type_text(":newws");
+    h.key("enter");
+    h.type_text(&s.ws.url("/echo"));
+    h.key("f5");
+    h.wait_for("101 Switching Protocols", 10);
+    // The Messages tab is the second request sub-tab, focused on the document.
+    h.key("alt+2");
+    h.key("ctrl+w k");
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("Messages"), "{sc}");
+    assert_eq!(
+        h.app.tab().and_then(|t| t.current_field()),
+        Some(sendito_ui::tab::Field::WsMessages)
+    );
+    assert!(sc.contains("WS"), "{sc}");
 }

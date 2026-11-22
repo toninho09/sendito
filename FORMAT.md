@@ -254,6 +254,79 @@ value = "Ana"
   also sends `content-type: application/grpc`, `te: trailers`,
   `user-agent: sendito/<version> tonic/<version>` and, with a deadline, `grpc-timeout`.
 
+## WebSocket request
+
+```toml
+kind = "websocket"
+url = "wss://{{host}}/chat"      # ws:// = plaintext, wss:// (or https://) = TLS
+subprotocols = ["chat.v2", "chat"] # sent as Sec-WebSocket-Protocol, in order
+
+messages = '''
+[
+  "hello",
+  { "binary": "AAEC" }
+]
+'''
+
+[options]
+timeout_ms = 10000               # handshake timeout, in ms (omit: [websocket] timeout_ms)
+deadline_ms = 60000              # optional: ends the whole session
+verify_tls = true                # default true
+tls = false                      # TLS when the URL has no scheme
+cookies = false                  # replay the cookie jar in the handshake
+
+[[headers]]
+name = "origin"
+value = "https://app.example"
+
+[auth]                           # same as HTTP, except OAuth
+type = "bearer"
+token = "{{token}}"
+
+[[scripts.assert]]               # status = the close code; header = handshake headers;
+from = "jsonpath"                #   jsonpath = the last text frame received
+expr = "$.ok"
+op = "eq"
+value = "true"
+```
+
+* `messages` is JSON text: an array of strings (text frames) and
+  `{ "binary": "base64" }` objects (binary frames), or one such value alone. An
+  empty array sends nothing. Every string may hold `{{placeholders}}`, rendered
+  when the session opens (like the gRPC message and MCP arguments). It is stored
+  and read as written — a half-typed document is a valid file — and rejected only
+  when the session opens.
+* A URL without a scheme uses `[options] tls`. `http://` and `https://` are
+  accepted and mean `ws://` and `wss://`.
+* In the UI, Send on an open session pushes the message editor's content as one
+  frame; `Ctrl+W d` starts the close handshake and `Ctrl+W x` aborts it.
+
+### What goes on the wire
+
+The handshake is one HTTP/1.1 request: `GET <path> HTTP/1.1` with `Host`,
+`Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version: 13`, a
+random `Sec-WebSocket-Key` (both are written by the library), the configured
+`[[headers]]` in file order, `Sec-WebSocket-Protocol` when `subprotocols` is set,
+and the auth header the request defines (`Authorization`, or the API key header
+or query parameter). No `permessage-deflate` is offered, so frames are never
+compressed. Redirects are not followed. A cookie jar that is enabled adds one
+`Cookie` header, and the response's `Set-Cookie` headers are stored.
+
+Frames carry exactly what the request defines: text frames the UTF-8 of the
+message, binary frames the decoded base64. Pings from the server are answered
+with a pong carrying the same payload (RFC 6455). The client closes with code
+1000 and waits at most 5 s for the peer's close answer before reporting the
+connection as dropped (1006). A session deadline (`[options] deadline_ms`) ends
+the session the same way, with a `deadline of N ms reached` reason, so the close
+code stays 1000. The close code and reason are the `status` and the assertion
+`value` source for scripts, and the last text frame received is the body.
+
+`[http] proxy` applies when it is an `http://` or `https://` URL (tunnelled with
+`CONNECT`, credentials from the URL sent as `Proxy-Authorization`). An `https://`
+proxy is itself reached over TLS, verified against `[http.tls] ca` when set and
+the platform roots otherwise. `socks*` proxies and `proxy = "env"` are refused
+for WebSocket sessions (`docs/DEBT.md`).
+
 ## MCP request
 
 An MCP request calls one tool on a server configured in `[mcp.servers]`:
@@ -408,6 +481,10 @@ scopes = ["read"]
 
 [grpc]
 deadline_ms = 0          # default deadline when a request sets none; 0 = none
+
+[websocket]
+timeout_ms = 10000       # default handshake timeout when a request sets none
+                         # (0 = no limit: wait for the server)
 
 [mcp]
 timeout_ms = 30000

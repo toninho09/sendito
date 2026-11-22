@@ -1,0 +1,8 @@
+kind = "websocket"
+url = "{{ws_tls_url}}/echo"
+messages = '''
+"over tls"
+'''
+
+[options]
+verify_tls = false

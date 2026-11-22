@@ -1,0 +1,10 @@
+kind = "websocket"
+url = "{{ws_url}}/echo"
+messages = '''
+"basic"
+'''
+
+[auth]
+type = "basic"
+username = "ana"
+password = "{{basic_password}}"

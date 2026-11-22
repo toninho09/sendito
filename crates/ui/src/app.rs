@@ -22,7 +22,10 @@ use crate::editor::{Clipboard, Outcome, TextEditor, VimMode};
 use crate::form::TableOutcome;
 use crate::keymap::{Action, Chord, Ctx, Keymap, Lookup};
 use crate::overlay::*;
-use crate::runner::{self, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache};
+use crate::runner::{
+    self, Control, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache, WsControl,
+    WsUpdate,
+};
 use crate::tab::{Field, Kind, Response, Running, Summary, Tab, Watch};
 use crate::theme::Theme;
 use crate::tree::{RowKind, TreeState};
@@ -147,6 +150,10 @@ pub enum AppMsg {
         tab: u64,
         update: GrpcUpdate,
     },
+    Ws {
+        tab: u64,
+        update: runner::WsUpdate,
+    },
     Mcp {
         tab: u64,
         update: runner::McpUpdate,
@@ -205,6 +212,12 @@ pub enum ScopeThen {
     Grpc {
         tab: u64,
         req: Box<GrpcRequest>,
+        name: String,
+        path: Option<String>,
+    },
+    Ws {
+        tab: u64,
+        req: Box<WebSocketRequest>,
         name: String,
         path: Option<String>,
     },
@@ -632,6 +645,7 @@ impl App {
         match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(tab.ed.url.vim),
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(tab.ed.target.vim),
+            Focus::Bar(0) if tab.ed.kind == Kind::Ws => Some(tab.ed.url.vim),
             Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(tab.ed.mcp_server.vim),
             Focus::ReqBody => match tab.current_field() {
                 Some(f) if f.is_table() => tab
@@ -726,6 +740,7 @@ impl App {
         match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(&mut tab.ed.url),
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.target),
+            Focus::Bar(0) if tab.ed.kind == Kind::Ws => Some(&mut tab.ed.url),
             Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(&mut tab.ed.mcp_server),
             Focus::Bar(1) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.grpc_method_text),
             Focus::ReqBody => {
@@ -779,6 +794,7 @@ impl App {
         let ed = match focus {
             Focus::Bar(1) if tab.ed.kind == Kind::Http => &mut tab.ed.url,
             Focus::Bar(0) if tab.ed.kind == Kind::Grpc => &mut tab.ed.target,
+            Focus::Bar(0) if tab.ed.kind == Kind::Ws => &mut tab.ed.url,
             Focus::Bar(0) if tab.ed.kind == Kind::Mcp => &mut tab.ed.mcp_server,
             Focus::Bar(1) if tab.ed.kind == Kind::Grpc => &mut tab.ed.grpc_method_text,
             Focus::ReqBody => {
@@ -939,7 +955,7 @@ impl App {
         }
         let vim = self.vim;
         let is_text = (kind == Kind::Http && part == 1)
-            || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0)
+            || (matches!(kind, Kind::Grpc | Kind::Ws | Kind::Mcp) && part == 0)
             || (kind == Kind::Grpc && part == 1);
         if is_text {
             let Some(out) = self.with_text(|e, cb| e.handle_key(&key, vim, cb)) else {
@@ -956,7 +972,7 @@ impl App {
                 }
                 Outcome::Submit => {
                     self.complete = None;
-                    if kind == Kind::Http {
+                    if matches!(kind, Kind::Http | Kind::Ws) {
                         self.dispatch(Action::Send);
                     } else if kind == Kind::Mcp {
                         self.focus = Focus::ReqTabs;
@@ -1183,6 +1199,7 @@ impl App {
                     .and_then(|s| s.methods.iter().find(|mi| mi.name == m))
                     .map(|mi| mi.input_fields.clone())
             }
+            Kind::Ws => None,
             Kind::Mcp => {
                 let tools = self.mcp_tools(t);
                 tools
@@ -1517,6 +1534,7 @@ impl App {
             Action::Quit => self.request_quit(),
             Action::NewRequest => self.new_tab(Request::new_http()),
             Action::NewGrpcRequest => self.new_tab(Request::new_grpc()),
+            Action::NewWsRequest => self.new_tab(Request::new_ws()),
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
             Action::PrevTab => self.switch_tab(-1),
@@ -1702,7 +1720,8 @@ impl App {
     }
 
     /// The top bar part to focus for the active tab: HTTP has a method chip
-    /// (part 0) and a URL (part 1); gRPC and MCP only have the address/server.
+    /// (part 0) and a URL (part 1); gRPC, WebSocket and MCP only have the
+    /// address/server (part 0).
     fn top_bar_focus(&self) -> Focus {
         if self.tab().is_some_and(|t| t.ed.kind == Kind::Http) {
             Focus::Bar(1)
@@ -1718,7 +1737,8 @@ impl App {
         }
         if !self.tabs.is_empty() {
             v.push(Focus::Bar(0));
-            if self.tab().is_some_and(|t| t.ed.kind != Kind::Mcp) {
+            // Only gRPC has a second bar part (the method).
+            if self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc) {
                 v.push(Focus::Bar(1));
             }
             v.extend([
@@ -1869,8 +1889,10 @@ impl App {
         } else {
             format!("untitled {n}")
         };
-        let blank =
-            req == Request::new_http() || req == Request::new_grpc() || req == Request::new_mcp();
+        let blank = req == Request::new_http()
+            || req == Request::new_grpc()
+            || req == Request::new_ws()
+            || req == Request::new_mcp();
         let mut tab = Tab::new(id, None, name, &req, None);
         tab.ed.set_vim(self.vim);
         tab.refresh_model();
@@ -1881,7 +1903,7 @@ impl App {
         }
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
-        self.focus = if matches!(req, Request::Grpc(_) | Request::Mcp(_)) {
+        self.focus = if matches!(req, Request::Grpc(_) | Request::Mcp(_) | Request::Ws(_)) {
             Focus::Bar(0)
         } else {
             Focus::Bar(1)
@@ -2070,20 +2092,30 @@ impl App {
             return;
         };
         tab.refresh_model();
-        // On an open client/bidi stream, Send pushes the editor content as more messages.
+        // On an open client/bidi stream or WebSocket session, Send pushes the
+        // editor content as more input.
         if let Some(r) = &tab.running {
             if r.streaming_input {
+                let ws = tab.ed.kind == Kind::Ws;
                 let json = tab.ed.message.text();
-                let compact = serde_json::from_str::<serde_json::Value>(&json)
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| json.split_whitespace().collect::<Vec<_>>().join(" "));
+                let compact = if ws {
+                    json.clone()
+                } else {
+                    serde_json::from_str::<serde_json::Value>(&json)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| json.split_whitespace().collect::<Vec<_>>().join(" "))
+                };
                 let shown: String = if compact.chars().count() > 32 {
                     compact.chars().take(31).chain(['…']).collect()
                 } else {
                     compact
                 };
                 if let Some(c) = &r.control {
-                    let _ = c.send(GrpcControl::Send(json));
+                    let _ = c.send(if ws {
+                        Control::Ws(WsControl::Text(json))
+                    } else {
+                        Control::Grpc(GrpcControl::Send(json))
+                    });
                 }
                 // Select the sent text so the next message can be typed over it.
                 tab.ed.message.select_all();
@@ -2091,16 +2123,24 @@ impl App {
                     .response
                     .as_ref()
                     .map(|r| {
-                        r.grpc_events
-                            .iter()
-                            .filter(|e| matches!(e, sendito_grpc::Event::Sent { .. }))
-                            .count()
+                        if ws {
+                            r.ws_events
+                                .iter()
+                                .filter(|e| matches!(e, sendito_ws::Event::Sent { .. }))
+                                .count()
+                        } else {
+                            r.grpc_events
+                                .iter()
+                                .filter(|e| matches!(e, sendito_grpc::Event::Sent { .. }))
+                                .count()
+                        }
                     })
                     .unwrap_or(0)
                     + 1;
                 let end = self.keymap.hint(Action::EndStream, self.vim);
+                let noun = if ws { "frame" } else { "message" };
                 self.set_status(
-                    format!("message {sent} sent: {shown} · {end} ends the stream"),
+                    format!("{noun} {sent} sent: {shown} · {end} ends the stream"),
                     StatusKind::Ok,
                 );
                 return;
@@ -2120,6 +2160,13 @@ impl App {
                 "choose a method first: Enter on the method field lists the services",
                 StatusKind::Warn,
             );
+            return;
+        }
+        if let Request::Ws(w) = &req
+            && w.url.trim().is_empty()
+        {
+            self.focus = Focus::Bar(0);
+            self.set_status("enter a ws:// or wss:// URL first", StatusKind::Warn);
             return;
         }
         if let Request::Mcp(m) = &req
@@ -2206,6 +2253,12 @@ impl App {
                 name,
                 path,
             },
+            Request::Ws(w) => ScopeThen::Ws {
+                tab: id,
+                req: Box::new(w),
+                name,
+                path,
+            },
             Request::Mcp(m) => ScopeThen::Mcp {
                 tab: id,
                 req: Box::new(m),
@@ -2255,6 +2308,7 @@ impl App {
             env: self.active_env.clone(),
             schemas: self.schemas.clone(),
             grpc_deadline_ms: self.project.config.grpc.deadline_ms,
+            ws_timeout_ms: self.project.config.websocket.timeout_ms,
             mask_echoed_secrets: true,
             cookie_jar: self.project.config.http.cookie_jar,
             oauth: Some(runner::OAuthRunInfo::of(&self.project)),
@@ -2302,7 +2356,7 @@ impl App {
                 }
                 let ctx = self.run_ctx(name, path);
                 let (utx, mut urx) = mpsc::unbounded_channel::<GrpcUpdate>();
-                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<GrpcControl>();
+                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<Control>();
                 let fwd = tx.clone();
                 let task = self.rt.spawn(async move {
                     let run = runner::exec_grpc(&ctx, &req, scope, errors, utx, ctx_rx);
@@ -2318,6 +2372,36 @@ impl App {
                 {
                     r.task = task;
                     r.control = Some(ctx_tx);
+                }
+            }
+            ScopeThen::Ws {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let (utx, mut urx) = mpsc::unbounded_channel::<runner::WsUpdate>();
+                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<Control>();
+                let fwd = tx.clone();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_ws(&ctx, &req, scope, errors, utx, ctx_rx);
+                    let forward = async {
+                        while let Some(u) = urx.recv().await {
+                            let _ = fwd.send(AppMsg::Ws { tab, update: u });
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                    r.control = Some(ctx_tx);
+                    r.streaming_input = true;
                 }
             }
             ScopeThen::Mcp {
@@ -2385,8 +2469,12 @@ impl App {
             );
             return;
         };
+        let kind = t.ed.kind;
         if let Some(c) = &r.control {
-            let _ = c.send(GrpcControl::Cancel);
+            let _ = c.send(match kind {
+                Kind::Ws => Control::Ws(WsControl::Cancel),
+                _ => Control::Grpc(GrpcControl::Cancel),
+            });
             return;
         }
         if let Some(r) = t.running.take() {
@@ -2409,14 +2497,165 @@ impl App {
         let Some(t) = self.tab_mut() else { return };
         match t.running.as_mut() {
             Some(r) if r.streaming_input => {
+                let ws = t.ed.kind == Kind::Ws;
                 if let Some(c) = &r.control {
-                    let _ = c.send(GrpcControl::EndStream);
+                    let _ = c.send(if ws {
+                        Control::Ws(WsControl::EndStream)
+                    } else {
+                        Control::Grpc(GrpcControl::EndStream)
+                    });
                 }
                 r.streaming_input = false;
                 // Nothing more can be sent: drop the "type over it" selection.
                 t.ed.message.anchor = None;
             }
-            _ => self.set_status("no open client stream", StatusKind::Info),
+            _ => self.set_status("no open stream or session", StatusKind::Info),
+        }
+    }
+
+    /// WebSocket session progress: same shape as the gRPC log.
+    fn on_ws(&mut self, tab_id: u64, u: WsUpdate) {
+        let mut status: Option<(String, StatusKind)> = None;
+        let mut updates = Vec::new();
+        let Some(t) = self.tab_by_id(tab_id) else {
+            return;
+        };
+        let resp = t.response.get_or_insert_with(Response::new);
+        // Follow the log while the cursor is at its end.
+        let before = resp.messages.row_count();
+        let follow = resp.messages.cursor + 2 >= before;
+        match u {
+            WsUpdate::Started { resolved } => {
+                resp.summary.status = String::new();
+                // The resolved URL can carry an API key in its query string.
+                resp.messages
+                    .doc
+                    .append_text(&format!("connecting to {}\n", mask_url(&resolved.url)));
+            }
+            WsUpdate::Event(ev) => {
+                resp.messages.doc.append_text(&ws_event_text(&ev));
+                match &ev {
+                    sendito_ws::Event::Handshake {
+                        status,
+                        headers,
+                        subprotocol,
+                        ..
+                    } => {
+                        if *status == 101 {
+                            let sub = subprotocol
+                                .as_ref()
+                                .map(|s| format!(" · subprotocol {s}"))
+                                .unwrap_or_default();
+                            resp.summary.status = format!("101 Switching Protocols{sub}");
+                            resp.summary.ok = true;
+                        } else {
+                            resp.summary.status = format!("handshake answered {status}");
+                            resp.summary.ok = false;
+                        }
+                        resp.headers = crate::tab::wrapped(Doc::text(&ws_headers_text(headers)));
+                    }
+                    sendito_ws::Event::Received { kind, preview, .. } => {
+                        if *kind == sendito_ws::FrameKind::Text {
+                            resp.set_body(Doc::text(&format!("{preview}\n")));
+                        }
+                    }
+                    sendito_ws::Event::Finished {
+                        code, reason, at, ..
+                    } => {
+                        let label = format!(
+                            "close {code}{}",
+                            if reason.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {reason}")
+                            }
+                        );
+                        resp.summary.status = if *code == 1000 && reason.is_empty() {
+                            "closed cleanly (1000)".into()
+                        } else {
+                            label.clone()
+                        };
+                        resp.summary.ok = *code == 1000;
+                        resp.summary.time_ms = Some(at.as_secs_f64() * 1000.0);
+                        if *code != 1000 {
+                            resp.summary.error = Some(label);
+                        }
+                    }
+                    _ => {}
+                }
+                resp.ws_events.push(ev);
+                let size: usize = resp
+                    .ws_events
+                    .iter()
+                    .filter_map(|e| match e {
+                        sendito_ws::Event::Received { size, .. } => Some(*size),
+                        _ => None,
+                    })
+                    .sum();
+                resp.summary.size = Some(size as u64);
+                resp.timing = crate::tab::wrapped(Doc::text(&ws_timing_text(&resp.ws_events)));
+            }
+            WsUpdate::Error(e) => {
+                resp.messages.doc.append_text(&format!("error: {e}\n"));
+                if resp.ws_events.is_empty() {
+                    resp.summary.status = "Error".into();
+                    resp.summary.error = Some(e.clone());
+                    resp.set_body_wrapped(format!("Session failed:\n\n{e}\n"));
+                }
+                status = Some((e, StatusKind::Error));
+            }
+            WsUpdate::Done {
+                scripts,
+                scope_errors,
+            } => {
+                t.running = None;
+                let text = messages_text(&scripts, &scope_errors, &[]);
+                if !text.trim().is_empty() {
+                    resp.messages.doc.append_text(&format!("\n{text}"));
+                }
+                updates = scripts.updates();
+                let fails = scripts.failed_asserts();
+                let result = if resp.summary.status.is_empty() {
+                    "session finished".to_string()
+                } else {
+                    format!("session finished: {}", resp.summary.status)
+                };
+                let ok = resp.summary.ok;
+                status = Some(if scripts.asserts.is_empty() {
+                    (
+                        result,
+                        if ok {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else if fails == 0 {
+                    (
+                        format!("{result} · {} passed", assertions(scripts.asserts.len())),
+                        if ok {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else {
+                    (
+                        format!(
+                            "{result} · {fails} of {} failed (see Log)",
+                            assertions(scripts.asserts.len())
+                        ),
+                        StatusKind::Error,
+                    )
+                });
+            }
+        }
+        if follow {
+            resp.messages.bottom();
+        }
+        self.apply_updates(updates);
+        if let Some((s, k)) = status {
+            self.set_status(s, k);
         }
     }
 
@@ -2428,6 +2667,7 @@ impl App {
             }
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
+            AppMsg::Ws { tab, update } => self.on_ws(tab, update),
             AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
             AppMsg::OAuthUrl { job, url } => {
                 if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
@@ -3460,7 +3700,12 @@ impl App {
             choices: vec![
                 (
                     "Type".into(),
-                    vec!["HTTP".into(), "gRPC".into(), "MCP".into()],
+                    vec![
+                        "HTTP".into(),
+                        "gRPC".into(),
+                        "WebSocket".into(),
+                        "MCP".into(),
+                    ],
                     0,
                 ),
                 self.folder_choice(),
@@ -4399,6 +4644,7 @@ impl App {
             "q!" | "quit!" => self.quit = true,
             "new" => self.new_tab(Request::new_http()),
             "newgrpc" => self.new_tab(Request::new_grpc()),
+            "newws" => self.new_tab(Request::new_ws()),
             "newmcp" => self.new_tab(Request::new_mcp()),
             "mcpservers" => self.open_mcp_server_picker(),
             "mcptools" => self.load_mcp_tools(true),
@@ -5516,6 +5762,108 @@ fn grpc_timing_text(events: &[sendito_grpc::Event]) -> String {
     s
 }
 
+fn ws_event_text(e: &sendito_ws::Event) -> String {
+    use sendito_ws::Event::*;
+    match e {
+        Handshake {
+            status,
+            subprotocol,
+            at,
+            ..
+        } => format!(
+            "{:12} +{:>8.3}s  ← handshake  {status}{}\n",
+            "",
+            at.as_secs_f64(),
+            subprotocol
+                .as_ref()
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default()
+        ),
+        Sent {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => format!(
+            "{} +{:>8.3}s  → sent {}     ({size} B) {}\n",
+            clock(*wall),
+            at.as_secs_f64(),
+            kind.as_str(),
+            preview
+        ),
+        Received {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => format!(
+            "{} +{:>8.3}s  ← received {} ({size} B) {}\n",
+            clock(*wall),
+            at.as_secs_f64(),
+            kind.as_str(),
+            preview
+        ),
+        Finished { code, reason, at } => format!(
+            "{:12} +{:>8.3}s  ■ close      {code}{}{reason}\n",
+            "",
+            at.as_secs_f64(),
+            if reason.is_empty() { "" } else { ": " }
+        ),
+    }
+}
+
+fn ws_headers_text(headers: &[(String, String)]) -> String {
+    let mut s = String::from("Handshake response\n");
+    for (k, v) in headers {
+        s.push_str(&format!("{k}: {v}\n"));
+    }
+    s
+}
+
+fn ws_timing_text(events: &[sendito_ws::Event]) -> String {
+    use sendito_ws::Event;
+    let mut s = String::new();
+    let mut first = None;
+    let (mut sent, mut received) = (0usize, 0usize);
+    for e in events {
+        match e {
+            Event::Handshake { at, .. } => s.push_str(&format!(
+                "Handshake answered {:>7.1} ms\n",
+                at.as_secs_f64() * 1000.0
+            )),
+            Event::Received { kind, at, .. } => {
+                if kind.has_payload() {
+                    received += 1;
+                    if first.is_none() {
+                        first = Some(*at);
+                    }
+                }
+            }
+            Event::Sent { kind, .. } => {
+                if kind.has_payload() {
+                    sent += 1;
+                }
+            }
+            Event::Finished { at, .. } => s.push_str(&format!(
+                "Closed            {:>10.1} ms\n",
+                at.as_secs_f64() * 1000.0
+            )),
+        }
+    }
+    if let Some(f) = first {
+        s.push_str(&format!(
+            "First frame       {:>10.1} ms\n",
+            f.as_secs_f64() * 1000.0
+        ));
+    }
+    s.push_str(&format!(
+        "\nFrames sent       {sent}\nFrames received  {received}\n"
+    ));
+    s
+}
+
 fn help_text(km: &Keymap, vim: bool) -> String {
     let mut s = String::from("All keys, including any you changed in the config.\n");
     s.push_str(&format!(
@@ -6235,7 +6583,8 @@ impl App {
                     .unwrap_or(folder);
                 let req = match choice {
                     1 => Request::new_grpc(),
-                    2 => Request::new_mcp(),
+                    2 => Request::new_ws(),
+                    3 => Request::new_mcp(),
                     _ => Request::new_http(),
                 };
                 let rel = self

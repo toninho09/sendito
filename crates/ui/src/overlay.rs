@@ -178,6 +178,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":q!", "Quit without saving"),
     (":new", "New HTTP request (Ctrl+N)"),
     (":newgrpc", "New gRPC request (Ctrl+W g)"),
+    (":newws", "New WebSocket request (Ctrl+W y)"),
     (":newmcp", "New MCP request"),
     (":mcpservers", "Choose an MCP server"),
     (":mcptools", "Discover and choose an MCP tool"),

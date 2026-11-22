@@ -74,6 +74,8 @@ struct Env {
     http: http_echo::HttpEcho,
     grpc: grpc_echo::GrpcEcho,
     mcp: mcp_echo::McpEcho,
+    ws: sendito_testkit::ws_echo::WsEcho,
+    ws_tls: sendito_testkit::ws_echo::WsEcho,
     keychain: Arc<MemoryKeychain>,
 }
 
@@ -84,6 +86,9 @@ async fn setup() -> Env {
     let http = http_echo::start().await.must();
     let grpc = grpc_echo::start().await.must();
     let mcp = mcp_echo::start().await.must();
+    let ws = sendito_testkit::ws_echo::start().await.must();
+    let certs = sendito_testkit::tls::generate().must();
+    let ws_tls = sendito_testkit::ws_echo::start_tls(&certs).await.must();
     let env_path = dir.path().join(".sendito/environments/corpus.toml");
     let text = std::fs::read_to_string(&env_path)
         .must()
@@ -96,7 +101,12 @@ async fn setup() -> Env {
             "grpc_target = \"127.0.0.1:0\"",
             &format!("grpc_target = \"{}\"", grpc.target()),
         );
-    let text = format!("{text}\nmcp_url = \"{}\"\n", mcp.url());
+    let text = format!(
+        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\n",
+        mcp.url(),
+        ws.url("").trim_end_matches('/'),
+        ws_tls.url("").trim_end_matches('/')
+    );
     std::fs::write(&env_path, text).must();
     let mut secrets = BTreeMap::new();
     secrets.insert("local_token".to_string(), random_secret("lt"));
@@ -134,6 +144,8 @@ async fn setup() -> Env {
         http,
         grpc,
         mcp,
+        ws,
+        ws_tls,
         keychain,
     }
 }
@@ -152,6 +164,7 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         env: Some("corpus".into()),
         schemas: Default::default(),
         grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -385,6 +398,182 @@ fn oracle_http(
         if !derived && !defined.contains(&n) {
             failures.push(format!("{case}: header {n} was sent but not defined"));
         }
+    }
+}
+
+/// One WebSocket case: the exact handshake head and every frame both ways.
+async fn run_ws_case(e: &Env, p: &Project, file: &str, failures: &mut Vec<String>) {
+    let case = file.trim_end_matches(".toml");
+    let rel = format!("ws/{file}");
+    let Request::Ws(req) = p.coll.load(&rel).must() else {
+        panic!("{rel} is not a WebSocket request")
+    };
+    let (scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+    assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
+    e.ws.take();
+    e.ws_tls.take();
+    let run = ctx(e, p, &rel);
+    let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+    let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(ctl_tx);
+    let exec = runner::exec_ws(&run, &req, scope.clone(), vec![], utx, ctl_rx);
+    let mut close = (0u16, String::new());
+    let mut failure = None;
+    let collect = async {
+        while let Some(u) = urx.recv().await {
+            match u {
+                runner::WsUpdate::Event(sendito_ws::Event::Finished { code, reason, .. }) => {
+                    close = (code, reason);
+                }
+                runner::WsUpdate::Error(err) => failure = Some(err),
+                _ => {}
+            }
+        }
+    };
+    tokio::join!(exec, collect);
+    if let Some(err) = failure {
+        failures.push(format!("{case}: session failed: {err}"));
+        return;
+    }
+    let resolved_url = sendito_core::resolve::resolve_ws(&req, &scope).url;
+    let secure = resolved_url.starts_with("wss");
+    let caps = if secure { e.ws_tls.take() } else { e.ws.take() };
+    let Some(cap) = caps.first() else {
+        failures.push(format!("{case}: the server saw no session"));
+        return;
+    };
+    // The handshake request the request file defines.
+    let head = cap.head();
+    let request_line = head.lines().next().unwrap_or_default().to_string();
+    let first = request_line.split(' ').nth(1).unwrap_or("");
+    if !first.starts_with('/') {
+        failures.push(format!("{case}: odd request target {first:?}"));
+    }
+    for h in req.headers.iter().filter(|h| h.enabled) {
+        let name = scope.render(&h.name).text;
+        let want = scope.render(&h.value).text;
+        // Dynamic values ({{$uuid}}, {{$timestamp}}) differ per send.
+        let dynamic = want.len() > 16 && !want.starts_with("https://");
+        let got: Vec<String> = cap
+            .head()
+            .lines()
+            .filter_map(|l| l.split_once(':'))
+            .filter(|(n, _)| n.trim().eq_ignore_ascii_case(&name))
+            .map(|(_, v)| v.trim().to_string())
+            .collect();
+        if !got.is_empty() && dynamic {
+            continue;
+        }
+        if !got.contains(&want) {
+            failures.push(format!(
+                "{case}: header {name}: {want:?} missing (got {got:?})"
+            ));
+        }
+    }
+    if let sendito_core::Auth::Bearer { token } = &req.auth {
+        let want = format!("Bearer {}", scope.render(token).text);
+        if !head.contains(&want) {
+            failures.push(format!("{case}: missing {want:?} in the handshake"));
+        }
+    }
+    if let sendito_core::Auth::Basic { username, password } = &req.auth {
+        let raw = format!(
+            "{}:{}",
+            scope.render(username).text,
+            scope.render(password).text
+        );
+        let want = format!("Basic {}", base64_std(&raw));
+        if !head.contains(&want) {
+            failures.push(format!("{case}: missing Basic auth in the handshake"));
+        }
+    }
+    if !req.subprotocols.is_empty() {
+        let want = req.subprotocols.join(", ");
+        if !head.contains(&format!("Sec-WebSocket-Protocol: {want}")) {
+            failures.push(format!("{case}: subprotocols {want:?} not offered"));
+        }
+    }
+    // The frames the request defines were sent, in order.
+    let sent: Vec<(String, Vec<u8>)> = cap
+        .frames
+        .iter()
+        .filter(|(out, _, _)| !out)
+        .map(|(_, k, p)| (k.clone(), p.clone()))
+        .collect();
+    let frames = sendito_ws::parse_messages(&scope.render(&req.messages).text).unwrap_or_default();
+    let expected: Vec<(String, Vec<u8>)> = frames
+        .iter()
+        .map(|f| match f {
+            sendito_ws::Frame::Text(t) => ("text".to_string(), t.clone().into_bytes()),
+            sendito_ws::Frame::Binary(b) => ("binary".to_string(), b.clone()),
+        })
+        .collect();
+    // The client closes with 1000, so the last received frame is that close.
+    let body: Vec<(String, Vec<u8>)> = sent.iter().filter(|(k, _)| k != "close").cloned().collect();
+    if body != expected {
+        failures.push(format!(
+            "{case}: frames differ: sent {body:?}, expected {expected:?}"
+        ));
+    }
+    // A clean close is 1000; the server may also close first (08-server-close).
+    if close.0 != 1000 && case != "08-server-close" {
+        failures.push(format!("{case}: closed with {close:?}"));
+    }
+    // The deadline case must show the deadline actually fired: the close reason
+    // names it, so the case cannot pass with an ordinary close.
+    if case == "10-deadline" && !close.1.contains("deadline") {
+        failures.push(format!(
+            "{case}: expected the deadline to end the session, got {close:?}"
+        ));
+    }
+    let dump = format!(
+        "### close: {} {}\n{}",
+        close.0,
+        close.1,
+        cap.dump()
+            .replace(
+                &format!("127.0.0.1:{}", e.ws.addr.port()),
+                "127.0.0.1:<port>"
+            )
+            .replace(
+                &format!("127.0.0.1:{}", e.ws_tls.addr.port()),
+                "127.0.0.1:<port>"
+            )
+    );
+    let dump = mask_ws_dynamic(dump, &e.secrets);
+    check("ws", case, &dump, failures);
+}
+
+/// Random per run: the handshake key and the generated request id.
+fn mask_ws_dynamic(mut s: String, secrets: &BTreeMap<String, String>) -> String {
+    for line in s.clone().lines() {
+        if let Some((n, v)) = line.split_once(':') {
+            let n = n.trim().to_ascii_lowercase();
+            if n == "sec-websocket-key" || n == "x-request-id" {
+                s = s.replace(v.trim(), &format!("<{n}>"));
+            }
+        }
+    }
+    mask_secrets(s, secrets)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ws_corpus() {
+    let e = setup().await;
+    let p = project(&e);
+    let root = e.dir.path().to_path_buf();
+    let mut failures = Vec::new();
+    let names = cases(&root, "ws");
+    assert!(names.len() >= 12, "only {} WebSocket cases", names.len());
+    for file in &names {
+        run_ws_case(&e, &p, file, &mut failures).await;
+    }
+    if !failures.is_empty() {
+        panic!(
+            "{} WebSocket failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }
 

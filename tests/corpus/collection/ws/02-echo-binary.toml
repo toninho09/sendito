@@ -1,0 +1,8 @@
+kind = "websocket"
+url = "{{ws_url}}/echo"
+messages = '''
+[
+  { "binary": "AAEC/w==" },
+  "after binary"
+]
+'''

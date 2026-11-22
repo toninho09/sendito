@@ -1,11 +1,12 @@
 //! The request model. These types mirror the on-disk TOML schema (see FORMAT.md)
 //! but carry no serialization logic: `sendito-store` owns the file format.
 
-/// A saved request: HTTP, gRPC or MCP.
+/// A saved request: HTTP, gRPC, WebSocket or MCP.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Http(HttpRequest),
     Grpc(GrpcRequest),
+    Ws(WebSocketRequest),
     Mcp(McpRequest),
 }
 
@@ -14,11 +15,12 @@ pub enum Request {
 static NO_AUTH: Auth = Auth::None;
 
 impl Request {
-    /// Short label used for tree badges (`GET`, `POST`, `GRPC`, `MCP`).
+    /// Short label used for tree badges (`GET`, `POST`, `GRPC`, `WS`, `MCP`).
     pub fn badge(&self) -> &str {
         match self {
             Request::Http(h) => &h.method,
             Request::Grpc(_) => "GRPC",
+            Request::Ws(_) => "WS",
             Request::Mcp(_) => "MCP",
         }
     }
@@ -27,6 +29,7 @@ impl Request {
         match self {
             Request::Http(h) => &h.scripts,
             Request::Grpc(g) => &g.scripts,
+            Request::Ws(w) => &w.scripts,
             Request::Mcp(m) => &m.scripts,
         }
     }
@@ -35,6 +38,7 @@ impl Request {
         match self {
             Request::Http(h) => &mut h.scripts,
             Request::Grpc(g) => &mut g.scripts,
+            Request::Ws(w) => &mut w.scripts,
             Request::Mcp(m) => &mut m.scripts,
         }
     }
@@ -43,16 +47,18 @@ impl Request {
         match self {
             Request::Http(h) => &h.auth,
             Request::Grpc(g) => &g.auth,
+            Request::Ws(w) => &w.auth,
             Request::Mcp(_) => &NO_AUTH,
         }
     }
 
-    /// The auth of an HTTP or gRPC request; `None` for MCP, whose auth lives
-    /// on the server definition in the config.
+    /// The auth of an HTTP, gRPC or WebSocket request; `None` for MCP, whose
+    /// auth lives on the server definition in the config.
     pub fn auth_mut(&mut self) -> Option<&mut Auth> {
         match self {
             Request::Http(h) => Some(&mut h.auth),
             Request::Grpc(g) => Some(&mut g.auth),
+            Request::Ws(w) => Some(&mut w.auth),
             Request::Mcp(_) => None,
         }
     }
@@ -63,6 +69,10 @@ impl Request {
 
     pub fn new_grpc() -> Self {
         Request::Grpc(GrpcRequest::default())
+    }
+
+    pub fn new_ws() -> Self {
+        Request::Ws(WebSocketRequest::default())
     }
 
     pub fn new_mcp() -> Self {
@@ -557,6 +567,66 @@ impl Default for GrpcRequest {
             deadline_ms: None,
             schema: SchemaSource::Reflection,
             scripts: Scripts::default(),
+        }
+    }
+}
+
+/// A WebSocket session: one URL, optional headers, subprotocols and an
+/// opening message document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSocketRequest {
+    /// `ws://`, `wss://` (or `http://`/`https://`); a URL without a scheme
+    /// uses the `tls` option.
+    pub url: String,
+    pub headers: Vec<KeyValue>,
+    /// Values for `Sec-WebSocket-Protocol`, in order.
+    pub subprotocols: Vec<String>,
+    /// Messages sent right after the handshake, as a JSON document: an array
+    /// of strings (text frames) and `{ "binary": "base64" }` objects (binary
+    /// frames), or one such value alone. Stored and read as written (a
+    /// half-typed document is a valid file); rejected only at send time.
+    pub messages: String,
+    pub auth: Auth,
+    pub options: WsOptions,
+    pub scripts: Scripts,
+}
+
+impl Default for WebSocketRequest {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            headers: Vec::new(),
+            subprotocols: Vec::new(),
+            messages: "[]".into(),
+            auth: Auth::None,
+            options: WsOptions::default(),
+            scripts: Scripts::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsOptions {
+    /// Handshake timeout. `None` uses the configured default.
+    pub timeout_ms: Option<u64>,
+    /// Optional whole-session deadline (like the gRPC deadline).
+    pub deadline_ms: Option<u64>,
+    pub verify_tls: bool,
+    /// TLS when the URL has no scheme; default false.
+    pub tls: bool,
+    /// Replay cookies from the collection's jar in the handshake. `None`
+    /// follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
+}
+
+impl Default for WsOptions {
+    fn default() -> Self {
+        Self {
+            timeout_ms: None,
+            deadline_ms: None,
+            verify_tls: true,
+            tls: false,
+            cookies: None,
         }
     }
 }

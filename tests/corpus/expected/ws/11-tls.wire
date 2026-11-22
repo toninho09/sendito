@@ -1,0 +1,12 @@
+### close: 1000 
+GET /echo HTTP/1.1
+Host: 127.0.0.1:<port>
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: <sec-websocket-key>
+
+< text 8 over tls
+> text 8 over tls
+< close 5 1000 
+> close 5 1000 

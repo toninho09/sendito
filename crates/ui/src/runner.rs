@@ -232,6 +232,8 @@ pub struct RunCtx {
     pub env: Option<String>,
     pub schemas: SchemaCache,
     pub grpc_deadline_ms: u64,
+    /// `[websocket] timeout_ms`: the default handshake timeout (0 = none).
+    pub ws_timeout_ms: u64,
     /// Mask secret values the server echoes back (the TUI); `sendito run`
     /// writes the body unchanged.
     pub mask_echoed_secrets: bool,
@@ -321,6 +323,7 @@ fn history_entry(
         template: match template {
             Request::Http(h) => h.url.clone(),
             Request::Grpc(g) => format!("{}/{}/{}", g.target, g.service, g.method),
+            Request::Ws(w) => w.url.clone(),
             Request::Mcp(m) => format!("{}/{}", m.server, m.tool),
         },
         request: sendito_store::request_file::to_toml(template),
@@ -780,6 +783,14 @@ pub fn conn_settings(
     }
 }
 
+/// Commands to a running request: gRPC calls and WebSocket sessions share
+/// the channel type so the UI can hold one sender per tab.
+#[derive(Debug, Clone)]
+pub enum Control {
+    Grpc(GrpcControl),
+    Ws(WsControl),
+}
+
 /// Commands from the UI to a running gRPC call.
 #[derive(Debug, Clone)]
 pub enum GrpcControl {
@@ -831,7 +842,7 @@ pub async fn exec_grpc(
     mut scope: Scope,
     scope_errors: Vec<String>,
     updates: mpsc::UnboundedSender<GrpcUpdate>,
-    mut control: mpsc::UnboundedReceiver<GrpcControl>,
+    mut control: mpsc::UnboundedReceiver<Control>,
 ) {
     let mut results = ScriptResults {
         pre: script::run_pre(&req.scripts.pre, &mut scope),
@@ -931,6 +942,10 @@ pub async fn exec_grpc(
                 if done { break; }
             }
             cmd = control.recv(), if control_open => {
+                let cmd = cmd.and_then(|c| match c {
+                    Control::Grpc(g) => Some(g),
+                    Control::Ws(_) => None,
+                });
                 match cmd {
                     Some(GrpcControl::Send(json)) => {
                         let rendered = scope.render(&json).text;
@@ -985,6 +1000,357 @@ pub async fn exec_grpc(
         scripts: results,
         scope_errors,
     });
+}
+
+// ----- WebSocket -----------------------------------------------------
+
+/// Commands from the UI to a running WebSocket session.
+#[derive(Debug, Clone)]
+pub enum WsControl {
+    /// One text frame.
+    Text(String),
+    /// One binary frame (raw bytes).
+    Binary(Vec<u8>),
+    /// Start the close handshake (1000).
+    EndStream,
+    /// Abort without a close handshake.
+    Cancel,
+}
+
+/// Progress of a WebSocket session, forwarded to the UI as it happens.
+#[derive(Debug, Clone)]
+pub enum WsUpdate {
+    Started {
+        resolved: sendito_core::resolve::ResolvedWs,
+    },
+    Event(sendito_ws::Event),
+    Error(String),
+    Done {
+        scripts: ScriptResults,
+        scope_errors: Vec<String>,
+    },
+}
+
+fn scrub_ws_event(ev: sendito_ws::Event, secrets: &[String]) -> sendito_ws::Event {
+    use sendito_core::vars::scrub;
+    let kv = |m: Vec<(String, String)>| -> Vec<(String, String)> {
+        m.into_iter()
+            .map(|(k, v)| (k, scrub(&v, secrets)))
+            .collect()
+    };
+    match ev {
+        sendito_ws::Event::Handshake {
+            status,
+            headers,
+            subprotocol,
+            at,
+            wall,
+        } => sendito_ws::Event::Handshake {
+            status,
+            headers: kv(headers),
+            subprotocol,
+            at,
+            wall,
+        },
+        sendito_ws::Event::Sent {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => sendito_ws::Event::Sent {
+            kind,
+            preview: scrub(&preview, secrets),
+            size,
+            at,
+            wall,
+        },
+        sendito_ws::Event::Received {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => sendito_ws::Event::Received {
+            kind,
+            preview: scrub(&preview, secrets),
+            size,
+            at,
+            wall,
+        },
+        sendito_ws::Event::Finished { code, reason, at } => sendito_ws::Event::Finished {
+            code,
+            reason: scrub(&reason, secrets),
+            at,
+        },
+    }
+}
+
+/// The close code the session must end with to count as a success.
+const WS_CLEAN_CLOSE: u16 = 1000;
+
+/// The HTTP equivalent of a resolved WebSocket URL: the cookie jar only speaks
+/// HTTP, and `ws`/`wss` mean the same origin and secure flag as `http`/`https`.
+fn http_equivalent(url: &str) -> String {
+    match url.strip_prefix("wss://") {
+        Some(rest) => format!("https://{rest}"),
+        None => match url.strip_prefix("ws://") {
+            Some(rest) => format!("http://{rest}"),
+            None => url.to_string(),
+        },
+    }
+}
+
+/// Runs a WebSocket session. Updates go to `updates`; `control` drives
+/// interactive input (like the gRPC streaming path).
+pub async fn exec_ws(
+    ctx: &RunCtx,
+    req: &WebSocketRequest,
+    mut scope: Scope,
+    scope_errors: Vec<String>,
+    updates: mpsc::UnboundedSender<WsUpdate>,
+    mut control: mpsc::UnboundedReceiver<Control>,
+) {
+    let mut results = ScriptResults {
+        pre: script::run_pre(&req.scripts.pre, &mut scope),
+        ..Default::default()
+    };
+    let mut resolved = sendito_core::resolve::resolve_ws(req, &scope);
+    // `timeout_ms` unset falls back to `[websocket] timeout_ms`; 0 means no
+    // limit in either place.
+    if resolved.timeout_ms.is_none() {
+        resolved.timeout_ms = Some(ctx.ws_timeout_ms);
+    }
+    if resolved.timeout_ms == Some(0) {
+        resolved.timeout_ms = None;
+    }
+    let template = Request::Ws(req.clone());
+    let target = match mask_request(&template, &scope) {
+        Request::Ws(w) => sendito_core::resolve::resolve_ws(&w, &Scope::new()).url,
+        _ => String::new(),
+    };
+    let started = std::time::Instant::now();
+    let fail_secrets = scope.secret_values();
+    let fail = |msg: String, results: ScriptResults| {
+        let msg = sendito_core::vars::scrub(&msg, &fail_secrets);
+        let entry = history_entry(
+            ctx,
+            &template,
+            target.clone(),
+            None,
+            started.elapsed().as_millis() as u64,
+            0,
+            Some(msg.clone()),
+        );
+        write_history(ctx, &entry);
+        let _ = updates.send(WsUpdate::Error(msg));
+        let _ = updates.send(WsUpdate::Done {
+            scripts: results,
+            scope_errors: scope_errors.clone(),
+        });
+    };
+    if matches!(req.auth, Auth::OAuth { .. }) {
+        return fail(
+            "OAuth 2 authentication is only supported for HTTP requests".into(),
+            results,
+        );
+    }
+    if resolved.url.is_empty() {
+        return fail("choose a WebSocket URL first".into(), results);
+    }
+    let proxy = match sendito_ws::WsProxy::of(ctx.send.proxy.as_ref()) {
+        Ok(p) => p,
+        Err(e) => return fail(e, results),
+    };
+    let mut settings = sendito_ws::ConnSettings {
+        url: resolved.url.clone(),
+        headers: resolved.headers.clone(),
+        subprotocols: resolved.subprotocols.clone(),
+        verify_tls: resolved.verify_tls,
+        handshake_timeout: resolved.timeout_ms.map(Duration::from_millis),
+        deadline: resolved.deadline_ms.map(Duration::from_millis),
+        close_timeout: sendito_ws::CLOSE_TIMEOUT,
+        tls: ctx.send.tls.clone(),
+        proxy,
+    };
+    // The collection cookie jar can add a Cookie header to the handshake. The
+    // jar speaks HTTP, so a ws:// URL is presented to it as http:// (and wss as
+    // https): the same host, path and secure flag the cookie rules depend on.
+    let cookie_url = http_equivalent(&resolved.url);
+    let cookies_on = req.options.cookies.unwrap_or(ctx.cookie_jar);
+    let jar_env = ctx.env.as_deref().unwrap_or(COLLECTION_ENV);
+    let mut cookie_secrets = Vec::new();
+    if cookies_on {
+        match jar_request(&ctx.root, jar_env, &cookie_url).await {
+            Ok((header, secrets)) => {
+                cookie_secrets = secrets;
+                if let Some(header) = header {
+                    settings.headers.push(("Cookie".into(), header));
+                }
+            }
+            Err(e) => return fail(e, results),
+        }
+    }
+    let mut session = match sendito_ws::open(&settings).await {
+        Ok(s) => s,
+        Err(e) => return fail(e.to_string(), results),
+    };
+    // The opening messages go out right after the handshake, in order.
+    let frames = match sendito_ws::parse_messages(&resolved.messages) {
+        Ok(f) => f,
+        Err(e) => {
+            session.cancel();
+            return fail(e, results);
+        }
+    };
+    let mut initial_error = None;
+    for f in frames {
+        let r = match f {
+            sendito_ws::Frame::Text(t) => session.send_text(t),
+            sendito_ws::Frame::Binary(b) => session.send_binary(b),
+        };
+        if let Err(e) = r {
+            initial_error = Some(e.to_string());
+            break;
+        }
+    }
+    let _ = updates.send(WsUpdate::Started {
+        resolved: resolved.clone(),
+    });
+    let secrets = scope.secret_values();
+    let mut events: Vec<sendito_ws::Event> = Vec::new();
+    let mut control_open = true;
+    if let Some(e) = initial_error {
+        let _ = updates.send(WsUpdate::Error(e.clone()));
+    }
+    loop {
+        tokio::select! {
+            ev = session.events.recv() => {
+                let Some(ev) = ev else { break };
+                if cookies_on
+                    && let sendito_ws::Event::Handshake { headers, .. } = &ev
+                {
+                    // Store cookies the handshake response set.
+                    let sets = set_cookie_headers(headers);
+                    if !sets.is_empty()
+                        && let Err(e) = jar_store(&ctx.root, jar_env, &cookie_url, &sets).await
+                    {
+                        let _ = updates.send(WsUpdate::Error(format!(
+                            "cookies not stored: {e}"
+                        )));
+                    }
+                }
+                let done = matches!(ev, sendito_ws::Event::Finished { .. });
+                events.push(ev.clone());
+                let ev = if ctx.mask_echoed_secrets { scrub_ws_event(ev, &secrets) } else { ev };
+                let _ = updates.send(WsUpdate::Event(ev));
+                if done { break; }
+            }
+            cmd = control.recv(), if control_open => {
+                let cmd = cmd.and_then(|c| match c {
+                    Control::Ws(w) => Some(w),
+                    Control::Grpc(_) => None,
+                });
+                match cmd {
+                    Some(WsControl::Text(text)) => {
+                        let rendered = scope.render(&text).text;
+                        if let Err(e) = session.send_text(rendered) {
+                            let _ = updates.send(WsUpdate::Error(e.to_string()));
+                        }
+                    }
+                    Some(WsControl::Binary(bytes)) => {
+                        if let Err(e) = session.send_binary(bytes) {
+                            let _ = updates.send(WsUpdate::Error(e.to_string()));
+                        }
+                    }
+                    Some(WsControl::EndStream) => session.close(),
+                    Some(WsControl::Cancel) => session.cancel(),
+                    // The controller went away (headless runs). With a deadline
+                    // the session runs until it expires, so a scripted run sees
+                    // every frame the server sends; without one there is nothing
+                    // to wait for, and the close handshake ends it. `close()`
+                    // is also bounded by `close_timeout`, so this never hangs.
+                    None => {
+                        control_open = false;
+                        if resolved.deadline_ms.is_none() {
+                            session.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Scripts see the handshake headers, the close code as status and the
+    // last text frame as body.
+    let (code, reason, headers, body) = ws_summary(&events);
+    let view = ResponseView {
+        status: code,
+        headers: &headers,
+        body: &body,
+    };
+    results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
+    results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+    for assertion in &mut results.asserts {
+        let all = [&secrets[..], &cookie_secrets[..]].concat();
+        assertion.actual = sendito_core::vars::scrub(&assertion.actual, &all);
+        assertion.label = sendito_core::vars::scrub(&assertion.label, &all);
+    }
+    let total = events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            sendito_ws::Event::Finished { at, .. } => Some(at.as_millis() as u64),
+            _ => None,
+        })
+        .unwrap_or_else(|| started.elapsed().as_millis() as u64);
+    let size: u64 = events
+        .iter()
+        .map(|e| match e {
+            sendito_ws::Event::Received { size, .. } => *size as u64,
+            _ => 0,
+        })
+        .sum();
+    let err = if code == WS_CLEAN_CLOSE {
+        None
+    } else if reason.is_empty() {
+        Some(format!("close {code}"))
+    } else {
+        Some(format!("close {code}: {reason}"))
+    };
+    let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
+    write_history(ctx, &entry);
+    let _ = updates.send(WsUpdate::Done {
+        scripts: results,
+        scope_errors,
+    });
+}
+
+/// Close code, reason, handshake headers and last text frame payload.
+fn ws_summary(events: &[sendito_ws::Event]) -> (u16, String, Vec<(String, String)>, Vec<u8>) {
+    let mut code = 1006;
+    let mut reason = String::new();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut body: Vec<u8> = Vec::new();
+    for e in events {
+        match e {
+            sendito_ws::Event::Handshake { headers: h, .. } => {
+                headers = h.clone();
+            }
+            sendito_ws::Event::Received { kind, preview, .. } => {
+                if *kind == sendito_ws::FrameKind::Text {
+                    body = preview.as_bytes().to_vec();
+                }
+            }
+            sendito_ws::Event::Finished {
+                code: c, reason: r, ..
+            } => {
+                code = *c;
+                reason = r.clone();
+            }
+            _ => {}
+        }
+    }
+    (code, reason, headers, body)
 }
 
 // ----- MCP -----------------------------------------------------------
@@ -1246,6 +1612,19 @@ pub async fn exec_mcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ws_urls_map_to_their_http_equivalent_for_the_jar() {
+        // The cookie jar only accepts http/https; ws/wss keep the same origin.
+        assert_eq!(http_equivalent("ws://h:1/a?b=c"), "http://h:1/a?b=c");
+        assert_eq!(http_equivalent("wss://h/a"), "https://h/a");
+        assert_eq!(
+            http_equivalent("https://h/a"),
+            "https://h/a",
+            "an http URL is left as is"
+        );
+        assert_eq!(http_equivalent("h/a"), "h/a");
+    }
 
     #[test]
     fn script_results() {

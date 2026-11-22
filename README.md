@@ -1,6 +1,7 @@
 # Sendito
 
-A terminal API client for **HTTP**, **gRPC** and **MCP tools**. It runs locally in your terminal,
+A terminal API client for **HTTP**, **gRPC**, **WebSocket** and **MCP tools**. It
+runs locally in your terminal,
 works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
 
@@ -23,7 +24,8 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 47 HTTP, 15 gRPC and 5 MCP cases is checked byte for byte in CI.
+  A corpus of 47 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
+  byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
   TLS verification, an optional proxy (`[http] proxy`, including `"env"` for
@@ -36,6 +38,11 @@ plain TOML files you can version in git.
   messages with generated templates, metadata, TLS, deadlines, cancellation, and a
   Log tab for every message sent and received.
   → [gRPC features](docs/FEATURES.md#grpc)
+* **WebSocket**: a session per request — handshake headers, subprotocols, a JSON
+  document of text and binary frames sent on connect, frames received live in a
+  Log tab, `wss://` with the same TLS material as HTTP, and the close code as the
+  assertion status.
+  → [WebSocket features](docs/FEATURES.md#websocket)
 * **MCP tools**: call tools on stdio or Streamable HTTP servers, discover tools
   and generate initial arguments from their input schema, with bearer or OAuth
   2.1 authentication for HTTP servers.
@@ -61,6 +68,7 @@ plain TOML files you can version in git.
 - [See it in action](#see-it-in-action)
 - [HTTP](#http)
 - [gRPC](#grpc)
+- [WebSocket](#websocket)
 - [MCP tools](#mcp-tools)
 - [Environments and secrets](#environments-and-secrets)
 - [Scripts (no code)](#scripts-no-code)
@@ -103,7 +111,8 @@ sendito                    # opens the collection
 
 In the app:
 
-1. Press `n` in the sidebar to create a request (choose HTTP, gRPC or MCP and a folder):
+1. Press `n` in the sidebar to create a request (choose HTTP, gRPC, WebSocket or MCP
+   and a folder):
    its file is created at once, empty. `Ctrl+N` instead opens a scratch tab that has
    no file until `Ctrl+S` asks for a name and folder.
 2. Type the URL, e.g. `{{base_url}}/users`, and press **Ctrl+Enter** or **F5**.
@@ -229,6 +238,37 @@ and protected URLs must use HTTPS except on loopback. See [FORMAT.md](FORMAT.md)
 ![A gRPC request at 200×60](docs/media/screenshots/200x60-dusk-grpc-unary.png)
 
 More: [gRPC features](docs/FEATURES.md#grpc).
+
+## WebSocket
+
+```toml
+kind = "websocket"
+url = "wss://echo.example.com/chat"
+subprotocols = ["chat.v2"]
+messages = '''
+[
+  "hello",
+  { "binary": "AAEC" }
+]
+'''
+```
+
+* One **session** per request: the handshake carries the request's headers,
+  subprotocols and auth; `wss://` uses the same `[http.tls]` material as HTTP,
+  and an `http(s)://` `[http] proxy` is tunnelled with `CONNECT`.
+* The **message document** is JSON: strings are text frames and
+  `{ "binary": "base64" }` objects are binary frames. It is sent right after the
+  handshake.
+* **Live frames**: everything the server sends appears in the **Log** tab as it
+  arrives; on an open session Send pushes the editor's content as one more
+  frame, `Ctrl+W d` starts the close handshake and `Ctrl+W x` aborts it.
+* The **Handshake** tab shows the upgrade response, **Timing** the handshake,
+  first frame and close plus the frame counters, and the last text frame is the
+  **Body**. Scripts see the close code as `status`.
+* `sendito run` prints the text frames received on stdout and exits `2` unless
+  the session closes with `1000`.
+
+More: [WebSocket features](docs/FEATURES.md#websocket).
 
 ## MCP tools
 

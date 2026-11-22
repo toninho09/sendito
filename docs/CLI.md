@@ -75,6 +75,16 @@ One request: the response body goes to **stdout**, and the status, timing and
 assertion results go to **stderr**. A failure is signalled by the exit code (see
 below), so `sendito run x > body.txt` is safe.
 
+For a WebSocket request (`kind = "websocket"`) the session opens, the message
+document is sent, the text frames received are printed on **stdout** (one per
+line), and the handshake status, the frames sent, the close code and the
+assertions go to **stderr**. `--include` also prints the handshake response
+headers. Without a `deadline_ms` the run closes the session as soon as the
+opening messages are out; with one, it reads frames until the deadline ends the
+session (a close with `1000` and a `deadline …` reason). Either way the close
+handshake is bounded (5 s), so the process cannot hang on a peer that never
+answers. A session that does not close with code 1000 exits `2`.
+
 A folder (or `.` for the current folder — the whole collection at its root) runs
 every request below it in tree order, one `PASS`/`FAIL`/`ERROR` line each plus a
 summary. **Variables a request extracts are carried forward** to the requests
@@ -223,7 +233,7 @@ available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 |---:|---|
 | `0` | Success: every assertion passed (and, for a folder run, every request succeeded) |
 | `1` | A failed assertion, or an MCP tool returned `isError: true` |
-| `2` | The request failed: network error, or a gRPC status other than `OK` |
+| `2` | The request failed: network error, a gRPC status other than `OK`, or a WebSocket close other than `1000` |
 | `3` | Usage error, including unresolved variables |
 
 For a folder run the exit code is the worst of the four over all requests:

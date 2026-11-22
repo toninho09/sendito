@@ -13,6 +13,8 @@ pub struct Icons {
     pub folder_open: &'static str,
     /// Before a gRPC request name; empty in the unicode set.
     pub grpc: &'static str,
+    /// Before a WebSocket request name; empty in the unicode set.
+    pub ws: &'static str,
     /// The environment chip.
     pub env: &'static str,
     pub history: &'static str,
@@ -48,6 +50,7 @@ impl Icons {
             folder_closed: "",
             folder_open: "",
             grpc: "",
+            ws: "",
             env: "●",
             history: "",
             requests: "",
@@ -77,6 +80,7 @@ impl Icons {
             folder_closed: "\u{f07b}",
             folder_open: "\u{f07c}",
             grpc: "\u{f0e7}",
+            ws: "\u{f1eb}",
             env: "\u{f0ac}",
             history: "\u{f1da}",
             requests: "\u{f0c9}",
@@ -118,11 +122,12 @@ impl Icons {
     }
 
     #[cfg(test)]
-    fn all(&self) -> [&'static str; 22] {
+    fn all(&self) -> [&'static str; 23] {
         [
             self.folder_closed,
             self.folder_open,
             self.grpc,
+            self.ws,
             self.env,
             self.history,
             self.requests,

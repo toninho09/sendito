@@ -74,7 +74,7 @@ bundles: ## Build the reviewer bundles (OUT= changes the destination)
 
 cov: ## Line coverage (non-UI crates), 80% gate
 	@bash scripts/quiet.sh cov cargo llvm-cov -j $(J) -q -p sendito-core -p sendito-http -p sendito-grpc \
-	  -p sendito-store -p sendito-import -p sendito-mcp \
+	  -p sendito-ws -p sendito-store -p sendito-import -p sendito-mcp \
 	  --fail-under-lines 80 --summary-only -- --test-threads=$(TT)
 
 bench: ## Benchmarks (needs hyperfine; see bench/run.sh)

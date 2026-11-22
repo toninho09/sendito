@@ -1,0 +1,12 @@
+### close: 1000 deadline of 150 ms reached
+GET /echo HTTP/1.1
+Host: 127.0.0.1:<port>
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: <sec-websocket-key>
+
+< text 4 wait
+> text 4 wait
+< close 31 1000 deadline of 150 ms reached
+> close 31 1000 deadline of 150 ms reached

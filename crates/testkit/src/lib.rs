@@ -6,3 +6,4 @@ pub mod mcp_auth;
 pub mod mcp_echo;
 pub mod proxy;
 pub mod tls;
+pub mod ws_echo;

@@ -142,9 +142,12 @@ struct RawRequest {
     target: Option<String>,
     service: Option<String>,
     message: Option<String>,
+    messages: Option<String>,
     server: Option<String>,
     tool: Option<String>,
     arguments: Option<String>,
+    #[serde(default)]
+    subprotocols: Vec<String>,
     #[serde(default)]
     options: RawOptions,
     #[serde(default)]
@@ -344,8 +347,25 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 scripts: scripts(r.scripts)?,
             }))
         }
+        "websocket" => Ok(Request::Ws(WebSocketRequest {
+            url: r.url.unwrap_or_default(),
+            headers: kvs(r.headers),
+            subprotocols: r.subprotocols,
+            // The message document is JSON text, stored and read as written
+            // (like MCP `arguments`); the sender parses it.
+            messages: r.messages.unwrap_or_else(|| "[]".into()),
+            auth: auth(r.auth)?,
+            options: WsOptions {
+                timeout_ms: r.options.timeout_ms,
+                deadline_ms: r.options.deadline_ms,
+                verify_tls: r.options.verify_tls.unwrap_or(true),
+                tls: r.options.tls.unwrap_or(false),
+                cookies: r.options.cookies,
+            },
+            scripts: scripts(r.scripts)?,
+        })),
         o => Err(format!(
-            "unknown request kind {o:?} (expected \"http\", \"grpc\" or \"mcp\")"
+            "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\" or \"mcp\")"
         )),
     }
 }
@@ -555,6 +575,43 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_scripts(&mut w, &m.scripts);
         }
+        Request::Ws(wq) => {
+            w.str("kind", "websocket");
+            w.str("url", &wq.url);
+            if !wq.subprotocols.is_empty() {
+                w.str_array("subprotocols", &wq.subprotocols);
+            }
+            if wq.messages != "[]" {
+                w.str("messages", &wq.messages);
+            }
+            let o = &wq.options;
+            if o.timeout_ms.is_some()
+                || o.deadline_ms.is_some()
+                || !o.verify_tls
+                || o.tls
+                || o.cookies.is_some()
+            {
+                w.table("options");
+                if let Some(t) = o.timeout_ms {
+                    w.int("timeout_ms", t);
+                }
+                if let Some(d) = o.deadline_ms {
+                    w.int("deadline_ms", d);
+                }
+                if !o.verify_tls {
+                    w.bool("verify_tls", false);
+                }
+                if o.tls {
+                    w.bool("tls", true);
+                }
+                if let Some(c) = o.cookies {
+                    w.bool("cookies", c);
+                }
+            }
+            write_kvs(&mut w, "headers", &wq.headers);
+            write_auth(&mut w, &wq.auth);
+            write_scripts(&mut w, &wq.scripts);
+        }
     }
     w.finish()
 }
@@ -586,6 +643,7 @@ pub fn sniff_badge(text: &str) -> Option<String> {
                 .unwrap_or_else(|| "GET".into()),
         ),
         Some("grpc") => Some("GRPC".into()),
+        Some("websocket") => Some("WS".into()),
         Some("mcp") => Some("MCP".into()),
         _ => None,
     }
@@ -780,6 +838,44 @@ mod tests {
             let request = Request::Mcp(McpRequest {
                 arguments: arguments.into(),
                 ..McpRequest::default()
+            });
+            assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
+        }
+    }
+
+    #[test]
+    fn roundtrip_ws() {
+        let w = Request::Ws(WebSocketRequest {
+            url: "wss://{{host}}/chat".into(),
+            headers: vec![
+                KeyValue::new("origin", "https://app.example"),
+                KeyValue::new("x-off", "1").disabled(),
+            ],
+            subprotocols: vec!["chat.v2".into(), "chat.v1".into()],
+            messages: "[\n  \"hello\",\n  {\"binary\": \"AAEC\"}\n]".into(),
+            auth: Auth::Bearer {
+                token: "{{t}}".into(),
+            },
+            options: WsOptions {
+                timeout_ms: Some(2000),
+                deadline_ms: Some(60_000),
+                verify_tls: false,
+                tls: true,
+                cookies: Some(false),
+            },
+            scripts: Scripts::default(),
+        });
+        let t = to_toml(&w);
+        assert_eq!(parse(&t).ok(), Some(w.clone()));
+        assert_eq!(to_toml(&w), t);
+        assert_eq!(sniff_badge(&t).as_deref(), Some("WS"));
+        let d = Request::new_ws();
+        assert_eq!(parse(&to_toml(&d)).ok(), Some(d));
+        // A half-typed message document is kept as written; the sender parses it.
+        for messages in ["", "  ", "[", "nope", "{\"binary\":"] {
+            let request = Request::Ws(WebSocketRequest {
+                messages: messages.into(),
+                ..WebSocketRequest::default()
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }

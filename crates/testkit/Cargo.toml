@@ -4,11 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Test servers for Sendito: raw HTTP echo and a gRPC echo server with reflection"
+description = "Test servers for Sendito: raw HTTP, gRPC and WebSocket echo servers and a proxy"
 
 [dependencies]
 tokio = { workspace = true, features = ["signal"] }
 tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
 tonic = { version = "0.14", default-features = false, features = ["transport", "codegen", "router"] }
 tonic-prost.workspace = true
 tonic-reflection = { version = "0.14", features = ["server"] }

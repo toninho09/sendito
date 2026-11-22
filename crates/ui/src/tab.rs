@@ -10,6 +10,7 @@ use crate::viewer::{Doc, Viewer};
 
 pub const HTTP_TABS: &[&str] = &["Params", "Headers", "Body", "Auth", "Scripts", "Options"];
 pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options"];
+pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options"];
 pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
 pub const RESP_TABS: &[&str] = &["Body", "Headers", "Timing", "Results"];
 
@@ -19,6 +20,7 @@ pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     match kind {
         Kind::Http => ["Body", "Headers", "Timing", "Results"],
         Kind::Grpc => ["Body", "Metadata", "Timing", "Log"],
+        Kind::Ws => ["Body", "Handshake", "Timing", "Log"],
         Kind::Mcp => ["Body", "Request", "Timing", "Log"],
     }
 }
@@ -78,6 +80,8 @@ pub enum Field {
     Deadline,
     McpServer,
     McpTool,
+    WsSubprotocols,
+    WsMessages,
 }
 
 impl Field {
@@ -120,6 +124,10 @@ impl Field {
             Field::Deadline => "Deadline (ms, empty = none)",
             Field::McpServer => "Server (a [mcp.servers] entry of the config)",
             Field::McpTool => "Tool",
+            Field::WsSubprotocols => "Subprotocols (comma-separated, offered in order)",
+            Field::WsMessages => {
+                "Messages sent after connecting (JSON: strings, or {\"binary\": \"base64\"})"
+            }
         }
     }
 
@@ -138,7 +146,7 @@ impl Field {
     }
 
     pub fn is_multiline(self) -> bool {
-        matches!(self, Field::BodyText | Field::Message)
+        matches!(self, Field::BodyText | Field::Message | Field::WsMessages)
     }
 
     pub fn is_text(self) -> bool {
@@ -161,6 +169,8 @@ impl Field {
                 | Field::Deadline
                 | Field::McpServer
                 | Field::McpTool
+                | Field::WsSubprotocols
+                | Field::WsMessages
         )
     }
 
@@ -189,6 +199,7 @@ impl Field {
 pub enum Kind {
     Http,
     Grpc,
+    Ws,
     Mcp,
 }
 
@@ -236,6 +247,7 @@ pub struct Editors {
     pub import_paths: TextEditor,
     pub mcp_server: TextEditor,
     pub mcp_tool: TextEditor,
+    pub ws_subprotocols: TextEditor,
     /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
     pub script_section: usize,
 }
@@ -441,6 +453,7 @@ impl Editors {
             import_paths: TextEditor::single("").with_placeholder("protos"),
             mcp_server: TextEditor::single("").with_placeholder("server name from [mcp.servers]"),
             mcp_tool: TextEditor::single("").with_placeholder("tool name"),
+            ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
             script_section: 0,
         };
         let scripts = req.scripts();
@@ -543,6 +556,18 @@ impl Editors {
                     e.proto_files.set_text(&list_text(files));
                     e.import_paths.set_text(&list_text(import_paths));
                 }
+            }
+            Request::Ws(w) => {
+                e.kind = Kind::Ws;
+                e.url.set_text(&w.url);
+                e.headers = kv_table("Header", "Value", &w.headers);
+                e.ws_subprotocols.set_text(&list_text(&w.subprotocols));
+                e.message.set_text(&w.messages);
+                e.timeout.set_text(&ms_text(w.options.timeout_ms));
+                e.deadline.set_text(&ms_text(w.options.deadline_ms));
+                e.tls = w.options.tls;
+                e.grpc_verify = w.options.verify_tls;
+                e.cookies = w.options.cookies;
             }
             Request::Mcp(m) => {
                 e.kind = Kind::Mcp;
@@ -730,6 +755,21 @@ impl Editors {
                 },
                 scripts: self.scripts(),
             }),
+            Kind::Ws => Request::Ws(WebSocketRequest {
+                url: self.url.text(),
+                headers: kv_rows(&self.headers),
+                subprotocols: parse_list(&self.ws_subprotocols.text()),
+                messages: self.message.text(),
+                auth: self.auth(),
+                options: WsOptions {
+                    timeout_ms: parse_ms(&self.timeout.text()),
+                    deadline_ms: parse_ms(&self.deadline.text()),
+                    verify_tls: self.grpc_verify,
+                    tls: self.tls,
+                    cookies: self.cookies,
+                },
+                scripts: self.scripts(),
+            }),
             Kind::Mcp => Request::Mcp(McpRequest {
                 server: self.mcp_server.text(),
                 tool: self.mcp_tool.text(),
@@ -790,6 +830,20 @@ impl Editors {
                     v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
                 }
             },
+            Kind::Ws => match tab {
+                0 => v.push(Field::Headers),
+                1 => v.push(Field::WsMessages),
+                2 => auth_fields(&mut v),
+                3 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::Deadline,
+                    Field::WsSubprotocols,
+                    Field::Tls,
+                    Field::GrpcVerify,
+                    Field::Cookies,
+                ]),
+            },
             Kind::Mcp => match tab {
                 0 => v.extend([Field::McpServer, Field::McpTool]),
                 1 => v.push(Field::Message),
@@ -823,6 +877,7 @@ impl Editors {
         match self.kind {
             Kind::Http => HTTP_TABS,
             Kind::Grpc => GRPC_TABS,
+            Kind::Ws => WS_TABS,
             Kind::Mcp => MCP_TABS,
         }
     }
@@ -846,6 +901,8 @@ impl Editors {
             Field::Deadline => &mut self.deadline,
             Field::McpServer => &mut self.mcp_server,
             Field::McpTool => &mut self.mcp_tool,
+            Field::WsSubprotocols => &mut self.ws_subprotocols,
+            Field::WsMessages => &mut self.message,
             _ => return None,
         })
     }
@@ -1083,6 +1140,7 @@ impl Editors {
             &mut self.deadline,
             &mut self.proto_files,
             &mut self.import_paths,
+            &mut self.ws_subprotocols,
         ] {
             e.vim = mode;
         }
@@ -1135,6 +1193,7 @@ pub struct Response {
     pub messages: Viewer,
     pub grpc_events: Vec<sendito_grpc::Event>,
     pub grpc_kind: Option<sendito_grpc::CallKind>,
+    pub ws_events: Vec<sendito_ws::Event>,
     /// Short outcome of the assertions, shown on the Results tab: "2/3 ✗", "3/3 ✓".
     pub results_badge: Option<String>,
     /// The jq expression filtering the body for display, if any.
@@ -1153,6 +1212,7 @@ impl Response {
             messages: wrapped(Doc::text("")),
             grpc_events: Vec::new(),
             grpc_kind: None,
+            ws_events: Vec::new(),
             results_badge: None,
             jq: None,
             jq_src: None,
@@ -1285,9 +1345,9 @@ impl Default for Response {
 /// An in-flight request.
 pub struct Running {
     pub task: tokio::task::JoinHandle<()>,
-    pub control: Option<tokio::sync::mpsc::UnboundedSender<crate::runner::GrpcControl>>,
+    pub control: Option<tokio::sync::mpsc::UnboundedSender<crate::runner::Control>>,
     pub started: std::time::Instant,
-    /// The call accepts more request messages (client/bidi streaming).
+    /// The call/session accepts more input (client/bidi streaming, open WS).
     pub streaming_input: bool,
 }
 
@@ -1560,6 +1620,24 @@ mod tests {
             ..Default::default()
         }));
         reqs.push(Request::new_grpc());
+        reqs.push(Request::Ws(WebSocketRequest {
+            url: "wss://{{h}}/chat".into(),
+            headers: vec![KeyValue::new("origin", "https://x")],
+            subprotocols: vec!["chat.v2".into()],
+            messages: "[\"a\", {\"binary\": \"AAEC\"}]".into(),
+            auth: Auth::Bearer {
+                token: "{{t}}".into(),
+            },
+            options: WsOptions {
+                timeout_ms: Some(5),
+                deadline_ms: Some(50),
+                verify_tls: false,
+                tls: true,
+                cookies: Some(false),
+            },
+            ..Default::default()
+        }));
+        reqs.push(Request::new_ws());
         for r in reqs {
             let e = Editors::from_request(&r);
             assert_eq!(e.to_request(), r);

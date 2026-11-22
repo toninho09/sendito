@@ -14,6 +14,8 @@ pub enum CurlError {
     NoUrl,
     #[error("option {0} needs a value")]
     MissingValue(String),
+    #[error("{0}")]
+    WebSocket(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,6 +320,16 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
     {
         headers.remove(i);
     }
+    // A WebSocket session is not an HTTP request: curl has no equivalent
+    // description (the upgrade headers alone do not make one).
+    if url.starts_with("ws://") || url.starts_with("wss://") {
+        let u = &url;
+        return Err(CurlError::WebSocket(format!(
+            "{} is a WebSocket URL; curl cannot describe a session — \
+             open one with :newws and paste the URL",
+            u
+        )));
+    }
     let method = match method {
         Some(m) => m.to_ascii_uppercase(),
         None if head => "HEAD".into(),
@@ -496,6 +508,20 @@ mod tests {
     use super::*;
     use sendito_core::vars::VarValue;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn websocket_urls_are_refused_with_guidance() {
+        for u in ["ws://127.0.0.1:9001/chat", "wss://example.com/socket"] {
+            match import(&format!("curl {u}")) {
+                Err(CurlError::WebSocket(msg)) => {
+                    assert!(msg.contains(":newws"), "{msg}");
+                }
+                other => panic!("{u}: expected a WebSocket refusal, got {other:?}"),
+            }
+        }
+        // An HTTP URL still imports.
+        assert!(import("curl https://example.com/x").is_ok());
+    }
 
     #[test]
     fn blank_header_is_disabled_and_empty_header_exports_with_semicolon() {

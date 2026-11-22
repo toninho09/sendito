@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — WebSocket
+
+* **WebSocket requests** (`kind = "websocket"`): a session per request, like a
+  gRPC call. The handshake carries the request's headers, subprotocols, auth and
+  (optionally) the cookie jar; `wss://` uses `[http.tls]`; an `http(s)://`
+  `[http] proxy` is tunnelled with `CONNECT` (an `https://` proxy over its own
+  TLS). A JSON document of strings and `{ "binary": "base64" }` objects (with
+  `{{variables}}` rendered) is sent on connect, and on an open session Send
+  pushes one more frame while `Ctrl+W d` starts the close handshake. Frames
+  arrive live in the Log tab; the Handshake and Timing tabs report the upgrade
+  response and the frame counters, the last text frame is the Body, and scripts
+  see the close code as `status`. New crate `sendito-ws` (tokio-tungstenite), a
+  WebSocket echo server in `sendito-testkit`, 12 corpus cases checked byte for
+  byte, and `sendito run` support (text frames on stdout, exit `2` unless the
+  session closes with `1000`). `curl ws://…` is refused with a pointer to
+  `:newws`; SOCKS proxies and `proxy = "env"` are refused for sessions
+  (`docs/DEBT.md`).
+
 ## Unreleased — jq response filter
 
 * **jq filtering of the response body**: `j` (conventional) / `J` (vim) or

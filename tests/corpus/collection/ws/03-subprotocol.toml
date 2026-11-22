@@ -1,0 +1,6 @@
+kind = "websocket"
+url = "{{ws_url}}/proto/chat.v2"
+subprotocols = ["chat.v2", "chat.v1"]
+messages = '''
+"negotiated"
+'''

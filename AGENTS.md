@@ -48,8 +48,9 @@ make ci         # fmt-check + lint + deny + test, in order
 Run one heavy job at a time (workspace tests, media generation, benchmarks and
 coverage must not run together).
 
-* **Wire corpus**: `tests/corpus.rs` sends 47 HTTP, 15 gRPC and 5 MCP requests to
-  the echo servers and compares the exact bytes with `tests/corpus/expected`.
+* **Wire corpus**: `tests/corpus.rs` sends 47 HTTP, 15 gRPC, 12 WebSocket and 5
+  MCP requests to the echo servers and compares the exact bytes with
+  `tests/corpus/expected`.
   `make corpus-update` rewrites the goldens (then shows a `--stat` diff); read it.
   `make corpus` runs the test only.
 * **UI**: `crates/ui/tests/flows.rs` (scripted key/mouse flows) and `snapshots.rs`

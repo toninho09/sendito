@@ -1,0 +1,11 @@
+kind = "websocket"
+url = "{{ws_url}}/echo"
+messages = '''
+"key in query"
+'''
+
+[auth]
+type = "apikey"
+key = "api_key"
+value = "{{local_token}}"
+in = "query"

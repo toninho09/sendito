@@ -93,9 +93,10 @@ allows `accept` as a transport header.
   `debug` logs nowhere (no logger is initialized) and `input`/`inputs` yield
   nothing (no further inputs). Removing the freeze needs a step budget or
   a cancellable worker thread, neither of which jaq's `run` API offers.
-* HTTP/3 and WebSocket are not supported.
+* HTTP/3 is not supported.
 * gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
-  support yet. HTTP requests and MCP servers over Streamable HTTP do.
+  support yet. HTTP requests, MCP servers over Streamable HTTP and WebSocket
+  sessions do.
 * `[http.tls]` is read when a connection is TLS: a plain `http://` request
   ignores the PEM paths entirely, so a missing file only fails (with its name)
   on an `https://` request or gRPC channel. The same material is loaded once
@@ -110,6 +111,26 @@ allows `accept` as a transport header.
   `br` (e.g. `zstd`, stacked codings) are shown as received; `gzip`, `deflate`
   and `br` are decompressed automatically. A truncated body is never decompressed.
 * Windows is not a target of this release.
+* **WebSocket proxies are HTTP(S) CONNECT only.** A `socks4`/`socks4a`/`socks5`/
+  `socks5h` proxy URL and `proxy = "env"` (which cannot be resolved without
+  reading the environment per request) are refused with a message instead of
+  being silently ignored. Fixing it means implementing the SOCKS handshake and
+  the `NO_PROXY` matching that `reqwest` provides for HTTP.
+* **WebSocket handshake headers are written by `tungstenite`.** The library
+  writes `Host`, `Connection`, `Upgrade`, `Sec-WebSocket-Version` and
+  `Sec-WebSocket-Key` first and then the configured headers; a configured header
+  keeps the spelling used by the library for `Sec-WebSocket-Protocol` and
+  `Origin` and the original spelling for the rest. Header order is the file
+  order after those five. The `Sec-WebSocket-Key` is random per session, so it
+  is masked in the corpus captures.
+* **No WebSocket extensions are negotiated.** `permessage-deflate` is not
+  offered, so a server cannot compress frames and Sendito never has to
+  decompress them; a server that requires the extension must be reached
+  without it.
+* **`curl` cannot import a WebSocket session.** `curl ws://…` is refused with a
+  message pointing at `:newws`, because an upgrade header pair does not
+  describe a session. Postman, Insomnia and Bruno exports that contain
+  WebSocket requests import only their HTTP requests.
 * The `auto` theme picks dark or light from `COLORFGBG` only, which many terminals do
   not set (it then picks `dusk`). Asking the terminal for its background with OSC 11
   (`ESC ] 11 ; ? BEL`) would be more reliable, but needs a raw-mode query with a
@@ -120,4 +141,4 @@ allows `accept` as a transport header.
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  47 HTTP, 15 gRPC and 5 MCP cases.
+  47 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.

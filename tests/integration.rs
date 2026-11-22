@@ -399,6 +399,7 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         env: Some("dev".into()),
         schemas: Default::default(),
         grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -457,6 +458,7 @@ fn cookie_jar_fails_closed_for_insecure_file() {
         env: None,
         schemas: Default::default(),
         grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -515,6 +517,7 @@ fn cookie_jar_stores_and_replays() {
         env: Some("dev".into()),
         schemas: Default::default(),
         grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -943,6 +946,7 @@ fn http_oauth_login_refresh_and_send() {
             env: Some("dev".into()),
             schemas: Default::default(),
             grpc_deadline_ms: 0,
+            ws_timeout_ms: 0,
             mask_echoed_secrets: true,
             cookie_jar: false,
             oauth: Some(sendito_ui::runner::OAuthRunInfo::of(&p)),
@@ -995,4 +999,66 @@ fn http_oauth_login_refresh_and_send() {
         assert!(o.response.is_err());
         assert_eq!(srv.http_requests(), 3);
     });
+}
+
+/// A WebSocket session replays the collection cookie jar: the handshake carries
+/// one `Cookie` header. The jar only speaks HTTP, so a ws:// URL must be mapped
+/// to its http:// equivalent instead of being refused.
+#[test]
+fn ws_session_replays_the_cookie_jar() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let ws = rt.block_on(sendito_testkit::ws_echo::start()).unwrap();
+    write(
+        root,
+        ".sendito/environments/dev.toml",
+        &format!("[variables]\nbase = \"{}\"\n", ws.url("")),
+    );
+    write(
+        root,
+        "chat.toml",
+        "kind = \"websocket\"\nurl = \"{{base}}/echo\"\nmessages = '''\"hi\"'''\n\n[options]\ncookies = true\n",
+    );
+    let p =
+        sendito_ui::runner::Project::open_with(root, sendito_ui::runner::default_keychain(), None);
+    let ctx = sendito_ui::runner::RunCtx {
+        root: root.to_path_buf(),
+        send: p.send_options(),
+        history: None,
+        name: "chat".into(),
+        path: Some("chat.toml".into()),
+        env: Some("dev".into()),
+        schemas: Default::default(),
+        grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
+        mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
+    };
+    let Request::Ws(req) = p.coll.load("chat.toml").unwrap() else {
+        panic!("not websocket")
+    };
+    // Seed the jar with a cookie for the ws host (stored under http://).
+    let http_url = ws.url("/").replacen("ws://", "http://", 1);
+    sendito_store::cookies::store_response(root, "dev", &http_url, &["sid=corpus-1".into()])
+        .unwrap();
+    let (scope, errors) =
+        sendito_ui::runner::build_scope(&p.envs, Some("dev"), &Default::default());
+    assert!(errors.is_empty(), "{errors:?}");
+    let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+    let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(ctl_tx);
+    rt.block_on(async {
+        let run = sendito_ui::runner::exec_ws(&ctx, &req, scope, vec![], utx, ctl_rx);
+        let collect = async { while urx.recv().await.is_some() {} };
+        tokio::join!(run, collect);
+    });
+    let caps = ws.take();
+    let cap = caps.first().expect("a session reached the server");
+    let head = cap.head();
+    assert!(
+        head.to_ascii_lowercase().contains("cookie: sid=corpus-1"),
+        "{head}"
+    );
 }

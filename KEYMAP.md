@@ -26,6 +26,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `quit` | `Ctrl+W q`, `Ctrl+Q` | `Ctrl+W q`, `Ctrl+Q` | Quit Sendito |
 | `new_request` | `Ctrl+N`, `Ctrl+W t` | `Ctrl+N`, `Ctrl+W t` | Open a new unsaved HTTP request tab |
 | `new_grpc_request` | `Ctrl+W g` | `Ctrl+W g` | Open a new unsaved gRPC request tab |
+| `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
@@ -178,7 +179,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | ⠋ on a tab (turning) | request running |
 | Results 2/3 ✗ | on the Results tab: assertions passed / total (✓ all passed, ✗ some failed) |
 | … | text cut short |
-| → ← ■ + in the gRPC Log tab | sent, received, final status, seconds since the call started |
+| → ← ■ + in the gRPC and WebSocket Log tabs | sent, received, final status, seconds since the session started |
 | Headers (2) | number of rows in a tab (compact: Headers(2)) |
 | Body•  Auth• | the body or the auth is set |
 | ▾ | opens a menu or picker |
@@ -211,6 +212,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:q!` | Quit without saving |
 | `:new` | New HTTP request (Ctrl+N) |
 | `:newgrpc` | New gRPC request (Ctrl+W g) |
+| `:newws` | New WebSocket request (Ctrl+W y) |
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
 | `:mcptools` | Discover and choose an MCP tool |

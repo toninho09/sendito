@@ -17,6 +17,7 @@ library. The non-UI crates build and test without a terminal.
 │   ├── core/                # model, template, vars, resolve, scripts
 │   ├── http/                # reqwest/rustls client, decoding, proxy, TLS, timing
 │   ├── grpc/                # tonic + prost-reflect + protox schema
+│   ├── ws/                  # tokio-tungstenite WebSocket sessions
 │   ├── mcp/                 # stdio and Streamable HTTP transports, protocol, OAuth
 │   ├── store/               # collection, request files, config, env, history, cookies, session, themes
 │   ├── import/              # Postman, Insomnia, Bruno, curl, .http
@@ -29,14 +30,15 @@ library. The non-UI crates build and test without a terminal.
 
 | Crate | Owns |
 |---|---|
-| `sendito-core` | `Request` / `HttpRequest` / `GrpcRequest` / `McpRequest` model, `{{template}}` parsing, variable scope and precedence, placeholder resolution, dynamic values, declarative scripts (pre / extract / assert), secret tainting and scrubbing |
+| `sendito-core` | `Request` / `HttpRequest` / `GrpcRequest` / `WebSocketRequest` / `McpRequest` model, `{{template}}` parsing, variable scope and precedence, placeholder resolution, dynamic values, declarative scripts (pre / extract / assert), secret tainting and scrubbing |
 | `sendito-http` | Sending HTTP with reqwest + rustls, header and body assembly, response decompression, proxy, `[http.tls]`, the DNS/connect/TLS/TTFB/download timing breakdown |
 | `sendito-grpc` | Schema from reflection or `.proto` (protox), proto3 JSON ↔ protobuf, all four call kinds, metadata, deadlines, the streaming session |
+| `sendito-ws` | The WebSocket handshake (headers, subprotocols, `wss://` TLS, HTTP CONNECT proxy and an `https://` proxy's own TLS), the frame loop, the close handshake with its bound and the session deadline |
 | `sendito-mcp` | JSON-RPC 2.0, stdio and Streamable HTTP transports, `tools/list` / `tools/call`, OAuth 2.1 with metadata discovery, PKCE and dynamic registration |
 | `sendito-store` | The collection tree on disk, canonical request files, layered config, environments and the four secret sources, cookie jar, history, session restore, themes, `init` |
 | `sendito-import` | Postman v2.1, Insomnia v4/v5, Bruno, curl (import and export), `.http` export, importing into a folder |
 | `sendito-ui` | The ratatui/crossterm app, drawing, editors, key map, themes, and `runner` — the send pipeline that both the UI and the CLI use |
-| `sendito-testkit` | HTTP/gRPC/MCP echo servers that record exact bytes, a fake MCP OAuth server, a forward proxy and a test CA / server / client |
+| `sendito-testkit` | HTTP/gRPC/WebSocket/MCP echo servers that record exact bytes, a fake MCP OAuth server, a forward proxy and a test CA / server / client |
 | `sendito` (binary) | Argument parsing, the headless `run`, `curl` / `http` export, OAuth login/logout, `import`, `theme` |
 
 ## How a request is sent
@@ -74,10 +76,11 @@ Consequences worth knowing:
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in each crate | `make test` |
-| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (47 HTTP, 15 gRPC, 5 MCP) | `make corpus` |
+| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (47 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
 | Rewrite corpus goldens | same | `make corpus-update` |
 | Integration (HTTP, TLS, proxy) | `tests/integration.rs`, `tests/tls.rs`, `tests/proxy.rs` | `make test` |
 | gRPC calls, MCP client and OAuth | `crates/{grpc,mcp}/tests/` | `make test` |
+| WebSocket sessions | `crates/ws/src/lib.rs` (unit tests) and `tests/integration.rs` (cookie jar) | `make test` |
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs` | `make test` |
 | UI snapshots (insta, 120×40 and 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
 | Screenshots and GIFs | `crates/ui/tests/media.rs` + `docs/media/render.py` | `make media && make render` |

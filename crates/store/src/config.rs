@@ -19,6 +19,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub http: HttpConfig,
     pub grpc: GrpcConfig,
+    pub websocket: WsConfig,
     pub mcp: McpConfig,
     /// Named OAuth identities for ordinary HTTP requests.
     pub oauth: BTreeMap<String, OAuthIdentity>,
@@ -135,6 +136,14 @@ pub struct HttpTlsConfig {
 pub struct GrpcConfig {
     /// Default deadline when a request sets none (0 = none).
     pub deadline_ms: u64,
+}
+
+/// WebSocket settings (`[websocket]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct WsConfig {
+    /// Default handshake timeout when a request sets none (0 = none).
+    pub timeout_ms: u64,
 }
 
 /// Authorization-code + PKCE settings for `[oauth.<name>]`.
