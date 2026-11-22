@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Roda um comando, guarda a saída completa em target/<modo>.log e imprime só um
-# resumo curto em caso de sucesso. Em falha, despeja o log e sai com erro.
+# Runs a command, keeps the full output in target/<mode>.log and prints only a
+# short summary on success. On failure, dumps the log and exits with an error.
 #
-# Uso: scripts/quiet.sh <modo> <comando...>
-# Modos: test (cargo test), cov (cargo llvm-cov), plain (usa "modo: ok")
+# Usage: scripts/quiet.sh <mode> <command...>
+# Modes: test (cargo test), cov (cargo llvm-cov), plain (prints "mode: ok")
 set -uo pipefail
 
-mode=${1:?modo ausente}
+mode=${1:?missing mode}
 shift
 log="target/${mode}.log"
 mkdir -p target
 
 if ! "$@" >"$log" 2>&1; then
   cat "$log"
-  printf '\nFALHOU — log completo: %s\n' "$log" >&2
+  printf '\nFAILED — full log: %s\n' "$log" >&2
   exit 1
 fi
 
@@ -24,11 +24,11 @@ case $mode in
          /^[.i]+$/ { next }
          /^$/ { next }
          { print }
-         END { printf "testes: %d suites, %d passed, %d failed, %d ignored\n", suites, pass, fail, ign }' "$log"
+         END { printf "tests: %d suites, %d passed, %d failed, %d ignored\n", suites, pass, fail, ign }' "$log"
     ;;
   cov)
-    awk '$1 == "TOTAL" { printf "cobertura: linhas %s (gate 80%%)\n", $10; found = 1 }
-         END { if (!found) print "cobertura: TOTAL ausente no log" }' "$log"
+    awk '$1 == "TOTAL" { printf "coverage: lines %s (gate 80%%)\n", $10; found = 1 }
+         END { if (!found) print "coverage: TOTAL missing from the log" }' "$log"
     ;;
   *)
     echo "${mode}: ok"
