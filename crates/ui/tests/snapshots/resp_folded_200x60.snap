@@ -60,5 +60,5 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Ln 2/24 ─╯
-  Alt+1-4  tabs   y  copy   p/r/x  view   /  search   s  save body   Enter  fold   w  wrap   Ctrl+P  commands   F1  all keys
+  Alt+1-4  tabs   y  copy   p/r/x  view   /  search   j  jq   s  save body   Enter  fold   w  wrap   Ctrl+P  commands   F1  all keys
  demo

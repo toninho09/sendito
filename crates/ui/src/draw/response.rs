@@ -170,6 +170,15 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         for (r, m) in rects.into_iter().zip(modes) {
             app.hits.push((r, Hit::ViewMode(m)));
         }
+        // A jq filter applied to the body, in the bottom border after the modes.
+        if let Some(expr) = tab.response.as_ref().and_then(|r| r.jq.as_deref()) {
+            let t = format!(" jq: {} ", truncate(expr, 24));
+            let tw = t.width() as u16;
+            let x = modes_end + 1;
+            if x + tw < max_x {
+                put(buf, x, bottom, &t, tw, theme.dim().bg(theme.surface));
+            }
+        }
     }
     let view = Rect::new(
         inner.x + 1,

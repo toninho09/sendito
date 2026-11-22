@@ -5,7 +5,7 @@ works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
 
 [![CI](https://github.com/toninho09/sendito/actions/workflows/ci.yml/badge.svg)](https://github.com/toninho09/sendito/actions/workflows/ci.yml)
-![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)
+![Rust](https://img.shields.io/badge/rust-1.89%2B-orange)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-blue)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
 
@@ -87,7 +87,7 @@ sha256sum -c sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 sudo install sendito /usr/local/bin/
 ```
 
-Or build from source (a recent stable Rust; the code needs 1.88 or newer for edition-2024 let chains, and CI builds with the current stable):
+Or build from source (a recent stable Rust; the code needs 1.89 or newer — edition-2024 let chains need 1.88 and the jq filter library sets the floor at 1.89 — and CI builds with the current stable):
 
 ```sh
 cargo install --path .

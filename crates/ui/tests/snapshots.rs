@@ -247,6 +247,23 @@ fn response_views() {
 }
 
 #[test]
+fn response_jq_filter() {
+    each(|h| {
+        open(h, "list users");
+        fake_response(h, BODY, 200);
+        h.key("ctrl+w j");
+        h.key("j");
+        snap("resp_jq_prompt", h);
+        h.type_text(".items[] | .name");
+        h.key("enter");
+        snap("resp_jq_filter", h);
+        h.key("j");
+        h.key("ctrl+a backspace enter");
+        snap("resp_jq_cleared", h);
+    });
+}
+
+#[test]
 fn overlays() {
     each(|h| {
         h.key("ctrl+p");

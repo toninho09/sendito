@@ -1137,6 +1137,10 @@ pub struct Response {
     pub grpc_kind: Option<sendito_grpc::CallKind>,
     /// Short outcome of the assertions, shown on the Results tab: "2/3 ✗", "3/3 ✓".
     pub results_badge: Option<String>,
+    /// The jq expression filtering the body for display, if any.
+    pub jq: Option<String>,
+    /// The unfiltered body bytes, captured when the first filter is applied.
+    pub jq_src: Option<Vec<u8>>,
 }
 
 impl Response {
@@ -1150,7 +1154,83 @@ impl Response {
             grpc_events: Vec::new(),
             grpc_kind: None,
             results_badge: None,
+            jq: None,
+            jq_src: None,
         }
+    }
+
+    /// Replaces the body document (a response, message or call result); any
+    /// jq filter no longer applies to the new document.
+    pub fn set_body(&mut self, doc: Doc) {
+        self.jq = None;
+        self.jq_src = None;
+        self.body = Viewer::new(doc);
+    }
+
+    /// Replaces the body with wrapped text (a failure report); any jq filter
+    /// no longer applies to it.
+    pub fn set_body_wrapped(&mut self, text: String) {
+        self.set_body(Doc::text(&text));
+        self.body.wrap = true;
+    }
+
+    /// Applies (or, with an empty expression, removes) the jq filter over the
+    /// body and rebuilds the viewer. The original bytes are captured when the
+    /// first filter succeeds, so a new expression re-filters the original
+    /// body and clearing restores it.
+    ///
+    /// Returns whether a filter is active afterwards.
+    pub fn apply_jq(&mut self, expr: &str) -> Result<bool, String> {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            self.jq = None;
+            if let Some(src) = self.jq_src.take() {
+                self.swap_body(Doc::from_bytes(src, Some("application/json")));
+            }
+            return Ok(false);
+        }
+        let outs = match self.jq_src.as_deref() {
+            Some(src) => crate::filter::apply(expr, src),
+            None => {
+                // Capture the original bytes only when the filter succeeds,
+                // so a failed first filter leaves no half-state behind.
+                let src = self.body.doc.bytes().to_vec();
+                let outs = crate::filter::apply(expr, &src);
+                if outs.is_ok() {
+                    self.jq_src = Some(src);
+                }
+                outs
+            }
+        };
+        let outs = outs?;
+        self.jq = Some(expr.to_string());
+        let doc = match outs.as_slice() {
+            [] => Doc::text("(no output)\n"),
+            [one] => Doc::from_bytes(one.clone(), Some("application/json")),
+            many => {
+                // One JSON value per line, like jq's own output stream.
+                let mut text = Vec::new();
+                for (i, o) in many.iter().enumerate() {
+                    if i > 0 {
+                        text.push(b'\n');
+                    }
+                    text.extend_from_slice(o);
+                }
+                Doc::from_bytes(text, None)
+            }
+        };
+        self.swap_body(doc);
+        Ok(true)
+    }
+
+    /// Swaps the body viewer's document, keeping the view mode, wrap and line
+    /// numbers.
+    fn swap_body(&mut self, doc: Doc) {
+        let mut v = Viewer::new(doc);
+        v.mode = self.body.mode;
+        v.wrap = self.body.wrap;
+        v.numbers = self.body.numbers;
+        self.body = v;
     }
 
     pub fn viewer_mut(&mut self, tab: usize) -> &mut Viewer {
@@ -1339,6 +1419,34 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viewer::ViewMode;
+
+    #[test]
+    fn jq_filter_state() {
+        let body = br#"{"items":[{"id":1},{"id":2}],"count":2}"#;
+        let mut r = Response::new();
+        r.set_body(Doc::from_bytes(body.to_vec(), Some("application/json")));
+        // A filter replaces the shown document and remembers the expression.
+        assert!(r.apply_jq(".count").unwrap());
+        assert_eq!(r.jq.as_deref(), Some(".count"));
+        assert_eq!(r.body.doc.line(ViewMode::Pretty, 0), "2");
+        // A new expression re-filters the original body, not the output.
+        assert!(r.apply_jq(".items[0].id").unwrap());
+        assert_eq!(r.body.doc.line(ViewMode::Pretty, 0), "1");
+        // Clearing restores the original bytes and drops the state.
+        assert!(!r.apply_jq("").unwrap());
+        assert!(r.jq.is_none() && r.jq_src.is_none());
+        assert_eq!(r.body.doc.bytes(), &body[..]);
+        // An empty filter with none applied is a no-op.
+        assert!(!r.apply_jq("").unwrap());
+        // A replaced body drops a pending filter.
+        assert!(r.apply_jq(".count").unwrap());
+        r.set_body(Doc::text("x"));
+        assert!(r.jq.is_none() && r.jq_src.is_none());
+        // A bad expression changes nothing.
+        assert!(r.apply_jq("nope").is_err());
+        assert!(r.jq.is_none());
+    }
 
     fn full() -> Request {
         Request::Http(HttpRequest {

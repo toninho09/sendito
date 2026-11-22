@@ -320,6 +320,67 @@ fn flow_send_get_and_post_json() {
 }
 
 #[test]
+fn flow_response_jq_filter() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    // The echo body: method, target, headers, session, …
+    let dbg = h.screen();
+    assert!(dbg.contains("\"method\""), "{dbg}");
+    h.key("ctrl+w j");
+    // j opens the filter prompt; the expression narrows the body.
+    h.key("j");
+    assert!(h.screen().contains("Filter response (jq)"));
+    h.type_text(".session");
+    h.key("enter");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq: .session"), "{sc}");
+        assert!(sc.contains("server-session-1"), "{sc}");
+        assert!(!sc.contains("\"method\""), "{sc}");
+    }
+    // :jq re-filters the original body, not the filtered output.
+    h.app.run_command("jq .method");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq: .method"), "{sc}");
+        assert!(sc.contains("\"POST\""), "{sc}");
+        assert!(!sc.contains("server-session-1"), "{sc}");
+    }
+    // A bad expression keeps the prompt open with the error.
+    h.key("j");
+    h.key("ctrl+a");
+    h.type_text(".a[");
+    h.key("enter");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("Filter response (jq)"), "{sc}");
+        assert!(!sc.contains("jq: .a["), "{sc}");
+    }
+    h.key("esc");
+    // An empty expression clears the filter and restores the body.
+    h.key("j");
+    h.key("ctrl+a");
+    h.key("backspace");
+    h.key("enter");
+    {
+        let sc = h.screen();
+        assert!(!sc.contains("jq:"), "{sc}");
+        assert!(sc.contains("\"method\""), "{sc}");
+    }
+    // A new response replaces the body and drops the filter.
+    h.app.run_command("jq .target");
+    assert!(h.screen().contains("jq: .target"));
+    h.key("f5");
+    h.wait_idle(10);
+    let sc = h.screen();
+    assert!(!sc.contains("jq:"), "{sc}");
+    assert!(sc.contains("\"method\""), "{sc}");
+}
+
+#[test]
 fn flow_multipart_upload() {
     let s = servers();
     let mut h = harness(&s, 120, 34);

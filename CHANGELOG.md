@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — jq response filter
+
+* **jq filtering of the response body**: `j` (conventional) / `J` (vim) or
+  `:jq [expr]` filters the JSON body with a real jq expression (the `jaq`
+  library): paths, pipes, `select`, `map`, slicing, arithmetic, regex — for
+  HTTP, gRPC messages and MCP results alike. The filter is display-only:
+  assertions, extracts, history and re-sends always see the full body, an
+  empty expression restores it, and a new response clears it. The body
+  border shows `jq: <expr>` while a filter is active; several outputs print
+  one JSON value per line as raw text (no pretty view). `halt`, `halt_error`
+  and `stderr` are removed
+  from the builtin set (they would exit the process or write to the
+  terminal). The new dependency raises the minimum Rust version to 1.89
+  (README and DEBT updated). The wire is unchanged.
+
 ## Unreleased — completion
 
 * **Autocomplete for gRPC and MCP.** The message editor (`Message` for gRPC, `Args`

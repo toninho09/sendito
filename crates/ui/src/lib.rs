@@ -4,6 +4,7 @@ pub mod app;
 pub mod complete;
 pub mod draw;
 pub mod editor;
+pub mod filter;
 pub mod form;
 pub mod icons;
 pub mod keymap;

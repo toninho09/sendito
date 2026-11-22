@@ -1601,6 +1601,7 @@ impl App {
             Action::ViewRaw => self.set_view(ViewMode::Raw),
             Action::ViewHex => self.set_view(ViewMode::Hex),
             Action::Search => self.open_search(),
+            Action::Filter => self.open_filter(),
             Action::SearchNext => self.with_viewer(|v| {
                 v.next_match(1);
             }),
@@ -2673,7 +2674,7 @@ impl App {
                             .map(|d| format!("{} {}", d.encoding, human_size(d.raw_len))),
                         error: None,
                     };
-                    resp.body = Viewer::new(std::mem::take(&mut o.doc));
+                    resp.set_body(std::mem::take(&mut o.doc));
                     resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, &o)));
                     let mut timing = timing_text(r, o.body_size);
                     if let Some(w) = &mut t.watch {
@@ -2717,10 +2718,10 @@ impl App {
                         error: Some(e.clone()),
                         ..Default::default()
                     };
-                    resp.body = crate::tab::wrapped(Doc::text(&format!(
+                    resp.set_body_wrapped(format!(
                         "Request failed: {}\n\nDetails:\n{e}\n",
                         explain_error(e)
-                    )));
+                    ));
                     resp.headers = crate::tab::wrapped(Doc::text(&request_headers_text(&o)));
                     // The reason is in the response pane; the status line names the
                     // outcome only (it would be cut short anyway).
@@ -2800,7 +2801,7 @@ impl App {
                 resp.messages.doc.append_text(&event_text(&ev));
                 match &ev {
                     sendito_grpc::Event::Received { json, .. } => {
-                        resp.body = Viewer::new(Doc::from_bytes(
+                        resp.set_body(Doc::from_bytes(
                             json.as_bytes().to_vec(),
                             Some("application/json"),
                         ));
@@ -2846,7 +2847,7 @@ impl App {
                 if resp.grpc_events.is_empty() {
                     resp.summary.status = "Error".into();
                     resp.summary.error = Some(e.clone());
-                    resp.body = crate::tab::wrapped(Doc::text(&format!("Call failed:\n\n{e}\n")));
+                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n"));
                 }
                 status = Some((e, StatusKind::Error));
             }
@@ -2973,9 +2974,9 @@ impl App {
                     },
                 };
                 if let Some(body) = result {
-                    resp.body = Viewer::new(Doc::from_bytes(body, Some("application/json")));
+                    resp.set_body(Doc::from_bytes(body, Some("application/json")));
                 } else if let Some(e) = &error {
-                    resp.body = crate::tab::wrapped(Doc::text(&format!("Call failed:\n\n{e}\n")));
+                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n"));
                 }
                 let text = messages_text(&scripts, &scope_errors, &[]);
                 if !text.trim().is_empty() {
@@ -3738,6 +3739,45 @@ impl App {
         }));
     }
 
+    fn open_filter(&mut self) {
+        if self.tab().and_then(|t| t.response.as_ref()).is_none() {
+            self.set_status("no response to filter yet", StatusKind::Info);
+            return;
+        }
+        let current = self
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .and_then(|r| r.jq.clone())
+            .unwrap_or_default();
+        self.overlay = Some(Overlay::Prompt(Prompt {
+            title: "Filter response (jq)".into(),
+            label: "jq".into(),
+            input: TextEditor::single(&current).with_placeholder(".data.items[] | select(.ok)"),
+            choices: vec![],
+            focus: 0,
+            action: PromptAction::Filter,
+            error: None,
+            note: Some("Enter applies · an empty expression clears the filter".into()),
+            open: None,
+        }));
+    }
+
+    /// Applies (or clears) the jq filter on the active tab's response body and
+    /// shows the body tab, where the result is drawn.
+    fn apply_filter(&mut self, expr: &str) -> Result<bool, String> {
+        let t = self
+            .tab_mut()
+            .ok_or_else(|| "no open request".to_string())?;
+        let resp = t
+            .response
+            .as_mut()
+            .ok_or_else(|| "no response to filter yet".to_string())?;
+        let applied = resp.apply_jq(expr)?;
+        t.resp_tab = 0;
+        self.focus = Focus::RespBody;
+        Ok(applied)
+    }
+
     pub fn open_import(&mut self, prefill: &str) {
         let mut input = TextEditor::multi(prefill)
             .with_placeholder("curl https://…   or   path/to/collection.json or Bruno directory");
@@ -4385,6 +4425,17 @@ impl App {
                 }))
             }
             "format" => self.format_body(),
+            "jq" => {
+                if arg.is_empty() {
+                    self.open_filter();
+                } else {
+                    match self.apply_filter(arg) {
+                        Ok(true) => self.set_status("jq filter applied", StatusKind::Ok),
+                        Ok(false) => self.set_status("jq filter cleared", StatusKind::Ok),
+                        Err(e) => self.set_status(e, StatusKind::Error),
+                    }
+                }
+            }
             "template" => self.load_schema(false, true, false),
             "reload" => self.load_schema(false, false, true),
             "settings" => self.overlay = Some(Overlay::Settings { sel: 0 }),
@@ -4903,6 +4954,7 @@ impl App {
                         ("y".into(), "copy".into()),
                         ("p/r/x".into(), "view".into()),
                         ("/".into(), "search".into()),
+                        (k(self, Action::Filter), "jq".into()),
                         ("s".into(), "save body".into()),
                         ("Enter".into(), "fold".into()),
                         ("w".into(), "wrap".into()),
@@ -4934,6 +4986,7 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
         }
         PromptAction::Rename(_) => "rename",
         PromptAction::Search => "search",
+        PromptAction::Filter => "apply",
         PromptAction::CustomMethod => "use",
     }
 }
@@ -6304,6 +6357,18 @@ impl App {
                 self.overlay = Some(Overlay::Env(ed));
             }
             PromptAction::Search => {}
+            PromptAction::Filter => {
+                let applied = self.apply_filter(&value)?;
+                self.set_status(
+                    (if applied {
+                        "jq filter applied"
+                    } else {
+                        "jq filter cleared"
+                    })
+                    .to_string(),
+                    StatusKind::Ok,
+                );
+            }
             PromptAction::CustomMethod => {
                 let m = value.trim().to_ascii_uppercase();
                 if m.is_empty()

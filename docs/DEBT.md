@@ -47,9 +47,9 @@ allows `accept` as a transport header.
   the 12 flows.
 * **Only Linux was run locally.** The CI matrix includes macOS arm64 and the OS keychain
   tests, but none of that has run yet; the release workflow has not run either.
-* **Minimum Rust version is unverified.** The code needs at least Rust 1.88
-  (edition 2024 let chains); dependencies may need more. Only the current stable
-  toolchain has been used.
+* **Minimum Rust version is unverified.** The code needs at least Rust 1.89
+  (edition 2024 let chains; the `jaq` jq library sets this floor); other
+  dependencies may need more. Only the current stable toolchain has been used.
 * **Terminal sizes.** Screenshots, recordings and snapshot tests cover 120×40 and
   200×60. Smaller terminals work (the layout adapts) but are not covered by snapshots.
 * **Coverage** is measured for the non-UI crates only (90.66%); `sendito-ui` is covered
@@ -86,6 +86,13 @@ allows `accept` as a transport header.
 * MCP OAuth login uses configured URLs and OAuth settings literally, without
   resolving environment placeholders. The local callback requires a browser able
   to reach the machine running Sendito.
+* The jq response filter runs synchronously on the UI thread with no output
+  or time cap: a pathological expression (`repeat(.)`, `[range(1e12)]`) freezes
+  the UI and grows memory until the expression finishes or the process is
+  killed. `halt`, `halt_error` and `stderr` are removed from the builtin set,
+  `debug` logs nowhere (no logger is initialized) and `input`/`inputs` yield
+  nothing (no further inputs). Removing the freeze needs a step budget or
+  a cancellable worker thread, neither of which jaq's `run` API offers.
 * HTTP/3 and WebSocket are not supported.
 * gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
   support yet. HTTP requests and MCP servers over Streamable HTTP do.

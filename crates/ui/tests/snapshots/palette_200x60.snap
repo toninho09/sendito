@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/72   ┃                                                 │
+│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/73   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -27,7 +27,7 @@ expression: screen
 │                            ││                   │  Focus the pane below                                                    Ctrl+W j / Ctrl+W Down  ┃                                                 │
 │                            ││                   │  Focus the pane above                                                      Ctrl+W k / Ctrl+W Up  ┃                                                 │
 │                            ││                   │  Focus the pane to the right                                            Ctrl+W l / Ctrl+W Right  ┃                                                 │
-│                            ││                   │  Next tab of the focused pane (e.g. Params → Headers)                                  Ctrl+W ]  ┃                                                 │
+│                            ││                   │  Next tab of the focused pane (e.g. Params → Headers)                                  Ctrl+W ]  │                                                 │
 │                            ││                   │  Previous tab of the focused pane                                                      Ctrl+W [  │                                                 │
 │                            ││                   │  Jump to tab 1 of the focused pane                                                        Alt+1  │                                                 │
 │                            ││                   │  Jump to tab 2 of the focused pane                                                        Alt+2  │ pear here.                                      │
@@ -47,7 +47,7 @@ expression: screen
 │                            ││                   │  Maximize or restore the focused pane                                                  Ctrl+W z  │                                                 │
 │                            ││                   │  Widen the sidebar                                                                     Ctrl+W >  │                                                 │
 │                            ││                   │  Narrow the sidebar                                                                    Ctrl+W <  │                                                 │
-│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 36 more ─╯                                                 │
+│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 37 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

@@ -117,6 +117,16 @@ The wire rules are exact and spelled out in
   numbers, search and a scrollbar.
 * **Timing**: DNS, TCP connect, TLS handshake, TTFB and download, with the
   remote address, the protocol and the final URL, drawn as a waterfall.
+* **jq filter**: `j` (vim `J`) or `:jq [expr]` filters the JSON body with a jq
+  expression (the `jaq` library): paths, pipes, `select`, `map`, slicing,
+  arithmetic, regex. The filter is display-only — assertions, extracts and
+  history always see the full body; an empty expression restores it and a new
+  response clears it. The body border shows `jq: <expr>` while active (dropped
+  or truncated when the border is crowded), several outputs print one JSON
+  value per line as raw text (no pretty view), and the filter needs a JSON
+  body. Works on any JSON body (HTTP, gRPC messages, MCP results). `halt`,
+  `halt_error` and `stderr` are not available (they would exit the process or
+  write to the terminal).
 * **Headers tab**: the response headers and the request that was actually sent,
   with secrets masked.
 * **Cookie jar** (opt-in): RFC 6265 with the public suffix list, stored in a
@@ -419,6 +429,7 @@ all environments, and the `:commands`.
 | `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar |
 | `:history`, `:clearhistory` | Show / clear history |
 | `:format` | Pretty-print the JSON body |
+| `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
 | `:settings`, `:theme <name>`, `:theme reload`, `:help` | Settings / theme / help |
 | `:report`, `:savebody [path]` | Reopen the last report / save the response body |

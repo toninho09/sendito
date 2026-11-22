@@ -111,6 +111,7 @@ actions! {
     ViewRaw => "view_raw", "Body view: raw text";
     ViewHex => "view_hex", "Body view: hex dump";
     Search => "search", "Search in the response";
+    Filter => "filter", "Filter the response body with a jq expression";
     SearchNext => "search_next", "Next search match";
     SearchPrev => "search_prev", "Previous search match";
     FoldToggle => "fold_toggle", "Fold or unfold the JSON block at the cursor";
@@ -394,6 +395,8 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (ViewRaw, Response, Both, &["r"]),
         (ViewHex, Response, Both, &["x"]),
         (Search, Response, Both, &["/", "ctrl+f"]),
+        (Filter, Response, Conventional, &["j"]),
+        (Filter, Response, Vim, &["J"]),
         (SearchNext, Response, Both, &["n", "f3"]),
         (SearchPrev, Response, Both, &["N", "shift+f3"]),
         (FoldToggle, Response, Conventional, &["enter", "space"]),
@@ -806,6 +809,30 @@ pub fn keymap_markdown() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_key_by_mode() {
+        // The jq filter is j in conventional mode and J in vim mode (j moves
+        // the cursor there); plain j must not open it in vim mode.
+        let km = Keymap::defaults();
+        let j = Chord::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let upper = Chord::new(KeyCode::Char('J'), KeyModifiers::NONE);
+        assert_eq!(
+            km.lookup(&[Ctx::Response], false, &[j]),
+            Lookup::Action(Action::Filter)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Response], true, &[j]),
+            Lookup::Action(Action::CursorDown)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Response], true, &[upper]),
+            Lookup::Action(Action::Filter)
+        );
+        // And the hint follows the mode.
+        assert_eq!(km.hint(Action::Filter, false), "j");
+        assert_eq!(km.hint(Action::Filter, true), "J");
+    }
 
     #[test]
     fn parse_and_display() {

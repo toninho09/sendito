@@ -29,6 +29,7 @@ pub enum PromptAction {
     SaveHistory(usize),
     CustomMethod,
     Search,
+    Filter,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +204,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":history", "Show history"),
     (":clearhistory", "Delete all history entries"),
     (":format", "Pretty-print the JSON body"),
+    (
+        ":jq [expr]",
+        "Filter the response body with a jq expression",
+    ),
     (
         ":template",
         "Fill the gRPC message with a template from the schema",
