@@ -10,6 +10,7 @@ description = "Sendito HTTP sender with timing breakdown"
 sendito-core.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+rustls-pki-types.workspace = true
 rustls-platform-verifier.workspace = true
 tokio.workspace = true
 tower.workspace = true
@@ -22,6 +23,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

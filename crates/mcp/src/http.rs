@@ -19,6 +19,8 @@ pub(crate) fn connect(
     url: &str,
     headers: &[(String, String)],
     verify_tls: bool,
+    proxy: Option<sendito_http::ProxySpec>,
+    tls: sendito_http::TlsMaterial,
     auth: Option<Arc<dyn TokenProvider>>,
 ) -> Result<Box<dyn Wire>, McpError> {
     // Fail early with the URL in the message: an unresolved `{{variable}}`
@@ -30,11 +32,15 @@ pub(crate) fn connect(
     })?;
     // Advertise ALPN like the HTTP client: a server that only speaks h2 must
     // still negotiate.
-    let tls =
-        sendito_http::tls_config(verify_tls, &[b"h2", b"http/1.1"]).map_err(McpError::Transport)?;
-    let client = reqwest::Client::builder()
+    let tls = sendito_http::tls_config(verify_tls, &[b"h2", b"http/1.1"], &tls)
+        .map_err(McpError::Transport)?;
+    let mut builder = reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(spec) = &proxy {
+        builder = spec.apply(builder).map_err(McpError::Transport)?;
+    }
+    let client = builder
         .build()
         .map_err(|e| McpError::Transport(e.to_string()))?;
     Ok(Box::new(HttpConn {

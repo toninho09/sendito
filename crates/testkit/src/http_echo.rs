@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 /// One request exactly as received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,12 +147,15 @@ fn dechunk(mut raw: &[u8]) -> Vec<u8> {
 pub struct HttpEcho {
     pub addr: SocketAddr,
     pub captures: Arc<Mutex<Vec<Captured>>>,
+    /// `true` when the listener speaks TLS (`start_tls`).
+    pub secure: bool,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl HttpEcho {
     pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.addr.port())
+        let scheme = if self.secure { "https" } else { "http" };
+        format!("{scheme}://127.0.0.1:{}", self.addr.port())
     }
 
     pub fn take(&self) -> Vec<Captured> {
@@ -194,6 +197,39 @@ pub async fn start_on(addr: &str) -> std::io::Result<HttpEcho> {
     Ok(HttpEcho {
         addr,
         captures,
+        secure: false,
+        task,
+    })
+}
+
+/// Starts the echo server over TLS with the given certificate; with
+/// `require_client`, a client certificate signed by the test CA must be
+/// presented (mutual TLS).
+pub async fn start_tls(
+    certs: &crate::tls::TestCerts,
+    require_client: bool,
+) -> Result<HttpEcho, Box<dyn std::error::Error + Send + Sync>> {
+    let cfg = crate::tls::server_config(certs, require_client, false)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let captures: Arc<Mutex<Vec<Captured>>> = Arc::default();
+    let c2 = captures.clone();
+    let task = tokio::spawn(async move {
+        while let Ok((sock, _)) = listener.accept().await {
+            let c = c2.clone();
+            let a = acceptor.clone();
+            tokio::spawn(async move {
+                if let Ok(sock) = a.accept(sock).await {
+                    let _ = serve(sock, c).await;
+                }
+            });
+        }
+    });
+    Ok(HttpEcho {
+        addr,
+        captures,
+        secure: true,
         task,
     })
 }
@@ -202,7 +238,10 @@ fn find(h: &[u8], pat: &[u8]) -> Option<usize> {
     h.windows(pat.len()).position(|w| w == pat)
 }
 
-async fn serve(mut sock: TcpStream, captures: Arc<Mutex<Vec<Captured>>>) -> std::io::Result<()> {
+async fn serve<S>(mut sock: S, captures: Arc<Mutex<Vec<Captured>>>) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = vec![0u8; 64 * 1024];
     loop {

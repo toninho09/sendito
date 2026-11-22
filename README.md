@@ -19,7 +19,9 @@ plain TOML files you can version in git.
   A corpus of 47 HTTP, 15 gRPC and 5 MCP cases is checked byte for byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
-  TLS verification, and a DNS / connect / TLS / TTFB / download breakdown.
+  TLS verification, an optional proxy (`[http] proxy`, including `"env"` for
+  `HTTPS_PROXY` and friends), a custom CA and client certificates for mutual
+  TLS (`[http.tls]`), and a DNS / connect / TLS / TTFB / download breakdown.
 * **gRPC**: services from server reflection or `.proto` files (compiled in-process,
   no `protoc`), unary, server-, client- and bidi-streaming calls, JSON messages
   with generated templates, metadata, TLS, deadlines, cancellation.
@@ -76,6 +78,8 @@ Without the UI:
 ```sh
 sendito run "Users/list users" --env local     # body to stdout, status to stderr
 sendito run checks/health --env prod || echo "an assertion failed"
+sendito run Users --env local                  # every request under Users, in tree order
+sendito run . --env local --report json        # current folder (root = all), JSON summary
 sendito curl "Users/create user" --env local   # print as curl (secrets stay {{placeholders}})
 sendito import acme.postman_collection.json    # Postman or Insomnia JSON
 sendito import path/to/bruno-collection        # Bruno directory
@@ -84,6 +88,17 @@ sendito import path/to/bruno-collection        # Bruno directory
 `sendito run` exits with 0 on success, 1 when an assertion fails or an MCP tool
 returns `isError: true`, 2 when the request fails (network error, gRPC status other
 than OK) and 3 on usage errors.
+
+Given a folder (or `.` for the current folder; at the collection root, `.` means
+everything), `sendito run` sends every request below it in tree order — one
+`PASS`/`FAIL`/`ERROR` line each and a summary — and **carries variables
+forward**: a value a request extracts is available to the ones after it, so a
+login followed by the calls that need its token works as one run.
+`--fail-fast` stops at the first failure, `--report json` prints a structured
+summary (counts and per-request status) to stdout, and the exit code is 0 (all
+passed), 1 (an assertion or tool error), 2 (a request failed) or 3 (usage,
+including unresolved variables). Folder runs go to History only when history
+is enabled, exactly like single requests.
 
 ### HTTP OAuth quick start
 

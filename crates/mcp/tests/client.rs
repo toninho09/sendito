@@ -17,6 +17,8 @@ fn http_transport(url: String) -> Transport {
         url,
         headers: Vec::new(),
         verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
         auth: None,
     }
 }

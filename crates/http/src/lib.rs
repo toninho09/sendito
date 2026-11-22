@@ -16,6 +16,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::{ClientSessionMemoryCache, ClientSessionStore, Resumption};
 use rustls::crypto::CryptoProvider;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, NamedGroup, SignatureScheme};
 use sendito_core::resolve::{PartData, ResolvedBody, ResolvedHttp};
@@ -146,6 +147,15 @@ pub struct SendOptions {
     pub default_timeout: Duration,
     /// Bodies larger than this are truncated.
     pub max_body: usize,
+    /// Outbound proxy from `[http] proxy` in the config. `None` keeps the
+    /// client's default proxy discovery: the proxy environment variables,
+    /// including `NO_PROXY` (`reqwest` is built without `system-proxy`, so the
+    /// OS settings are not read). `env` reads the variables explicitly. Applies
+    /// to HTTP requests and MCP over Streamable HTTP, not to gRPC (FORMAT.md).
+    pub proxy: Option<ProxySpec>,
+    /// PEM material from `[http] tls` in the config (custom CA, client
+    /// certificate); empty uses the platform roots and no client auth.
+    pub tls: TlsMaterial,
 }
 
 impl Default for SendOptions {
@@ -153,8 +163,136 @@ impl Default for SendOptions {
         Self {
             default_timeout: Duration::from_secs(30),
             max_body: 100 * 1024 * 1024,
+            proxy: None,
+            tls: TlsMaterial::default(),
         }
     }
+}
+
+/// Outbound proxy from `[http] proxy` in the config.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ProxySpec {
+    /// `proxy = "env"`: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and
+    /// `NO_PROXY` (lowercase too), with curl's precedence — the scheme
+    /// variable beats `ALL_PROXY`, and `NO_PROXY` exempts hosts.
+    Env,
+    /// A proxy URL such as `"http://host:port"` (also `https://`,
+    /// `socks4://`, `socks4a://`, `socks5://`, `socks5h://`); credentials may
+    /// be part of the URL.
+    Url(String),
+}
+
+/// Credentials in a proxy URL never reach logs: `Debug` shows them redacted.
+impl std::fmt::Debug for ProxySpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProxySpec::Env => f.write_str("Env"),
+            ProxySpec::Url(u) => f.debug_tuple("Url").field(&redact_url(u)).finish(),
+        }
+    }
+}
+
+impl ProxySpec {
+    /// Parses the `[http] proxy` value.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let v = value.trim();
+        if v.eq_ignore_ascii_case("env") {
+            return Ok(ProxySpec::Env);
+        }
+        const SCHEMES: [&str; 6] = [
+            "http://",
+            "https://",
+            "socks4://",
+            "socks4a://",
+            "socks5://",
+            "socks5h://",
+        ];
+        if SCHEMES.iter().any(|s| v.starts_with(s)) {
+            return Ok(ProxySpec::Url(v.to_string()));
+        }
+        Err(format!(
+            "invalid [http] proxy {:?}: use \"env\" or a URL such as \"http://host:port\" or \"socks5://host:port\"",
+            redact_url(v)
+        ))
+    }
+
+    /// Adds the proxy to a client builder. Reads the environment only for
+    /// [`ProxySpec::Env`], at send time.
+    pub fn apply(&self, mut b: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder, String> {
+        match self {
+            ProxySpec::Url(u) => {
+                let p = reqwest::Proxy::all(u.clone())
+                    .map_err(|e| proxy_error("[http] proxy", u, e))?;
+                Ok(b.proxy(p))
+            }
+            ProxySpec::Env => {
+                let read = |k: &str| std::env::var(k).ok();
+                let (https, http) = env_proxy_urls(&read);
+                if let Some(u) = https {
+                    let p = reqwest::Proxy::https(u.clone())
+                        .map_err(|e| proxy_error("HTTPS_PROXY", &u, e))?
+                        .no_proxy(reqwest::NoProxy::from_env());
+                    b = b.proxy(p);
+                }
+                if let Some(u) = http {
+                    let p = reqwest::Proxy::http(u.clone())
+                        .map_err(|e| proxy_error("HTTP_PROXY", &u, e))?
+                        .no_proxy(reqwest::NoProxy::from_env());
+                    b = b.proxy(p);
+                }
+                Ok(b)
+            }
+        }
+    }
+}
+
+/// Curl precedence: `HTTPS_PROXY` and `HTTP_PROXY` beat `ALL_PROXY`; the
+/// result is the proxy for `https` and `http` requests respectively.
+fn env_proxy_urls(get: &impl Fn(&str) -> Option<String>) -> (Option<String>, Option<String>) {
+    let all = env_proxy("ALL_PROXY", get);
+    let https = env_proxy("HTTPS_PROXY", get).or_else(|| all.clone());
+    let http = env_proxy("HTTP_PROXY", get).or(all);
+    (https, http)
+}
+
+/// One proxy variable, uppercase before lowercase, empty values skipped.
+fn env_proxy(name: &str, get: &impl Fn(&str) -> Option<String>) -> Option<String> {
+    for key in [name, &name.to_ascii_lowercase()] {
+        if let Some(v) = get(key) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Builds a proxy error message with the credentials in `raw` redacted. The
+/// underlying error may repeat the URL, so the same redaction is applied to
+/// its text.
+fn proxy_error(what: &str, raw: &str, err: impl std::fmt::Display) -> String {
+    let hidden = redact_url(raw);
+    let msg = err.to_string();
+    let msg = if raw == hidden {
+        msg
+    } else {
+        msg.replace(raw, &hidden)
+    };
+    format!("invalid {what} {hidden:?}: {msg}")
+}
+
+/// A proxy URL without its userinfo (`scheme://user:pass@host` becomes
+/// `scheme://host`), so error messages never print credentials.
+fn redact_url(raw: &str) -> String {
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        return raw.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some((_, host)) = rest[..end].rsplit_once('@') else {
+        return raw.to_string();
+    };
+    format!("{scheme}://{host}{}", &rest[end..])
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -368,22 +506,117 @@ pub fn platform_verifier() -> Result<Arc<dyn ServerCertVerifier>, String> {
     .map(|v| v as Arc<dyn ServerCertVerifier>)
 }
 
-/// A rustls client config with the given verification mode and ALPN protocols.
-pub fn tls_config(verify: bool, alpn: &[&[u8]]) -> Result<rustls::ClientConfig, String> {
+/// PEM material from `[http.tls]`: a certificate authority that replaces the
+/// platform roots and a client certificate for mutual TLS. Paths are
+/// resolved by the caller (relative to the collection root, `~/` expanded)
+/// and read when the connection is set up, so a missing file fails the send
+/// with its name in the message.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsMaterial {
+    /// PEM file with CA certificates; the file may hold several.
+    pub ca: Option<std::path::PathBuf>,
+    /// PEM file with the client certificate chain.
+    pub client_cert: Option<std::path::PathBuf>,
+    /// PEM file with the client private key.
+    pub client_key: Option<std::path::PathBuf>,
+}
+
+impl TlsMaterial {
+    pub fn is_empty(&self) -> bool {
+        self.ca.is_none() && self.client_cert.is_none() && self.client_key.is_none()
+    }
+
+    /// `Some(message)` when `client_cert` and `client_key` are not both set
+    /// or both unset (they are a pair).
+    pub fn pair_error(&self) -> Option<String> {
+        match (&self.client_cert, &self.client_key) {
+            (None, None) | (Some(_), Some(_)) => None,
+            (Some(c), None) => Some(format!(
+                "[http.tls] client_cert {} is set without client_key",
+                c.display()
+            )),
+            (None, Some(k)) => Some(format!(
+                "[http.tls] client_key {} is set without client_cert",
+                k.display()
+            )),
+        }
+    }
+}
+
+/// A rustls client config with the given verification mode, PEM material and
+/// ALPN protocols. `verify: false` disables server verification, so `ca` is
+/// unused there; a client certificate still authenticates the client.
+pub fn tls_config(
+    verify: bool,
+    alpn: &[&[u8]],
+    material: &TlsMaterial,
+) -> Result<rustls::ClientConfig, String> {
     let builder = rustls::ClientConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?;
     let verifier: Arc<dyn ServerCertVerifier> = if verify {
-        platform_verifier()?
+        match &material.ca {
+            None => platform_verifier()?,
+            Some(ca) => root_verifier(ca)?,
+        }
     } else {
         Arc::new(NoVerify(provider()))
     };
-    let mut cfg = builder
+    let builder = builder
         .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(verifier);
+    let mut cfg = match (&material.client_cert, &material.client_key) {
+        (Some(cert), Some(key)) => {
+            let chain = read_cert_chain(cert)?;
+            let key = read_key(key)?;
+            builder
+                .with_client_auth_cert(chain, key)
+                .map_err(|e| e.to_string())?
+        }
+        _ => builder.with_no_client_auth(),
+    };
     cfg.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
     Ok(cfg)
+}
+
+/// A verifier that trusts only the certificates in `ca` (they replace the
+/// platform roots). This is the `[http.tls] ca` behaviour.
+fn root_verifier(ca: &std::path::Path) -> Result<Arc<dyn ServerCertVerifier>, String> {
+    let pem = std::fs::read(ca).map_err(|e| format!("{}: {e}", ca.display()))?;
+    let mut roots = rustls::RootCertStore::empty();
+    let mut n = 0;
+    for cert in CertificateDer::pem_slice_iter(&pem) {
+        let cert = cert.map_err(|e| format!("{}: {e}", ca.display()))?;
+        roots
+            .add(cert)
+            .map_err(|e| format!("{}: certificate cannot be a trust root: {e}", ca.display()))?;
+        n += 1;
+    }
+    if n == 0 {
+        return Err(format!("{} holds no certificates", ca.display()));
+    }
+    let verifier =
+        rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider())
+            .build()
+            .map_err(|e| e.to_string())?;
+    Ok(verifier)
+}
+
+fn read_cert_chain(path: &std::path::Path) -> Result<Vec<CertificateDer<'static>>, String> {
+    let pem = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let chain: Vec<_> = CertificateDer::pem_slice_iter(&pem)
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if chain.is_empty() {
+        return Err(format!("{} holds no certificates", path.display()));
+    }
+    Ok(chain)
+}
+
+fn read_key(path: &std::path::Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>, String> {
+    let pem = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    rustls::pki_types::PrivateKeyDer::from_pem_slice(&pem)
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn err_chain(e: &(dyn std::error::Error + 'static)) -> String {
@@ -433,8 +666,28 @@ pub fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, HttpError> 
 
 /// Sends a resolved request and reads the whole response.
 pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse, HttpError> {
+    let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
+        url: req.url.clone(),
+        msg: e.to_string(),
+    })?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(HttpError::Url {
+            url: req.url.clone(),
+            msg: "scheme must be http or https".into(),
+        });
+    }
     let marks: Shared = Arc::new(Mutex::new(Marks::default()));
-    let mut tls = tls_config(req.verify_tls, &[b"h2", b"http/1.1"]).map_err(HttpError::Tls)?;
+    // PEM files are only read for TLS: a plain `http://` request must not fail
+    // because `[http.tls]` points at a missing file, and a folder run must not
+    // re-read them once per request.
+    let plain = TlsMaterial::default();
+    let material = if url.scheme() == "https" {
+        &opts.tls
+    } else {
+        &plain
+    };
+    let mut tls =
+        tls_config(req.verify_tls, &[b"h2", b"http/1.1"], material).map_err(HttpError::Tls)?;
     tls.resumption = Resumption::store(Arc::new(TimedSessions {
         inner: ClientSessionMemoryCache::new(8),
         marks: marks.clone(),
@@ -443,7 +696,7 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         .timeout_ms
         .map(Duration::from_millis)
         .unwrap_or(opts.default_timeout);
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
         .dns_resolver(Arc::new(TimedResolver(marks.clone())))
         .connector_layer(TimingLayer(marks.clone()))
@@ -457,22 +710,16 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         .referer(false)
         // HTTP/1 header names are written in Title-Case (`x-api-key` is sent as
         // `X-Api-Key`); names are case-insensitive. HTTP/2 always sends lowercase.
-        .http1_title_case_headers()
+        .http1_title_case_headers();
+    if let Some(spec) = &opts.proxy {
+        builder = spec.apply(builder).map_err(HttpError::Send)?;
+    }
+    let client = builder
         .build()
         .map_err(|e| HttpError::Send(err_chain(&e)))?;
 
     let method = reqwest::Method::from_bytes(req.method.as_bytes())
         .map_err(|_| HttpError::Method(req.method.clone()))?;
-    let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
-        url: req.url.clone(),
-        msg: e.to_string(),
-    })?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(HttpError::Url {
-            url: req.url.clone(),
-            msg: "scheme must be http or https".into(),
-        });
-    }
     let headers = header_map(&req.headers)?;
     // POST, PUT and PATCH define a meaning for content, so even without a body
     // they carry `Content-Length: 0` (RFC 9110, 8.6) unless the request frames
@@ -853,7 +1100,7 @@ mod tests {
     fn helpers() {
         assert_eq!(guess_mime("a.png"), "image/png");
         assert_eq!(guess_mime("a.unknownext"), "application/octet-stream");
-        assert!(tls_config(false, &[b"h2"]).is_ok());
+        assert!(tls_config(false, &[b"h2"], &TlsMaterial::default()).is_ok());
         let m = header_map(&[("A".into(), "é".into())]).unwrap();
         assert_eq!(m.get("a").map(|v| v.as_bytes()), Some("é".as_bytes()));
     }
@@ -992,5 +1239,177 @@ mod tests {
             !sent.to_ascii_lowercase().contains("accept-encoding"),
             "{sent}"
         );
+    }
+
+    #[test]
+    fn proxy_spec_parse() {
+        assert_eq!(ProxySpec::parse("env").unwrap(), ProxySpec::Env);
+        assert_eq!(ProxySpec::parse(" ENV ").unwrap(), ProxySpec::Env);
+        for ok in [
+            "http://proxy:3128",
+            "https://proxy:3128",
+            "socks5://proxy",
+            "socks5h://proxy:1080",
+            "socks4://proxy",
+            "http://user:pass@proxy:3128",
+        ] {
+            assert_eq!(ProxySpec::parse(ok).unwrap(), ProxySpec::Url(ok.into()));
+        }
+        for bad in ["proxy:3128", "ftp://proxy", "", "localhost"] {
+            assert!(ProxySpec::parse(bad).is_err(), "{bad:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn proxy_env_variables() {
+        let get = |k: &str| match k {
+            "ALL_PROXY" => Some("http://all:9".to_string()),
+            "http_proxy" => Some("http://low:1".to_string()),
+            "HTTPS_PROXY" => Some("  ".to_string()), // empty: skipped
+            _ => None,
+        };
+        assert_eq!(env_proxy("HTTP_PROXY", &get), Some("http://low:1".into()));
+        assert_eq!(env_proxy("HTTPS_PROXY", &get), None);
+        assert_eq!(env_proxy("ALL_PROXY", &get), Some("http://all:9".into()));
+        assert_eq!(env_proxy("NO_PROXY", &get), None);
+    }
+
+    #[test]
+    fn proxy_env_routing_precedence() {
+        let pairs = |vars: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                vars.iter()
+                    .find(|(name, _)| *name == k)
+                    .map(|(_, v)| (*v).to_string())
+            }
+        };
+        // The scheme variable beats ALL_PROXY, for its own scheme only.
+        let (https, http) = env_proxy_urls(&pairs(&[
+            ("ALL_PROXY", "http://all:9"),
+            ("HTTPS_PROXY", "http://secure:8"),
+            ("HTTP_PROXY", "http://plain:7"),
+        ]));
+        assert_eq!(https.as_deref(), Some("http://secure:8"));
+        assert_eq!(http.as_deref(), Some("http://plain:7"));
+
+        // ALL_PROXY fills the scheme that has no variable.
+        let (https, http) = env_proxy_urls(&pairs(&[
+            ("ALL_PROXY", "http://all:9"),
+            ("HTTP_PROXY", "http://p:7"),
+        ]));
+        assert_eq!(https.as_deref(), Some("http://all:9"));
+        assert_eq!(http.as_deref(), Some("http://p:7"));
+
+        // Lowercase is read, and an empty uppercase does not hide it.
+        let (https, http) = env_proxy_urls(&pairs(&[
+            ("HTTPS_PROXY", ""),
+            ("https_proxy", "http://low:1"),
+        ]));
+        assert_eq!(https.as_deref(), Some("http://low:1"));
+        assert_eq!(http, None);
+
+        // Nothing set: both direct.
+        let (https, http) = env_proxy_urls(&pairs(&[]));
+        assert_eq!(https, None);
+        assert_eq!(http, None);
+    }
+
+    #[test]
+    fn proxy_errors_hide_credentials() {
+        assert_eq!(
+            redact_url("http://user:secret@proxy:3128"),
+            "http://proxy:3128"
+        );
+        assert_eq!(
+            redact_url("socks5h://u:p@proxy/path?q=1"),
+            "socks5h://proxy/path?q=1"
+        );
+        assert_eq!(redact_url("http://proxy:3128"), "http://proxy:3128");
+        assert_eq!(redact_url("proxy:3128"), "proxy:3128");
+
+        let e = ProxySpec::parse("ftp://user:secret@proxy:1").unwrap_err();
+        assert!(e.contains("proxy:1"), "{e}");
+        assert!(!e.contains("secret") && !e.contains("user:"), "{e}");
+
+        // The underlying error may repeat the URL: it is redacted too.
+        let e = proxy_error(
+            "HTTPS_PROXY",
+            "http://user:secret@proxy:1",
+            "unsupported proxy http://user:secret@proxy:1",
+        );
+        assert!(!e.contains("secret"), "{e}");
+        assert!(e.contains("http://proxy:1"), "{e}");
+    }
+
+    #[test]
+    fn proxy_debug_hides_credentials() {
+        let spec = ProxySpec::Url("http://user:secret@proxy:3128".into());
+        let dbg = format!("{spec:?}");
+        assert!(!dbg.contains("secret") && !dbg.contains("user:"), "{dbg}");
+        assert!(dbg.contains("http://proxy:3128"), "{dbg}");
+        assert_eq!(format!("{:?}", ProxySpec::Env), "Env");
+    }
+
+    #[test]
+    fn tls_material_pair_rules() {
+        assert!(TlsMaterial::default().is_empty());
+        assert_eq!(TlsMaterial::default().pair_error(), None);
+        let d = tempfile::tempdir().unwrap();
+        let m = |c: bool, k: bool| TlsMaterial {
+            ca: None,
+            client_cert: c.then(|| d.path().join("c.pem")),
+            client_key: k.then(|| d.path().join("k.pem")),
+        };
+        assert_eq!(m(true, true).pair_error(), None);
+        assert!(
+            m(true, false)
+                .pair_error()
+                .is_some_and(|e| e.contains("client_cert"))
+        );
+        assert!(
+            m(false, true)
+                .pair_error()
+                .is_some_and(|e| e.contains("client_key"))
+        );
+    }
+
+    #[test]
+    fn tls_config_reports_bad_material() {
+        let d = tempfile::tempdir().unwrap();
+        let missing = d.path().join("missing.pem");
+        let m = TlsMaterial {
+            ca: Some(missing.clone()),
+            client_cert: None,
+            client_key: None,
+        };
+        let e = tls_config(true, &[], &m).unwrap_err();
+        assert!(e.contains("missing.pem"), "{e}");
+
+        let empty = d.path().join("empty.pem");
+        std::fs::write(&empty, b"nothing here\n").unwrap();
+        let m = TlsMaterial {
+            ca: Some(empty.clone()),
+            client_cert: None,
+            client_key: None,
+        };
+        let e = tls_config(true, &[], &m).unwrap_err();
+        assert!(e.contains("no certificates"), "{e}");
+
+        // An unparseable client key is reported with its path.
+        let bad = d.path().join("bad.key");
+        let cert = d.path().join("bad.pem");
+        std::fs::write(&bad, b"garbage").unwrap();
+        std::fs::write(
+            &cert,
+            b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let m = TlsMaterial {
+            ca: None,
+            client_cert: Some(cert),
+            client_key: Some(bad.clone()),
+        };
+        let e = tls_config(true, &[], &m).unwrap_err();
+        assert!(e.contains("bad.key"), "{e}");
     }
 }

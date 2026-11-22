@@ -91,7 +91,8 @@ pub trait TokenStore: Send + Sync {
 }
 
 fn client() -> Result<reqwest::Client, McpError> {
-    let tls = sendito_http::tls_config(true, &[b"h2", b"http/1.1"]).map_err(McpError::Transport)?;
+    let tls = sendito_http::tls_config(true, &[b"h2", b"http/1.1"], &Default::default())
+        .map_err(McpError::Transport)?;
     reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
         // Never forward authorization codes, refresh tokens or client secrets

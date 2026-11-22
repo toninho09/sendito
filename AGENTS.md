@@ -29,32 +29,37 @@ exact wire rules), `KEYMAP.md` (generated), `docs/DEBT.md` (known limits),
 
 ## Build and test
 
-Use limited parallelism; the full suite is heavy:
+Recurrent commands live in the `Makefile` (`make help` lists them). They wrap the
+cargo calls with quiet, token-efficient output and limited parallelism (`J`/`TT`
+override jobs and test threads):
 
 ```sh
-cargo build -j 4
-cargo test -j 4 --workspace -- --test-threads=2
-cargo fmt --all
-cargo clippy -j 4 --workspace --all-targets -- -D warnings
-cargo deny check
+make build      # cargo build -j 4
+make test       # cargo test -j 4 --workspace -- --test-threads=2
+make fmt        # cargo fmt --all
+make lint       # clippy --all-targets -D warnings (one-line diagnostics)
+make deny       # cargo deny check
+make ci         # fmt-check + lint + deny + test, in order
 ```
 
 Run one heavy job at a time (workspace tests, media generation, benchmarks and
 coverage must not run together).
 
-* **Wire corpus**: `tests/corpus.rs` sends 44 HTTP, 15 gRPC and 5 MCP requests to
+* **Wire corpus**: `tests/corpus.rs` sends 47 HTTP, 15 gRPC and 5 MCP requests to
   the echo servers and compares the exact bytes with `tests/corpus/expected`.
-  `UPDATE_CORPUS=1 cargo test --test corpus` rewrites the goldens; read the diff.
+  `make corpus-update` rewrites the goldens (then shows a `--stat` diff); read it.
+  `make corpus` runs the test only.
 * **UI**: `crates/ui/tests/flows.rs` (scripted key/mouse flows) and `snapshots.rs`
-  (insta; `INSTA_UPDATE=always` accepts new snapshots). Snapshots are 120×40 and 200×60.
+  (insta; `make snap` accepts new snapshots). Snapshots are 120×40 and 200×60.
 * **Key map**: `KEYMAP.md` is generated. After changing keys or hints run
-  `cargo run -q -- --print-keymap > KEYMAP.md` (a unit test checks it is current).
-* **Media** (screenshots and GIFs): `cargo test -p sendito-ui --test media -- --ignored
-  --test-threads=1`, then `python3 docs/media/render.py`.
-* **Review bundles**: `bash scripts/critic-bundles.sh OUTDIR` builds the isolated
-  inputs for the independent UX and correctness reviews described in `docs/PLAN.md`.
-* **Coverage and performance**: `cargo llvm-cov` for the non-UI crates (CI requires
-  80% lines) and `bench/run.sh`; results are in `docs/reports/`.
+  `make keymap` (a unit test checks it is current; the target reports whether the
+  file changed).
+* **Media** (screenshots and GIFs): `make media`, then `make render`.
+* **Review bundles**: `make bundles` (default output `target/critic-bundles`, or
+  `make bundles OUT=DIR`) builds the isolated inputs for the independent UX and
+  correctness reviews described in `docs/PLAN.md`.
+* **Coverage and performance**: `make cov` for the non-UI crates (CI requires
+  80% lines) and `make bench`; results are in `docs/reports/`.
 
 ## Conventions
 

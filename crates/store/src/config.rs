@@ -88,6 +88,17 @@ pub struct HttpConfig {
     /// Whether requests use the collection cookie jar when the request's
     /// `[options] cookies` says nothing.
     pub cookie_jar: bool,
+    /// Outbound proxy for HTTP requests and MCP Streamable HTTP servers:
+    /// `"http://host:port"` (also `https://` and `socks4://`, `socks4a://`,
+    /// `socks5://`, `socks5h://`), or `"env"` for `HTTPS_PROXY`,
+    /// `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` read at send time with curl's
+    /// precedence. Unset keeps the client's default discovery — the same
+    /// variables, `NO_PROXY` included; the OS proxy settings are not read.
+    /// gRPC does not use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// TLS material (`[http.tls]`): a custom CA and a client certificate.
+    pub tls: HttpTlsConfig,
 }
 
 impl Default for HttpConfig {
@@ -96,8 +107,27 @@ impl Default for HttpConfig {
             timeout_ms: 30_000,
             max_body_mb: 100,
             cookie_jar: false,
+            proxy: None,
+            tls: HttpTlsConfig::default(),
         }
     }
+}
+
+/// PEM files for TLS, used by HTTP, gRPC and MCP Streamable HTTP servers.
+/// Paths are relative to the collection root; `~/` expands to the home
+/// directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct HttpTlsConfig {
+    /// PEM file whose certificates replace the platform roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    /// PEM file with the client certificate chain (needs `client_key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_cert: Option<String>,
+    /// PEM file with the client private key (needs `client_cert`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -382,6 +412,28 @@ scopes = ["read"]
         };
         assert!(h.verify_tls);
         assert!(matches!(&h.auth, Some(McpServerAuth::Bearer { token }) if token == "{{t}}"));
+    }
+
+    #[test]
+    fn http_tls_parses() {
+        let c: Config = toml::from_str(
+            "[http.tls]\nca = \"certs/ca.pem\"\nclient_cert = \"c.pem\"\nclient_key = \"k.pem\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.http.tls.ca.as_deref(), Some("certs/ca.pem"));
+        assert_eq!(c.http.tls.client_cert.as_deref(), Some("c.pem"));
+        assert_eq!(c.http.tls.client_key.as_deref(), Some("k.pem"));
+        let c: Config = toml::from_str("[http]\ntimeout_ms = 1\n").unwrap();
+        assert_eq!(c.http.tls, Default::default());
+        assert!(toml::from_str::<HttpConfig>("[tls]\nbogus = 1\n").is_err());
+    }
+
+    #[test]
+    fn http_proxy_parses() {
+        let c: Config = toml::from_str("[http]\nproxy = \"socks5://127.0.0.1:1080\"\n").unwrap();
+        assert_eq!(c.http.proxy.as_deref(), Some("socks5://127.0.0.1:1080"));
+        let c: Config = toml::from_str("[http]\ntimeout_ms = 1\n").unwrap();
+        assert_eq!(c.http.proxy, None);
     }
 
     #[test]

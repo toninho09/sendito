@@ -2685,6 +2685,7 @@ impl App {
         let id = t.id;
         let resolved = sendito_core::resolve::resolve_grpc(&g, &self.names);
         let root = self.project.root.clone();
+        let tls = self.project.tls.clone();
         let cache = self.schemas.clone();
         let tx = self.tx.clone();
         let svc = g.service.clone();
@@ -2701,7 +2702,7 @@ impl App {
             StatusKind::Info,
         );
         self.rt.spawn(async move {
-            let r = runner::load_schema(&root, &resolved, &g.schema, &cache, refresh).await;
+            let r = runner::load_schema(&root, &resolved, &g.schema, &cache, refresh, &tls).await;
             let template = match (&r, template) {
                 (Ok(s), true) => s.template(&svc, &method).ok(),
                 _ => None,

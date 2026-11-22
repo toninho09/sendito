@@ -36,7 +36,7 @@ impl TokenStore for MemStore {
 /// a default provider).
 fn spawn_browser(slot: Arc<Mutex<Option<String>>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let tls = match sendito_http::tls_config(false, &[]) {
+        let tls = match sendito_http::tls_config(false, &[], &Default::default()) {
             Ok(t) => t,
             Err(_) => return,
         };
@@ -109,6 +109,8 @@ async fn login_flow_and_call() -> Result<(), Box<dyn std::error::Error>> {
         url: srv.mcp_url(),
         headers: Vec::new(),
         verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
         auth: Some(provider),
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -169,6 +171,8 @@ async fn unauthorized_refreshes_and_retries_once() -> Result<(), Box<dyn std::er
         url: srv.mcp_url(),
         headers: Vec::new(),
         verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
         auth: Some(provider.clone()),
     };
     let (tx, _) = tokio::sync::mpsc::unbounded_channel();
@@ -196,6 +200,8 @@ async fn not_signed_in_is_a_clear_error() -> Result<(), Box<dyn std::error::Erro
         url: srv.mcp_url(),
         headers: Vec::new(),
         verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
         auth: Some(provider),
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();

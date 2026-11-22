@@ -65,6 +65,11 @@ allows `accept` as a transport header.
 
 * No JavaScript scripting: scripts are declarative (set, extract, assert). Postman
   scripts are reported as not imported.
+* Folder runs (`sendito run <folder>`) are sequential and share one variable
+  scope in tree order; there is no parallelism, no per-request retry and no
+  JUnit/TAP writer (the JSON report is the machine format). A request that
+  fails does not stop the run unless `--fail-fast` is given, and a request with
+  unresolved variables is reported as an error and skipped.
 * Postman import covers v2.1 collections; OAuth 2 and Digest auth are not imported
   (reported), and neither are saved example responses. Bruno and Insomnia imports
   cover supported HTTP requests and environments, not arbitrary scripts or template
@@ -82,6 +87,16 @@ allows `accept` as a transport header.
   resolving environment placeholders. The local callback requires a browser able
   to reach the machine running Sendito.
 * HTTP/3 and WebSocket are not supported.
+* gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
+  support yet. HTTP requests and MCP servers over Streamable HTTP do.
+* `[http.tls]` is read when a connection is TLS: a plain `http://` request
+  ignores the PEM paths entirely, so a missing file only fails (with its name)
+  on an `https://` request or gRPC channel. The same material is loaded once
+  per request; a folder run re-reads it for every TLS request.
+* OAuth endpoints (HTTP `[oauth]` identities and MCP server OAuth) do not use
+  `[http.tls]` or `[http] proxy` yet: authorize/token requests always verify
+  with the platform roots, send no client certificate and ignore the
+  configured proxy.
 * HTTP requests with the cookie jar enabled do not follow redirects, so an
   automatically forwarded Cookie header cannot escape its path or origin scope.
 * Response bodies with a `Content-Encoding` other than `gzip`, `deflate` and

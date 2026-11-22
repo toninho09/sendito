@@ -3,9 +3,12 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use sendito_core::Request;
+use sendito_core::script::RUNTIME_LAYER;
+use sendito_core::vars::Scope;
 use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
 
 #[derive(Parser)]
@@ -38,29 +41,39 @@ struct Cli {
 enum Cmd {
     /// Create a collection in PATH (default: current directory).
     Init { path: Option<PathBuf> },
-    /// Send one request without the UI and print the response.
+    /// Send one request, or every request in a folder, without the UI.
     ///
-    /// The body goes to stdout; status, timing and assertion results go to stderr.
+    /// One request: the body goes to stdout; status, timing and assertion
+    /// results go to stderr. A folder (or `.` for the current folder — the
+    /// whole collection at its root) runs every request below it in tree order
+    /// — one line per request and a summary; variables a request extracts are
+    /// available to the next ones.
     /// Exit codes: 0 success, 1 failed assertion or MCP tool error, 2 request
-    /// failed, 3 usage error.
+    /// failed, 3 usage error (or unresolved variables).
     Run {
-        /// Request file, relative to the collection or the current directory (`.toml` optional).
+        /// Request file, or a folder to run recursively (`.` = current folder).
         request: PathBuf,
         /// Environment to use.
         #[arg(long, short)]
         env: Option<String>,
-        /// Print response headers to stderr.
+        /// Print response headers to stderr (one request only).
         #[arg(long, short = 'i')]
         include: bool,
         /// Send even if some variables are unresolved.
         #[arg(long)]
         allow_unresolved: bool,
-        /// Do not record the request in history.
+        /// Do not record the requests in history.
         #[arg(long)]
         no_history: bool,
         /// Do not use the collection's cookie jar for this run.
         #[arg(long)]
         no_cookies: bool,
+        /// Stop at the first failed or errored request (folder runs only).
+        #[arg(long)]
+        fail_fast: bool,
+        /// Folder report format: `text` (stderr lines) or `json` (stdout).
+        #[arg(long, value_enum, default_value_t = RunReport::Text)]
+        report: RunReport,
     },
     /// Print a request as a curl command (secret variables stay as placeholders).
     Curl {
@@ -104,6 +117,24 @@ enum Cmd {
         #[arg(long, default_value = "")]
         into: String,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+enum RunReport {
+    Text,
+    Json,
+}
+
+/// The `sendito run` flags, shared by the one-request and folder paths.
+#[derive(Clone)]
+struct RunFlags {
+    env: Option<String>,
+    include: bool,
+    allow_unresolved: bool,
+    no_history: bool,
+    no_cookies: bool,
+    fail_fast: bool,
+    report: RunReport,
 }
 
 #[derive(Subcommand)]
@@ -223,14 +254,20 @@ fn main() -> ExitCode {
             allow_unresolved,
             no_history,
             no_cookies,
-        }) => rt.block_on(run(
-            &request,
-            env,
-            include,
-            allow_unresolved,
-            no_history,
-            no_cookies,
-        )),
+            fail_fast,
+            report,
+        }) => {
+            let flags = RunFlags {
+                env,
+                include,
+                allow_unresolved,
+                no_history,
+                no_cookies,
+                fail_fast,
+                report,
+            };
+            rt.block_on(run_entry(&request, flags))
+        }
         Some(Cmd::Curl {
             request,
             env,
@@ -352,12 +389,7 @@ fn locate(request: &Path) -> Result<(PathBuf, String), String> {
     Err(format!("request {} not found", request.display()))
 }
 
-fn load(request: &Path, env: &Option<String>) -> Result<(Project, String, Request), (String, u8)> {
-    let (root, rel) = locate(request).map_err(|e| (e, 3))?;
-    let project = Project::open(&root, runner::default_keychain());
-    for w in &project.warnings {
-        eprintln!("warning: {w}");
-    }
+fn check_env(project: &Project, env: &Option<String>) -> Result<(), (String, u8)> {
     if let Some(e) = env
         && !project.envs.list().contains(e)
     {
@@ -369,25 +401,195 @@ fn load(request: &Path, env: &Option<String>) -> Result<(Project, String, Reques
             3,
         ));
     }
+    Ok(())
+}
+
+fn load(request: &Path, env: &Option<String>) -> Result<(Project, String, Request), (String, u8)> {
+    let (root, rel) = locate(request).map_err(|e| (e, 3))?;
+    load_at(root, rel, env)
+}
+
+/// Opens the collection of a located request and loads it.
+fn load_at(
+    root: PathBuf,
+    rel: String,
+    env: &Option<String>,
+) -> Result<(Project, String, Request), (String, u8)> {
+    let project = Project::open(&root, runner::default_keychain());
+    for w in &project.warnings {
+        eprintln!("warning: {w}");
+    }
+    check_env(&project, env)?;
     let req = project.coll.load(&rel).map_err(|e| (e.to_string(), 3))?;
     Ok((project, rel, req))
 }
 
-async fn run(
-    request: &Path,
-    env: Option<String>,
-    include: bool,
-    allow_unresolved: bool,
+/// Locates a folder to run: a directory in the current directory (or an
+/// absolute one), or one relative to the collection root. `""` is the whole
+/// collection.
+fn load_suite(request: &Path, env: &Option<String>) -> Result<(Project, String), (String, u8)> {
+    let cwd = std::env::current_dir().map_err(|e| (e.to_string(), 3))?;
+    // The relative path of `dir` inside `root`, `/`-separated; `None` when
+    // `root` is not an ancestor of `dir`.
+    let rel_of = |dir: &Path, root: &Path| -> Option<String> {
+        let d: Vec<_> = dir.components().collect();
+        let r: Vec<_> = root.components().collect();
+        (d.len() >= r.len() && d[..r.len()] == r[..]).then(|| {
+            d[r.len()..]
+                .iter()
+                .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+    };
+    // A directory next to the current one: its collection is the nearest
+    // `.sendito` at or above it (the directory itself may be the collection).
+    let mut found = None;
+    let dir = cwd.join(request);
+    // Canonicalize before looking for the root: with a lexical `..`,
+    // `find_root` would walk ancestors of the written path (which may contain
+    // the current collection) instead of ancestors of the real one.
+    if dir.is_dir()
+        && let Ok(dir) = dir.canonicalize()
+        && let Some(root) = sendito_store::init::find_root(&dir)
+        && let Some(rel) = rel_of(&dir, &root)
+    {
+        found = Some((root, rel));
+    } else if !request.is_absolute()
+        && !cwd.join(request).exists()
+        && let Some(root) = sendito_store::init::find_root(&cwd)
+        && root.join(request).is_dir()
+    {
+        // A folder of the collection addressed from anywhere inside it. Only
+        // when the path does not exist next to the current directory: an
+        // absolute or `../` path that exists outside the collection must not
+        // be reinterpreted as collection-relative.
+        found = Some((
+            root,
+            request
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => s.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/"),
+        ));
+    }
+    let Some((root, rel)) = found else {
+        return Err(if cwd.join(request).is_dir() {
+            (
+                format!("{} is not inside a Sendito collection", request.display()),
+                3,
+            )
+        } else {
+            (format!("folder {} not found", request.display()), 3)
+        });
+    };
+    let project = Project::open(&root, runner::default_keychain());
+    for w in &project.warnings {
+        eprintln!("warning: {w}");
+    }
+    check_env(&project, env)?;
+    Ok((project, rel))
+}
+
+fn ctx_for(
+    project: &Project,
+    env: &Option<String>,
+    rel: &str,
     no_history: bool,
     no_cookies: bool,
-) -> ExitCode {
-    let (project, rel, req) = match load(request, &env) {
-        Ok(v) => v,
-        Err((e, code)) => {
-            eprintln!("sendito: {e}");
-            return ExitCode::from(code);
-        }
-    };
+    schemas: runner::SchemaCache,
+) -> RunCtx {
+    RunCtx {
+        root: project.root.clone(),
+        send: project.send_options(),
+        history: if no_history || !project.config.history.enabled {
+            None
+        } else {
+            Some((
+                sendito_store::history::history_path(&project.root),
+                project.config.history.max_entries,
+            ))
+        },
+        name: sendito_store::collection::name_of(rel).to_string(),
+        path: Some(rel.to_string()),
+        env: env.clone(),
+        schemas,
+        grpc_deadline_ms: project.config.grpc.deadline_ms,
+        mask_echoed_secrets: false,
+        cookie_jar: project.config.http.cookie_jar && !no_cookies,
+        oauth: Some(runner::OAuthRunInfo::of(project)),
+    }
+}
+
+async fn scope_of(project: &Project, env: &Option<String>) -> (Scope, Vec<String>) {
+    let envs = project.envs.clone();
+    let e2 = env.clone();
+    tokio::task::spawn_blocking(move || {
+        runner::build_scope(&envs, e2.as_deref(), &Default::default())
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// True when the argument names a directory (a folder run). Checked before
+/// loading so a folder's own errors (unknown environment, missing folder) are
+/// reported instead of "request not found".
+fn is_folder_arg(request: &Path) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if cwd.join(request).is_dir() {
+        return true;
+    }
+    sendito_store::init::find_root(&cwd).is_some_and(|root| root.join(request).is_dir())
+}
+
+/// Routes `run` to one request or a folder: a request file wins over a folder
+/// of the same name, and errors from whichever path matched are reported as
+/// they are.
+async fn run_entry(request: &Path, flags: RunFlags) -> ExitCode {
+    // Locate once: the result decides between a single request and a folder.
+    if let Ok((root, rel)) = locate(request) {
+        return match load_at(root, rel, &flags.env) {
+            Ok((project, rel, req)) => run(project, rel, req, &flags).await,
+            Err((e, code)) => {
+                eprintln!("sendito: {e}");
+                ExitCode::from(code)
+            }
+        };
+    }
+    if is_folder_arg(request) {
+        return match load_suite(request, &flags.env) {
+            Ok((project, folder)) => run_suite(project, folder, &flags).await,
+            Err((e, code)) => {
+                eprintln!("sendito: {e}");
+                ExitCode::from(code)
+            }
+        };
+    }
+    eprintln!("sendito: request {} not found", request.display());
+    ExitCode::from(3)
+}
+
+async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> ExitCode {
+    let RunFlags {
+        env,
+        include,
+        allow_unresolved,
+        no_history,
+        no_cookies,
+        fail_fast,
+        report,
+    } = flags.clone();
+    if fail_fast {
+        eprintln!("warning: --fail-fast applies to folder runs; ignoring it for a single request");
+    }
+    if report == RunReport::Json {
+        eprintln!(
+            "warning: --report json applies to folder runs; ignoring it for a single request"
+        );
+    }
     let names = runner::names_scope(&project.envs, env.as_deref(), &Default::default());
     let un = runner::unresolved(&req, &names);
     if !un.is_empty() && !allow_unresolved {
@@ -400,36 +602,18 @@ async fn run(
         );
         return ExitCode::from(3);
     }
-    let envs = project.envs.clone();
-    let env2 = env.clone();
-    let (scope, errors) = tokio::task::spawn_blocking(move || {
-        runner::build_scope(&envs, env2.as_deref(), &Default::default())
-    })
-    .await
-    .unwrap_or_default();
+    let (scope, errors) = scope_of(&project, &env).await;
     for e in &errors {
         eprintln!("warning: {e}");
     }
-    let ctx = RunCtx {
-        root: project.root.clone(),
-        send: project.send_options(),
-        history: if no_history || !project.config.history.enabled {
-            None
-        } else {
-            Some((
-                sendito_store::history::history_path(&project.root),
-                project.config.history.max_entries,
-            ))
-        },
-        name: sendito_store::collection::name_of(&rel).to_string(),
-        path: Some(rel.clone()),
-        env: env.clone(),
-        schemas: Default::default(),
-        grpc_deadline_ms: project.config.grpc.deadline_ms,
-        mask_echoed_secrets: false,
-        cookie_jar: project.config.http.cookie_jar && !no_cookies,
-        oauth: Some(runner::OAuthRunInfo::of(&project)),
-    };
+    let ctx = ctx_for(
+        &project,
+        &env,
+        &rel,
+        no_history,
+        no_cookies,
+        Default::default(),
+    );
     let mut out = std::io::stdout().lock();
     match req {
         Request::Http(mut h) => {
@@ -594,6 +778,333 @@ async fn run(
                 ExitCode::from(1)
             } else {
                 ExitCode::SUCCESS
+            }
+        }
+    }
+}
+
+/// One request's result in a folder run.
+struct Ran {
+    /// `pass`, `fail` (a failed assertion or a tool `isError`) or `error`.
+    outcome: &'static str,
+    /// Status text: `201 Created`, `OK`, or the error message.
+    label: String,
+    scripts: runner::ScriptResults,
+}
+
+/// Runs every request under `folder` in tree order, chaining variables: a
+/// value a request extracts is available to the ones after it.
+async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCode {
+    let RunFlags {
+        env,
+        include,
+        allow_unresolved,
+        no_history,
+        no_cookies,
+        fail_fast,
+        report,
+    } = flags.clone();
+    if include {
+        eprintln!(
+            "sendito: -i prints response headers of a single request; it does not apply to a folder run"
+        );
+        return ExitCode::from(3);
+    }
+    let rels = match project.coll.requests_under(&folder) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("sendito: {e}");
+            return ExitCode::from(3);
+        }
+    };
+    if rels.is_empty() {
+        let what = if folder.is_empty() {
+            "the collection".to_string()
+        } else {
+            format!("\"{folder}\"")
+        };
+        eprintln!("sendito: no requests under {what}");
+        return ExitCode::from(3);
+    }
+    let (mut scope, scope_errors) = scope_of(&project, &env).await;
+    for e in &scope_errors {
+        eprintln!("warning: {e}");
+    }
+    let mcp_info = runner::McpRunInfo::of(&project);
+    // One schema cache for the whole run: reflection and `.proto` files are
+    // loaded once, not once per gRPC request.
+    let schemas: runner::SchemaCache = Default::default();
+    let started = Instant::now();
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    let (mut npass, mut nfail, mut nerr, mut nunresolved) = (0u32, 0u32, 0u32, 0u32);
+    let folder_label = if folder.is_empty() {
+        ".".to_string()
+    } else {
+        folder.clone()
+    };
+    eprintln!(
+        "sendito: running {} request(s) under \"{folder_label}\"",
+        rels.len()
+    );
+    for rel in &rels {
+        let req = match project.coll.load(rel) {
+            Ok(r) => r,
+            Err(e) => {
+                nerr += 1;
+                // Multi-line parse errors: the first line names the file and
+                // position; the full message stays in the JSON report.
+                let first = e.to_string().lines().next().unwrap_or_default().to_string();
+                eprintln!("ERROR {rel}  {first}");
+                entries.push(serde_json::json!({
+                    "path": rel,
+                    "kind": serde_json::Value::Null,
+                    "outcome": "error",
+                    "status": serde_json::Value::Null,
+                    "duration_ms": serde_json::Value::Null,
+                    "asserts": 0,
+                    "failed_asserts": 0,
+                    "error": e.to_string(),
+                }));
+                if fail_fast {
+                    break;
+                }
+                continue;
+            }
+        };
+        let kind = match &req {
+            Request::Http(_) => "http",
+            Request::Grpc(_) => "grpc",
+            Request::Mcp(_) => "mcp",
+        };
+        let un = runner::unresolved(&req, &scope);
+        if !un.is_empty() && !allow_unresolved {
+            nunresolved += 1;
+            let names = un
+                .iter()
+                .map(|u| format!("{{{{{u}}}}}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("ERROR {rel}  unresolved variables: {names}");
+            entries.push(serde_json::json!({
+                "path": rel,
+                "kind": kind,
+                "outcome": "error",
+                "status": serde_json::Value::Null,
+                "duration_ms": serde_json::Value::Null,
+                "asserts": 0,
+                "failed_asserts": 0,
+                "unresolved": true,
+                "error": format!("unresolved variables: {names}"),
+            }));
+            if fail_fast {
+                break;
+            }
+            continue;
+        }
+        let ctx = ctx_for(&project, &env, rel, no_history, no_cookies, schemas.clone());
+        let t0 = Instant::now();
+        let ran = run_one(&ctx, &req, &scope, &scope_errors, &mcp_info, no_cookies).await;
+        let ms = t0.elapsed().as_millis();
+        let mark = match ran.outcome {
+            "pass" => "PASS",
+            "fail" => "FAIL",
+            _ => "ERROR",
+        };
+        eprintln!("{mark:<5} {rel}  ({}, {ms} ms)", ran.label);
+        for a in ran.scripts.asserts.iter().filter(|a| !a.pass) {
+            eprintln!("      ✗ {}  (actual: {})", a.label, a.actual);
+        }
+        let fails = ran.scripts.failed_asserts();
+        entries.push(serde_json::json!({
+            "path": rel,
+            "kind": kind,
+            "outcome": ran.outcome,
+            "status": ran.label,
+            "duration_ms": ms,
+            "asserts": ran.scripts.asserts.len(),
+            "failed_asserts": fails,
+            "unresolved": false,
+            "error": serde_json::Value::Null,
+        }));
+        for (var, value) in ran.scripts.updates() {
+            scope.set(RUNTIME_LAYER, &var, value);
+        }
+        match ran.outcome {
+            "pass" => npass += 1,
+            "fail" => nfail += 1,
+            _ => nerr += 1,
+        }
+        if fail_fast && ran.outcome != "pass" {
+            break;
+        }
+    }
+    let total_ms = started.elapsed().as_millis();
+    eprintln!(
+        "{npass} passed, {nfail} failed, {nerr} error(s){}  ({}, {:.1} s)",
+        if nunresolved > 0 {
+            format!(", {nunresolved} unresolved")
+        } else {
+            String::new()
+        },
+        entries.len(),
+        total_ms as f64 / 1000.0
+    );
+    if report == RunReport::Json {
+        // `errors` counts every `"outcome": "error"` entry, unresolved
+        // variables included (they are also broken out in `unresolved`), so
+        // `passed + failed + errors == total`.
+        let out = serde_json::json!({
+            "environment": env,
+            "folder": folder_label,
+            "total": entries.len(),
+            "passed": npass,
+            "failed": nfail,
+            "errors": nerr + nunresolved,
+            "unresolved": nunresolved,
+            "duration_ms": total_ms,
+            "requests": entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    }
+    if nunresolved > 0 {
+        ExitCode::from(3)
+    } else if nerr > 0 {
+        ExitCode::from(2)
+    } else if nfail > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Executes one request of a suite run and classifies the outcome.
+async fn run_one(
+    ctx: &RunCtx,
+    req: &Request,
+    scope: &Scope,
+    scope_errors: &[String],
+    mcp_info: &runner::McpRunInfo,
+    no_cookies: bool,
+) -> Ran {
+    match req {
+        Request::Http(h) => {
+            let mut h = h.clone();
+            if no_cookies {
+                h.options.cookies = Some(false);
+            }
+            let o = runner::exec_http(ctx, &h, scope.clone(), scope_errors.to_vec()).await;
+            let failed_asserts = o.scripts.failed_asserts();
+            match &o.response {
+                Ok(r) => Ran {
+                    outcome: if failed_asserts > 0 { "fail" } else { "pass" },
+                    label: format!("{} {}", r.status, r.reason),
+                    scripts: o.scripts,
+                },
+                Err(e) => Ran {
+                    outcome: "error",
+                    label: e.clone(),
+                    scripts: o.scripts,
+                },
+            }
+        }
+        Request::Grpc(g) => {
+            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+            drop(ctl_tx);
+            let run = runner::exec_grpc(ctx, g, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
+            let mut code = 0i32;
+            let mut label = String::from("OK");
+            let mut scripts = runner::ScriptResults::default();
+            // Drive the call and collect its updates together: the channel is
+            // only fed while `run` is polled.
+            let collect = async {
+                while let Some(u) = urx.recv().await {
+                    match u {
+                        GrpcUpdate::Event(sendito_grpc::Event::Finished {
+                            code: c,
+                            message,
+                            ..
+                        }) => {
+                            code = c;
+                            label = if c == 0 {
+                                "OK".into()
+                            } else if message.is_empty() {
+                                format!("{} ({c})", sendito_grpc::code_name(c))
+                            } else {
+                                format!("{}: {message}", sendito_grpc::code_name(c))
+                            };
+                        }
+                        GrpcUpdate::Error(e) => {
+                            code = -1;
+                            label = e;
+                        }
+                        GrpcUpdate::Done { scripts: s, .. } => scripts = s,
+                        _ => {}
+                    }
+                }
+            };
+            tokio::join!(run, collect);
+            if code != 0 {
+                Ran {
+                    outcome: "error",
+                    label,
+                    scripts,
+                }
+            } else {
+                let fails = scripts.failed_asserts();
+                Ran {
+                    outcome: if fails > 0 { "fail" } else { "pass" },
+                    label,
+                    scripts,
+                }
+            }
+        }
+        Request::Mcp(m) => {
+            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+            let run = runner::exec_mcp(ctx, m, scope.clone(), scope_errors.to_vec(), mcp_info, utx);
+            let mut code = 0u8;
+            let mut label = String::from("ok");
+            let mut scripts = runner::ScriptResults::default();
+            // Same as gRPC: the future must be polled while the updates are
+            // read, or the channel never produces anything.
+            let collect = async {
+                while let Some(u) = urx.recv().await {
+                    if let runner::McpUpdate::Done {
+                        error,
+                        is_error,
+                        scripts: s,
+                        ..
+                    } = u
+                    {
+                        scripts = s;
+                        if let Some(e) = error {
+                            code = 2;
+                            label = e;
+                        } else if is_error {
+                            code = 1;
+                            label = "the tool reported an error".into();
+                        }
+                    }
+                }
+            };
+            tokio::join!(run, collect);
+            if code == 2 {
+                Ran {
+                    outcome: "error",
+                    label,
+                    scripts,
+                }
+            } else {
+                let fails = scripts.failed_asserts();
+                Ran {
+                    outcome: if code == 1 || fails > 0 {
+                        "fail"
+                    } else {
+                        "pass"
+                    },
+                    label,
+                    scripts,
+                }
             }
         }
     }

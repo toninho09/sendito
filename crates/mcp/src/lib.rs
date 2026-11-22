@@ -80,6 +80,10 @@ pub enum Transport {
         url: String,
         headers: Vec<(String, String)>,
         verify_tls: bool,
+        /// `[http] proxy` from the config; `None` connects directly.
+        proxy: Option<sendito_http::ProxySpec>,
+        /// `[http] tls` from the config (custom CA, client certificate).
+        tls: sendito_http::TlsMaterial,
         /// OAuth (or a fixed token): adds `Authorization` and retries once
         /// after a `401`.
         auth: Option<Arc<dyn TokenProvider>>,
@@ -99,12 +103,16 @@ impl std::fmt::Debug for Transport {
                 url,
                 headers,
                 verify_tls,
+                proxy,
+                tls,
                 auth,
             } => f
                 .debug_struct("Transport::Http")
                 .field("url", url)
                 .field("headers", headers)
                 .field("verify_tls", verify_tls)
+                .field("proxy", proxy)
+                .field("tls", tls)
                 .field("auth", &auth.is_some())
                 .finish(),
         }
@@ -235,8 +243,17 @@ impl Session {
                 url,
                 headers,
                 verify_tls,
+                proxy,
+                tls,
                 auth,
-            } => http::connect(url, headers, *verify_tls, auth.clone())?,
+            } => http::connect(
+                url,
+                headers,
+                *verify_tls,
+                proxy.clone(),
+                tls.clone(),
+                auth.clone(),
+            )?,
         };
         let mut s = Self {
             wire,

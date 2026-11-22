@@ -43,6 +43,8 @@ pub struct ConnSettings {
     pub uri: String,
     pub verify_tls: bool,
     pub connect_timeout: Duration,
+    /// `[http] tls` from the config (custom CA, client certificate).
+    pub tls: sendito_http::TlsMaterial,
 }
 
 /// Opens a channel. TLS (with ALPN `h2`) is used for `https://` URIs.
@@ -52,10 +54,13 @@ pub async fn connect(s: &ConnSettings) -> Result<Channel, GrpcError> {
         .connect_timeout(s.connect_timeout)
         .user_agent(concat!("sendito/", env!("CARGO_PKG_VERSION")))
         .map_err(|_| GrpcError::Target(s.uri.clone()))?;
-    let tls = sendito_http::tls_config(s.verify_tls, &[]).map_err(|e| GrpcError::Connect {
-        target: s.uri.clone(),
-        msg: e,
-    })?;
+    // ALPN is left empty: hyper-rustls sets it from the enabled schemes
+    // (h2 + http/1.1 here) and asserts the config's list is empty.
+    let tls =
+        sendito_http::tls_config(s.verify_tls, &[], &s.tls).map_err(|e| GrpcError::Connect {
+            target: s.uri.clone(),
+            msg: e,
+        })?;
     let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
     http.enforce_http(false);
     http.set_nodelay(true);

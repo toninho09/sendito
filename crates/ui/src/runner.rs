@@ -34,6 +34,8 @@ pub struct Project {
     pub global_config: Option<PathBuf>,
     /// Where user themes are looked for, lowest precedence first.
     pub theme_dirs: Vec<PathBuf>,
+    /// `[http] tls` with paths resolved against the collection root.
+    pub tls: sendito_http::TlsMaterial,
 }
 
 /// The keychain to use: `SENDITO_KEYCHAIN=memory` selects an in-memory one (tests, demos).
@@ -53,7 +55,30 @@ impl Project {
     /// Opens a collection with an explicit global config path (tests pass `None`).
     pub fn open_with(root: &Path, keychain: Arc<dyn Keychain>, global: Option<PathBuf>) -> Self {
         let project = sendito_store::config::project_path(root);
-        let (config, warnings) = sendito_store::config::load(global.as_deref(), Some(&project));
+        let (config, mut warnings) = sendito_store::config::load(global.as_deref(), Some(&project));
+        if let Some(p) = &config.http.proxy
+            && let Err(e) = sendito_http::ProxySpec::parse(p)
+        {
+            warnings.push(e);
+        }
+        let tls = {
+            let t = &config.http.tls;
+            let m = sendito_http::TlsMaterial {
+                ca: t.ca.as_deref().map(|p| sendito_store::env::expand(root, p)),
+                client_cert: t
+                    .client_cert
+                    .as_deref()
+                    .map(|p| sendito_store::env::expand(root, p)),
+                client_key: t
+                    .client_key
+                    .as_deref()
+                    .map(|p| sendito_store::env::expand(root, p)),
+            };
+            if let Some(e) = m.pair_error() {
+                warnings.push(e);
+            }
+            m
+        };
         let name = config.collection.name.clone().unwrap_or_else(|| {
             root.canonicalize()
                 .ok()
@@ -71,6 +96,7 @@ impl Project {
             name,
             theme_dirs: sendito_store::themes::dirs(global.as_deref(), root),
             global_config: global,
+            tls,
         }
     }
 
@@ -78,6 +104,13 @@ impl Project {
         SendOptions {
             default_timeout: Duration::from_millis(self.config.http.timeout_ms.max(1)),
             max_body: (self.config.http.max_body_mb.max(1) as usize) * 1024 * 1024,
+            proxy: self
+                .config
+                .http
+                .proxy
+                .as_deref()
+                .and_then(|p| sendito_http::ProxySpec::parse(p).ok()),
+            tls: self.tls.clone(),
         }
     }
 }
@@ -703,6 +736,7 @@ pub async fn load_schema(
     src: &SchemaSource,
     cache: &SchemaCache,
     refresh: bool,
+    tls: &sendito_http::TlsMaterial,
 ) -> Result<Schema, String> {
     let key = schema_key(&resolved.uri, src);
     if !refresh && let Some(s) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
@@ -720,7 +754,7 @@ pub async fn load_schema(
                 .map_err(|e| e.to_string())?
         }
         SchemaSource::Reflection => {
-            let ch = sendito_grpc::connect(&conn_settings(resolved))
+            let ch = sendito_grpc::connect(&conn_settings(resolved, tls))
                 .await
                 .map_err(|e| e.to_string())?;
             sendito_grpc::schema::from_reflection(ch)
@@ -734,11 +768,15 @@ pub async fn load_schema(
     Ok(schema)
 }
 
-pub fn conn_settings(r: &ResolvedGrpc) -> sendito_grpc::ConnSettings {
+pub fn conn_settings(
+    r: &ResolvedGrpc,
+    tls: &sendito_http::TlsMaterial,
+) -> sendito_grpc::ConnSettings {
     sendito_grpc::ConnSettings {
         uri: r.uri.clone(),
         verify_tls: r.verify_tls,
         connect_timeout: Duration::from_secs(10),
+        tls: tls.clone(),
     }
 }
 
@@ -839,7 +877,16 @@ pub async fn exec_grpc(
     if resolved.service.is_empty() || resolved.method.is_empty() {
         return fail("choose a service and method first".into(), results);
     }
-    let schema = match load_schema(&ctx.root, &resolved, &req.schema, &ctx.schemas, false).await {
+    let schema = match load_schema(
+        &ctx.root,
+        &resolved,
+        &req.schema,
+        &ctx.schemas,
+        false,
+        &ctx.send.tls,
+    )
+    .await
+    {
         Ok(s) => s,
         Err(e) => return fail(e, results),
     };
@@ -860,7 +907,7 @@ pub async fn exec_grpc(
         Ok(m) => m,
         Err(e) => return fail(e.to_string(), results),
     };
-    let channel = match sendito_grpc::connect(&conn_settings(&resolved)).await {
+    let channel = match sendito_grpc::connect(&conn_settings(&resolved, &ctx.send.tls)).await {
         Ok(c) => c,
         Err(e) => return fail(e.to_string(), results),
     };
@@ -952,6 +999,10 @@ pub struct McpRunInfo {
     pub servers: BTreeMap<String, sendito_store::config::McpServer>,
     pub keychain: Arc<dyn Keychain>,
     pub collection: String,
+    /// `[http] proxy`, also used by MCP servers over Streamable HTTP.
+    pub proxy: Option<sendito_http::ProxySpec>,
+    /// `[http] tls` (custom CA, client certificate).
+    pub tls: sendito_http::TlsMaterial,
 }
 
 impl McpRunInfo {
@@ -961,6 +1012,8 @@ impl McpRunInfo {
             servers: p.config.mcp.servers.clone(),
             keychain: p.envs.keychain.clone(),
             collection: p.name.clone(),
+            proxy: p.send_options().proxy,
+            tls: p.tls.clone(),
         }
     }
 }
@@ -1036,6 +1089,8 @@ pub fn mcp_transport(
                 url: r(&h.url),
                 headers,
                 verify_tls: h.verify_tls,
+                proxy: info.proxy.clone(),
+                tls: info.tls.clone(),
                 auth,
             }
         }

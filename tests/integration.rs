@@ -618,6 +618,217 @@ fn cookie_jar_stores_and_replays() {
     assert!(last.header("cookie").is_none(), "{}", last.head());
 }
 
+/// `sendito run <folder>` runs every request in tree order, chains extracted
+/// variables into the following requests and aggregates the exit code.
+#[test]
+fn cli_runs_a_folder_and_chains_variables() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("Users")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Health")).unwrap();
+        std::fs::write(
+            dir.path().join(".sendito/environments/local.toml"),
+            format!("[variables]\nbase_url = \"{}\"\n", echo.url()),
+        )
+        .unwrap();
+        // Extracts `user_id` from the echo of its own target.
+        std::fs::write(
+            dir.path().join("Users/create user.toml"),
+            "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base_url}}/users\"\n        \n[body]\ntype = \"json\"\ntext = '''{\"name\":\"ada\"}'''\n\n[[scripts.extract]]\nvar = \"user_id\"\nfrom = \"jsonpath\"\nexpr = \"$.target\"\n",
+        )
+        .unwrap();
+        // Uses the value the previous request extracted.
+        std::fs::write(
+            dir.path().join("Users/list users.toml"),
+            "kind = \"http\"\nurl = \"{{base_url}}/users?id={{user_id}}\"\n\n[[scripts.assert]]\nfrom = \"status\"\nop = \"eq\"\nvalue = \"200\"\n",
+        )
+        .unwrap();
+        // A failing assertion: recorded as a failure, the run continues.
+        std::fs::write(
+            dir.path().join("Health/boom.toml"),
+            "kind = \"http\"\nurl = \"{{base_url}}/status/500\"\n\n[[scripts.assert]]\nfrom = \"status\"\nop = \"eq\"\nvalue = \"200\"\n",
+        )
+        .unwrap();
+
+        let run = |args: &[&str]| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .output()
+                .unwrap()
+        };
+
+        // The folder run: both requests pass, in tree order, and the second
+        // one sees `{{user_id}}` set by the first.
+        let out = run(&["run", "Users", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        let first = stderr.find("PASS  Users/create user.toml").unwrap();
+        let second = stderr.find("PASS  Users/list users.toml").unwrap();
+        assert!(first < second, "tree order expected:\n{stderr}");
+        assert!(stderr.contains("2 passed, 0 failed, 0 error(s)"), "{stderr}");
+        // Bodies are not printed in a folder run; the status lines are.
+        assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
+        let sent: Vec<String> = echo.take().iter().map(|c| c.target()).collect();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert_eq!(sent[1], "/users?id=/users");
+
+        // A failed assertion exits 1 and names the request.
+        let out = run(&["run", ".", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains("FAIL  Health/boom.toml"), "{stderr}");
+        assert!(
+            stderr.contains("status == 200  (actual: 500)"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("2 passed, 1 failed"), "{stderr}");
+
+        // The JSON report goes to stdout and carries one entry per request.
+        let out = run(&[
+            "run",
+            ".",
+            "--env",
+            "local",
+            "--no-history",
+            "--report",
+            "json",
+        ]);
+        let report: serde_json::Value =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(report["total"], 3);
+        assert_eq!(report["passed"], 2);
+        assert_eq!(report["failed"], 1);
+        assert_eq!(report["errors"], 0);
+        assert_eq!(report["environment"], "local");
+        let paths: Vec<&str> = report["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            vec!["Health/boom.toml", "Users/create user.toml", "Users/list users.toml"],
+            "{report}"
+        );
+
+        // --fail-fast stops at the first failure.
+        let out = run(&[
+            "run",
+            ".",
+            "--env",
+            "local",
+            "--no-history",
+            "--fail-fast",
+        ]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        // Health/boom is first in tree order: the run stops right there.
+        assert!(stderr.contains("FAIL  Health/boom.toml"), "{stderr}");
+        assert!(stderr.contains("0 passed, 1 failed, 0 error(s)"), "{stderr}");
+        assert!(!stderr.contains("Users/list users.toml"), "{stderr}");
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+
+        // Unresolved variables make a folder run a usage error (3).
+        let out = run(&["run", "Users", "--no-history"]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(stderr.contains("unresolved variables"), "{stderr}");
+
+        // An unknown environment on a folder reports the environment, not a
+        // missing request.
+        let out = run(&["run", "Users", "--env", "nope"]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(
+            stderr.contains("no environment named \"nope\""),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("request Users not found"), "{stderr}");
+
+        // A folder without requests and an unknown folder are usage errors.
+        std::fs::create_dir_all(dir.path().join("Empty")).unwrap();
+        let out = run(&["run", "Empty", "--env", "local"]);
+        assert_eq!(out.status.code(), Some(3));
+        let out = run(&["run", "Nope", "--env", "local"]);
+        assert_eq!(out.status.code(), Some(3));
+
+        // A directory outside the collection is a usage error, never a
+        // whole-collection run. A lexical `..` used to make `find_root` pick
+        // the current collection and run everything under it.
+        let outside = tempfile::tempdir().unwrap();
+        for arg in [
+            outside.path().to_path_buf(),
+            std::path::Path::new("..").join(outside.path().file_name().unwrap()),
+        ] {
+            let arg = arg.to_str().unwrap();
+            let out = run(&["run", arg, "--no-history"]);
+            assert_eq!(out.status.code(), Some(3), "{arg}");
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            assert!(
+                stderr.contains("is not inside a Sendito collection"),
+                "{arg}: {stderr}"
+            );
+            assert!(!stderr.contains("PASS "), "{arg}: {stderr}");
+        }
+    });
+}
+
+/// Folder runs also drive gRPC and MCP calls. The update channel is only fed
+/// while the call future is polled, so awaiting the updates first hangs the
+/// whole run.
+#[test]
+fn cli_runs_grpc_and_mcp_in_a_folder() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let grpc = sendito_testkit::grpc_echo::start().await.unwrap();
+        let mcp = sendito_testkit::mcp_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("Rpc")).unwrap();
+        std::fs::write(
+            dir.path().join(".sendito/environments/local.toml"),
+            format!(
+                "[variables]\ngrpc_target = \"{}\"\nmcp_url = \"{}\"\n",
+                grpc.target(),
+                mcp.url()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".sendito/config.toml"),
+            "[collection]\nname = \"suite\"\n\n[mcp.servers.echo]\nurl = \"{{mcp_url}}/mcp\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Rpc/call.toml"),
+            "kind = \"grpc\"\ntarget = \"{{grpc_target}}\"\nservice = \"sendito.test.v1.Echo\"\nmethod = \"Unary\"\nmessage = '''{\"text\":\"hello\"}'''\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Rpc/tool.toml"),
+            "kind = \"mcp\"\nserver = \"echo\"\ntool = \"greet\"\narguments = '''{\"name\":\"ada\"}'''\n",
+        )
+        .unwrap();
+
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(dir.path())
+            .args(["run", "Rpc", "--env", "local", "--no-history"])
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("PASS  Rpc/call.toml"), "{stderr}");
+        assert!(stderr.contains("PASS  Rpc/tool.toml"), "{stderr}");
+        assert!(stderr.contains("2 passed, 0 failed, 0 error(s)"), "{stderr}");
+    });
+}
+
 #[test]
 fn cli_imports_bruno_and_insomnia_without_overwriting_environments() {
     let dir = tempfile::tempdir().unwrap();

@@ -236,7 +236,13 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
             "--http1.1" | "--http2" | "--http1.0" | "--http2-prior-knowledge" | "--http3" => {
                 notes.push(format!("{t} ignored: the HTTP version is negotiated automatically"))
             }
-            "--connect-timeout" | "--retry" | "--retry-delay" | "--max-redirs" | "-x" | "--proxy" | "--cacert" | "--cert" | "--key" | "--resolve" => {
+            "-x" | "--proxy" => {
+                let v = val(&t)?;
+                notes.push(format!(
+                    "{t} {v} not imported: set [http] proxy in .sendito/config.toml"
+                ))
+            }
+            "--connect-timeout" | "--retry" | "--retry-delay" | "--max-redirs" | "--cacert" | "--cert" | "--key" | "--resolve" => {
                 let v = val(&t)?;
                 notes.push(format!("{t} {v} not supported; ignored"));
             }

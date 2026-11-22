@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — folder runs
+
+* **`sendito run <folder>`** (or `.` for the current folder, which at the
+  collection root is the whole collection) sends every request below it in
+  tree order and prints one `PASS`/`FAIL`/`ERROR` line per request plus a
+  summary. Variables flow forward: a value extracted by one
+  request is available to the next, so a login and its dependent calls can run
+  as one command in CI. `--fail-fast`, `--report json` (structured summary on
+  stdout) and aggregated exit codes (0/1/2/3) are new; sending a single request
+  is unchanged. `docs/DEBT.md` notes the limits (no parallelism, no JUnit).
+
+## Unreleased — custom CA and mutual TLS
+
+* **`[http.tls]`**: `ca` replaces the platform roots with your own PEM file
+  (private CAs), and `client_cert` + `client_key` present a client certificate
+  for mutual TLS — used by HTTP requests, gRPC connections and MCP servers
+  over Streamable HTTP. Paths are relative to the collection root (`~/`
+  expands); a `client_cert` without `client_key` (or the reverse) warns at
+  startup. Nothing changes for collections without the table, and a request's
+  `verify_tls = false` still skips server verification entirely.
+
+## Unreleased — proxy
+
+* **HTTP proxy (`[http] proxy`)**: HTTP requests and MCP servers over
+  Streamable HTTP can go through a proxy — a URL such as
+  `http://proxy.corp:8080` (also `https://`, `socks4://`, `socks4a://`,
+  `socks5://`, `socks5h://`, credentials allowed in the URL) or `"env"` to
+  read `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` / `NO_PROXY` at send time
+  with curl's precedence. Unset keeps the client's default discovery: the same
+  variables, `NO_PROXY` included (the OS proxy settings are not read).
+  Nothing changes on the wire. gRPC does not use the proxy
+  (docs/DEBT.md). A failed `-x`/`--proxy` curl import now points at the setting
+  instead of ignoring it silently.
+
 ## Unreleased — response decoding and watch
 
 * **Automatic response decompression**: responses with `Content-Encoding: gzip`,

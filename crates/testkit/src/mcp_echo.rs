@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 /// One request exactly as received.
@@ -48,13 +48,16 @@ impl Captured {
 pub struct McpEcho {
     addr: SocketAddr,
     captured: Arc<Mutex<Vec<Captured>>>,
+    secure: bool,
     task: JoinHandle<()>,
 }
 
 impl McpEcho {
-    /// The base URL (`http://addr`); endpoints are `/mcp` and `/mcp/sse`.
+    /// The base URL (`http://addr`, or `https://` for `start_tls`); endpoints
+    /// are `/mcp` and `/mcp/sse`.
     pub fn url(&self) -> String {
-        format!("http://{}", self.addr)
+        let scheme = if self.secure { "https" } else { "http" };
+        format!("{scheme}://{}", self.addr)
     }
 
     pub fn captured(&self) -> Vec<Captured> {
@@ -93,15 +96,53 @@ pub async fn start_on(addr: &str) -> std::io::Result<McpEcho> {
     Ok(McpEcho {
         addr,
         captured,
+        secure: false,
         task,
     })
 }
 
-async fn serve(
-    mut sock: TcpStream,
+/// Starts the echo server over TLS with the given certificate; with
+/// `require_client`, a client certificate signed by the test CA must be
+/// presented (mutual TLS).
+pub async fn start_tls(
+    certs: &crate::tls::TestCerts,
+    require_client: bool,
+) -> Result<McpEcho, Box<dyn std::error::Error + Send + Sync>> {
+    let cfg = crate::tls::server_config(certs, require_client, false)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let captured: Arc<Mutex<Vec<Captured>>> = Arc::default();
+    let c2 = captured.clone();
+    let task = tokio::spawn(async move {
+        let next_session = AtomicU32::new(1);
+        while let Ok((sock, _)) = listener.accept().await {
+            let c = c2.clone();
+            let s = next_session.fetch_add(1, Ordering::SeqCst);
+            let a = acceptor.clone();
+            tokio::spawn(async move {
+                if let Ok(sock) = a.accept(sock).await {
+                    let _ = serve(sock, c, s).await;
+                }
+            });
+        }
+    });
+    Ok(McpEcho {
+        addr,
+        captured,
+        secure: true,
+        task,
+    })
+}
+
+async fn serve<S>(
+    mut sock: S,
     captured: Arc<Mutex<Vec<Captured>>>,
     session_no: u32,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = vec![0u8; 64 * 1024];
     loop {
@@ -301,13 +342,16 @@ fn error_body(id: &serde_json::Value, code: i64, message: &str) -> String {
     .to_string()
 }
 
-async fn respond(
-    sock: &mut TcpStream,
+async fn respond<S>(
+    sock: &mut S,
     status: u16,
     ctype: &str,
     body: &[u8],
     extra_headers: &str,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\n{}Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         status,
@@ -320,12 +364,15 @@ async fn respond(
     sock.write_all(body).await
 }
 
-async fn respond_sse(
-    sock: &mut TcpStream,
+async fn respond_sse<S>(
+    sock: &mut S,
     status: u16,
     body: &[u8],
     extra_headers: &str,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: text/event-stream\r\n{}Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         status,

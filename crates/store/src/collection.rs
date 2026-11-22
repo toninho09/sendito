@@ -80,6 +80,15 @@ impl Folder {
     }
 }
 
+fn collect_rels(f: &Folder, out: &mut Vec<String>) {
+    for r in &f.requests {
+        out.push(r.rel.clone());
+    }
+    for sub in &f.folders {
+        collect_rels(sub, out);
+    }
+}
+
 /// Joins a relative collection path.
 pub fn join_rel(parent: &str, name: &str) -> String {
     if parent.is_empty() {
@@ -141,6 +150,26 @@ impl Collection {
 
     pub fn meta_dir(&self) -> PathBuf {
         self.root.join(META_DIR)
+    }
+
+    /// Relative paths of every request under `rel` (`""` for the whole
+    /// collection), in tree order: a folder's own requests first, then its
+    /// subfolders, each in natural sort order.
+    pub fn requests_under(&self, rel: &str) -> Result<Vec<String>> {
+        let tree = self.scan()?;
+        let start = if rel.is_empty() {
+            Some(&tree)
+        } else {
+            tree.find_folder(rel)
+        };
+        let Some(start) = start else {
+            return Err(StoreError::Invalid(format!(
+                "folder \"{rel}\" does not exist in the collection"
+            )));
+        };
+        let mut out = Vec::new();
+        collect_rels(start, &mut out);
+        Ok(out)
     }
 
     /// Scans the tree. Request badges are sniffed from the file head; hidden
@@ -500,6 +529,46 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let c = Collection::new(d.path(), vec!["target".into()]);
         (d, c)
+    }
+
+    #[test]
+    fn requests_under_lists_in_tree_order() {
+        let (_d, c) = coll();
+        c.create_request("", "ping", &Request::new_grpc()).unwrap();
+        let users = c.create_folder("", "Users").unwrap();
+        c.create_request(&users, "zeta", &Request::new_http())
+            .unwrap();
+        c.create_request(&users, "alpha", &Request::new_http())
+            .unwrap();
+        let admin = c.create_folder(&users, "Admin").unwrap();
+        c.create_request(&admin, "ban", &Request::new_http())
+            .unwrap();
+
+        // A folder's own requests (natural sort) before its subfolders.
+        assert_eq!(
+            c.requests_under(&users).unwrap(),
+            vec![
+                "Users/alpha.toml",
+                "Users/zeta.toml",
+                "Users/Admin/ban.toml"
+            ]
+        );
+        assert_eq!(
+            c.requests_under("Users/Admin").unwrap(),
+            vec!["Users/Admin/ban.toml"]
+        );
+        // "" runs the whole collection, root requests first.
+        assert_eq!(
+            c.requests_under("").unwrap(),
+            vec![
+                "ping.toml",
+                "Users/alpha.toml",
+                "Users/zeta.toml",
+                "Users/Admin/ban.toml"
+            ]
+        );
+        let e = c.requests_under("nope").unwrap_err().to_string();
+        assert!(e.contains("nope"), "{e}");
     }
 
     #[test]

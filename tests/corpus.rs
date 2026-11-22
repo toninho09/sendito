@@ -647,6 +647,8 @@ async fn mcp_list_corpus() {
         url: format!("{}/mcp?paginate=1", echo.url()),
         headers: Vec::new(),
         verify_tls: true,
+        proxy: None,
+        tls: Default::default(),
         auth: None,
     };
     let (tx, _) = tokio::sync::mpsc::unbounded_channel();

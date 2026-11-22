@@ -383,6 +383,21 @@ watch_interval_s = 5     # :watch re-sends the active request this often
 timeout_ms = 30000
 max_body_mb = 100        # larger bodies are truncated (a warning is shown)
 cookie_jar = false       # default for requests that do not specify [options] cookies
+proxy = "http://proxy.corp:8080"  # optional: also https:// and socks4:// socks4a://
+                         # socks5:// socks5h:// (credentials may be in the URL).
+                         # "env" reads HTTPS_PROXY / HTTP_PROXY / ALL_PROXY /
+                         # NO_PROXY at send time (curl's precedence). Unset
+                         # keeps the client's default discovery: the same
+                         # variables, including NO_PROXY (the OS proxy settings
+                         # are not read). Used by HTTP requests and MCP over
+                         # Streamable HTTP; gRPC does not use it
+
+[http.tls]               # optional: PEM material used by HTTP requests, gRPC
+ca = "certs/ca.pem"      # and MCP Streamable HTTP servers (paths relative to the
+client_cert = "certs/c.pem"  # collection root; ~/ expands). ca replaces the
+client_key = "certs/c.key"   # platform roots; the client pair does mutual TLS
+                         # and must be set together. A request's verify_tls = false
+                         # skips server verification, so ca is unused there
 
 [oauth.example]          # HTTP OAuth identity; authorization code + PKCE
 authorize_url = "https://example.com/authorize"
