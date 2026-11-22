@@ -200,7 +200,7 @@ fn auth_header(ctx: &mut Ctx<'_>, auth: &Auth) -> Option<(String, String)> {
             value,
             location: ApiKeyLocation::Header,
         } => Some((ctx.r(key), ctx.r(value))),
-        Auth::ApiKey { .. } => None,
+        Auth::ApiKey { .. } | Auth::OAuth { .. } => None,
     }
 }
 
@@ -489,6 +489,9 @@ fn mask_auth(a: &Auth, s: &Scope) -> Auth {
             key: s.render_masked(key),
             value: s.render_masked(value),
             location: *location,
+        },
+        Auth::OAuth { name } => Auth::OAuth {
+            name: s.render_masked(name),
         },
     }
 }

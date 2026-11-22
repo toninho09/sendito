@@ -4,15 +4,16 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/209 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/218 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
-│  G│ All keys, including any you changed in the config.                                           │   Delete, x                    Delete the selected item (asks first)                          ┃   │
-│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   m                            Move the selected item to another folder                       ┃   │
-│   │                                                                                              │   /                            Filter the tree by name                                        ┃   │
-│   │ ── Global ──                                                                                 │   Up                           Move up                                                        ┃   │
-│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   Down                         Move down                                                      ┃   │
-│   │   Ctrl+W x                     Cancel the running request or stream                          │   PageUp                       Page up                                                        ┃   │
-│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   PageDown                     Page down                                                      ┃   │
+│  G│ All keys, including any you changed in the config.                                           │   d                            Duplicate the selected item                                    ┃   │
+│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   Delete, x                    Delete the selected item (asks first)                          ┃   │
+│   │                                                                                              │   m                            Move the selected item to another folder                       ┃   │
+│   │ ── Global ──                                                                                 │   /                            Filter the tree by name                                        ┃   │
+│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   Up                           Move up                                                        ┃   │
+│   │   Ctrl+W x                     Cancel the running request or stream                          │   Down                         Move down                                                      ┃   │
+│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   PageUp                       Page up                                                        ┃   │
+│   │   Ctrl+W m                     Re-send the active request on an interval (watch)             │   PageDown                     Page down                                                      ┃   │
 │   │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   Home                         Go to the first line                                           ┃   │
 │   │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   End                          Go to the last line                                            ┃   │
 │   │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │                                                                                               ┃   │
@@ -26,8 +27,8 @@ expression: screen
 │   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │                                                                                               ┃   │
 │   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │ ── Params / headers / form tables ──                                                          ┃   │
 │   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │   Enter                        Edit the next cell (name → value → next row)                   ┃   │
-│   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Ctrl+T                       Enable or disable the row                                      ┃   │
-│   │   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+D                       Delete the row                                                 ┃   │
+│   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Ctrl+T                       Enable or disable the row                                      │   │
+│   │   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+D                       Delete the row                                                 │   │
 │   │   Alt+1                        Jump to tab 1 of the focused pane                             │                                                                                               │   │
 │   │   Alt+2                        Jump to tab 2 of the focused pane                             │ ── Response viewer ──                                                                         │   │
 │   │   Alt+3                        Jump to tab 3 of the focused pane                             │   Up                           Move up                                                        │   │
@@ -41,7 +42,7 @@ expression: screen
 │   │   Ctrl+W V                     Edit environments and their variables                         │   p                            Body view: pretty (JSON formatted and highlighted)             │   │
 │   │   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   r                            Body view: raw text                                            │   │
 │   │   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   x                            Body view: hex dump                                            │   │
-│   │   Ctrl+W i                     Import a Postman collection or a curl command                 │   /, Ctrl+F                    Search in the response                                         │   │
+│   │   Ctrl+W i                     Import a collection or a curl command                         │   /, Ctrl+F                    Search in the response                                         │   │
 │   │   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   n, F3                        Next search match                                              │   │
 │   │   Ctrl+W f                     Pretty-print the JSON body / message                          │   N, Shift+F3                  Previous search match                                          │   │
 │   │   Ctrl+W z                     Maximize or restore the focused pane                          │   Enter, Space                 Fold or unfold the JSON block at the cursor                    │   │
@@ -57,7 +58,6 @@ expression: screen
 │   │   n                            New request in the selected folder                            │   Ctrl+Left / Ctrl+Right                                  Move by word                        │   │
 │   │   N                            New folder in the selected folder                             │   Backspace / Delete                                      Delete before / after the cursor    │   │
 │   │   r, F2                        Rename the selected item                                      │   Tab (body editor)                                       Insert two spaces (Esc first to     │   │
-│   │   d                            Duplicate the selected item                                   │     leave the editor)                                                                         │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 ╰───                                                                                                                                                                                                 ──╯
   type  search   ↑↓ PgUp PgDn  scroll   Esc  close

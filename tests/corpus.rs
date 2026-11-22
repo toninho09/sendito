@@ -153,6 +153,8 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
     }
 }
 
@@ -378,7 +380,8 @@ fn oracle_http(
                 | "authorization"
                 // reqwest adds `Accept: */*` to every request (see docs/DEBT.md).
                 | "accept"
-        ) || (matches!(&req.auth, sendito_core::Auth::ApiKey { key, location: sendito_core::ApiKeyLocation::Header, .. } if key.eq_ignore_ascii_case(&n)));
+        ) || (matches!(&req.auth, sendito_core::Auth::ApiKey { key, location: sendito_core::ApiKeyLocation::Header, .. } if key.eq_ignore_ascii_case(&n)))
+            || (n == "cookie" && req.options.cookies == Some(true));
         if !derived && !defined.contains(&n) {
             failures.push(format!("{case}: header {n} was sent but not defined"));
         }
@@ -387,8 +390,28 @@ fn oracle_http(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn http_corpus() {
-    let e = setup().await;
-    let p = project(&e);
+    let mut e = setup().await;
+    let mut p = project(&e);
+    let access = random_secret("oauth");
+    let tokens = sendito_mcp::oauth::Tokens {
+        access: access.clone(),
+        refresh: None,
+        expires_at: None,
+        client_id: "client".into(),
+        client_secret: None,
+    };
+    let account = runner::oauth_token_account(&p.name, Some("corpus"), "sample");
+    e.keychain.set(&account, &tokens.to_json()).must();
+    e.secrets.insert("http_oauth".into(), access);
+    p.config.oauth.insert(
+        "sample".into(),
+        sendito_store::config::OAuthIdentity {
+            authorize_url: "http://127.0.0.1:9/authorize".into(),
+            token_url: "http://127.0.0.1:9/token".into(),
+            client_id: "client".into(),
+            ..Default::default()
+        },
+    );
     let root = e.dir.path().to_path_buf();
     let mut failures = Vec::new();
     let names = cases(&root, "http");
@@ -404,7 +427,9 @@ async fn http_corpus() {
         assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
         let before = failures.len();
         e.http.take();
-        let o = runner::exec_http(&ctx(&e, &p, &rel), &req, scope.clone(), vec![]).await;
+        let mut run = ctx(&e, &p, &rel);
+        run.oauth = Some(runner::OAuthRunInfo::of(&p));
+        let o = runner::exec_http(&run, &req, scope.clone(), vec![]).await;
         if let Err(err) = &o.response {
             failures.push(format!("{case}: request failed: {err}"));
             continue;

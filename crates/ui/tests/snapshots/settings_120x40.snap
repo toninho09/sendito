@@ -23,8 +23,9 @@ expression: screen
 │                        │    Mouse support                                          ‹ On ›   │ ds)                    │
 │                        │    Confirm quit with unsaved changes                      ‹ On ›   │ nd                     │
 │                        │    Record history                                         ‹ On ›   │                        │
-│                        │ ────────────────────────────────────────────────────────────────── │ the mouse)             │
-│                        │  Colors: auto follows the terminal; ansi uses your terminal        │ ide                    │
+│                        │    Watch interval                                        ‹ 5 s ›   │ the mouse)             │
+│                        │ ────────────────────────────────────────────────────────────────── │ ide                    │
+│                        │  Colors: auto follows the terminal; ansi uses your terminal        │                        │
 │                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │
 │                        │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                        │
 │                        │                                                                    │                        │
@@ -32,7 +33,6 @@ expression: screen
 │                        │  ~/.config/sendito/config.toml                                     │                        │
 │                        ╰────────────────────────────────────────────────────────────────────╯                        │
 │                                                                                                                      │
-│                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

@@ -5,7 +5,7 @@ request is one TOML file; every directory is a folder in the sidebar tree.
 
 ```
 my-api/
-├── .gitignore                    # sendito init adds the three local files below
+├── .gitignore                    # sendito init adds the local files below
 ├── .sendito/
 │   ├── config.toml               # project settings (versioned)
 │   ├── collection.toml           # collection-level variables (versioned)
@@ -13,6 +13,8 @@ my-api/
 │   │   ├── local.toml            # selectable environments (versioned)
 │   │   └── staging.toml
 │   ├── secrets.toml              # local secret values      (gitignored)
+│   ├── cookies.toml              # per-environment cookie jar (gitignored)
+│   ├── cookies.lock              # cookie jar lock (gitignored)
 │   ├── session.toml              # open tabs, drafts, layout (gitignored)
 │   └── history.jsonl             # sent requests, masked    (gitignored)
 ├── Users/
@@ -78,6 +80,7 @@ url = "{{base_url}}/users"      # no scheme → http://
 timeout_ms = 5000               # default: [http] timeout_ms from config (30000)
 follow_redirects = false        # default true (up to 10 hops)
 verify_tls = false              # default true
+cookies = true                  # optional: defaults to [http] cookie_jar (false)
 
 [[params]]                      # query parameters, appended to the URL
 name = "q"
@@ -90,10 +93,11 @@ value = "{{$uuid}}"
 enabled = true
 
 [auth]                          # optional; one of:
-type = "bearer"                 # none | basic | bearer | apikey
+type = "bearer"                 # none | basic | bearer | apikey | oauth (HTTP only)
 token = "{{token}}"
 # type = "basic"   → username, password   (Authorization: Basic base64(user:pass))
 # type = "apikey"  → key, value, in = "header" | "query"
+# type = "oauth"   → name = "identity" from [oauth.<identity>]
 
 [body]                          # optional; one of:
 type = "json"
@@ -146,12 +150,21 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
     or `application/octet-stream` (file), `multipart/form-data; boundary=…`
     (multipart — this one replaces a user `Content-Type`, because the boundary must
     match; a note is shown).
-  * `Authorization` (basic, bearer) or the API-key header, unless the request
+  * `Authorization` (basic, bearer, OAuth) or the API-key header, unless the request
     already defines a header with that name (the explicit header wins; a note is shown).
   * `Accept: */*`, when no enabled `Accept` header is defined (added by the HTTP
     library; it cannot be turned off, see `docs/DEBT.md`).
+  * `Cookie` from the environment's jar, only when enabled (see below).
   * Nothing else: no `User-Agent`, `Accept-Encoding` or `Referer` is added, and
-    responses are shown as received (no decompression).
+    responses are never requested compressed.
+* **Response decoding**: when the response arrives with `Content-Encoding:
+  gzip`, `deflate` (zlib, with a raw-stream fallback) or `br`, the body is
+  decompressed for display, extraction and assertions; the response
+  border shows the encoding and the size it had on the wire. Sendito never
+  sends `Accept-Encoding`, so this only decodes what the server chose to send.
+  Any other coding (`zstd`, stacked codings) or a stream that does not decode
+  cleanly is shown as received. The configured body-size limit applies to both
+  received and decoded bytes; a truncated compressed stream is not decoded.
 * **Bodies**:
   * json / raw: the rendered text as UTF-8, byte for byte (including line endings).
     A defined but empty body is sent with `Content-Length: 0`. `type = "none"` (or
@@ -169,6 +182,29 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
 * **Paths** in bodies are relative to the collection root; `~/` is expanded.
 * **Redirects** (when followed) re-send the request to the `Location`; no `Referer`
   is added.
+
+### Cookie jar
+
+The cookie jar is opt-in via `[options] cookies = true` or `[http] cookie_jar = true`.
+The request option overrides the configuration; `sendito run --no-cookies` disables
+it for one run. Cookies are isolated by environment, with `_collection` used when
+no environment is selected. Multiple matching cookies are sent as a `Cookie` header
+appended after any explicit `Cookie` header, with longer paths first.
+
+Cookies are stored in `.sendito/cookies.toml`, using a private file (0600 on Unix),
+a cross-process lock and atomic replacement. `sendito init` adds the file to
+`.gitignore`; older collections get `.sendito/.gitignore` entries when first
+saved, and that file ignores itself so it never shows up as untracked.
+In a git worktree, `git` must be available; writes fail if the cookie file is tracked
+or not ignored. Session cookies persist
+until deleted. `:cookies` lists cookies without values; `:cookies delete <number>`
+deletes one, and `:cookies clear` deletes the active environment's jar.
+
+Cookie parsing and matching follow RFC 6265 using the public suffix list; secure
+cookies require HTTPS and public-suffix Domain attributes are rejected. To prevent
+cookies from being sent to the wrong path or origin, **redirects are not followed
+when the jar is enabled**; the response and a note are shown instead. Set-Cookie
+values and their echoes are masked in the UI.
 
 ## gRPC request
 
@@ -341,10 +377,19 @@ icons = "unicode"        # unicode | nerd (Nerd Font icons)
 sidebar = "left"         # left | right
 mouse = true
 confirm_quit = true
+watch_interval_s = 5     # :watch re-sends the active request this often
 
 [http]
 timeout_ms = 30000
 max_body_mb = 100        # larger bodies are truncated (a warning is shown)
+cookie_jar = false       # default for requests that do not specify [options] cookies
+
+[oauth.example]          # HTTP OAuth identity; authorization code + PKCE
+authorize_url = "https://example.com/authorize"
+token_url = "https://example.com/token"
+client_id = "client"
+client_secret = "{{client_secret}}"  # optional, from a secret environment source
+scopes = ["read"]
 
 [grpc]
 deadline_ms = 0          # default deadline when a request sets none; 0 = none
@@ -374,7 +419,19 @@ max_entries = 10000
 send = ["f9", "ctrl+w e"]
 ```
 
-For OAuth, replace the bearer auth table with `type = "oauth"`. Optional fields
+For HTTP OAuth use `[auth] type = "oauth"` and `name = "example"` in an HTTP
+request. Sign in with `sendito auth login example --env local` or
+`:auth login example` in the UI; logout with the corresponding `logout` command.
+The authorization URL is available even when no browser opens. Tokens are kept in
+an OS keychain account isolated by collection, environment and identity. The
+endpoint and client fields can use environment variables; secrets are allowed only
+in `client_secret`, never in URLs, client ID or scopes. OAuth endpoints and protected
+HTTP URLs require HTTPS except for loopback. An explicit Authorization header wins.
+On HTTP 401 Sendito refreshes the token and retries the request once; this may
+repeat a request with side effects. Exports use a `{{oauth.example}}` placeholder
+rather than reading a token from the keychain. HTTP OAuth is not available for gRPC.
+
+For MCP OAuth, replace the bearer auth table with `type = "oauth"`. Optional fields
 are `client_id`, `client_secret`, `authorize_url`, `token_url`,
 `registration_url` and `scopes` (an array). Run `sendito mcp login <server>`
 from the collection to authorize; `sendito mcp logout <server>` deletes its

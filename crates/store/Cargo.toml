@@ -14,8 +14,10 @@ toml = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 time.workspace = true
 keyring.workspace = true
-
-[dev-dependencies]
+cookie_store.workspace = true
+psl.workspace = true
+url.workspace = true
+fs2.workspace = true
 tempfile.workspace = true
 
 [lints]

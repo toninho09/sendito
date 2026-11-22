@@ -64,6 +64,12 @@ clap = { version = "4", features = ["derive"] }
 keyring = "4"
 shell-words = "1"
 mime_guess = "2"
+flate2 = "1"
+brotli = "8"
+cookie_store = { version = "0.22", default-features = false, features = ["serde_json", "preserve_order"] }
+psl = "2"
+url = "2"
+fs2 = "0.4"
 insta = "1"
 tempfile = "3"
 

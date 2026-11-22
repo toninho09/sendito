@@ -468,12 +468,16 @@ pub(super) fn draw_overlay(
                 Some(SettingId::History) => {
                     "Keep sent requests in History (F7) to reopen or resend.".to_string()
                 }
+                Some(SettingId::WatchInterval) => {
+                    "The :watch command re-sends the active request on this interval.".to_string()
+                }
                 None => String::new(),
             };
             let values = match id {
                 Some(SettingId::Theme) => app.themes.names().join(" / "),
                 Some(SettingId::Icons) => crate::icons::ICON_SETS.join(" / "),
                 Some(SettingId::Sidebar) => "left / right".into(),
+                Some(SettingId::WatchInterval) => "5 / 10 / 30 / 60 s".into(),
                 Some(_) => "On / Off".into(),
                 None => String::new(),
             };
@@ -966,7 +970,7 @@ pub(super) fn draw_overlay(
                 buf,
                 inner.x + 2,
                 inner.y + 1,
-                "Paste a curl command, or enter the path of a Postman v2.1 collection (.json).",
+                "Paste a curl command, or enter a Postman/Insomnia JSON file or Bruno directory.",
                 tw,
                 note,
             );

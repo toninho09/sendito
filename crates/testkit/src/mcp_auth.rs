@@ -31,6 +31,7 @@ struct State {
     pub_registered: bool,
     logins: u32,
     refreshes: u32,
+    http_requests: u32,
 }
 
 impl State {
@@ -66,6 +67,10 @@ impl McpAuth {
 
     pub fn registered(&self) -> bool {
         self.state.lock().map(|s| s.pub_registered).unwrap_or(false)
+    }
+
+    pub fn http_requests(&self) -> u32 {
+        self.state.lock().map(|s| s.http_requests).unwrap_or(0)
     }
 }
 
@@ -200,13 +205,17 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, base: String) -> s
                 )
                 .await?;
             }
-            ("GET", "/authorize") => {
+            ("GET", "/authorize" | "/authorize-http") => {
                 // Validate what the client built, then redirect as if allowed.
                 let challenge = query.get("code_challenge").cloned();
                 let redirect = query.get("redirect_uri").cloned();
                 let st = query.get("state").cloned();
                 let ok = query.get("response_type").map(String::as_str) == Some("code")
-                    && query.get("resource") == Some(&format!("{base}/mcp"))
+                    && if path == "/authorize-http" {
+                        !query.contains_key("resource")
+                    } else {
+                        query.get("resource") == Some(&format!("{base}/mcp"))
+                    }
                     && query.contains_key("client_id")
                     && challenge.is_some()
                     && query.get("code_challenge_method").map(String::as_str) == Some("S256")
@@ -241,9 +250,44 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, base: String) -> s
                 )
                 .await?;
             }
-            ("POST", "/token") => {
+            ("GET", "/http-api") => {
+                let bearer = headers
+                    .iter()
+                    .find(|(n, _)| n == "authorization")
+                    .and_then(|(_, v)| v.strip_prefix("Bearer "));
+                // The retry after a 401 must also replay the cookie the 401 set.
+                let cookie = headers
+                    .iter()
+                    .any(|(n, v)| n == "cookie" && v.contains("retry=ok-to-proceed"));
+                let valid = state.lock().is_ok_and(|mut s| {
+                    s.http_requests += 1;
+                    s.http_requests > 1
+                        && cookie
+                        && bearer.is_some_and(|t| s.access.contains_key(t))
+                });
+                if valid {
+                    let text = serde_json::json!({"ok": true, "token": bearer.unwrap_or_default()})
+                        .to_string();
+                    respond(&mut sock, 200, "application/json", &text, "").await?;
+                } else {
+                    respond(
+                        &mut sock,
+                        401,
+                        "application/json",
+                        "{}",
+                        "Set-Cookie: retry=ok-to-proceed; Path=/\r\n",
+                    )
+                    .await?;
+                }
+            }
+            ("POST", "/token" | "/token-http") => {
                 let form = parse_query(&body);
-                let out = token(&form, &state, &format!("{base}/mcp"));
+                let resource = if path == "/token-http" {
+                    None
+                } else {
+                    Some(format!("{base}/mcp"))
+                };
+                let out = token(&form, &state, resource.as_deref());
                 let (status, text) = match out {
                     Ok(v) => (200, v),
                     Err(e) => (400, format!("{{\"error\":\"{e}\"}}")),
@@ -259,10 +303,10 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, base: String) -> s
 fn token(
     form: &BTreeMap<String, String>,
     state: &Arc<Mutex<State>>,
-    resource: &str,
+    resource: Option<&str>,
 ) -> Result<String, String> {
     let mut s = state.lock().map_err(|_| "locked")?;
-    if form.get("resource").map(String::as_str) != Some(resource) {
+    if form.get("resource").map(String::as_str) != resource {
         return Err("invalid_target".into());
     }
     if form.get("client_secret").map(String::as_str) != Some("test-client-secret") {

@@ -45,6 +45,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         headers,
         body: Vec::new(),
         truncated: false,
+        decoded: None,
         timing: Timing {
             dns: Some(Duration::from_micros(1200)),
             connect: Some(Duration::from_micros(800)),

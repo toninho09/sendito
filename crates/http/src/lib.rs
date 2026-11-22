@@ -45,7 +45,19 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
     /// True when the body exceeded the size limit and was cut.
     pub truncated: bool,
+    /// Set when the body arrived with a known `Content-Encoding` and was
+    /// transparently decompressed. `body` then holds the decoded bytes.
+    pub decoded: Option<Decoded>,
     pub timing: Timing,
+}
+
+/// A response body that was received compressed and decoded for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decoded {
+    /// The `Content-Encoding` value that was applied (`gzip`, `deflate`, `br`).
+    pub encoding: String,
+    /// Body size as received on the wire, in bytes.
+    pub raw_len: u64,
 }
 
 impl HttpResponse {
@@ -63,6 +75,69 @@ impl HttpResponse {
             .map(|(n, v)| n.len() + v.len() + 4)
             .sum()
     }
+
+    /// Size of the body as received on the wire: the compressed size when the
+    /// body was decompressed, else the body length.
+    pub fn wire_body_len(&self) -> u64 {
+        match &self.decoded {
+            Some(d) => d.raw_len,
+            None => self.body.len() as u64,
+        }
+    }
+}
+
+/// Decompresses a response body according to its `Content-Encoding` header.
+/// Only whole-body encodings Sendito can decode are touched: `gzip`,
+/// `deflate` (zlib, with a raw-deflate fallback) and `br`. Anything else
+/// (multiple codings, `zstd`, unknown names) and a stream that does not
+/// decompress cleanly is returned untouched, so what is shown is what was
+/// received. Sendito never advertises `Accept-Encoding`, so this only decodes
+/// what the server chose to send.
+fn decode_body(
+    headers: &[(String, String)],
+    body: Vec<u8>,
+    max_body: usize,
+) -> (Vec<u8>, Option<Decoded>, bool) {
+    let mut encodings = headers
+        .iter()
+        .filter(|(n, _)| n.eq_ignore_ascii_case("content-encoding"));
+    let enc = encodings
+        .next()
+        .map(|(_, v)| v.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    // Multiple header fields form a list of codings; do not partially decode.
+    if body.is_empty() || encodings.next().is_some() {
+        return (body, None, false);
+    }
+    let raw_len = body.len() as u64;
+    let decoded = match enc.as_str() {
+        "gzip" => read_limited(flate2::read::MultiGzDecoder::new(&body[..]), max_body),
+        "deflate" => read_limited(flate2::read::ZlibDecoder::new(&body[..]), max_body)
+            .or_else(|| read_limited(flate2::read::DeflateDecoder::new(&body[..]), max_body)),
+        "br" => read_limited(brotli::Decompressor::new(&body[..], 4096), max_body),
+        _ => None,
+    };
+    match decoded {
+        Some((b, truncated)) => (
+            b,
+            Some(Decoded {
+                encoding: enc,
+                raw_len,
+            }),
+            truncated,
+        ),
+        None => (body, None, false),
+    }
+}
+
+fn read_limited(r: impl std::io::Read, max_body: usize) -> Option<(Vec<u8>, bool)> {
+    use std::io::Read;
+    let limit = (max_body as u64).saturating_add(1);
+    let mut out = Vec::new();
+    r.take(limit).read_to_end(&mut out).ok()?;
+    let truncated = out.len() > max_body;
+    out.truncate(max_body);
+    Some((out, truncated))
 }
 
 #[derive(Debug, Clone)]
@@ -511,6 +586,14 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         }
     }
     let end = Instant::now();
+    // A body cut at the size limit is kept as received: decompressing half a
+    // stream would fail or lie.
+    let (body, decoded, decoded_truncated) = if truncated {
+        (body, None, false)
+    } else {
+        decode_body(&headers, body, opts.max_body)
+    };
+    truncated |= decoded_truncated;
 
     let m = marks.lock().map(|m| Marks { ..*m }).unwrap_or_default();
     let dns = match (m.dns_start, m.dns_end) {
@@ -545,6 +628,7 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         headers,
         body,
         truncated,
+        decoded,
         timing,
     })
 }
@@ -772,5 +856,141 @@ mod tests {
         assert!(tls_config(false, &[b"h2"]).is_ok());
         let m = header_map(&[("A".into(), "é".into())]).unwrap();
         assert_eq!(m.get("a").map(|v| v.as_bytes()), Some("é".as_bytes()));
+    }
+
+    fn gzipped(data: &[u8]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::read::GzEncoder;
+        use std::io::Read as _;
+        let mut e = GzEncoder::new(data, Compression::default());
+        let mut out = Vec::new();
+        e.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    fn zipped(data: &[u8]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::read::ZlibEncoder;
+        use std::io::Read as _;
+        let mut e = ZlibEncoder::new(data, Compression::default());
+        let mut out = Vec::new();
+        e.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    fn brotlied(data: &[u8]) -> Vec<u8> {
+        use brotli::enc::BrotliEncoderParams;
+        use std::io::Read as _;
+        let mut out = Vec::new();
+        let params = BrotliEncoderParams::default();
+        let mut r = brotli::CompressorReader::new(
+            data,
+            4096,
+            u32::try_from(params.quality).unwrap_or(11),
+            u32::try_from(params.lgwin).unwrap_or(22),
+        );
+        r.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    fn hdr(enc: &str) -> Vec<(String, String)> {
+        vec![("Content-Encoding".into(), enc.into())]
+    }
+
+    #[test]
+    fn decodes_known_encodings() {
+        let text = b"{\"hello\": \"compressed world\"}";
+        for (enc, bytes) in [
+            ("gzip", gzipped(text)),
+            ("deflate", zipped(text)),
+            ("br", brotlied(text)),
+        ] {
+            let (body, d, truncated) = decode_body(&hdr(enc), bytes, 1024);
+            assert!(!truncated);
+            assert_eq!(body, text, "{enc}");
+            let d = d.unwrap_or_else(|| panic!("{enc} not decoded"));
+            assert_eq!(d.encoding, enc);
+            assert!(d.raw_len > 0);
+        }
+        // Raw deflate (no zlib wrapper) is served by some servers.
+        let raw = {
+            use flate2::Compression;
+            use flate2::read::DeflateEncoder;
+            use std::io::Read as _;
+            let mut e = DeflateEncoder::new(&text[..], Compression::default());
+            let mut out = Vec::new();
+            e.read_to_end(&mut out).unwrap();
+            out
+        };
+        let (body, d, truncated) = decode_body(&hdr("deflate"), raw, 1024);
+        assert!(!truncated);
+        assert_eq!(body, text);
+        assert_eq!(d.map(|d| d.encoding).as_deref(), Some("deflate"));
+    }
+
+    #[test]
+    fn decode_leaves_unhandled_cases_alone() {
+        let text = b"plain";
+        // No Content-Encoding, identity, unknown coding, stacked codings.
+        for hdrs in [Vec::new(), hdr("identity"), hdr("zstd"), hdr("gzip, br")] {
+            let (body, d, truncated) = decode_body(&hdrs, text.to_vec(), 1024);
+            assert!(!truncated);
+            assert_eq!(body, text);
+            assert!(d.is_none());
+        }
+        // A corrupt stream and an empty body stay as received.
+        let (body, d, truncated) = decode_body(&hdr("gzip"), vec![1, 2, 3, 4, 5], 1024);
+        assert!(!truncated);
+        assert_eq!(body, vec![1, 2, 3, 4, 5]);
+        assert!(d.is_none());
+        let (body, d, truncated) = decode_body(&hdr("gzip"), Vec::new(), 1024);
+        assert!(!truncated);
+        assert!(body.is_empty());
+        assert!(d.is_none());
+    }
+
+    #[test]
+    fn decoded_body_is_bounded_and_stacked_headers_are_untouched() {
+        let original = vec![b'x'; 100_000];
+        let compressed = gzipped(&original);
+        let (body, decoded, truncated) = decode_body(&hdr("gzip"), compressed.clone(), 32);
+        assert_eq!(body, vec![b'x'; 32]);
+        assert!(decoded.is_some());
+        assert!(truncated);
+        let headers = vec![
+            ("content-encoding".into(), "gzip".into()),
+            ("content-encoding".into(), "br".into()),
+        ];
+        let (body, decoded, truncated) = decode_body(&headers, compressed.clone(), 32);
+        assert_eq!(body, compressed);
+        assert!(decoded.is_none());
+        assert!(!truncated);
+    }
+
+    #[tokio::test]
+    async fn decodes_and_reports_in_send() {
+        let text = b"compressed body";
+        let gz = gzipped(text);
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+            gz.len()
+        );
+        let mut raw = head.into_bytes();
+        raw.extend_from_slice(&gz);
+        // Leak: the one-shot server takes a `&'static [u8]`.
+        let raw: &'static [u8] = Box::leak(raw.into_boxed_slice());
+        let (url, h) = one_shot_server(raw).await;
+        let r = send(&req(url), &SendOptions::default()).await.unwrap();
+        assert_eq!(r.body, text);
+        let d = r.decoded.as_ref().unwrap();
+        assert_eq!(d.encoding, "gzip");
+        assert_eq!(d.raw_len, gz.len() as u64);
+        assert_eq!(r.wire_body_len(), gz.len() as u64);
+        // The request itself never advertises Accept-Encoding.
+        let sent = String::from_utf8(h.await.unwrap()).unwrap();
+        assert!(
+            !sent.to_ascii_lowercase().contains("accept-encoding"),
+            "{sent}"
+        );
     }
 }

@@ -21,6 +21,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `send` | `Ctrl+Enter`, `F5`, `Ctrl+W e` | `Ctrl+Enter`, `F5`, `Ctrl+W e` | Send the request (or start the gRPC call) |
 | `cancel` | `Ctrl+W x` | `Ctrl+W x` | Cancel the running request or stream |
 | `end_stream` | `Ctrl+W d` | `Ctrl+W d` | Finish sending on a client/bidi stream (half-close) |
+| `watch` | `Ctrl+W m` | `Ctrl+W m` | Re-send the active request on an interval (watch) |
 | `save` | `Ctrl+S`, `Ctrl+W s` | `Ctrl+S`, `Ctrl+W s` | Save the request to its file (asks for a name if new) |
 | `quit` | `Ctrl+W q`, `Ctrl+Q` | `Ctrl+W q`, `Ctrl+Q` | Quit Sendito |
 | `new_request` | `Ctrl+N`, `Ctrl+W t` | `Ctrl+N`, `Ctrl+W t` | Open a new unsaved HTTP request tab |
@@ -49,7 +50,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
 | `history` | `F7`, `Ctrl+W r` | `F7`, `Ctrl+W r` | Show request history in the sidebar (toggle) |
 | `toggle_sidebar` | `Ctrl+B`, `Ctrl+W b` | `Ctrl+B`, `Ctrl+W b` | Show or hide the sidebar |
-| `import` | `Ctrl+W i` | `Ctrl+W i` | Import a Postman collection or a curl command |
+| `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
@@ -148,7 +149,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | Environment editor | Space (Source cell) | Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file |
 | Environment editor | Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown | Save / new environment / previous, next environment |
 | Environment editor | Enter / Ctrl+D / Esc | Next cell / delete the row / close |
-| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or the Postman file / cancel |
+| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or collection / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
 | MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
@@ -195,9 +196,12 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 |---|---|
 | `:send` | Send the current request |
 | `:cancel` | Cancel the running request |
+| `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
+| `:auth login <identity>` | Sign in to an HTTP OAuth identity |
+| `:auth logout <identity>` | Remove HTTP OAuth tokens for this environment |
 | `:w` | Save the request |
 | `:saveas <name>` | Save the request under a new name |
 | `:wq` | Save and quit |
@@ -208,9 +212,14 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
 | `:mcptools` | Discover and choose an MCP tool |
-| `:import [path]` | Import a Postman collection (path) or paste a curl command |
+| `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
+| `:httpfile` | Copy the request as an .http file |
+| `:httpfile!` | Copy the .http file including secret values |
+| `:cookies` | List the active environment's cookies (values masked) |
+| `:cookies clear` | Clear the active environment's cookies |
+| `:cookies delete <number>` | Delete one cookie from the active environment |
 | `:history` | Show history |
 | `:clearhistory` | Delete all history entries |
 | `:format` | Pretty-print the JSON body |

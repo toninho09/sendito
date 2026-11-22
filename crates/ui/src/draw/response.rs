@@ -79,6 +79,10 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                 ),
                 theme.dim(),
             ));
+            // A decoded body shows the encoding and the size it had on the wire.
+            if let Some(d) = &summary.decoded {
+                spans.push((format!("← {d} "), theme.dim()));
+            }
         }
     }
     // Tabs in the top border.

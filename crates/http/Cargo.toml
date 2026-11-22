@@ -16,6 +16,8 @@ tower.workspace = true
 tower-service.workspace = true
 bytes.workspace = true
 mime_guess.workspace = true
+flate2.workspace = true
+brotli.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

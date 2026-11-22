@@ -23,6 +23,8 @@ pub(super) fn short_label(f: Field) -> &'static str {
         Field::AuthUser => "Username",
         Field::AuthPass => "Password",
         Field::AuthToken => "Token",
+        Field::AuthOAuthName => "OAuth identity",
+        Field::Cookies => "Cookie jar",
         Field::AuthKey => "Key name",
         Field::AuthValue => "Key value",
         Field::AuthIn => "Send in",

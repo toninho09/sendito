@@ -21,7 +21,7 @@ use crate::form::TableOutcome;
 use crate::keymap::{Action, Chord, Ctx, Keymap, Lookup};
 use crate::overlay::*;
 use crate::runner::{self, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache};
-use crate::tab::{Field, Kind, Response, Running, Summary, Tab};
+use crate::tab::{Field, Kind, Response, Running, Summary, Tab, Watch};
 use crate::theme::Theme;
 use crate::tree::{RowKind, TreeState};
 use crate::viewer::{Doc, ViewMode, Viewer};
@@ -147,6 +147,18 @@ pub enum AppMsg {
         tab: u64,
         update: runner::McpUpdate,
     },
+    OAuthUrl {
+        job: u64,
+        url: String,
+    },
+    OAuthDone {
+        job: u64,
+        result: Result<String, String>,
+    },
+    Cookies {
+        job: u64,
+        result: Result<CookiesOutcome, String>,
+    },
     McpTools {
         job: u64,
         tab: u64,
@@ -166,6 +178,13 @@ pub enum AppMsg {
     },
 }
 
+/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
+/// guarded by a cross-process lock).
+pub enum CookiesOutcome {
+    List(Vec<String>),
+    Done(&'static str),
+}
+
 /// What to do once a full scope (with secrets) is ready.
 pub enum ScopeThen {
     Http {
@@ -173,6 +192,7 @@ pub enum ScopeThen {
         req: Box<HttpRequest>,
         name: String,
         path: Option<String>,
+        from_watch: bool,
     },
     Grpc {
         tab: u64,
@@ -251,6 +271,10 @@ pub struct App {
     pub schemas: SchemaCache,
     mcp_discovery: Option<(u64, tokio::task::JoinHandle<()>)>,
     mcp_discovery_seq: u64,
+    oauth_login: Option<(u64, tokio::task::JoinHandle<()>)>,
+    oauth_login_seq: u64,
+    cookies_job: Option<(u64, tokio::task::JoinHandle<()>)>,
+    cookies_job_seq: u64,
     pub filter: TextEditor,
     pub osc52: Vec<String>,
     pub size: (u16, u16),
@@ -356,6 +380,10 @@ impl App {
             schemas: SchemaCache::default(),
             mcp_discovery: None,
             mcp_discovery_seq: 0,
+            oauth_login: None,
+            oauth_login_seq: 0,
+            cookies_job: None,
+            cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
             osc52: Vec::new(),
             size: (80, 24),
@@ -479,8 +507,10 @@ impl App {
         self.last_session_save = Instant::now();
     }
 
-    /// Periodic work: save the session a moment after changes.
-    pub fn tick(&mut self) {
+    /// Periodic work: save the session a moment after changes, expire status
+    /// messages and repeat a watched request. Returns whether anything changed
+    /// that needs a redraw.
+    pub fn tick(&mut self) -> bool {
         if self.session_dirty && self.last_session_save.elapsed() > Duration::from_secs(2) {
             self.save_session();
         }
@@ -490,6 +520,92 @@ impl App {
                 self.status = None;
             }
         }
+        // Skip missed intervals while a request is running. Each watched tab
+        // can continue in the background; dialogs pause automatic sends.
+        let now = Instant::now();
+        for tab in &mut self.tabs {
+            if tab.running.is_some()
+                && let Some(w) = &mut tab.watch
+                && now >= w.next
+            {
+                w.next = now + w.interval;
+            }
+        }
+        if self.overlay.is_some() {
+            return false;
+        }
+        let due: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, tab)| {
+                (tab.ed.kind == Kind::Http
+                    && tab.running.is_none()
+                    && tab.watch.as_ref().is_some_and(|w| now >= w.next))
+                .then_some(i)
+            })
+            .collect();
+        let active = self.active;
+        let mut changed = false;
+        for i in due {
+            self.tabs[i].refresh_model();
+            let request = &self.tabs[i].model;
+            let undefined = !runner::unresolved(request, &self.names).is_empty()
+                || !sendito_core::template::empty_placeholders(
+                    &sendito_store::request_file::to_toml(request),
+                )
+                .is_empty();
+            if undefined {
+                self.tabs[i].watch = None;
+                self.set_status(
+                    "watch stopped: request has unresolved variables",
+                    StatusKind::Warn,
+                );
+            } else {
+                // `send_opts` uses the active index for the duration of this
+                // synchronous setup only; restore focus before processing events.
+                self.active = i;
+                self.send_opts(false, true);
+                self.active = active;
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    /// Starts or stops re-sending the active request every `secs` seconds
+    /// (`:watch [s]`, the watch key).
+    fn toggle_watch(&mut self, secs: Option<u64>) {
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if tab.watch.take().is_some() {
+            self.set_status("watch off", StatusKind::Info);
+            return;
+        }
+        if tab.ed.kind != Kind::Http {
+            self.set_status(
+                "watch repeats HTTP requests; send gRPC and MCP calls yourself",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        let s = secs.unwrap_or_else(|| self.project.config.ui.watch_interval_s.max(1));
+        if !(1..=86_400).contains(&s) {
+            self.set_status(
+                "watch interval must be between 1 and 86400 seconds",
+                StatusKind::Error,
+            );
+            return;
+        }
+        tab.watch = Some(Watch::new(Duration::from_secs(s)));
+        let key = self.keymap.hint(Action::WatchToggle, self.vim);
+        self.set_status(
+            format!(
+                "watch on: sending every {s} s until {key}, cancel, close or change environment"
+            ),
+            StatusKind::Ok,
+        );
     }
 
     /// The vim mode of the editor that has the keyboard, if one does.
@@ -521,7 +637,9 @@ impl App {
     }
 
     pub fn is_busy(&self) -> bool {
-        self.mcp_discovery.is_some() || self.tabs.iter().any(|t| t.running.is_some())
+        self.mcp_discovery.is_some()
+            || self.oauth_login.is_some()
+            || self.tabs.iter().any(|t| t.running.is_some())
     }
 
     // ----- events -------------------------------------------------------
@@ -1011,6 +1129,7 @@ impl App {
                 }
             }
             Action::Cancel => self.cancel(),
+            Action::WatchToggle => self.toggle_watch(None),
             Action::EndStream => self.end_stream(),
             Action::Save => self.save(),
             Action::Quit => self.request_quit(),
@@ -1548,6 +1667,12 @@ impl App {
     // ----- sending ------------------------------------------------------
 
     pub fn send(&mut self, confirmed: bool) {
+        self.send_opts(confirmed, false);
+    }
+
+    /// Sends the active tab's request. `from_watch` marks an automatic repeat:
+    /// no note about unsaved edits, and the watch cycle restarts.
+    fn send_opts(&mut self, confirmed: bool, from_watch: bool) {
         let Some(tab) = self.tabs.get_mut(self.active) else {
             self.set_status("open or create a request first (Ctrl+N)", StatusKind::Warn);
             return;
@@ -1664,7 +1789,7 @@ impl App {
         tab.response = Some(resp);
         // A new request makes earlier messages stale.
         self.status = None;
-        if edited {
+        if edited && !from_watch {
             let save = self.keymap.hint(Action::Save, self.vim);
             self.set_status(
                 format!("sent with your unsaved edits ({save} saves them to the file)"),
@@ -1681,6 +1806,7 @@ impl App {
                 req: Box::new(h),
                 name,
                 path,
+                from_watch,
             },
             Request::Grpc(g) => ScopeThen::Grpc {
                 tab: id,
@@ -1713,6 +1839,11 @@ impl App {
             started: Instant::now(),
             streaming_input: false,
         });
+        // The watched request was just sent: the next repeat is a full interval
+        // away, also after a manual send.
+        if let Some(w) = &mut tab.watch {
+            w.next = Instant::now() + w.interval;
+        }
     }
 
     fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {
@@ -1733,6 +1864,8 @@ impl App {
             schemas: self.schemas.clone(),
             grpc_deadline_ms: self.project.config.grpc.deadline_ms,
             mask_echoed_secrets: true,
+            cookie_jar: self.project.config.http.cookie_jar,
+            oauth: Some(runner::OAuthRunInfo::of(&self.project)),
         }
     }
 
@@ -1744,11 +1877,15 @@ impl App {
                 req,
                 name,
                 path,
+                from_watch,
             } => {
                 if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
                     return; // cancelled meanwhile
                 }
-                let ctx = self.run_ctx(name, path);
+                let mut ctx = self.run_ctx(name, path);
+                if from_watch {
+                    ctx.history = None;
+                }
                 let task = self.rt.spawn(async move {
                     let outcome = runner::exec_http(&ctx, &req, scope, errors).await;
                     let _ = tx.send(AppMsg::Http {
@@ -1823,6 +1960,16 @@ impl App {
     }
 
     fn cancel(&mut self) {
+        if let Some((_, task)) = self.cookies_job.take() {
+            task.abort();
+            self.set_status("cookie command cancelled", StatusKind::Info);
+            return;
+        }
+        if let Some((_, task)) = self.oauth_login.take() {
+            task.abort();
+            self.set_status("OAuth login cancelled", StatusKind::Info);
+            return;
+        }
         if let Some((_, task)) = self.mcp_discovery.take() {
             task.abort();
             self.set_status("MCP tool discovery cancelled", StatusKind::Info);
@@ -1830,7 +1977,15 @@ impl App {
         }
         let Some(t) = self.tab_mut() else { return };
         let Some(r) = &t.running else {
-            self.set_status("nothing is running", StatusKind::Info);
+            let watched = t.watch.take().is_some();
+            self.set_status(
+                if watched {
+                    "watch off"
+                } else {
+                    "nothing is running"
+                },
+                StatusKind::Info,
+            );
             return;
         };
         if let Some(c) = &r.control {
@@ -1840,11 +1995,17 @@ impl App {
         if let Some(r) = t.running.take() {
             r.task.abort();
         }
+        // Cancelling also stops the watch: it would just re-send what was
+        // cancelled.
+        let watch_off = t.watch.take().is_some();
         let resp = t.response.get_or_insert_with(Response::new);
         resp.summary.error = Some("cancelled".into());
         resp.summary.status = "Cancelled".into();
         // "Cancelled" in the response border and status line says it all.
         self.clear_transient_status();
+        if watch_off {
+            self.set_status("cancelled · watch off", StatusKind::Info);
+        }
     }
 
     fn end_stream(&mut self) {
@@ -1871,6 +2032,64 @@ impl App {
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
             AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
+            AppMsg::OAuthUrl { job, url } => {
+                if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
+                    let text = format!(
+                        "Open this URL in a browser if it did not open automatically:\n\n{url}\n\nWaiting for the callback. Close this dialog and use Ctrl+W x to cancel.\n"
+                    );
+                    if self.overlay.is_none() {
+                        self.show_report("HTTP OAuth login", &text);
+                    } else {
+                        self.last_report = Some(("HTTP OAuth login".into(), text));
+                        self.set_status("OAuth URL available with :report", StatusKind::Info);
+                    }
+                }
+            }
+            AppMsg::OAuthDone { job, result } => {
+                if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
+                    self.oauth_login = None;
+                    if matches!(&self.overlay, Some(Overlay::Report(r)) if r.title == "HTTP OAuth login")
+                    {
+                        self.overlay = None;
+                    }
+                    match result {
+                        Ok(message) => self.set_status(message, StatusKind::Ok),
+                        Err(e) => self.set_status(e, StatusKind::Error),
+                    }
+                }
+            }
+            AppMsg::Cookies { job, result } => {
+                if self.cookies_job.as_ref().is_some_and(|(id, _)| *id == job) {
+                    self.cookies_job = None;
+                    self.status = None;
+                    match result {
+                        Ok(CookiesOutcome::List(rows)) => {
+                            let text = if rows.is_empty() {
+                                "No cookies in this environment.\n".to_string()
+                            } else {
+                                format!(
+                                    "{}\n\n:cookies delete <number> removes one; :cookies clear removes all.\n",
+                                    rows.join("\n")
+                                )
+                            };
+                            if self.overlay.is_none() {
+                                self.overlay = Some(Overlay::Report(Report {
+                                    title: "Cookie jar".into(),
+                                    viewer: Viewer::new(Doc::text(&text)),
+                                    copy_text: text,
+                                    copied: false,
+                                    close_status: None,
+                                }));
+                            } else {
+                                self.last_report = Some(("Cookie jar".into(), text));
+                                self.set_status("cookies listed with :report", StatusKind::Info);
+                            }
+                        }
+                        Ok(CookiesOutcome::Done(m)) => self.set_status(m, StatusKind::Ok),
+                        Err(e) => self.set_status(format!("cookie jar: {e}"), StatusKind::Error),
+                    }
+                }
+            }
             AppMsg::McpTools {
                 job,
                 tab,
@@ -2002,6 +2221,10 @@ impl App {
         let updates = o.scripts.updates();
         let mut status: Option<(String, StatusKind)> = None;
         if let Some(t) = self.tab_by_id(tab_id) {
+            let elapsed_ms = t
+                .running
+                .as_ref()
+                .map(|r| r.started.elapsed().as_secs_f64() * 1000.0);
             t.running = None;
             let mut resp = Response::new();
             match &o.response {
@@ -2012,11 +2235,22 @@ impl App {
                         ok: r.status < 400,
                         time_ms: Some(r.timing.total.as_secs_f64() * 1000.0),
                         size: Some(o.body_size),
+                        decoded: r
+                            .decoded
+                            .as_ref()
+                            .map(|d| format!("{} {}", d.encoding, human_size(d.raw_len))),
                         error: None,
                     };
                     resp.body = Viewer::new(std::mem::take(&mut o.doc));
                     resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, &o)));
-                    resp.timing = crate::tab::wrapped(Doc::text(&timing_text(r, o.body_size)));
+                    let mut timing = timing_text(r, o.body_size);
+                    if let Some(w) = &mut t.watch {
+                        w.record(r.status < 400, r.timing.total.as_secs_f64() * 1000.0);
+                        if !w.samples.is_empty() {
+                            timing.push_str(&watch_text(&w.samples));
+                        }
+                    }
+                    resp.timing = crate::tab::wrapped(Doc::text(&timing));
                     let fails = o.scripts.failed_asserts();
                     if !o.scripts.asserts.is_empty() {
                         status = Some(if fails == 0 {
@@ -2042,6 +2276,10 @@ impl App {
                     }
                 }
                 Err(e) => {
+                    if let Some(w) = &mut t.watch {
+                        w.record(false, elapsed_ms.unwrap_or(0.0));
+                        resp.timing = crate::tab::wrapped(Doc::text(&watch_text(&w.samples)));
+                    }
                     resp.summary = Summary {
                         status: "Error".into(),
                         error: Some(e.clone()),
@@ -2280,6 +2518,7 @@ impl App {
                         ok: false,
                         time_ms,
                         size,
+                        decoded: None,
                         error: Some(e.clone()),
                     },
                     (None, true) => Summary {
@@ -2288,6 +2527,7 @@ impl App {
                         ok: false,
                         time_ms,
                         size,
+                        decoded: None,
                         error: None,
                     },
                     (None, false) => Summary {
@@ -2296,6 +2536,7 @@ impl App {
                         ok: true,
                         time_ms,
                         size,
+                        decoded: None,
                         error: None,
                     },
                 };
@@ -2525,11 +2766,17 @@ impl App {
 
     pub fn set_env(&mut self, env: Option<String>) {
         self.active_env = env;
+        // A watch re-resolves variables at every send; a new environment makes
+        // that a different request, so watches stop.
+        let watched = self.tabs.iter_mut().filter_map(|t| t.watch.take()).count();
         self.refresh_names();
         self.session_dirty = true;
         // The status line and the tab bar show the new environment; an older
         // confirmation would now be stale.
         self.clear_transient_status();
+        if watched > 0 {
+            self.set_status("watch off (environment changed)", StatusKind::Info);
+        }
     }
 
     pub fn open_env_editor(&mut self) {
@@ -3046,7 +3293,7 @@ impl App {
 
     pub fn open_import(&mut self, prefill: &str) {
         let mut input = TextEditor::multi(prefill)
-            .with_placeholder("curl https://…   or   path/to/collection.postman_collection.json");
+            .with_placeholder("curl https://…   or   path/to/collection.json or Bruno directory");
         input.move_to_end();
         self.overlay = Some(Overlay::Import(Import { input, error: None }));
     }
@@ -3113,8 +3360,8 @@ impl App {
             self.import_curl(t);
             return Ok(());
         }
-        let json = if t.starts_with('{') {
-            t.to_string()
+        let (format, result) = if t.starts_with('{') {
+            sendito_import::import_json(t)?
         } else {
             // A relative path is looked up in the working directory, then in
             // the collection folder.
@@ -3126,9 +3373,8 @@ impl App {
                     p = in_root;
                 }
             }
-            std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?
+            sendito_import::import_path(&p)?
         };
-        let result = sendito_import::postman::import(&json).map_err(|e| e.to_string())?;
         let rep = sendito_import::write(&result, &self.project.coll, Some(&self.project.envs), "")
             .map_err(|e| e.to_string())?;
         self.overlay = None;
@@ -3137,10 +3383,31 @@ impl App {
         self.refresh_names();
         let here = self.project.name.clone();
         let mut text = format!(
-            "Postman collection \"{}\" imported as the folder {}/ in this collection ({here}).\n\n  requests:  {}\n  folders:   {}\n  variables: {} (collection variables)\n",
-            result.root.name, rep.folder, rep.requests, rep.folders, rep.variables
+            "{} collection \"{}\" imported as the folder {}/ in this collection ({here}).\n\n  requests:  {}\n  folders:   {}\n  variables: {} (collection variables)\n",
+            format.label(),
+            result.root.name,
+            rep.folder,
+            rep.requests,
+            rep.folders,
+            rep.variables
         );
-        if result.skipped.is_empty() {
+        if rep.environments > 0 {
+            text.push_str(&format!("  environments: {}\n", rep.environments));
+        }
+        for name in &rep.variable_conflicts {
+            text.push_str(&format!(
+                "  kept the existing collection variable {name:?}\n"
+            ));
+        }
+        for (original, renamed) in &rep.renamed_environments {
+            text.push_str(&format!(
+                "  environment {original:?} imported as {renamed:?}\n"
+            ));
+        }
+        if result.skipped.is_empty()
+            && rep.variable_conflicts.is_empty()
+            && rep.renamed_environments.is_empty()
+        {
             text.push_str("\nEverything was imported as it was.\n");
         } else {
             // Three kinds of note, each with what to do about it.
@@ -3192,7 +3459,7 @@ impl App {
                 }
             }
         }
-        self.show_report("Postman import", &text);
+        self.show_report(&format!("{} import", format.label()), &text);
         let notes = result.skipped.len();
         if let Some(Overlay::Report(r)) = &mut self.overlay {
             r.close_status = Some(format!(
@@ -3277,6 +3544,52 @@ impl App {
             "curl command sent to the terminal clipboard",
             StatusKind::Ok,
         );
+    }
+
+    /// Copies the active request as an .http file (JetBrains HTTP client /
+    /// VS Code REST Client).
+    fn export_http_file(&mut self, include_secrets: bool) {
+        let Some(t) = self.tab() else { return };
+        let Request::Http(h) = &t.model else {
+            self.set_status(".http export is for HTTP requests", StatusKind::Warn);
+            return;
+        };
+        let name = t.name.clone();
+        let h = h.clone();
+        let scope = if include_secrets {
+            runner::build_scope(
+                &self.project.envs,
+                self.active_env.as_deref(),
+                &self.runtime,
+            )
+            .0
+        } else {
+            self.names.clone()
+        };
+        let file = sendito_import::http_file::export(
+            &name,
+            &h,
+            &scope,
+            include_secrets,
+            &self.project.root,
+        );
+        self.clipboard.set(file.clone(), false);
+        self.osc52.push(file.clone());
+        let note = if include_secrets {
+            "Sent to the terminal clipboard (OSC 52); some terminals block it. It CONTAINS SECRET VALUES."
+        } else {
+            "Copied to the terminal clipboard (OSC 52); some terminals block it. Secret variables stay \u{7b}\u{7b}placeholders\u{7d}\u{7d}; :httpfile! includes their values."
+        };
+        self.overlay = Some(Overlay::Report(Report {
+            title: "Copy as .http".into(),
+            viewer: Viewer::new(Doc::text(&format!(
+                "{file}\n\n── notes (not part of the file) ──\n{note}\n"
+            ))),
+            copy_text: file,
+            copied: true,
+            close_status: Some("the .http file was sent to the terminal clipboard".into()),
+        }));
+        self.set_status(".http file sent to the terminal clipboard", StatusKind::Ok);
     }
 
     fn format_body(&mut self) {
@@ -3372,6 +3685,173 @@ impl App {
 
     // ----- palette commands ---------------------------------------------
 
+    /// `:cookies [clear | delete <number>]`. The jar is guarded by a
+    /// cross-process lock, so the work runs off the UI thread and the result
+    /// arrives as an [`AppMsg::Cookies`] message.
+    fn cookies_command(&mut self, arg: &str) {
+        enum Op {
+            List,
+            Clear,
+            Delete(usize),
+        }
+        let op = if arg == "clear" {
+            Ok(Op::Clear)
+        } else if let Some(number) = arg.strip_prefix("delete ") {
+            number
+                .trim()
+                .parse::<usize>()
+                .map(Op::Delete)
+                .map_err(|_| ())
+        } else if arg.is_empty() {
+            Ok(Op::List)
+        } else {
+            Err(())
+        };
+        let Ok(op) = op else {
+            self.set_status(
+                "usage: :cookies [clear | delete <number>]",
+                StatusKind::Error,
+            );
+            return;
+        };
+        if self.cookies_job.is_some() {
+            self.set_status("a cookie command is already running", StatusKind::Warn);
+            return;
+        }
+        let root = self.project.root.clone();
+        let env = self
+            .active_env
+            .clone()
+            .unwrap_or_else(|| COLLECTION_ENV.into());
+        self.cookies_job_seq = self.cookies_job_seq.wrapping_add(1);
+        let job = self.cookies_job_seq;
+        let tx = self.tx.clone();
+        let task = self.rt.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let r = match op {
+                    Op::List => {
+                        sendito_store::cookies::describe(&root, &env).map(CookiesOutcome::List)
+                    }
+                    Op::Clear => sendito_store::cookies::clear(&root, &env).map(|()| {
+                        CookiesOutcome::Done("cookies cleared for the active environment")
+                    }),
+                    Op::Delete(n) => sendito_store::cookies::delete(&root, &env, n)
+                        .map(|()| CookiesOutcome::Done("cookie deleted")),
+                };
+                r.map_err(|e| e.to_string())
+            })
+            .await
+            .map_err(|_| "cookie jar task failed".to_string())
+            .and_then(|r| r);
+            let _ = tx.send(AppMsg::Cookies { job, result });
+        });
+        self.cookies_job = Some((job, task));
+        self.set_status("working on the cookie jar…", StatusKind::Info);
+    }
+
+    fn http_oauth_command(&mut self, arg: &str) {
+        let Some((action, name)) = arg.split_once(char::is_whitespace) else {
+            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            return;
+        };
+        let name = name.trim();
+        if name.is_empty() || !matches!(action, "login" | "logout") {
+            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            return;
+        }
+        if self.oauth_login.is_some() {
+            self.set_status("an OAuth operation is already running", StatusKind::Warn);
+            return;
+        }
+        let identity = self.project.config.oauth.get(name).cloned();
+        if action == "login" && identity.is_none() {
+            self.set_status(
+                "OAuth identity is not defined in [oauth]",
+                StatusKind::Error,
+            );
+            return;
+        }
+        let account =
+            runner::oauth_token_account(&self.project.name, self.active_env.as_deref(), name);
+        let keychain = self.project.envs.keychain.clone();
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let login = action == "login";
+        self.oauth_login_seq = self.oauth_login_seq.wrapping_add(1);
+        let job = self.oauth_login_seq;
+        let tx = self.tx.clone();
+        let task = self.rt.spawn(async move {
+            let result: Result<String, String> = async {
+                if !login {
+                    tokio::task::spawn_blocking(move || keychain.delete(&account))
+                        .await
+                        .map_err(|_| "keychain task failed".to_string())?
+                        .map_err(|_| "could not delete OAuth tokens".to_string())?;
+                    return Ok("HTTP OAuth tokens removed".into());
+                }
+                let (scope, errors) = tokio::task::spawn_blocking(move || {
+                    runner::build_scope(&envs, env.as_deref(), &runtime)
+                })
+                .await
+                .map_err(|_| "environment resolution failed".to_string())?;
+                if !errors.is_empty() {
+                    return Err("cannot resolve environment secrets".into());
+                }
+                let identity = identity.ok_or("OAuth identity is not defined")?;
+                let settings = runner::oauth_settings(&identity, &scope)?;
+                let opener = |url: &str| {
+                    let program = if cfg!(target_os = "macos") {
+                        "open"
+                    } else {
+                        "xdg-open"
+                    };
+                    std::process::Command::new(program)
+                        .arg(url)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .is_ok()
+                };
+                let note = |text: String| {
+                    if let Some(url) = text.strip_prefix("authorization URL:\n  ") {
+                        let _ = tx.send(AppMsg::OAuthUrl {
+                            job,
+                            url: url.into(),
+                        });
+                    }
+                };
+                let tokens = sendito_mcp::oauth::login_http(
+                    &settings,
+                    Duration::from_secs(300),
+                    &opener,
+                    &note,
+                )
+                .await
+                .map_err(|_| {
+                    "OAuth login failed; check the endpoints and authorization response".to_string()
+                })?;
+                tokio::task::spawn_blocking(move || keychain.set(&account, &tokens.to_json()))
+                    .await
+                    .map_err(|_| "keychain task failed".to_string())?
+                    .map_err(|_| "could not store OAuth tokens".to_string())?;
+                Ok("HTTP OAuth login complete".into())
+            }
+            .await;
+            let _ = tx.send(AppMsg::OAuthDone { job, result });
+        });
+        self.oauth_login = Some((job, task));
+        self.set_status(
+            if login {
+                "starting HTTP OAuth login"
+            } else {
+                "removing OAuth tokens"
+            },
+            StatusKind::Info,
+        );
+    }
+
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
         let (word, arg) = cmd
@@ -3381,6 +3861,20 @@ impl App {
         match word {
             "send" => self.send(false),
             "cancel" => self.cancel(),
+            "auth" => self.http_oauth_command(arg),
+            "watch" => {
+                let secs = if arg.is_empty() {
+                    Ok(None)
+                } else {
+                    arg.parse::<u64>().map(Some)
+                };
+                match secs {
+                    Ok(s) => self.toggle_watch(s),
+                    Err(_) => {
+                        self.set_status("usage: :watch [seconds]".to_string(), StatusKind::Error)
+                    }
+                }
+            }
             "end" => self.end_stream(),
             "env" => {
                 let list = self.project.envs.list();
@@ -3430,7 +3924,10 @@ impl App {
             }
             "curl" => self.export_curl(false),
             "curl!" => self.export_curl(true),
+            "httpfile" => self.export_http_file(false),
+            "httpfile!" => self.export_http_file(true),
             "history" => self.toggle_history(),
+            "cookies" => self.cookies_command(arg),
             "clearhistory" => {
                 self.overlay = Some(Overlay::Confirm(Confirm {
                     title: "Clear history".into(),
@@ -3503,6 +4000,7 @@ impl App {
                     "Off".into()
                 }
             }
+            SettingId::WatchInterval => format!("{} s", self.project.config.ui.watch_interval_s),
         }
     }
 
@@ -3636,6 +4134,16 @@ impl App {
                     "enabled",
                     toml::Value::Boolean(self.project.config.history.enabled),
                 )
+            }
+            SettingId::WatchInterval => {
+                const STEPS: [u64; 4] = [5, 10, 30, 60];
+                let i = STEPS
+                    .iter()
+                    .position(|s| *s == self.project.config.ui.watch_interval_s)
+                    .unwrap_or(0) as isize;
+                let next = STEPS[((i + dir).rem_euclid(STEPS.len() as isize)) as usize];
+                self.project.config.ui.watch_interval_s = next;
+                ("ui", "watch_interval_s", toml::Value::Integer(next as i64))
             }
         };
         if let Some(p) = self.project.global_config.clone()
@@ -4149,6 +4657,40 @@ pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
     ));
 
     s
+}
+
+/// The watch section of the Timing tab: one mark per send while watching
+/// (✗ failed, blocks show duration, tallest = slowest).
+fn watch_text(samples: &[(bool, f64)]) -> String {
+    const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let max = samples.iter().map(|(_, ms)| *ms).fold(0.0_f64, f64::max);
+    let marks: String = samples
+        .iter()
+        .map(|&(ok, ms)| {
+            if !ok {
+                '✗'
+            } else if max <= 0.0 {
+                BLOCKS[0]
+            } else {
+                BLOCKS[(((ms / max) * 7.0).clamp(0.0, 7.0)) as usize]
+            }
+        })
+        .collect();
+    let fails = samples.iter().filter(|(ok, _)| !ok).count();
+    let last = samples
+        .last()
+        .map(|&(ok, ms)| {
+            if ok {
+                format!("{:.0} ms", ms)
+            } else {
+                "failed".into()
+            }
+        })
+        .unwrap_or_else(|| "-".into());
+    format!(
+        "\nWatch\n\n  {marks}\n\n  {} sends · {fails} failed · last {last}\n  ✗ failed send (error or status 400+) · blocks show duration\n",
+        samples.len()
+    )
 }
 
 fn request_headers_text(o: &HttpOutcome) -> String {

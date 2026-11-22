@@ -74,7 +74,10 @@ Request format rules that matter here: on HTTP/1 header names are written in
 Title-Case ("x-api-key" is sent as "X-Api-Key"; names are case-insensitive), the
 order between headers of different names may differ from the file (headers with the
 same name stay in file order), and "Accept: */*" is added when the request defines
-no enabled Accept header (added by the HTTP library). Also: metadata keys ending in "-bin" take a
+no enabled Accept header (added by the HTTP library). When [options] cookies = true,
+matching cookies from the per-environment jar are sent in a Cookie header. Redirects
+are not followed with the jar enabled. Cases 45 and 46 cover cookie storage and replay.
+Case 47 uses a keychain-sourced OAuth bearer token. Also: metadata keys ending in "-bin" take a
 base64 value in the request file (as on the gRPC wire); the client decodes it
 and sends those bytes, so the server sees the same base64 text and, decoded,
 the bytes shown under it. An HTTP request with no body (type "none" or no

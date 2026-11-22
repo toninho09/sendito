@@ -473,6 +473,72 @@ fn flow_postman_import() {
 }
 
 #[test]
+fn flow_http_oauth_invalid_endpoint_reports_error() {
+    let mut h = Harness::new(120, 40);
+    h.app.project.config.oauth.insert(
+        "service".into(),
+        sendito_store::config::OAuthIdentity {
+            authorize_url: "http://example.test/auth".into(),
+            token_url: "http://example.test/token".into(),
+            client_id: "client".into(),
+            ..Default::default()
+        },
+    );
+    h.app.run_command("auth login service");
+    h.wait_idle(5);
+    let screen = h.screen();
+    assert!(screen.contains("OAuth login failed"), "{screen}");
+}
+
+#[test]
+fn flow_cookie_jar_report_and_delete() {
+    let mut h = Harness::new(120, 40);
+    h.app.set_env(Some("local".into()));
+    sendito_store::cookies::store_response(
+        h.dir.path(),
+        "local",
+        "https://example.test/",
+        &["session=private-value; Path=/".into()],
+    )
+    .must();
+    h.app.run_command("cookies");
+    let screen = h.wait_for("Cookie jar", 5);
+    assert!(screen.contains("session"), "{screen}");
+    assert!(!screen.contains("private-value"));
+    h.key("esc");
+    h.app.run_command("cookies delete 1");
+    h.wait_for("cookie deleted", 5);
+    assert!(
+        sendito_store::cookies::describe(h.dir.path(), "local")
+            .must()
+            .is_empty()
+    );
+}
+
+#[test]
+fn flow_bruno_and_insomnia_import() {
+    let mut h = Harness::new(120, 40);
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    for (name, title, expected) in [
+        ("bruno", "Bruno import", "Bruno demo/Users/List.toml"),
+        (
+            "insomnia.json",
+            "Insomnia import",
+            "Insomnia demo/Users/Create.toml",
+        ),
+    ] {
+        h.key("ctrl+w i");
+        h.paste(&fixtures.join(name).display().to_string());
+        h.key("f5");
+        let screen = h.screen();
+        assert!(screen.contains(title), "{screen}");
+        assert!(screen.contains("requests:  1"), "{screen}");
+        h.key("esc");
+        assert!(h.dir.path().join(expected).is_file());
+    }
+}
+
+#[test]
 fn flow_curl_paste_and_export() {
     let s = servers();
     let mut h = harness(&s, 120, 34);
@@ -746,4 +812,58 @@ fn flow_help_two_columns() {
     // PgDn moves by both columns at once.
     h.key("pagedown");
     assert!(cursor(&h) > wide);
+}
+
+#[test]
+fn flow_watch_repeats_and_stops() {
+    let s = servers();
+    let mut h = harness(&s, 120, 34);
+    open(&mut h, "health");
+    h.app.run_command("watch 1");
+    assert!(h.app.tabs[h.app.active].watch.is_some());
+    // The first send goes out by hand; the watch repeats it.
+    h.key("f5");
+    h.wait_idle(10);
+    if let Some(w) = h.app.tabs[h.app.active].watch.as_mut() {
+        w.next = std::time::Instant::now() - std::time::Duration::from_millis(10);
+    }
+    assert!(h.app.tick(), "the tick should fire the watched request");
+    h.wait_idle(10);
+    assert!(s.http.take().len() >= 2);
+    let sc = h.screen();
+    assert!(sc.contains("↻ 1 s"), "{sc}");
+    // The Timing tab shows one mark per send (scrolled to its end).
+    h.key("ctrl+w j alt+3");
+    h.key("end");
+    let sc = h.screen();
+    assert!(sc.contains("Watch"), "{sc}");
+    assert!(sc.contains("2 sends"), "{sc}");
+    // A watch remains active and sends while another tab is selected.
+    let watched = h.app.active;
+    h.key("ctrl+n");
+    let active = h.app.active;
+    assert_ne!(active, watched);
+    h.app.tabs[watched].watch.as_mut().must().next =
+        std::time::Instant::now() - std::time::Duration::from_millis(10);
+    assert!(h.app.tick());
+    assert_eq!(h.app.active, active);
+    h.wait_idle(10);
+    assert_eq!(s.http.take().len(), 1);
+    assert_eq!(h.app.tabs[watched].watch.as_ref().must().samples.len(), 3);
+    let history = std::fs::read_to_string(h.dir.path().join(".sendito/history.jsonl")).must();
+    assert_eq!(
+        history.lines().count(),
+        1,
+        "watch repeats must not flood history"
+    );
+    h.key("ctrl+w p");
+    assert_eq!(h.app.active, watched);
+    // Changing the environment stops the watch.
+    h.app.set_env(Some("local".into()));
+    assert!(h.app.tabs[h.app.active].watch.is_none());
+    // The watch key toggles it.
+    h.key("ctrl+w m");
+    assert!(h.app.tabs[h.app.active].watch.is_some());
+    h.key("ctrl+w m");
+    assert!(h.app.tabs[h.app.active].watch.is_none());
 }

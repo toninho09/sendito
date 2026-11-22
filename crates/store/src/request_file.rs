@@ -26,6 +26,7 @@ struct RawOptions {
     timeout_ms: Option<u64>,
     follow_redirects: Option<bool>,
     verify_tls: Option<bool>,
+    cookies: Option<bool>,
     tls: Option<bool>,
     deadline_ms: Option<u64>,
 }
@@ -71,6 +72,8 @@ struct RawAuth {
     password: String,
     #[serde(default)]
     token: String,
+    #[serde(default)]
+    name: String,
     #[serde(default)]
     key: String,
     #[serde(default)]
@@ -176,6 +179,7 @@ fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
             password: a.password,
         },
         "bearer" => Auth::Bearer { token: a.token },
+        "oauth" => Auth::OAuth { name: a.name },
         "apikey" => Auth::ApiKey {
             key: a.key,
             value: a.value,
@@ -300,6 +304,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 timeout_ms: r.options.timeout_ms,
                 follow_redirects: r.options.follow_redirects.unwrap_or(true),
                 verify_tls: r.options.verify_tls.unwrap_or(true),
+                cookies: r.options.cookies,
             },
             scripts: scripts(r.scripts)?,
         })),
@@ -370,6 +375,11 @@ fn write_auth(w: &mut Writer, a: &Auth) {
             w.str("type", "bearer");
             w.str("token", token);
         }
+        Auth::OAuth { name } => {
+            w.table("auth");
+            w.str("type", "oauth");
+            w.str("name", name);
+        }
         Auth::ApiKey {
             key,
             value,
@@ -429,7 +439,8 @@ pub fn to_toml(req: &Request) -> String {
             w.str("method", &h.method);
             w.str("url", &h.url);
             let o = &h.options;
-            if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls {
+            if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls || o.cookies.is_some()
+            {
                 w.table("options");
                 if let Some(t) = o.timeout_ms {
                     w.int("timeout_ms", t);
@@ -439,6 +450,9 @@ pub fn to_toml(req: &Request) -> String {
                 }
                 if !o.verify_tls {
                     w.bool("verify_tls", false);
+                }
+                if let Some(c) = o.cookies {
+                    w.bool("cookies", c);
                 }
             }
             write_kvs(&mut w, "params", &h.params);
@@ -620,6 +634,7 @@ mod tests {
                 timeout_ms: Some(1500),
                 follow_redirects: false,
                 verify_tls: false,
+                cookies: None,
             },
             scripts: Scripts {
                 pre: vec![SetVar {
@@ -688,6 +703,9 @@ mod tests {
                     password: "p".into(),
                 },
                 Auth::Bearer { token: "t".into() },
+                Auth::OAuth {
+                    name: "identity".into(),
+                },
             ] {
                 reqs.push(Request::Http(HttpRequest {
                     body: body.clone(),

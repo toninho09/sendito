@@ -54,6 +54,7 @@ actions! {
     Send => "send", "Send the request (or start the gRPC call)";
     Cancel => "cancel", "Cancel the running request or stream";
     EndStream => "end_stream", "Finish sending on a client/bidi stream (half-close)";
+    WatchToggle => "watch", "Re-send the active request on an interval (watch)";
     Save => "save", "Save the request to its file (asks for a name if new)";
     Quit => "quit", "Quit Sendito";
     NewRequest => "new_request", "Open a new unsaved HTTP request tab";
@@ -82,7 +83,7 @@ actions! {
     ManageEnvs => "manage_envs", "Edit environments and their variables";
     History => "history", "Show request history in the sidebar (toggle)";
     ToggleSidebar => "toggle_sidebar", "Show or hide the sidebar";
-    Import => "import", "Import a Postman collection or a curl command";
+    Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
     Zoom => "zoom", "Maximize or restore the focused pane";
@@ -313,6 +314,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Send, Global, Both, &["ctrl+enter", "f5", "ctrl+w e"]),
         (Cancel, Global, Both, &["ctrl+w x"]),
         (EndStream, Global, Both, &["ctrl+w d"]),
+        (WatchToggle, Global, Both, &["ctrl+w m"]),
         (Save, Global, Both, &["ctrl+s", "ctrl+w s"]),
         (Quit, Global, Both, &["ctrl+w q", "ctrl+q"]),
         (NewRequest, Global, Both, &["ctrl+n", "ctrl+w t"]),
@@ -658,7 +660,7 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     (
         "Import dialog",
         "F5 or Ctrl+S / Esc",
-        "Import the pasted curl command or the Postman file / cancel",
+        "Import the pasted curl command or collection / cancel",
     ),
     (
         "Settings",

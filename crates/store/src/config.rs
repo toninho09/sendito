@@ -20,6 +20,8 @@ pub struct Config {
     pub http: HttpConfig,
     pub grpc: GrpcConfig,
     pub mcp: McpConfig,
+    /// Named OAuth identities for ordinary HTTP requests.
+    pub oauth: BTreeMap<String, OAuthIdentity>,
     pub history: HistoryConfig,
     pub collection: CollectionConfig,
     /// `[keymap.<mode>] <action> = "key"` or `["key1", "key2"]`.
@@ -57,6 +59,9 @@ pub struct UiConfig {
     pub mouse: bool,
     /// Ask before quitting with unsaved changes.
     pub confirm_quit: bool,
+    /// Default watch interval, in seconds (`:watch` re-sends the active
+    /// request on this interval until stopped).
+    pub watch_interval_s: u64,
 }
 
 impl Default for UiConfig {
@@ -68,6 +73,7 @@ impl Default for UiConfig {
             sidebar: "left".into(),
             mouse: true,
             confirm_quit: true,
+            watch_interval_s: 5,
         }
     }
 }
@@ -79,6 +85,9 @@ pub struct HttpConfig {
     pub timeout_ms: u64,
     /// Response bodies larger than this are truncated.
     pub max_body_mb: u64,
+    /// Whether requests use the collection cookie jar when the request's
+    /// `[options] cookies` says nothing.
+    pub cookie_jar: bool,
 }
 
 impl Default for HttpConfig {
@@ -86,6 +95,7 @@ impl Default for HttpConfig {
         Self {
             timeout_ms: 30_000,
             max_body_mb: 100,
+            cookie_jar: false,
         }
     }
 }
@@ -95,6 +105,17 @@ impl Default for HttpConfig {
 pub struct GrpcConfig {
     /// Default deadline when a request sets none (0 = none).
     pub deadline_ms: u64,
+}
+
+/// Authorization-code + PKCE settings for `[oauth.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct OAuthIdentity {
+    pub authorize_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub scopes: Vec<String>,
 }
 
 /// MCP settings and the servers a request can call (`[mcp.servers.<name>]`).

@@ -281,6 +281,10 @@ pub enum Auth {
         value: String,
         location: ApiKeyLocation,
     },
+    /// A named HTTP OAuth identity from the collection configuration.
+    OAuth {
+        name: String,
+    },
 }
 
 impl Auth {
@@ -290,6 +294,7 @@ impl Auth {
             Auth::Basic { .. } => AuthKind::Basic,
             Auth::Bearer { .. } => AuthKind::Bearer,
             Auth::ApiKey { .. } => AuthKind::ApiKey,
+            Auth::OAuth { .. } => AuthKind::OAuth,
         }
     }
 
@@ -308,6 +313,9 @@ impl Auth {
                 value: String::new(),
                 location: ApiKeyLocation::Header,
             },
+            AuthKind::OAuth => Auth::OAuth {
+                name: String::new(),
+            },
         }
     }
 }
@@ -318,14 +326,16 @@ pub enum AuthKind {
     Basic,
     Bearer,
     ApiKey,
+    OAuth,
 }
 
 impl AuthKind {
-    pub const ALL: [AuthKind; 4] = [
+    pub const ALL: [AuthKind; 5] = [
         AuthKind::None,
         AuthKind::Basic,
         AuthKind::Bearer,
         AuthKind::ApiKey,
+        AuthKind::OAuth,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -334,6 +344,7 @@ impl AuthKind {
             AuthKind::Basic => "basic",
             AuthKind::Bearer => "bearer",
             AuthKind::ApiKey => "apikey",
+            AuthKind::OAuth => "oauth",
         }
     }
 
@@ -343,6 +354,7 @@ impl AuthKind {
             AuthKind::Basic => "Basic",
             AuthKind::Bearer => "Bearer token",
             AuthKind::ApiKey => "API key",
+            AuthKind::OAuth => "OAuth 2",
         }
     }
 }
@@ -360,6 +372,9 @@ pub struct HttpOptions {
     pub timeout_ms: Option<u64>,
     pub follow_redirects: bool,
     pub verify_tls: bool,
+    /// Replay cookies from the collection's cookie jar and store the ones the
+    /// response sets. `None` follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
 }
 
 impl Default for HttpOptions {
@@ -368,6 +383,7 @@ impl Default for HttpOptions {
             timeout_ms: None,
             follow_redirects: true,
             verify_tls: true,
+            cookies: None,
         }
     }
 }

@@ -152,12 +152,24 @@ pub struct Palette {
 pub const COMMANDS: &[(&str, &str)] = &[
     (":send", "Send the current request"),
     (":cancel", "Cancel the running request"),
+    (
+        ":watch [seconds]",
+        "Repeat the active HTTP request on an interval",
+    ),
     (":end", "Finish sending on a client/bidi stream"),
     (
         ":env <name>",
         "Switch environment (names listed as you type)",
     ),
     (":envs", "Edit environments"),
+    (
+        ":auth login <identity>",
+        "Sign in to an HTTP OAuth identity",
+    ),
+    (
+        ":auth logout <identity>",
+        "Remove HTTP OAuth tokens for this environment",
+    ),
     (":w", "Save the request"),
     (":saveas <name>", "Save the request under a new name"),
     (":wq", "Save and quit"),
@@ -170,13 +182,24 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":mcptools", "Discover and choose an MCP tool"),
     (
         ":import [path]",
-        "Import a Postman collection (path) or paste a curl command",
+        "Import a Postman/Insomnia file or Bruno directory, or paste curl",
     ),
     (
         ":curl",
         "Copy the request as curl (secret variables stay {{placeholders}})",
     ),
     (":curl!", "Copy the request as curl including secret values"),
+    (":httpfile", "Copy the request as an .http file"),
+    (":httpfile!", "Copy the .http file including secret values"),
+    (
+        ":cookies",
+        "List the active environment's cookies (values masked)",
+    ),
+    (":cookies clear", "Clear the active environment's cookies"),
+    (
+        ":cookies delete <number>",
+        "Delete one cookie from the active environment",
+    ),
     (":history", "Show history"),
     (":clearhistory", "Delete all history entries"),
     (":format", "Pretty-print the JSON body"),
@@ -271,6 +294,7 @@ pub enum SettingId {
     Mouse,
     ConfirmQuit,
     History,
+    WatchInterval,
 }
 
 pub const SETTINGS: &[(SettingId, &str)] = &[
@@ -281,6 +305,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::Mouse, "Mouse support"),
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),
     (SettingId::History, "Record history"),
+    (SettingId::WatchInterval, "Watch interval"),
 ];
 
 /// Source labels in the editor, in the order of the file's `source` values

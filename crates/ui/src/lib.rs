@@ -235,8 +235,7 @@ fn event_loop(
             dirty = true;
         }
         let before = app.status.is_some();
-        app.tick();
-        if before != app.status.is_some() {
+        if app.tick() || before != app.status.is_some() {
             dirty = true;
         }
     }

@@ -316,6 +316,16 @@ fn respond(c: &Captured) -> Reply {
             };
             (302, vec![("Location".into(), to)], Vec::new(), None)
         }
+        ["set-cookie"] => (
+            200,
+            vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Set-Cookie".into(), "session=corpus-1; Path=/".into()),
+                ("Set-Cookie".into(), "theme=dark; Max-Age=3600".into()),
+            ],
+            json(serde_json::json!({"cookies_set": 2})),
+            None,
+        ),
         ["delay", ms] => {
             let ms: u64 = ms.parse().unwrap_or(0);
             (

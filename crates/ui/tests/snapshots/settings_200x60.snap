@@ -33,15 +33,15 @@ expression: screen
 │                            ││                             Ctrl+│    Mouse support                                          ‹ On ›   │ sts you send appear here.                                      │
 │                            ││                             n / N│    Confirm quit with unsaved changes                      ‹ On ›   │                                                                │
 │                            ││                             Enter│    Record history                                         ‹ On ›   │ all history                                                    │
+│                            ││                             Ctrl+│    Watch interval                                        ‹ 5 s ›   │                                                                │
 │                            ││                             Ctrl+│ ────────────────────────────────────────────────────────────────── │                                                                │
-│                            ││                             Ctrl+│  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
-│                            ││                             F4   │  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
-│                            ││                             m    │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
-│                            ││                             Ctrl+│                                                                    │                                                                │
-│                            ││                             F1   │  Changes apply at once and are saved to                            │                                                                │
-│                            ││                             Ctrl+│  ~/.config/sendito/config.toml                                     │                                                                │
+│                            ││                             F4   │  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
+│                            ││                             m    │  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
+│                            ││                             Ctrl+│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
+│                            ││                             F1   │                                                                    │                                                                │
+│                            ││                             Ctrl+│  Changes apply at once and are saved to                            │                                                                │
+│                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
 │                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

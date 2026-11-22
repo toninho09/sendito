@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
 ╭ Req╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮────╮
-│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/209 · ↑↓ PgUp PgDn   ┃    │
+│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/218 · ↑↓ PgUp PgDn   ┃    │
 │▸ Us│                                                                                                            ┃    │
 │  GR│ All keys, including any you changed in the config.                                                         ┃    │
 │  GE│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃    │
@@ -13,6 +13,7 @@ expression: screen
 │    │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                                   │    │
 │    │   Ctrl+W x                     Cancel the running request or stream                                        │    │
 │    │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)                         │    │
+│    │   Ctrl+W m                     Re-send the active request on an interval (watch)                           │    │
 │    │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)                       │    │
 │    │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                                │    │
 │    │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                                         │    │
@@ -37,7 +38,6 @@ expression: screen
 │    │   Ctrl+P                       Open the command palette                                                    │    │
 │    │   F1, Ctrl+W ?                 Show all keys and actions                                                   │    │
 │    │   Ctrl+W ,                     Open settings                                                               │    │
-│    │   F4, Ctrl+W v                 Choose the active environment                                               │    │
 │    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 ╰─── 6                                                                                                              ───╯
   type  search   ↑↓ PgUp PgDn  scroll   Esc  close

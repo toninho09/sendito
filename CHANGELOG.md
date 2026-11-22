@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — response decoding and watch
+
+* **Automatic response decompression**: responses with `Content-Encoding: gzip`,
+  `deflate` (zlib and raw) or `br` are decoded for display, extraction,
+  assertions. Sendito still never sends `Accept-Encoding` — nothing
+  changes on the wire; the body is decoded only when the server chose to
+  compress. The response border shows the encoding and the wire size
+  (`45.6 KB ← gzip 1.2 KB`), and `sendito run` notes it on stderr. Other codings
+  or a corrupt stream are shown as received.
+* **Watch (`Ctrl+W m`, `:watch [s]`)**: re-sends the active HTTP request every
+  few seconds (`ui.watch_interval_s`, default 5, changeable in Settings), even
+  when another tab is active. The status line shows `↻ 5 s`; the Timing tab
+  gains a sparkline with one mark per send (`✗` for errors and status 400+).
+  Cancelling, closing the tab, switching environment or leaving variables
+  unresolved stops it. Watch repeats are not written to History.
+* **`.http` export (`:httpfile`, `sendito http <request> --env <env>`)**: the
+  request as a JetBrains HTTP client / VS Code REST Client file — method, URL,
+  headers, JSON/raw bodies inline, file bodies as `< path`, multipart written
+  with an explicit boundary. `# @timeout` and `# @no-redirect` directives carry
+  the request options. Secret variables stay as `{{placeholders}}` unless
+  `:httpfile!` / `--include-secrets`.
+* **Cookie jar**: opt in per request or collection; cookies are isolated per
+  environment, matched with public-suffix protection, and stored in a private,
+  gitignored file. `:cookies` lists them without values; `:cookies delete <number>`
+  or `:cookies clear` removes them. Redirects are not followed while enabled.
+* **HTTP OAuth 2**: named identities use authorization code and PKCE, with tokens
+  in the keychain isolated per environment. `sendito auth login|logout` and
+  `:auth login|logout` manage them; 401 triggers one refresh and retry.
+* **Bruno and Insomnia import**: folders, supported HTTP requests and selectable
+  environments can be imported from a Bruno directory or an Insomnia v4/v5 JSON
+  export. Unsupported data and secret environments are reported. Imported
+  environments whose name is taken get a unique name, and existing collection
+  variables are kept rather than overwritten; both are stated in the report.
+
 ## Unreleased — MCP tools
 
 * **MCP requests**: a new `kind = "mcp"` request calls one tool on a server from

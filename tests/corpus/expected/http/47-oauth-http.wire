@@ -1,0 +1,6 @@
+GET /echo HTTP/1.1
+Authorization: Bearer <secret:http_oauth>
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

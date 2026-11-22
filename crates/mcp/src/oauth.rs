@@ -53,7 +53,8 @@ const EXPIRY_SLACK: u64 = 30;
 
 impl Tokens {
     pub fn expired(&self, now: u64) -> bool {
-        self.expires_at.is_some_and(|t| t <= now + EXPIRY_SLACK)
+        self.expires_at
+            .is_some_and(|t| t <= now.saturating_add(EXPIRY_SLACK))
     }
 
     pub fn to_json(&self) -> String {
@@ -96,17 +97,23 @@ fn client() -> Result<reqwest::Client, McpError> {
         // Never forward authorization codes, refresh tokens or client secrets
         // to an endpoint selected by an HTTP redirect.
         .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| McpError::Transport(e.to_string()))
 }
 
 /// OAuth secrets may only travel over TLS, except to a local test server.
-fn validate_oauth_url(url: &str) -> Result<(), McpError> {
+pub fn validate_oauth_url(url: &str) -> Result<(), McpError> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|_| McpError::Message("invalid OAuth endpoint URL".into()))?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(McpError::Message(
             "OAuth endpoint URLs must not contain credentials".into(),
+        ));
+    }
+    if parsed.fragment().is_some() {
+        return Err(McpError::Message(
+            "OAuth URLs must not contain fragments".into(),
         ));
     }
     let local = parsed.host_str().is_some_and(|host| {
@@ -297,7 +304,7 @@ pub struct Granted {
     pub code: String,
     pub verifier: String,
     pub redirect_uri: String,
-    pub resource: String,
+    pub resource: Option<String>,
 }
 
 pub async fn authorize(
@@ -306,11 +313,53 @@ pub async fn authorize(
     client_id: &str,
     scopes: &[String],
     wait: Duration,
-    opener: &dyn Fn(&str) -> bool,
-    note: &dyn Fn(String),
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
+) -> Result<Granted, McpError> {
+    authorize_with_resource(
+        endpoints,
+        Some(resource_url),
+        client_id,
+        scopes,
+        wait,
+        opener,
+        note,
+    )
+    .await
+}
+
+async fn authorize_with_resource(
+    endpoints: &Endpoints,
+    resource_url: Option<&str>,
+    client_id: &str,
+    scopes: &[String],
+    wait: Duration,
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
 ) -> Result<Granted, McpError> {
     validate_oauth_url(&endpoints.authorize)?;
-    validate_oauth_url(resource_url)?;
+    let authorize_url = reqwest::Url::parse(&endpoints.authorize)
+        .map_err(|_| McpError::Message("invalid OAuth endpoint URL".into()))?;
+    if authorize_url.query_pairs().any(|(key, _)| {
+        matches!(
+            key.as_ref(),
+            "response_type"
+                | "client_id"
+                | "redirect_uri"
+                | "resource"
+                | "state"
+                | "code_challenge"
+                | "code_challenge_method"
+                | "scope"
+        )
+    }) {
+        return Err(McpError::Message(
+            "OAuth authorize_url contains reserved parameters".into(),
+        ));
+    }
+    if let Some(resource_url) = resource_url {
+        validate_oauth_url(resource_url)?;
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| McpError::Transport(e.to_string()))?;
@@ -325,15 +374,24 @@ pub async fn authorize(
         ("response_type".into(), "code".into()),
         ("client_id".into(), client_id.to_string()),
         ("redirect_uri".into(), redirect_uri.clone()),
-        ("resource".into(), resource_url.to_string()),
+    ];
+    if let Some(resource_url) = resource_url {
+        params.push(("resource".into(), resource_url.to_string()));
+    }
+    params.extend([
         ("state".into(), state.clone()),
         ("code_challenge".into(), pk.challenge.clone()),
         ("code_challenge_method".into(), "S256".into()),
-    ];
+    ]);
     if !scopes.is_empty() {
         params.push(("scope".into(), scopes.join(" ")));
     }
-    let url = format!("{}?{}", endpoints.authorize, form_encode(&params));
+    let separator = if endpoints.authorize.contains('?') {
+        "&"
+    } else {
+        "?"
+    };
+    let url = format!("{}{separator}{}", endpoints.authorize, form_encode(&params));
     note(format!("authorization URL:\n  {url}"));
     if opener(&url) {
         note(format!(
@@ -381,7 +439,7 @@ pub async fn authorize(
                     .ok_or_else(|| McpError::Message("the redirect carried no code".into()))?,
                 verifier: pk.verifier.clone(),
                 redirect_uri: redirect_uri.clone(),
-                resource: resource_url.to_string(),
+                resource: resource_url.map(str::to_string),
             });
         }
     })
@@ -404,10 +462,14 @@ pub async fn exchange(
         ("grant_type".into(), "authorization_code".into()),
         ("code".into(), granted.code),
         ("redirect_uri".into(), granted.redirect_uri),
-        ("resource".into(), granted.resource),
+    ];
+    if let Some(resource) = granted.resource {
+        form.push(("resource".into(), resource));
+    }
+    form.extend([
         ("client_id".into(), client_id.to_string()),
         ("code_verifier".into(), granted.verifier),
-    ];
+    ]);
     if let Some(secret) = client_secret {
         form.push(("client_secret".into(), secret.to_string()));
     }
@@ -422,12 +484,31 @@ pub async fn refresh_tokens(
     client_secret: Option<&str>,
     refresh_token: &str,
 ) -> Result<Tokens, McpError> {
+    refresh_with_resource(
+        endpoints,
+        Some(resource_url),
+        client_id,
+        client_secret,
+        refresh_token,
+    )
+    .await
+}
+
+async fn refresh_with_resource(
+    endpoints: &Endpoints,
+    resource_url: Option<&str>,
+    client_id: &str,
+    client_secret: Option<&str>,
+    refresh_token: &str,
+) -> Result<Tokens, McpError> {
     let mut form: Vec<(String, String)> = vec![
         ("grant_type".into(), "refresh_token".into()),
         ("refresh_token".into(), refresh_token.to_string()),
-        ("resource".into(), resource_url.to_string()),
-        ("client_id".into(), client_id.to_string()),
     ];
+    if let Some(resource_url) = resource_url {
+        form.push(("resource".into(), resource_url.to_string()));
+    }
+    form.push(("client_id".into(), client_id.to_string()));
     if let Some(secret) = client_secret {
         form.push(("client_secret".into(), secret.to_string()));
     }
@@ -479,7 +560,7 @@ async fn token_request(
     let expires_at = v
         .get("expires_in")
         .and_then(Value::as_u64)
-        .map(|s| unix_now() + s);
+        .map(|s| unix_now().saturating_add(s));
     Ok(Tokens {
         access: access.to_string(),
         refresh: v
@@ -498,8 +579,8 @@ pub async fn login(
     resource_url: &str,
     settings: &OAuthSettings,
     wait: Duration,
-    opener: &dyn Fn(&str) -> bool,
-    note: &dyn Fn(String),
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
 ) -> Result<Tokens, McpError> {
     let endpoints = discover_endpoints(resource_url, settings).await?;
     let (client_id, client_secret) = match &settings.client_id {
@@ -540,13 +621,68 @@ pub async fn login(
     Ok(tokens)
 }
 
+/// OAuth authorization-code login for a normal HTTP API. Unlike MCP, it
+/// does not discover resource metadata or send the RFC 8707 resource parameter.
+pub async fn login_http(
+    settings: &OAuthSettings,
+    wait: Duration,
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
+) -> Result<Tokens, McpError> {
+    let endpoints = http_endpoints(settings)?;
+    let client_id = settings
+        .client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth client_id is required".into()))?;
+    let granted = authorize_with_resource(
+        &endpoints,
+        None,
+        client_id,
+        &settings.scopes,
+        wait,
+        opener,
+        note,
+    )
+    .await?;
+    let mut tokens = exchange(
+        &endpoints,
+        granted,
+        client_id,
+        settings.client_secret.as_deref(),
+    )
+    .await?;
+    tokens.client_secret = settings.client_secret.clone();
+    Ok(tokens)
+}
+
+fn http_endpoints(settings: &OAuthSettings) -> Result<Endpoints, McpError> {
+    let authorize = settings
+        .authorize_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth authorize_url is required".into()))?;
+    let token = settings
+        .token_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth token_url is required".into()))?;
+    validate_oauth_url(&authorize)?;
+    validate_oauth_url(&token)?;
+    Ok(Endpoints {
+        authorize,
+        token,
+        registration: None,
+    })
+}
+
 /// A [`TokenProvider`] backed by a [`TokenStore`]: serves the stored access
 /// token, refreshes it when missing, expired or forced (after a 401), and
 /// saves what comes back.
 pub struct RefreshingProvider {
     pub store: Arc<dyn TokenStore>,
     pub account: String,
-    pub resource_url: String,
+    pub resource_url: Option<String>,
     pub settings: OAuthSettings,
     endpoints: Mutex<Option<Endpoints>>,
 }
@@ -561,7 +697,17 @@ impl RefreshingProvider {
         Self {
             store,
             account,
-            resource_url,
+            resource_url: Some(resource_url),
+            settings,
+            endpoints: Mutex::new(None),
+        }
+    }
+
+    pub fn new_http(store: Arc<dyn TokenStore>, account: String, settings: OAuthSettings) -> Self {
+        Self {
+            store,
+            account,
+            resource_url: None,
             settings,
             endpoints: Mutex::new(None),
         }
@@ -571,7 +717,10 @@ impl RefreshingProvider {
         if let Some(e) = self.endpoints.lock().ok().and_then(|g| g.clone()) {
             return Ok(e);
         }
-        let e = discover_endpoints(&self.resource_url, &self.settings).await?;
+        let e = match &self.resource_url {
+            Some(url) => discover_endpoints(url, &self.settings).await?,
+            None => http_endpoints(&self.settings)?,
+        };
         if let Ok(mut g) = self.endpoints.lock() {
             *g = Some(e.clone());
         }
@@ -586,15 +735,19 @@ impl TokenProvider for RefreshingProvider {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, McpError>> + Send + 'a>>
     {
         Box::pin(async move {
-            let stored = self
-                .store
-                .get(&self.account)
+            let store = self.store.clone();
+            let account = self.account.clone();
+            let stored = tokio::task::spawn_blocking(move || store.get(&account))
+                .await
+                .map_err(|_| McpError::Transport("keychain task failed".into()))?
                 .map_err(McpError::Transport)?
                 .and_then(|s| Tokens::from_json(&s));
             let Some(mut tokens) = stored else {
-                return Err(McpError::Message(
-                    "not signed in (run `sendito mcp login`)".into(),
-                ));
+                return Err(McpError::Message(if self.resource_url.is_some() {
+                    "not signed in (run `sendito mcp login`)".into()
+                } else {
+                    "not signed in (run `sendito auth login`)".into()
+                }));
             };
             if !force_refresh && !tokens.expired(unix_now()) {
                 return Ok(tokens.access);
@@ -607,17 +760,21 @@ impl TokenProvider for RefreshingProvider {
                 .client_secret
                 .clone()
                 .or_else(|| self.settings.client_secret.clone());
-            tokens = refresh_tokens(
+            tokens = refresh_with_resource(
                 &endpoints,
-                &self.resource_url,
+                self.resource_url.as_deref(),
                 &tokens.client_id,
                 client_secret.as_deref(),
                 &refresh,
             )
             .await?;
             tokens.client_secret = client_secret;
-            self.store
-                .set(&self.account, &tokens.to_json())
+            let store = self.store.clone();
+            let account = self.account.clone();
+            let serialized = tokens.to_json();
+            tokio::task::spawn_blocking(move || store.set(&account, &serialized))
+                .await
+                .map_err(|_| McpError::Transport("keychain task failed".into()))?
                 .map_err(McpError::Transport)?;
             Ok(tokens.access)
         })

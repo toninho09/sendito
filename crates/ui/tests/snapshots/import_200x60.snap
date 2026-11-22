@@ -24,11 +24,11 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                   ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮                                                 │
 │                            ││                   │                                                                                                  │                                                 │
-│                            ││                   │  Paste a curl command, or enter the path of a Postman v2.1 collection (.json).                   │                                                 │
+│                            ││                   │  Paste a curl command, or enter a Postman/Insomnia JSON file or Bruno directory.                 │                                                 │
 │                            ││                   │  Relative paths: the folder where you started Sendito, then the collection.                      │                                                 │
 │                            ││                   │  Enter = new line; F5 / Ctrl+S imports.                                                          │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
-│                            ││                   │  ▍  curl https://…   or   path/to/collection.postman_collection.json                             │                                                 │
+│                            ││                   │  ▍  curl https://…   or   path/to/collection.json or Bruno directory                             │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │ pear here.                                      │
 │                            ││                   │                                                                                                  │                                                 │

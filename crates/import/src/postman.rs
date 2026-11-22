@@ -618,6 +618,7 @@ pub fn import(json: &str) -> Result<ImportResult, PostmanError> {
     Ok(ImportResult {
         root,
         variables,
+        environments: vec![],
         skipped: ctx.skipped,
     })
 }

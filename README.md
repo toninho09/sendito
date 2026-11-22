@@ -16,9 +16,9 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 44 HTTP, 15 gRPC and 5 MCP cases is checked byte for byte in CI.
+  A corpus of 47 HTTP, 15 gRPC and 5 MCP cases is checked byte for byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
-  (with files) / file bodies, Basic / Bearer / API-key auth, timeout, redirects,
+  (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
   TLS verification, and a DNS / connect / TLS / TTFB / download breakdown.
 * **gRPC**: services from server reflection or `.proto` files (compiled in-process,
   no `protoc`), unary, server-, client- and bidi-streaming calls, JSON messages
@@ -28,9 +28,11 @@ plain TOML files you can version in git.
   authentication for HTTP servers.
 * **Environments** with secrets from four sources: the env file, a gitignored
   secrets file, the OS keychain, or a file. Secrets are masked everywhere.
+  An opt-in cookie jar keeps cookies per environment; `:cookies` manages them.
+  Redirects are not followed while the jar is enabled.
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
   header, status) after, and assert on them.
-* **History**, **Postman v2.1 import**, **curl import/export**, session restore,
+* **History**, **Postman / Bruno / Insomnia import**, **curl import/export**, session restore,
   seven themes plus your own, optional Nerd Font icons, and a key map you can
   change.
 
@@ -75,12 +77,33 @@ Without the UI:
 sendito run "Users/list users" --env local     # body to stdout, status to stderr
 sendito run checks/health --env prod || echo "an assertion failed"
 sendito curl "Users/create user" --env local   # print as curl (secrets stay {{placeholders}})
-sendito import acme.postman_collection.json    # Postman v2.1
+sendito import acme.postman_collection.json    # Postman or Insomnia JSON
+sendito import path/to/bruno-collection        # Bruno directory
 ```
 
 `sendito run` exits with 0 on success, 1 when an assertion fails or an MCP tool
 returns `isError: true`, 2 when the request fails (network error, gRPC status other
 than OK) and 3 on usage errors.
+
+### HTTP OAuth quick start
+
+Configure an identity in `.sendito/config.toml`:
+
+```toml
+[oauth.example]
+authorize_url = "https://example.com/authorize"
+token_url = "https://example.com/token"
+client_id = "client"
+client_secret = "{{client_secret}}"  # optional; use a secret environment source
+scopes = ["read"]
+```
+
+Run `sendito auth login example --env local`, or `:auth login example` in the
+app with `local` active. In the request's Auth tab select **OAuth 2** and enter
+`example`. Tokens are stored in the OS keychain per collection, environment and
+identity. A 401 triggers one token refresh and retry. Use `sendito auth logout
+example --env local` or `:auth logout example` to remove them. OAuth endpoints
+and protected URLs must use HTTPS except on loopback. See [FORMAT.md](FORMAT.md).
 
 ### MCP quick start
 
@@ -160,6 +183,7 @@ Conventional keys by default; vim mode in Settings (`Ctrl+W ,`). The most used:
 |---|---|
 | `Ctrl+Enter` / `F5` / `Ctrl+W e` | send (on an open client/bidi stream: send the next message; the sent text stays selected so you can type the next one over it) |
 | `Ctrl+W x` | cancel the running request or stream |
+| `Ctrl+W m` | watch: re-send the active HTTP request every few seconds (`:watch 10` sets the interval; the Timing tab shows a sparkline) |
 | `Ctrl+W d` | end the request stream (client/bidi gRPC) |
 | `Ctrl+S` | save (asks for a name and folder the first time) |
 | `Ctrl+P` | command palette: actions, requests, environments and `:commands` |
@@ -248,13 +272,20 @@ The **Scripts** tab has three sections:
 
 ## Import and export
 
-* `Ctrl+W i` (or `:import path`) imports a Postman Collection v2.1 (a relative
-  path is looked up in the working directory, then the collection folder): folders,
-  requests, bodies, auth (including inherited auth) and collection variables. A
-  report lists everything that was not imported as-is (scripts, saved examples,
-  unsupported auth types, path variables replaced by their value, …).
+* `Ctrl+W i` (or `:import path`) imports a Postman Collection v2.1, an Insomnia
+  v4/v5 JSON export, or a Bruno collection directory. Relative paths are looked up
+  in the working directory, then the collection folder. Supported requests,
+  folders, authentication and variables are imported; selectable environments
+  are created with unique names. A report lists skipped or changed items. Private
+  Insomnia environments and Bruno secret variables are not imported; configure
+  their secrets separately. Scripts, advanced template expressions, and unsupported
+  auth/body types are reported rather than silently converted.
 * Paste a `curl …` command into the URL field or the import dialog to turn it into
-  a request. `Ctrl+W u` (or `:curl`) copies the request as curl.
+  a request. `Ctrl+W u` (or `:curl`) copies the request as curl; `:httpfile` (or
+  `sendito http <request>`) copies it as an `.http` file (JetBrains HTTP client /
+  VS Code REST Client). Both keep secrets as `{{placeholders}}` unless you run
+  `:curl!` / `:httpfile!`. For Basic auth with unresolved credentials, `.http`
+  export requires `{{sendito_basic_credentials}}` to be set to base64(username:password).
 
 ## Configuration
 

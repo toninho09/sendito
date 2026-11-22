@@ -312,7 +312,21 @@ pub(super) fn draw_status(
             x = gap(buf, x);
         }
     }
-    // While a request runs, say so.
+    // While a request runs, say so; a watched tab also shows its interval.
+    if let Some(t) = app.tab()
+        && let Some(w) = &t.watch
+    {
+        x = put(
+            buf,
+            x,
+            area.y,
+            &format!("\u{21bb} {} s", w.interval.as_secs()),
+            maxx.saturating_sub(x),
+            bar.patch(theme.fg(theme.accent))
+                .add_modifier(Modifier::BOLD),
+        );
+        x = gap(buf, x);
+    }
     if let Some(t) = app.tab()
         && t.running.is_some()
     {

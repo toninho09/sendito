@@ -1,0 +1,6 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/set-cookie"
+
+[options]
+cookies = true

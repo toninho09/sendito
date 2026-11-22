@@ -1,0 +1,24 @@
+meta {
+  name: List
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base}}/users
+  body: none
+  auth: bearer
+}
+
+headers {
+  Accept: application/json
+  ~X-Disabled: no
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+script:post-response {
+  // Scripts are reported, not executed.
+}

@@ -58,6 +58,9 @@ enum Cmd {
         /// Do not record the request in history.
         #[arg(long)]
         no_history: bool,
+        /// Do not use the collection's cookie jar for this run.
+        #[arg(long)]
+        no_cookies: bool,
     },
     /// Print a request as a curl command (secret variables stay as placeholders).
     Curl {
@@ -67,6 +70,21 @@ enum Cmd {
         /// Include secret values in the output.
         #[arg(long)]
         include_secrets: bool,
+    },
+    /// Print a request as an .http file (JetBrains HTTP client / VS Code REST
+    /// Client). Secret variables stay as {{placeholders}}.
+    Http {
+        request: PathBuf,
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Include secret values in the output.
+        #[arg(long)]
+        include_secrets: bool,
+    },
+    /// Sign in or out of a named HTTP OAuth identity.
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
     },
     /// Sign an HTTP MCP server in (OAuth) or out.
     Mcp {
@@ -78,13 +96,29 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ThemeCmd,
     },
-    /// Import a Postman v2.1 collection into the collection.
+    /// Import a Postman, Insomnia, or Bruno collection.
     Import {
-        /// Postman collection JSON file.
+        /// JSON export file, or a Bruno collection directory.
         file: PathBuf,
         /// Folder (relative to the collection) to import into.
         #[arg(long, default_value = "")]
         into: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCmd {
+    /// Sign in with authorization code + PKCE, storing tokens in the OS keychain.
+    Login {
+        name: String,
+        #[arg(long, short)]
+        env: Option<String>,
+    },
+    /// Remove tokens for an identity and environment.
+    Logout {
+        name: String,
+        #[arg(long, short)]
+        env: Option<String>,
     },
 }
 
@@ -188,14 +222,28 @@ fn main() -> ExitCode {
             include,
             allow_unresolved,
             no_history,
-        }) => rt.block_on(run(&request, env, include, allow_unresolved, no_history)),
+            no_cookies,
+        }) => rt.block_on(run(
+            &request,
+            env,
+            include,
+            allow_unresolved,
+            no_history,
+            no_cookies,
+        )),
         Some(Cmd::Curl {
             request,
             env,
             include_secrets,
         }) => curl(&request, env, include_secrets),
+        Some(Cmd::Http {
+            request,
+            env,
+            include_secrets,
+        }) => http_export(&request, env, include_secrets),
         Some(Cmd::Import { file, into }) => import(&file, &into),
         Some(Cmd::Mcp { cmd }) => rt.block_on(mcp(cmd)),
+        Some(Cmd::Auth { cmd }) => rt.block_on(http_auth(cmd)),
         Some(Cmd::Theme { cmd }) => theme(cmd),
         None => {
             let root = find_collection(cli.path.as_deref());
@@ -331,6 +379,7 @@ async fn run(
     include: bool,
     allow_unresolved: bool,
     no_history: bool,
+    no_cookies: bool,
 ) -> ExitCode {
     let (project, rel, req) = match load(request, &env) {
         Ok(v) => v,
@@ -378,23 +427,40 @@ async fn run(
         schemas: Default::default(),
         grpc_deadline_ms: project.config.grpc.deadline_ms,
         mask_echoed_secrets: false,
+        cookie_jar: project.config.http.cookie_jar && !no_cookies,
+        oauth: Some(runner::OAuthRunInfo::of(&project)),
     };
     let mut out = std::io::stdout().lock();
     match req {
-        Request::Http(h) => {
+        Request::Http(mut h) => {
+            if no_cookies {
+                h.options.cookies = Some(false);
+            }
             let o = runner::exec_http(&ctx, &h, scope, errors).await;
             for n in &o.resolved.notes {
                 eprintln!("note: {n}");
             }
             let code = match &o.response {
                 Ok(r) => {
+                    let decoded = r
+                        .decoded
+                        .as_ref()
+                        .map(|d| {
+                            format!(
+                                ", {} {} decoded",
+                                d.encoding,
+                                sendito_ui::app::human_size(d.raw_len)
+                            )
+                        })
+                        .unwrap_or_default();
                     eprintln!(
-                        "{} {} {}  ({} ms, {})",
+                        "{} {} {}  ({} ms, {}{})",
                         r.version,
                         r.status,
                         r.reason,
                         r.timing.total.as_millis(),
-                        sendito_ui::app::human_size(o.body_size)
+                        sendito_ui::app::human_size(o.body_size),
+                        decoded
                     );
                     if include {
                         for (k, v) in &r.headers {
@@ -582,18 +648,36 @@ fn curl(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode 
     ExitCode::SUCCESS
 }
 
+fn http_export(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
+    let (project, rel, req) = match load(request, &env) {
+        Ok(v) => v,
+        Err((e, code)) => {
+            eprintln!("sendito: {e}");
+            return ExitCode::from(code);
+        }
+    };
+    let Request::Http(h) = req else {
+        eprintln!("sendito: .http export is only available for HTTP requests");
+        return ExitCode::from(3);
+    };
+    let scope = if include_secrets {
+        runner::build_scope(&project.envs, env.as_deref(), &Default::default()).0
+    } else {
+        runner::names_scope(&project.envs, env.as_deref(), &Default::default())
+    };
+    let name = sendito_store::collection::name_of(&rel).to_string();
+    print!(
+        "{}",
+        sendito_import::http_file::export(&name, &h, &scope, include_secrets, &project.root)
+    );
+    ExitCode::SUCCESS
+}
+
 fn import(file: &Path, into: &str) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = sendito_store::init::find_root(&cwd).unwrap_or(cwd);
     let project = Project::open(&root, runner::default_keychain());
-    let json = match std::fs::read_to_string(file) {
-        Ok(j) => j,
-        Err(e) => {
-            eprintln!("sendito: {}: {e}", file.display());
-            return ExitCode::from(3);
-        }
-    };
-    let result = match sendito_import::postman::import(&json) {
+    let (format, result) = match sendito_import::import_path(file) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("sendito: {e}");
@@ -603,9 +687,20 @@ fn import(file: &Path, into: &str) -> ExitCode {
     match sendito_import::write(&result, &project.coll, Some(&project.envs), into) {
         Ok(rep) => {
             println!(
-                "imported {} requests in {} folders into {}/ ({} collection variables)",
-                rep.requests, rep.folders, rep.folder, rep.variables
+                "imported {} requests in {} folders into {}/ ({} collection variables, {} environments; {})",
+                rep.requests,
+                rep.folders,
+                rep.folder,
+                rep.variables,
+                rep.environments,
+                format.label()
             );
+            for name in &rep.variable_conflicts {
+                println!("  collection variable {name:?} already exists; existing value kept");
+            }
+            for (original, renamed) in &rep.renamed_environments {
+                println!("  environment {original:?} imported as {renamed:?}");
+            }
             if !result.skipped.is_empty() {
                 println!("\nnot imported or changed ({}):", result.skipped.len());
                 for s in &result.skipped {
@@ -621,7 +716,90 @@ fn import(file: &Path, into: &str) -> ExitCode {
     }
 }
 
-/// `sendito mcp login|logout <server>`: OAuth for HTTP MCP servers.
+/// `sendito auth login|logout <name>`: OAuth for HTTP requests.
+async fn http_auth(cmd: AuthCmd) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(root) = sendito_store::init::find_root(&cwd) else {
+        eprintln!("sendito: no collection here (no .sendito directory found upwards)");
+        return ExitCode::from(3);
+    };
+    let project = Project::open(&root, runner::default_keychain());
+    let (name, env, login) = match cmd {
+        AuthCmd::Login { name, env } => (name, env, true),
+        AuthCmd::Logout { name, env } => (name, env, false),
+    };
+    if let Some(e) = env.as_deref()
+        && !project.envs.list().iter().any(|v| v == e)
+    {
+        eprintln!("sendito: environment not found");
+        return ExitCode::from(3);
+    }
+    let account = runner::oauth_token_account(&project.name, env.as_deref(), &name);
+    let keychain = project.envs.keychain.clone();
+    if !login {
+        return match keychain.delete(&account) {
+            Ok(()) => {
+                println!("forgot HTTP OAuth tokens for {name:?}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("sendito: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let Some(identity) = project.config.oauth.get(&name) else {
+        eprintln!("sendito: OAuth identity {name:?} is not defined in [oauth]");
+        return ExitCode::from(3);
+    };
+    let (scope, errors) = runner::build_scope(&project.envs, env.as_deref(), &Default::default());
+    if !errors.is_empty() {
+        eprintln!("sendito: cannot resolve environment secrets");
+        return ExitCode::from(2);
+    }
+    let settings = match runner::oauth_settings(identity, &scope) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("sendito: {e}");
+            return ExitCode::from(3);
+        }
+    };
+    let opener = |url: &str| -> bool {
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        std::process::Command::new(program).arg(url).spawn().is_ok()
+    };
+    let note = |n: String| eprintln!("{n}");
+    match sendito_mcp::oauth::login_http(
+        &settings,
+        std::time::Duration::from_secs(300),
+        &opener,
+        &note,
+    )
+    .await
+    {
+        Ok(tokens) => match keychain.set(&account, &tokens.to_json()) {
+            Ok(()) => {
+                println!("signed in to {name:?} (tokens in the OS keychain)");
+                ExitCode::SUCCESS
+            }
+            Err(_) => {
+                eprintln!("sendito: cannot store OAuth tokens in the keychain");
+                ExitCode::from(2)
+            }
+        },
+        Err(_) => {
+            eprintln!(
+                "sendito: HTTP OAuth login failed; check the endpoints and authorization response"
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
 async fn mcp(cmd: McpCmd) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(root) = sendito_store::init::find_root(&cwd) else {

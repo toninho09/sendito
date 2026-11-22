@@ -66,7 +66,9 @@ allows `accept` as a transport header.
 * No JavaScript scripting: scripts are declarative (set, extract, assert). Postman
   scripts are reported as not imported.
 * Postman import covers v2.1 collections; OAuth 2 and Digest auth are not imported
-  (reported), and neither are saved example responses.
+  (reported), and neither are saved example responses. Bruno and Insomnia imports
+  cover supported HTTP requests and environments, not arbitrary scripts or template
+  engines; skipped features and secret environments are reported.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
 * MCP supports tools only; resources and prompts are not implemented. Each list
@@ -80,7 +82,11 @@ allows `accept` as a transport header.
   resolving environment placeholders. The local callback requires a browser able
   to reach the machine running Sendito.
 * HTTP/3 and WebSocket are not supported.
-* Response bodies are shown as received; there is no automatic decompression.
+* HTTP requests with the cookie jar enabled do not follow redirects, so an
+  automatically forwarded Cookie header cannot escape its path or origin scope.
+* Response bodies with a `Content-Encoding` other than `gzip`, `deflate` and
+  `br` (e.g. `zstd`, stacked codings) are shown as received; `gzip`, `deflate`
+  and `br` are decompressed automatically. A truncated body is never decompressed.
 * Windows is not a target of this release.
 * The `auto` theme picks dark or light from `COLORFGBG` only, which many terminals do
   not set (it then picks `dusk`). Asking the terminal for its background with OSC 11
@@ -92,4 +98,4 @@ allows `accept` as a transport header.
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  44 HTTP, 15 gRPC and 5 MCP cases.
+  47 HTTP, 15 gRPC and 5 MCP cases.

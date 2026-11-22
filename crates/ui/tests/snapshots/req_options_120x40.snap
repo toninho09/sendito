@@ -8,7 +8,7 @@ expression: screen
 │▾ Users/                    ││ Timeout ms     default                                                                 │
 │├ POST  create user         ││ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
 │├ DEL   delete user         ││ Verify TLS     [✓] On  turn off for self-signed certificates                           │
-│└ GET   list users          ││                                                                                        │
+│└ GET   list users          ││ Cookie jar     Config default ▾                                                        │
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │

@@ -56,6 +56,7 @@ pub enum Field {
     AuthUser,
     AuthPass,
     AuthToken,
+    AuthOAuthName,
     AuthKey,
     AuthValue,
     AuthIn,
@@ -66,6 +67,7 @@ pub enum Field {
     Timeout,
     FollowRedirects,
     VerifyTls,
+    Cookies,
     Message,
     Metadata,
     SchemaSource,
@@ -94,6 +96,7 @@ impl Field {
             Field::AuthUser => "Username",
             Field::AuthPass => "Password",
             Field::AuthToken => "Token",
+            Field::AuthOAuthName => "OAuth identity",
             Field::AuthKey => "Key name",
             Field::AuthValue => "Key value",
             Field::AuthIn => "Send in",
@@ -104,6 +107,7 @@ impl Field {
             Field::Timeout => "Timeout (ms, empty = default)",
             Field::FollowRedirects => "Follow redirects",
             Field::VerifyTls => "Verify TLS certificates",
+            Field::Cookies => "Cookie jar",
             Field::Message => {
                 "Request message (JSON; an array sends several on client/bidi streams)"
             }
@@ -147,6 +151,7 @@ impl Field {
                 | Field::AuthUser
                 | Field::AuthPass
                 | Field::AuthToken
+                | Field::AuthOAuthName
                 | Field::AuthKey
                 | Field::AuthValue
                 | Field::Timeout
@@ -168,6 +173,7 @@ impl Field {
                 | Field::AuthIn
                 | Field::SchemaSource
                 | Field::ScriptSection
+                | Field::Cookies
         )
     }
 
@@ -205,6 +211,7 @@ pub struct Editors {
     pub auth_user: TextEditor,
     pub auth_pass: TextEditor,
     pub auth_token: TextEditor,
+    pub auth_oauth_name: TextEditor,
     pub auth_key: TextEditor,
     pub auth_value: TextEditor,
     pub auth_in: ApiKeyLocation,
@@ -214,6 +221,8 @@ pub struct Editors {
     pub timeout: TextEditor,
     pub follow: bool,
     pub verify: bool,
+    /// `[options] cookies`: `None` follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
     pub target: TextEditor,
     pub service: String,
     pub grpc_method: String,
@@ -324,6 +333,7 @@ impl Editors {
             auth_user: TextEditor::single(""),
             auth_pass: TextEditor::single(""),
             auth_token: TextEditor::single("").with_placeholder("{{token}}"),
+            auth_oauth_name: TextEditor::single("").with_placeholder("name from [oauth]"),
             auth_key: TextEditor::single("X-API-Key"),
             auth_value: TextEditor::single(""),
             auth_in: ApiKeyLocation::Header,
@@ -395,6 +405,7 @@ impl Editors {
             timeout: TextEditor::single("").with_placeholder("default"),
             follow: true,
             verify: true,
+            cookies: None,
             target: TextEditor::single("").with_placeholder("localhost:50051  (https:// for TLS)"),
             service: String::new(),
             grpc_method: String::new(),
@@ -489,6 +500,7 @@ impl Editors {
                 e.timeout.set_text(&ms_text(h.options.timeout_ms));
                 e.follow = h.options.follow_redirects;
                 e.verify = h.options.verify_tls;
+                e.cookies = h.options.cookies;
             }
             Request::Grpc(g) => {
                 e.kind = Kind::Grpc;
@@ -530,6 +542,7 @@ impl Editors {
                 self.auth_pass.set_text(password);
             }
             Auth::Bearer { token } => self.auth_token.set_text(token),
+            Auth::OAuth { name } => self.auth_oauth_name.set_text(name),
             Auth::ApiKey {
                 key,
                 value,
@@ -551,6 +564,9 @@ impl Editors {
             },
             AuthKind::Bearer => Auth::Bearer {
                 token: self.auth_token.text(),
+            },
+            AuthKind::OAuth => Auth::OAuth {
+                name: self.auth_oauth_name.text(),
             },
             AuthKind::ApiKey => Auth::ApiKey {
                 key: self.auth_key.text(),
@@ -655,6 +671,7 @@ impl Editors {
                         timeout_ms: parse_ms(&self.timeout.text()),
                         follow_redirects: self.follow,
                         verify_tls: self.verify,
+                        cookies: self.cookies,
                     },
                     scripts: self.scripts(),
                 })
@@ -697,6 +714,7 @@ impl Editors {
                 AuthKind::None => {}
                 AuthKind::Basic => out.extend([Field::AuthUser, Field::AuthPass]),
                 AuthKind::Bearer => out.push(Field::AuthToken),
+                AuthKind::OAuth => out.push(Field::AuthOAuthName),
                 AuthKind::ApiKey => out.extend([Field::AuthKey, Field::AuthValue, Field::AuthIn]),
             }
         };
@@ -718,7 +736,12 @@ impl Editors {
                 }
                 3 => auth_fields(&mut v),
                 4 => v.extend([Field::ScriptSection, self.script_table()]),
-                _ => v.extend([Field::Timeout, Field::FollowRedirects, Field::VerifyTls]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::FollowRedirects,
+                    Field::VerifyTls,
+                    Field::Cookies,
+                ]),
             },
             Kind::Grpc => match tab {
                 0 => v.push(Field::Message),
@@ -779,6 +802,7 @@ impl Editors {
             Field::AuthUser => &mut self.auth_user,
             Field::AuthPass => &mut self.auth_pass,
             Field::AuthToken => &mut self.auth_token,
+            Field::AuthOAuthName => &mut self.auth_oauth_name,
             Field::AuthKey => &mut self.auth_key,
             Field::AuthValue => &mut self.auth_value,
             Field::Timeout => &mut self.timeout,
@@ -829,6 +853,11 @@ impl Editors {
                 .unwrap_or_default(),
             Field::FollowRedirects => onoff(self.follow),
             Field::VerifyTls => onoff(self.verify),
+            Field::Cookies => match self.cookies {
+                None => "Config default".into(),
+                Some(true) => "On".into(),
+                Some(false) => "Off".into(),
+            },
             Field::Tls => onoff(self.tls),
             Field::GrpcVerify => onoff(self.grpc_verify),
             _ => String::new(),
@@ -843,11 +872,13 @@ impl Editors {
                 .collect(),
             Field::AuthKind => AuthKind::ALL
                 .iter()
+                .filter(|k| self.kind == Kind::Http || **k != AuthKind::OAuth)
                 .map(|k| k.label().to_string())
                 .collect(),
             Field::AuthIn => vec!["Header".into(), "Query parameter".into()],
             Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
             Field::ScriptSection => self.script_options(),
+            Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
             _ => vec![],
         }
     }
@@ -868,7 +899,12 @@ impl Editors {
                     .iter()
                     .position(|k| *k == self.auth_kind)
                     .unwrap_or(0);
-                self.auth_kind = AuthKind::ALL[step(i, AuthKind::ALL.len())];
+                let len = if self.kind == Kind::Http {
+                    AuthKind::ALL.len()
+                } else {
+                    AuthKind::ALL.len() - 1
+                };
+                self.auth_kind = AuthKind::ALL[step(i, len)];
             }
             Field::AuthIn => {
                 self.auth_in = match self.auth_in {
@@ -880,6 +916,18 @@ impl Editors {
             Field::ScriptSection => self.script_section = step(self.script_section, 3),
             Field::FollowRedirects => self.follow = !self.follow,
             Field::VerifyTls => self.verify = !self.verify,
+            Field::Cookies => {
+                let index = match self.cookies {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                };
+                self.cookies = match step(index, 3) {
+                    0 => None,
+                    1 => Some(true),
+                    _ => Some(false),
+                };
+            }
             Field::Tls => self.tls = !self.tls,
             Field::GrpcVerify => self.grpc_verify = !self.grpc_verify,
             _ => return false,
@@ -908,6 +956,13 @@ impl Editors {
             }
             Field::SchemaSource => self.schema_files = index == 1,
             Field::ScriptSection => self.script_section = index.min(2),
+            Field::Cookies => {
+                self.cookies = match index {
+                    1 => Some(true),
+                    2 => Some(false),
+                    _ => None,
+                }
+            }
             _ => {}
         }
     }
@@ -955,6 +1010,10 @@ impl Editors {
                 "Authorization".into(),
                 format!("Bearer {}", self.auth_token.text()),
             )),
+            AuthKind::OAuth if !has("authorization") => v.push((
+                "Authorization".into(),
+                "Bearer •••••• (OAuth keychain)".into(),
+            )),
             AuthKind::ApiKey
                 if self.auth_in == ApiKeyLocation::Header && !has(&self.auth_key.text()) =>
             {
@@ -981,6 +1040,7 @@ impl Editors {
             &mut self.auth_user,
             &mut self.auth_pass,
             &mut self.auth_token,
+            &mut self.auth_oauth_name,
             &mut self.auth_key,
             &mut self.auth_value,
             &mut self.timeout,
@@ -1026,6 +1086,9 @@ pub struct Summary {
     pub ok: bool,
     pub time_ms: Option<f64>,
     pub size: Option<u64>,
+    /// e.g. `gzip 1.2 KB`: the body arrived with this Content-Encoding and was
+    /// decoded; `size` is the decoded size.
+    pub decoded: Option<String>,
     pub error: Option<String>,
 }
 
@@ -1114,6 +1177,39 @@ pub struct Running {
     pub streaming_input: bool,
 }
 
+/// Watch (repeat) state of a tab: the request is sent again on this interval
+/// while the tab is active and idle. Stopped by the watch key again, cancelling,
+/// closing the tab or changing the environment.
+#[derive(Debug, Clone)]
+pub struct Watch {
+    pub interval: std::time::Duration,
+    /// When the next repeat is due.
+    pub next: std::time::Instant,
+    /// One `(ok, ms)` per send while watching, oldest first.
+    pub samples: Vec<(bool, f64)>,
+}
+
+/// How many watch samples are kept for the sparkline.
+pub const WATCH_SAMPLES: usize = 120;
+
+impl Watch {
+    pub fn new(interval: std::time::Duration) -> Self {
+        Self {
+            interval,
+            next: std::time::Instant::now() + interval,
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn record(&mut self, ok: bool, ms: f64) {
+        self.samples.push((ok, ms));
+        let n = self.samples.len();
+        if n > WATCH_SAMPLES {
+            self.samples.drain(..n - WATCH_SAMPLES);
+        }
+    }
+}
+
 pub struct Tab {
     pub id: u64,
     pub path: Option<String>,
@@ -1125,6 +1221,7 @@ pub struct Tab {
     pub field: usize,
     pub response: Option<Response>,
     pub running: Option<Running>,
+    pub watch: Option<Watch>,
     pub services: Option<Vec<ServiceInfo>>,
     pub mcp_tools: Vec<sendito_mcp::Tool>,
     pub schema_error: Option<String>,
@@ -1158,6 +1255,7 @@ impl Tab {
             field: 0,
             response: None,
             running: None,
+            watch: None,
             services: None,
             mcp_tools: Vec::new(),
             schema_error: None,
@@ -1235,6 +1333,7 @@ mod tests {
                 timeout_ms: Some(10),
                 follow_redirects: false,
                 verify_tls: false,
+                cookies: None,
             },
             scripts: Scripts {
                 pre: vec![SetVar {
@@ -1285,6 +1384,9 @@ mod tests {
                     password: "p".into(),
                 },
                 Auth::Bearer { token: "t".into() },
+                Auth::OAuth {
+                    name: "identity".into(),
+                },
             ] {
                 reqs.push(Request::Http(HttpRequest {
                     body: b.clone(),
@@ -1333,7 +1435,7 @@ mod tests {
         e.set_choice(Field::BodyKind, 1);
         assert_eq!(e.body_kind, BodyKind::Json);
         assert_eq!(e.choice_label(Field::BodyKind), "JSON");
-        assert_eq!(e.choice_options(Field::AuthKind).len(), 4);
+        assert_eq!(e.choice_options(Field::AuthKind).len(), 5);
         assert!(e.cycle(Field::FollowRedirects, 1));
         assert_eq!(e.choice_label(Field::FollowRedirects), "On");
         assert!(!e.cycle(Field::Params, 1));
@@ -1345,9 +1447,28 @@ mod tests {
         assert!(e.text_mut(Field::BodyText).is_some());
         assert!(e.table_mut(Field::Params).is_some());
         assert!(e.text_mut(Field::Params).is_none());
-        for f in [Field::Params, Field::BodyText, Field::BodyKind, Field::Tls] {
+        for f in [
+            Field::Params,
+            Field::BodyText,
+            Field::BodyKind,
+            Field::Tls,
+            Field::Cookies,
+        ] {
             assert!(!f.label().is_empty());
         }
+        // The cookie jar option cycles: default → on → off → default.
+        assert_eq!(e.choice_label(Field::Cookies), "Config default");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "On");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "Off");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "Config default");
+        e.cookies = Some(true);
+        let Request::Http(h) = e.to_request() else {
+            panic!("not http")
+        };
+        assert_eq!(h.options.cookies, Some(true));
         let mut tab = Tab::new(1, None, "x".into(), &full(), Some(full()));
         tab.refresh_model();
         assert!(!tab.dirty());

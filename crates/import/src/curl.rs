@@ -364,9 +364,22 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
     let mut no_auth = src.clone();
     no_auth.auth = match &src.auth {
         Auth::Basic { .. } => Auth::None,
+        Auth::OAuth { .. } => Auth::None,
         other => other.clone(),
     };
-    let r = resolve_http(&no_auth, sc, base_dir);
+    let mut r = resolve_http(&no_auth, sc, base_dir);
+    crate::preserve_export_templates(&no_auth, sc, &mut r);
+    if let Auth::OAuth { name } = &src.auth
+        && !r
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("authorization"))
+    {
+        r.headers.push((
+            "Authorization".into(),
+            format!("Bearer {}", crate::oauth_placeholder(&sc.render(name).text)),
+        ));
+    }
     let mut args: Vec<String> = vec!["curl".into()];
     let has_body = !matches!(r.body, ResolvedBody::None);
     match r.method.as_str() {
@@ -638,6 +651,7 @@ mod tests {
                 follow_redirects: false,
                 verify_tls: false,
                 timeout_ms: Some(1500),
+                cookies: None,
             },
             ..Default::default()
         };

@@ -17,6 +17,12 @@ fn read(p: &Path) -> String {
     }
 }
 
+fn write(root: &Path, rel: &str, text: &str) {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap_or(root)).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
 /// Postman v2.1 fixture (32 requests): every request is imported and every
 /// feature that is not imported as-is is listed in the report.
 #[test]
@@ -394,6 +400,8 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
     };
     let o = rt.block_on(sendito_ui::runner::exec_http(
         &ctx,
@@ -426,4 +434,354 @@ fn secrets_stay_out_of_history_exports_and_repo() {
     // Explicitly asked: curl with secrets includes them.
     let with = sendito_import::curl::export(&req, &scope, true, dir.path());
     assert!(with.contains(&secret_kc));
+}
+
+#[cfg(unix)]
+#[test]
+fn cookie_jar_fails_closed_for_insecure_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let http = rt.block_on(sendito_testkit::http_echo::start()).unwrap();
+    let p = sendito_ui::runner::Project::open_with(
+        dir.path(),
+        sendito_ui::runner::default_keychain(),
+        None,
+    );
+    let ctx = sendito_ui::runner::RunCtx {
+        root: dir.path().to_path_buf(),
+        send: p.send_options(),
+        history: None,
+        name: "test".into(),
+        path: None,
+        env: None,
+        schemas: Default::default(),
+        grpc_deadline_ms: 0,
+        mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
+    };
+    let mut req = sendito_core::HttpRequest {
+        url: http.url(),
+        ..Default::default()
+    };
+    req.options.cookies = Some(true);
+    std::fs::create_dir_all(dir.path().join(".sendito")).unwrap();
+    let jar = dir.path().join(".sendito/cookies.toml");
+    std::fs::write(&jar, "[jars]\n").unwrap();
+    std::fs::set_permissions(&jar, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let result = rt.block_on(sendito_ui::runner::exec_http(
+        &ctx,
+        &req,
+        Scope::new(),
+        vec![],
+    ));
+    assert!(result.response.is_err());
+    assert!(http.take().is_empty());
+}
+
+/// The cookie jar: a Set-Cookie response stores cookies per environment, the
+/// next request replays them, and `--no-cookies` semantics (cookie_jar off)
+/// send nothing.
+#[test]
+fn cookie_jar_stores_and_replays() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let http = rt.block_on(sendito_testkit::http_echo::start()).unwrap();
+    write(
+        root,
+        ".sendito/environments/dev.toml",
+        &format!("[variables]\nbase = \"{}\"\n", http.url()),
+    );
+    write(
+        root,
+        "login.toml",
+        "kind = \"http\"\nmethod = \"GET\"\nurl = \"{{base}}/set-cookie\"\n\n[options]\ncookies = true\n",
+    );
+    write(
+        root,
+        "echo.toml",
+        "kind = \"http\"\nmethod = \"GET\"\nurl = \"{{base}}/echo\"\n\n[options]\ncookies = true\n",
+    );
+    let p =
+        sendito_ui::runner::Project::open_with(root, sendito_ui::runner::default_keychain(), None);
+    let ctx = |name: &str| sendito_ui::runner::RunCtx {
+        root: root.to_path_buf(),
+        send: p.send_options(),
+        history: None,
+        name: name.into(),
+        path: Some(format!("{name}.toml")),
+        env: Some("dev".into()),
+        schemas: Default::default(),
+        grpc_deadline_ms: 0,
+        mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
+    };
+    let login = p.coll.load("login.toml").unwrap();
+    let echo = p.coll.load("echo.toml").unwrap();
+    let (Request::Http(login), Request::Http(echo)) = (login, echo) else {
+        panic!("not http")
+    };
+    let (scope, errors) =
+        sendito_ui::runner::build_scope(&p.envs, Some("dev"), &Default::default());
+    assert!(errors.is_empty(), "{errors:?}");
+    // 1. The login response sets two cookies.
+    let o = rt.block_on(sendito_ui::runner::exec_http(
+        &ctx("login"),
+        &login,
+        scope.clone(),
+        vec![],
+    ));
+    let resp = o
+        .response
+        .clone()
+        .unwrap_or_else(|e| panic!("login failed: {e}"));
+    assert_eq!(resp.status, 200);
+    let text = read(&root.join(".sendito/cookies.toml"));
+    assert!(text.contains("session"));
+    assert!(text.contains("theme"));
+    // 2. The next request replays them.
+    let o = rt.block_on(sendito_ui::runner::exec_http(
+        &ctx("echo"),
+        &echo,
+        scope.clone(),
+        vec![],
+    ));
+    assert!(o.response.is_ok());
+    let caps = http.take();
+    let last = caps.last().unwrap();
+    assert_eq!(
+        last.header("cookie").as_deref(),
+        Some("session=corpus-1; theme=dark"),
+        "{}",
+        last.head()
+    );
+    // The TUI must not expose Set-Cookie or its extracted value.
+    let mut masked_ctx = ctx("login");
+    masked_ctx.mask_echoed_secrets = true;
+    let mut with_extract = login.clone();
+    with_extract
+        .scripts
+        .extract
+        .push(sendito_core::model::Extract {
+            var: "cookie".into(),
+            source: sendito_core::model::Source::Header,
+            expr: "set-cookie".into(),
+            secret: false,
+        });
+    let masked = rt.block_on(sendito_ui::runner::exec_http(
+        &masked_ctx,
+        &with_extract,
+        scope.clone(),
+        vec![],
+    ));
+    let extracted = masked.scripts.extracts[0].value.as_ref().unwrap();
+    assert!(extracted.secret);
+    let response = masked.response.unwrap();
+    assert!(
+        response
+            .headers
+            .iter()
+            .filter(|(n, _)| n == "set-cookie")
+            .all(|(_, v)| !v.contains("corpus-1") && !v.contains("dark"))
+    );
+    // Do not forward cookies across a redirect even on the same host.
+    let mut redirected = echo.clone();
+    redirected.url = "{{base}}/redirect/1".into();
+    let o = rt.block_on(sendito_ui::runner::exec_http(
+        &ctx("redirect"),
+        &redirected,
+        scope.clone(),
+        vec![],
+    ));
+    assert_eq!(o.response.unwrap().status, 302);
+    assert!(
+        o.resolved
+            .notes
+            .iter()
+            .any(|n| n.contains("redirects are not followed"))
+    );
+    http.take();
+    // 3. Without `cookies = true` nothing is sent or stored.
+    let mut plain = echo.clone();
+    plain.options.cookies = Some(false);
+    let o = rt.block_on(sendito_ui::runner::exec_http(
+        &ctx("echo"),
+        &plain,
+        scope,
+        vec![],
+    ));
+    assert!(o.response.is_ok());
+    let last = http.take().last().unwrap().clone();
+    assert!(last.header("cookie").is_none(), "{}", last.head());
+}
+
+#[test]
+fn cli_imports_bruno_and_insomnia_without_overwriting_environments() {
+    let dir = tempfile::tempdir().unwrap();
+    sendito_store::init::init(dir.path()).unwrap();
+    for (fixture, label) in [
+        ("tests/fixtures/bruno", "Bruno"),
+        ("tests/fixtures/insomnia.json", "Insomnia"),
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(dir.path())
+            .arg("import")
+            .arg(root().join(fixture))
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(label), "{stdout}");
+        assert!(!stdout.contains("private-placeholder"));
+    }
+    let coll = sendito_store::Collection::new(dir.path(), vec![]);
+    let Request::Http(bruno) = coll.load("Bruno demo/Users/List.toml").unwrap() else {
+        panic!("expected http")
+    };
+    assert!(!bruno.headers[1].enabled);
+    let Request::Http(insomnia) = coll.load("Insomnia demo/Users/Create.toml").unwrap() else {
+        panic!("expected http")
+    };
+    assert_eq!(insomnia.url, "{{base}}/users");
+    assert!(!insomnia.headers[1].enabled);
+    let envs = sendito_store::env::Envs::new(
+        dir.path(),
+        "test",
+        std::sync::Arc::new(sendito_store::env::MemoryKeychain::default()),
+    );
+    assert!(envs.list().iter().any(|e| e == "dev"));
+    assert!(envs.list().iter().any(|e| e == "dev (2)"));
+    for name in envs.list() {
+        let text = std::fs::read_to_string(envs.env_dir().join(format!("{name}.toml"))).unwrap();
+        assert!(!text.contains("private-placeholder"));
+    }
+}
+
+#[test]
+fn http_oauth_login_refresh_and_send() {
+    use sendito_core::model::{Auth, HttpRequest, KeyValue};
+    use sendito_core::resolve::{ResolvedBody, ResolvedHttp};
+    use sendito_store::env::{Keychain, MemoryKeychain};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let srv = sendito_testkit::mcp_auth::start().await.unwrap();
+        let mut settings = sendito_mcp::oauth::OAuthSettings {
+            client_id: Some("cli-1".into()),
+            client_secret: Some("test-client-secret".into()),
+            authorize_url: Some(format!("{}/authorize-http", srv.url())),
+            token_url: Some(format!("{}/token-http", srv.url())),
+            ..Default::default()
+        };
+        let opener = |url: &str| {
+            let url = url.to_owned();
+            tokio::spawn(async move {
+                let request = ResolvedHttp {
+                    method: "GET".into(),
+                    url,
+                    headers: vec![],
+                    header_origins: vec![],
+                    body: ResolvedBody::None,
+                    timeout_ms: Some(5000),
+                    follow_redirects: true,
+                    verify_tls: true,
+                    unresolved: vec![],
+                    notes: vec![],
+                };
+                let _ = sendito_http::send(&request, &Default::default()).await;
+            });
+            true
+        };
+        let mut tokens =
+            sendito_mcp::oauth::login_http(&settings, Duration::from_secs(5), &opener, &|_| {})
+                .await
+                .unwrap();
+        // Force a 401 to exercise the one-retry path, rather than a pre-send refresh.
+        tokens.expires_at = None;
+        let kc = Arc::new(MemoryKeychain::default());
+        let mut p = sendito_ui::runner::Project::open_with(dir.path(), kc.clone(), None);
+        p.config.oauth.insert(
+            "service".into(),
+            sendito_store::config::OAuthIdentity {
+                authorize_url: settings.authorize_url.take().unwrap(),
+                token_url: settings.token_url.take().unwrap(),
+                client_id: "cli-1".into(),
+                client_secret: Some("test-client-secret".into()),
+                scopes: vec![],
+            },
+        );
+        let account = sendito_ui::runner::oauth_token_account(&p.name, Some("dev"), "service");
+        kc.set(&account, &tokens.to_json()).unwrap();
+        let ctx = sendito_ui::runner::RunCtx {
+            root: dir.path().to_path_buf(),
+            send: p.send_options(),
+            history: None,
+            name: "oauth".into(),
+            path: None,
+            env: Some("dev".into()),
+            schemas: Default::default(),
+            grpc_deadline_ms: 0,
+            mask_echoed_secrets: true,
+            cookie_jar: false,
+            oauth: Some(sendito_ui::runner::OAuthRunInfo::of(&p)),
+        };
+        let req = HttpRequest {
+            url: format!("{}/http-api", srv.url()),
+            auth: Auth::OAuth {
+                name: "service".into(),
+            },
+            ..Default::default()
+        };
+        let mut req = req;
+        // The jar is on: the 401 sets a cookie and the retry must replay it.
+        req.options.cookies = Some(true);
+        req.scripts.extract.push(sendito_core::model::Extract {
+            var: "reflected_token".into(),
+            source: sendito_core::model::Source::Body,
+            expr: "$.token".into(),
+            secret: false,
+        });
+        let o = sendito_ui::runner::exec_http(&ctx, &req, Scope::new(), vec![]).await;
+        assert_eq!(o.response.as_ref().unwrap().status, 200);
+        assert!(o.scripts.extracts[0].value.as_ref().unwrap().secret);
+        assert_eq!(srv.http_requests(), 2);
+        assert_eq!(srv.refreshes(), 1);
+        let refreshed = kc.get(&account).unwrap().unwrap();
+        let token = sendito_mcp::oauth::Tokens::from_json(&refreshed).unwrap();
+        assert!(!o.doc.raw.text.contains(&token.access));
+        assert_ne!(refreshed, tokens.to_json());
+        // Export never includes the keychain token, even with include-secrets.
+        let curl = sendito_import::curl::export(&req, &Scope::new(), true, dir.path());
+        assert!(curl.contains("{{oauth.service}}"));
+        assert!(!curl.contains(&tokens.access));
+        let file =
+            sendito_import::http_file::export("test", &req, &Scope::new(), false, dir.path());
+        assert!(file.contains("{{oauth.service}}"));
+        // An explicitly configured Authorization wins without fetching a token.
+        let mut explicit = req.clone();
+        explicit
+            .headers
+            .push(KeyValue::new("Authorization", "Bearer explicit"));
+        let o = sendito_ui::runner::exec_http(&ctx, &explicit, Scope::new(), vec![]).await;
+        assert_eq!(o.response.unwrap().status, 401);
+        assert_eq!(srv.http_requests(), 3);
+        assert_eq!(srv.refreshes(), 1);
+        // Different environments cannot use each other's stored tokens.
+        let mut other = ctx;
+        other.env = Some("other".into());
+        let o = sendito_ui::runner::exec_http(&other, &req, Scope::new(), vec![]).await;
+        assert!(o.response.is_err());
+        assert_eq!(srv.http_requests(), 3);
+    });
 }

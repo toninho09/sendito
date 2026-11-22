@@ -7,13 +7,14 @@ expression: screen
 │▸ Orders/                   ││                                                                                        │
 │▸ Users/                    ││                                                                                        │
 │  GRPC  e╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮         │
-│  GET   h│ ▍  type to search actions and requests, or : for commands                                 1/70   ┃         │
+│  GET   h│ ▍  type to search actions and requests, or : for commands                                 1/71   ┃         │
 │         │                                                                                                  ┃         │
 │         │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃         │
 │         │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃         │
 │         │  Cancel the running request or stream                                                  Ctrl+W x  ┃         │
 │         │  Finish sending on a client/bidi stream (half-close)                                   Ctrl+W d  ┃         │
-│         │  Save the request to its file (asks for a name if new)                        Ctrl+S / Ctrl+W s  ┃         │
+│         │  Re-send the active request on an interval (watch)                                     Ctrl+W m  ┃         │
+│         │  Save the request to its file (asks for a name if new)                        Ctrl+S / Ctrl+W s  │         │
 │         │  Quit Sendito                                                                 Ctrl+W q / Ctrl+Q  │         │
 │         │  Open a new unsaved HTTP request tab                                          Ctrl+N / Ctrl+W t  │         │
 │         │  Open a new unsaved gRPC request tab                                                   Ctrl+W g  │         │
@@ -30,8 +31,7 @@ expression: screen
 │         │  Jump to tab 2 of the focused pane                                                        Alt+2  │         │
 │         │  Jump to tab 3 of the focused pane                                                        Alt+3  │         │
 │         │  Jump to tab 4 of the focused pane                                                        Alt+4  │         │
-│         │  Jump to tab 5 of the focused pane                                                        Alt+5  │         │
-│         ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 48 more ─╯         │
+│         ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 49 more ─╯         │
 │                                                                                                                      │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
