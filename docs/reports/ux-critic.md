@@ -65,6 +65,24 @@ decline is recorded below with its reason. The settled decisions are in the bund
 9. Values derived from a file are italic and marked "(auto)".
 10. Transient messages appear in the message area, apart from the "|"-separated fields.
 
+## Redesign — decisions revised
+
+The 0.2.0 visual redesign was allowed to change the composition and to revisit the
+settled decisions above. It was validated with tests, snapshots and a before/after
+review of the screenshots, without new critic rounds. What changed:
+
+| Before | Now |
+|---|---|
+| Focused pane with a `THICK` border | `ROUNDED` border in the accent color; `THICK` only in mono and `contrast` (`Theme.heavy_focus`) |
+| Pane tabs on their own row, separated by "│" | Tabs in the pane's top border |
+| URL inside the Request pane | Its own strip above both panes |
+| A dialog clears the screen (iteration 1 finding) | Dimmed backdrop and a shadow; mono still clears |
+| Status "env │ last request: … │ ms │ B" (decisions 8 and 10) | Segments without "│"; the environment only in the top bar; the last request only while the Response pane is hidden; messages in a chip with an icon |
+| Start screen = a list of keys | Wordmark, collection summary, Start and Recent |
+| `[x]` | `[✓]` |
+| Help in one column | Two columns on screens 180 columns wide or more |
+| Kept | Decisions 1–5, 6, 7 and 9 |
+
 ## Fixed in the last triaged rounds (13–18)
 
 * Dialogs: action-named confirm buttons ("Create (Enter)", "Save (s)"), the confirm
@@ -154,5 +172,5 @@ Each entry gives the iteration, the finding, and why it was declined.
 
 No recording shows the Scripts, Auth, Metadata or Options tabs in detail, the keychain
 and file environment sources, the right-hand sidebar or pane zoom; those are covered
-by the UI flow tests (13 flows) and the snapshot tests instead. All recordings are
+by the UI flow tests (15 flows) and the snapshot tests instead. All recordings are
 in the dusk theme; the daylight theme appears in the screenshots.

@@ -713,7 +713,7 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
 /// Symbols used on screen, listed in the help and KEYMAP.md.
 pub const SYMBOLS: &[(&str, &str)] = &[
     ("●", "unsaved changes (tab, status line)"),
-    ("↻ on a tab", "request running"),
+    ("⠋ on a tab (turning)", "request running"),
     (
         "Results 2/3 ✗",
         "on the Results tab: assertions passed / total (✓ all passed, ✗ some failed)",

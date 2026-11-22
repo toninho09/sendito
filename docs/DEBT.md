@@ -52,8 +52,14 @@ allows `accept` as a transport header.
   toolchain has been used.
 * **Terminal sizes.** Screenshots, recordings and snapshot tests cover 120×40 and
   200×60. Smaller terminals work (the layout adapts) but are not covered by snapshots.
-* **Coverage** is measured for the non-UI crates only (91.77%); `sendito-ui` is covered
-  by the 13 flow tests and the snapshot tests, with no line-coverage figure.
+* **Coverage** is measured for the non-UI crates only (91.89%); `sendito-ui` is covered
+  by the 15 flow tests and the snapshot tests, with no line-coverage figure.
+* **The visual redesign was checked in the test backend only.** The cursor shape (bar
+  while typing, block in vim NORMAL), the window title push/pop (`CSI 22;0t` /
+  `CSI 23;0t`), mouse hover, the Braille spinner in fonts without Braille, Nerd Font
+  icon alignment, the 256-color path (`TERM=xterm-256color` without `COLORTERM`),
+  `NO_COLOR` and the `ansi` theme's underline fallback have not been looked at in a
+  real terminal.
 
 ## 3. Product limits worth knowing
 
@@ -66,6 +72,11 @@ allows `accept` as a transport header.
 * HTTP/3 and WebSocket are not supported.
 * Response bodies are shown as received; there is no automatic decompression.
 * Windows is not a target of this release.
+* The `auto` theme picks dark or light from `COLORFGBG` only, which many terminals do
+  not set (it then picks `dusk`). Asking the terminal for its background with OSC 11
+  (`ESC ] 11 ; ? BEL`) would be more reliable, but needs a raw-mode query with a
+  timeout before the first frame, and terminals that do not answer (or multiplexers
+  that swallow the reply) must not delay start-up. Set `theme` explicitly meanwhile.
 
 ## 4. Housekeeping
 

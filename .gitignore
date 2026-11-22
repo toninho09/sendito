@@ -5,6 +5,7 @@
 /.sendito/history.jsonl
 .claude/
 .codegraph/
+.idea/
 /docs/media/recordings/*/
 .DS_Store
 /bench/results/*

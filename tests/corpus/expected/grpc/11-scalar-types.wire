@@ -2,7 +2,7 @@ method: /sendito.test.v1.Echo/Unary
 metadata received:
   te: trailers
   content-type: application/grpc
-  user-agent: sendito/0.1.0 tonic/0.14.9
+  user-agent: sendito/0.2.0 tonic/0.14.9
 messages received: 1
   json: {"color":"GREEN","data":"AAEC/w==","db":-0.25,"f32":123,"f64":"456","fl":1.5,"flag":true,"i32":-2147483648,"i64":"-9223372036854775808","s32":-1,"s64":"-2","sf32":-3,"sf64":"-4","text":"ünïcödé ✓","u32":4294967295,"u64":"18446744073709551615"}
   protobuf (base64): Cg/DvG7Dr2PDtmTDqSDinJMQgICAgPj/////ARiAgICAgICAgIABIP////8PKP///////////wEwATgDRXsAAABJyAEAAAAAAABV/f///1n8/////////2UAAMA/aQAAAAAAANC/cAF6BAABAv+AAQI=

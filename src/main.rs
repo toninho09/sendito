@@ -67,6 +67,11 @@ enum Cmd {
         #[arg(long)]
         include_secrets: bool,
     },
+    /// List color themes or print one as a theme file to start your own.
+    Theme {
+        #[command(subcommand)]
+        cmd: ThemeCmd,
+    },
     /// Import a Postman v2.1 collection into the collection.
     Import {
         /// Postman collection JSON file.
@@ -75,6 +80,63 @@ enum Cmd {
         #[arg(long, default_value = "")]
         into: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ThemeCmd {
+    /// List the built-in themes and your own (with any problems found).
+    List {
+        /// Collection whose `.sendito/themes` is searched too.
+        #[arg(long)]
+        collection: Option<PathBuf>,
+    },
+    /// Print a theme with every color token, as a file you can edit.
+    Print {
+        name: String,
+        #[arg(long)]
+        collection: Option<PathBuf>,
+    },
+}
+
+fn theme_registry(collection: Option<&Path>) -> sendito_ui::theme::Registry {
+    let root = find_collection(collection);
+    let dirs = sendito_store::themes::dirs(sendito_store::config::global_path().as_deref(), &root);
+    let (files, warnings) = sendito_store::themes::discover(&dirs);
+    sendito_ui::theme::Registry::from_files(files, warnings)
+}
+
+fn theme(cmd: ThemeCmd) -> ExitCode {
+    match cmd {
+        ThemeCmd::List { collection } => {
+            let reg = theme_registry(collection.as_deref());
+            for name in reg.names() {
+                let path = reg
+                    .path(&name)
+                    .map(|p| format!("  {}", p.display()))
+                    .unwrap_or_else(|| "  (built in)".into());
+                println!("{name:<16}{path}");
+                for n in reg.notes(&name) {
+                    println!("{:<16}  ! {n}", "");
+                }
+            }
+            for w in &reg.warnings {
+                eprintln!("sendito: {w}");
+            }
+            ExitCode::SUCCESS
+        }
+        ThemeCmd::Print { name, collection } => {
+            let reg = theme_registry(collection.as_deref());
+            if !reg.is_known(&name) {
+                eprintln!(
+                    "sendito: no theme named \"{name}\" (available: {})",
+                    reg.names().join(", ")
+                );
+                return ExitCode::from(3);
+            }
+            print!("{}", reg.theme_full(&name).to_toml());
+            ExitCode::SUCCESS
+        }
+    }
 }
 
 fn find_collection(path: Option<&Path>) -> PathBuf {
@@ -118,6 +180,7 @@ fn main() -> ExitCode {
             include_secrets,
         }) => curl(&request, env, include_secrets),
         Some(Cmd::Import { file, into }) => import(&file, &into),
+        Some(Cmd::Theme { cmd }) => theme(cmd),
         None => {
             let root = find_collection(cli.path.as_deref());
             if !root.is_dir() {

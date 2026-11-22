@@ -30,6 +30,8 @@ pub struct Project {
     pub name: String,
     /// Global config file (settings are written here); `None` disables writing.
     pub global_config: Option<PathBuf>,
+    /// Where user themes are looked for, lowest precedence first.
+    pub theme_dirs: Vec<PathBuf>,
 }
 
 /// The keychain to use: `SENDITO_KEYCHAIN=memory` selects an in-memory one (tests, demos).
@@ -65,6 +67,7 @@ impl Project {
             config,
             warnings,
             name,
+            theme_dirs: sendito_store::themes::dirs(global.as_deref(), root),
             global_config: global,
         }
     }

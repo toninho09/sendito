@@ -2,43 +2,43 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                          ┏ Environment ━━━━━━━━━━━━━━━━━━━━━┓
-                                          ┃  type to filter                  ┃
-                                          ┃ (no environment)                 ┃
-                                          ┃ local                            ┃
-                                          ┃ staging                          ┃
-                                          ┃ Manage environments…             ┃
-                                          ┃                                  ┃
-                                          ┃                                  ┃
-                                          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- type filter  ↑↓ move  Enter choose  Esc close
- env: local
+ sendito   +                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                        │
+│▸ Users/                    ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
+│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
+│                            ││                                                                                        │
+│                            ││                            HTTP and gRPC, from the terminal                            │
+│                            ││                      demo  ·  6 requests · 2 folders  ·  ● local                       │
+│                            ││                                                                                        │
+│                            ││        St╭─ Environment ──────────────────────╮                                        │
+│                            ││         C│ ▍  type to filter                  │                                        │
+│                            ││         n│                                    │  sidebar                               │
+│                            ││         E│  ● (no environment)                │                                        │
+│                            ││         C│▌ ● local                           │ equests, :commands)                    │
+│                            ││         C│  ● staging                         │  or a curl command                     │
+│                            ││         F│  ● Manage environments…            │                                        │
+│                            ││         m│                                    │ or drag it with the mouse)             │
+│                            ││         C│                                    │ icons, sidebar side                    │
+│                            ││         F╰────────────────────────────────────╯                                        │
+│                            ││         Ct                                                                             │
+│                            ││                                                                                        │
+│                            ││        Recent                                                                          │
+│                            ││        Requests you send appear here.                                                  │
+│                            ││                                                                                        │
+│                            ││         F7  all history                                                                │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+  type  filter   ↑↓  move   Enter  choose   Esc  close
+ demo

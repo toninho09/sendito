@@ -29,6 +29,21 @@ impl ViewMode {
     }
 }
 
+/// How a plain-text document is colored, line by line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Syntax {
+    #[default]
+    Plain,
+    /// "Name: value" lines, an HTTP status line, "Request sent".
+    Headers,
+    /// The timing waterfall and its details.
+    Timing,
+    /// Assertions, variables and the gRPC message log.
+    Messages,
+    /// The key list: "── Section ──" and "  keys  description".
+    Help,
+}
+
 /// Text with a line index.
 #[derive(Debug, Clone, Default)]
 pub struct Lines {
@@ -411,6 +426,9 @@ pub struct Viewer {
     /// Doc line count when `rows` was built (logs grow while shown).
     rows_lines: usize,
     height: u16,
+    /// Line numbers in a gutter.
+    pub numbers: bool,
+    pub syntax: Syntax,
 }
 
 impl Viewer {
@@ -433,6 +451,8 @@ impl Viewer {
             rows_width: 0,
             rows_lines: 0,
             height: 0,
+            numbers: false,
+            syntax: Syntax::Plain,
         }
     }
 
@@ -767,11 +787,18 @@ impl Viewer {
         if area.width < 4 || area.height == 0 {
             return;
         }
-        let gutter: u16 = if self.mode == ViewMode::Pretty && self.doc.pretty.is_some() {
+        let folds: u16 = if self.mode == ViewMode::Pretty && self.doc.pretty.is_some() {
             2
         } else {
             0
         };
+        // Line numbers (not in the hex view, which shows offsets).
+        let num_w: u16 = if self.numbers && self.mode != ViewMode::Hex && area.width > 20 {
+            self.doc.line_count(self.mode).to_string().len().max(2) as u16 + 1
+        } else {
+            0
+        };
+        let gutter = folds + num_w;
         let text_w = area.width.saturating_sub(gutter);
         self.height = area.height;
         if (self.wrap || self.folds_active())
@@ -816,7 +843,21 @@ impl Viewer {
                     c.set_char(' ').set_style(row_style);
                 }
             }
-            if gutter > 0 && start_char == 0 {
+            if num_w > 0 && start_char == 0 {
+                let st = if is_cursor && focused {
+                    theme.fg(theme.fg)
+                } else {
+                    theme.fg(theme.gutter)
+                };
+                buf.set_stringn(
+                    area.x,
+                    y,
+                    format!("{:>w$} ", line_no + 1, w = (num_w - 1) as usize),
+                    num_w as usize,
+                    st.patch(Style::default().bg(row_style.bg.unwrap_or(theme.bg))),
+                );
+            }
+            if folds > 0 && start_char == 0 {
                 let marker = if self.folded.contains(&line_no) {
                     "▸"
                 } else if self.doc.fold_end(line_no).is_some() {
@@ -825,7 +866,7 @@ impl Viewer {
                     " "
                 };
                 buf.set_string(
-                    area.x,
+                    area.x + num_w,
                     y,
                     marker,
                     theme
@@ -835,6 +876,8 @@ impl Viewer {
             }
             let spans = if pretty_json {
                 json_line_spans(&line, theme)
+            } else if self.mode != ViewMode::Hex {
+                syntax_spans(self.syntax, &line, theme)
             } else {
                 Vec::new()
             };
@@ -944,9 +987,208 @@ impl Viewer {
     }
 }
 
+/// Character spans for one line of a [`Syntax`] document: sorted and not
+/// overlapping.
+pub fn syntax_spans(syntax: Syntax, line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let heading = theme.fg(theme.title).add_modifier(Modifier::BOLD);
+    let find = |from: usize, pat: &str| -> Option<usize> {
+        let p: Vec<char> = pat.chars().collect();
+        (from..=n.saturating_sub(p.len())).find(|&i| chars[i..].starts_with(&p))
+    };
+    let mut out: Vec<(usize, usize, Style)> = Vec::new();
+    match syntax {
+        Syntax::Plain => {}
+        Syntax::Headers => {
+            if line.starts_with("HTTP/") {
+                // "HTTP/1.1 200 OK": the code and reason in the status color.
+                let sp = find(0, " ").unwrap_or(n);
+                out.push((0, sp, theme.dim()));
+                let code: u16 = line
+                    .get(sp + 1..sp + 4)
+                    .and_then(|c| c.parse().ok())
+                    .unwrap_or(0);
+                out.push((
+                    sp,
+                    n,
+                    theme
+                        .fg(theme.status_color(code))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else if matches!(line, "Request sent" | "Response headers" | "Trailers") {
+                out.push((0, n, heading));
+            } else if let Some(sp) = find(0, " ")
+                && line.contains("://")
+                && chars[..sp].iter().all(|c| c.is_ascii_uppercase())
+            {
+                // "GET http://…": the request line.
+                let m: String = chars[..sp].iter().collect();
+                out.push((
+                    0,
+                    sp,
+                    theme
+                        .fg(theme.method_color(&m))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else if let Some(c) = find(0, ": ")
+                && c > 0
+            {
+                out.push((0, c, theme.fg(theme.json_key)));
+                out.push((c, c + 1, theme.dim()));
+                if line[line
+                    .char_indices()
+                    .nth(c + 2)
+                    .map(|(b, _)| b)
+                    .unwrap_or(line.len())..]
+                    .contains(crate::MASK)
+                {
+                    out.push((c + 2, n, theme.dim()));
+                }
+            }
+        }
+        Syntax::Timing => {
+            let phase = [
+                ("DNS lookup", theme.phase_dns),
+                ("TCP connect", theme.phase_connect),
+                ("TLS handshake", theme.phase_tls),
+                ("Waiting for first byte", theme.phase_wait),
+                ("Download", theme.phase_download),
+            ]
+            .into_iter()
+            .find(|(p, _)| line.starts_with(p))
+            .map(|(_, c)| c);
+            if line.starts_with("Phase") {
+                out.push((0, n, theme.dim().add_modifier(Modifier::BOLD)));
+            } else if line.starts_with("Total") {
+                out.push((0, n, theme.fg(theme.fg).add_modifier(Modifier::BOLD)));
+            } else if let Some(c) = phase {
+                let mut i = 0;
+                while i < n {
+                    let ch = chars[i];
+                    if is_bar(ch) {
+                        let s0 = i;
+                        while i < n && is_bar(chars[i]) {
+                            i += 1;
+                        }
+                        out.push((s0, i, theme.fg(c)));
+                    } else if ch == '·' {
+                        let s0 = i;
+                        while i < n && chars[i] == '·' {
+                            i += 1;
+                        }
+                        out.push((s0, i, theme.fg(theme.border)));
+                    } else if line[line.char_indices().nth(i).map(|(b, _)| b).unwrap_or(0)..]
+                        .starts_with("skipped")
+                    {
+                        out.push((i, n, theme.dim()));
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+            } else if n > 16 && line.as_bytes().get(15) == Some(&b' ') && !line.starts_with(' ') {
+                // "Protocol        HTTP/1.1"
+                out.push((0, 16, theme.dim()));
+            }
+        }
+        Syntax::Messages => {
+            if line.ends_with(':') && !line.starts_with(' ') || line.starts_with("Assertions:") {
+                out.push((0, n, heading));
+            } else if let Some(i) = find(0, "✓ PASS") {
+                out.push((i, i + 6, theme.fg(theme.ok).add_modifier(Modifier::BOLD)));
+            } else if let Some(i) = find(0, "✗ FAIL") {
+                out.push((i, i + 6, theme.fg(theme.err).add_modifier(Modifier::BOLD)));
+                if let Some(a) = find(i, "(actual:") {
+                    out.push((a, n, theme.dim()));
+                }
+            } else if let Some(arrow) = chars.iter().position(|c| matches!(c, '→' | '←' | '■'))
+                && arrow >= 12
+                && find(0, " +").is_some_and(|p| p < arrow)
+            {
+                // A gRPC log line: time, offset, direction, what, payload.
+                out.push((0, arrow, theme.dim()));
+                let what_end = (arrow + 2..n).find(|&j| chars[j] == ' ').unwrap_or(n);
+                let color = match chars[arrow] {
+                    '→' => theme.accent,
+                    '←' => theme.ok,
+                    _ if line.contains("OK (0)") => theme.ok,
+                    _ => theme.err,
+                };
+                out.push((
+                    arrow,
+                    what_end,
+                    theme.fg(color).add_modifier(Modifier::BOLD),
+                ));
+                let rest_start = (what_end..n).find(|&j| chars[j] != ' ').unwrap_or(n);
+                let rest: String = chars[rest_start..].iter().collect();
+                if rest.starts_with('{') || rest.starts_with('[') || rest.starts_with('(') {
+                    for (s0, e0, st) in crate::editor::json_line_spans(&rest, theme) {
+                        out.push((rest_start + s0, rest_start + e0, st));
+                    }
+                }
+            } else if let Some(eq) = find(0, " = ")
+                && line.starts_with("  ")
+            {
+                out.push((2, eq, theme.fg(theme.json_key)));
+            } else if line.starts_with("unary:")
+                || line.contains("stream:") && !line.starts_with(' ')
+            {
+                out.push((0, n, heading));
+            }
+        }
+        Syntax::Help => {
+            if line.starts_with("── ") {
+                out.push((0, n, theme.accent().add_modifier(Modifier::BOLD)));
+            } else if line.starts_with("  ") && n > 2 {
+                let end = find(2, "  ").unwrap_or(n);
+                out.push((2, end, theme.accent().add_modifier(Modifier::BOLD)));
+            }
+        }
+    }
+    out.sort_by_key(|s| s.0);
+    out
+}
+
+fn is_bar(c: char) -> bool {
+    matches!(c, '█' | '▉' | '▊' | '▋' | '▌' | '▍' | '▎' | '▏' | '▐' | '▕')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syntax_colors() {
+        let t = Theme::dusk();
+        let s = syntax_spans(Syntax::Headers, "HTTP/1.1 404 Not Found", &t);
+        assert_eq!(s[1].2.fg, Some(t.warn));
+        let s = syntax_spans(Syntax::Headers, "content-type: application/json", &t);
+        assert_eq!(s[0], (0, 12, t.fg(t.json_key)));
+        let s = syntax_spans(Syntax::Headers, "POST http://x/y", &t);
+        assert_eq!(s[0].2.fg, Some(t.post));
+        let s = syntax_spans(Syntax::Timing, "TCP connect   0.1 ms  ··██▍···", &t);
+        assert!(s.iter().any(|(_, _, st)| st.fg == Some(t.phase_connect)));
+        let s = syntax_spans(
+            Syntax::Messages,
+            "  ✗ FAIL  status == 200   (actual: 404)",
+            &t,
+        );
+        assert_eq!(s[0].2.fg, Some(t.err));
+        let s = syntax_spans(
+            Syntax::Messages,
+            "12:00:00.000 +   0.001s  ← received  (2 B) {\"a\":1}",
+            &t,
+        );
+        assert!(s.iter().any(|(_, _, st)| st.fg == Some(t.ok)));
+        assert!(s.iter().any(|(_, _, st)| st.fg == Some(t.json_key)));
+        let s = syntax_spans(Syntax::Help, "  Ctrl+W x         Cancel", &t);
+        assert_eq!((s[0].0, s[0].1), (2, 10));
+        // Spans never overlap.
+        for w in s.windows(2) {
+            assert!(w[0].1 <= w[1].0);
+        }
+    }
 
     #[test]
     fn stream_log_events_continue_under_their_message() {

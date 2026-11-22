@@ -46,8 +46,11 @@ impl KeySpec {
 pub struct UiConfig {
     /// Vim-style modal editing and navigation.
     pub vim_mode: bool,
-    /// `auto`, `ansi`, `dusk`, `daylight`, `contrast`.
+    /// A built-in theme (`auto`, `dusk`, `daylight`, `ember`, `linen`,
+    /// `contrast`, `ansi`) or a user theme from a `themes/` directory.
     pub theme: String,
+    /// `unicode` (works with any font) or `nerd` (Nerd Font icons).
+    pub icons: String,
     /// `left` or `right`.
     pub sidebar: String,
     pub mouse: bool,
@@ -60,6 +63,7 @@ impl Default for UiConfig {
         Self {
             vim_mode: false,
             theme: "auto".into(),
+            icons: "unicode".into(),
             sidebar: "left".into(),
             mouse: true,
             confirm_quit: true,

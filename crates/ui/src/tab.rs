@@ -267,7 +267,9 @@ impl Editors {
         let mut e = Editors {
             kind: Kind::Http,
             method: "GET".into(),
-            url: TextEditor::single("").with_placeholder("https://…  or paste a curl command"),
+            url: TextEditor::single("")
+                .with_placeholder("https://…  or paste a curl command")
+                .with_highlight(Highlight::Url),
             params: Table::kv("Name", "Value"),
             headers: Table::kv("Header", "Value"),
             body_kind: BodyKind::None,

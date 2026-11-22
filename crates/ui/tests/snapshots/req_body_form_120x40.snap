@@ -2,30 +2,15 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- DELETE delete user ● × │ +                                                                   env: local ▾  F1 all keys
-╭  Requests  History ────────╮┏ Request · Users/delete user.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│▸ Orders/                   │┃ DELETE ▾ {{base_url}}/users/42                                                    Send ┃
-│▾ Users/                    │┃ Params │ Headers │ Body• │ Auth │ Scripts │ Options                                    ┃
-││   POST  create user       │┃Body type      Form URL-encoded ▾  Enter or Space to change                             ┃
-││   DEL   delete user       │┃    Field                            Value                                              ┃
-││   GET   list users        │┃[x] username                        │ana                                              │✕┃
-│  GRPC  echo unary          │┃[ ] debug                           │1                                                │✕┃
-│  GET   health              │┃ +  add field                       │                                                   ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
-│                            ││ Body │ Headers │ Timing │ Results                                                      │
-│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
-│                            ││                                                                                        │
-│                            ││ The response appears here.                                                             │
+ sendito   DEL delete user ● ×    +                                                            ● local ▾   F1  all keys
+╭ Requests  History ─────────╮  DELETE ▾  ▍{{base_url}}/users/42                                                  Send
+│▸ Orders/                   │╭─ Params  Headers  Body•  Auth  Scripts  Options ───────────────── Users › delete user ─╮
+│▾ Users/                    ││ Body type      Form URL-encoded ▾  Enter or Space to change                            │
+│├ POST  create user         ││     Field                           Value                                              │
+│├ DEL   delete user         ││ [✓] username                       │ana                                             │✕ │
+│└ GET   list users          ││ [ ] debug                          │1                                               │✕ │
+│  GRPC  echo unary          ││  +  add field                      │                                                   │
+│  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -36,9 +21,24 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 all keys
- env: local │ ● 1 unsaved
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                            ││                                                                                        │
+│                            ││                               The response appears here.                               │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+  Ctrl+Enter/F5  send   Ctrl+S  save   Ctrl+P  commands   F1  all keys
+ demo  ● 1 unsaved

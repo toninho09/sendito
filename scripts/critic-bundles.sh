@@ -117,8 +117,12 @@ would make it clear.
 - Scripts, assertions and extracted variables (Results tab).
 - gRPC: schema from reflection or .proto files, a message template, streaming with a
   Log tab (message log, legend pinned above it), several messages per stream, end of stream.
-- Optional vim mode, mouse support (click, drag in the tree, drag pane borders),
-  two themes, sidebar on either side, pane zoom.
+- Optional vim mode, mouse support (click, hover, drag in the tree, drag pane
+  borders), sidebar on either side, pane zoom.
+- Seven themes (auto, dusk, daylight, ember, linen, contrast, ansi) plus user themes
+  read from TOML files (:theme NAME, :theme reload, `sendito theme list|print`).
+- Optional Nerd Font icons (Settings > Icons); the default icon set works with any
+  font.
 - Response tools: pretty / raw / hex views, JSON folding, search, wrap, save body;
   a DNS / connect / TLS / first-byte timing breakdown.
 - Dialog choice rows: Left/Right cycle the value and Space opens the list; Enter
@@ -130,8 +134,15 @@ ask for the opposite choice.
 - In dialogs, Enter always confirms (Ctrl+S too). On a choice row, Left/Right
   change the value and Space opens the list. The button names the action, e.g.
   "Save (Enter)".
+- Layout: a top bar (name, request tabs, +, environment chip colored by name,
+  "F1 all keys"), a URL strip above both panes (method chip, URL, Send), and pane
+  tabs drawn in each pane's top border with the request's folder path on the right.
+  Details ("✓ JSON", "Ln, Col", view mode, position) and scrollbars are in the
+  bottom and right borders. The focused pane has a rounded accent border (heavy only
+  in the contrast theme and without color). Dialogs open over a dimmed screen with a
+  shadow (without color the screen is cleared instead).
 - An unsaved new tab keeps a stable name ("untitled", "untitled 2"); its URL shows
-  in the URL bar, not in the tab name.
+  in the URL strip, not in the tab name.
 - History rows show method, status and name, then the URL path (without the
   {{base}} variable or host) with the time (and the environment when the sidebar
   is wide enough). The full request opens with Enter.
@@ -142,10 +153,16 @@ ask for the opposite choice.
 - The hint row lists the keys for the focused pane by priority. When they do not
   fit, the rest are reached with "F1 all keys", which is always shown.
 - The gRPC message log is the "Log" tab for every call kind, unary included.
-- The status line's "last request:" field always describes the last request
-  sent. Other actions report in the message area on the right.
-- Transient messages (copied, saved, kept, resent ...) appear in the message area
-  to the right of the status fields; the fields themselves are separated by "|".
+- The status line shows segments without separators: vim mode, unsaved count,
+  undefined variables and a message. The environment is only shown in the top bar.
+  The last request's status, time and size appear in the status line only while
+  the Response pane is hidden (otherwise they are in the Response border).
+- Transient messages (copied, saved, kept, resent ...) appear as a chip with an
+  icon at the right of the status line.
+- The start screen (no request open) shows the wordmark, what the collection
+  holds, the keys to start and the most recent requests.
+- Help lists every key; on screens 180 columns wide or more it reads in two
+  columns (the right column continues the left one).
 - Values derived from a file (multipart filename and content type) are shown in
   italics and marked "(auto)".
 
@@ -153,7 +170,9 @@ recordings/NN-flow/ - numbered frames (00.png, 01.png, ...) of a scripted sessio
                       120x40 terminal. The yellow strip under each frame is a caption
                       describing the step; it is not part of the application.
 screenshots/        - SIZE-THEME-VIEW.png: the application at 120x40 and 200x60 cells in
-                      the dark ("dusk") and light ("daylight") themes.
+                      the dark ("dusk") and light ("daylight") themes, plus a few views
+                      at 120x40 in ember, linen, contrast, ansi and dusk with Nerd Font
+                      icons ("dusk-nerd").
 README.md, KEYMAP.md - the documentation shipped with the application.
 TXT
 echo "bundles in $OUT"

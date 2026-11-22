@@ -82,7 +82,8 @@ fn flow_create_folder_and_request() {
     h.key("ctrl+s");
     let text = std::fs::read_to_string(&file).must();
     assert!(text.contains("url = \"{{base_url}}/charges\""), "{text}");
-    assert!(!h.screen().contains(" ● "));
+    assert!(h.app.tabs.iter().all(|t| !t.dirty()));
+    assert!(!h.screen().contains("unsaved"));
     // Rename and duplicate from the tree.
     h.key("ctrl+w h");
     h.app.tree.select_rel("Payments/charge card.toml");
@@ -196,11 +197,11 @@ fn flow_multipart_upload() {
 fn flow_switch_env() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
-    assert!(h.screen().contains("env: local"));
+    assert!(h.screen().contains("local ▾"));
     h.key("f4");
     h.type_text("stag");
     h.key("enter");
-    assert!(h.screen().contains("env: staging"));
+    assert!(h.screen().contains("staging ▾"));
     // Undefined variables are flagged before sending.
     open(&mut h, "get order");
     h.key("f5");
@@ -213,7 +214,7 @@ fn flow_switch_env() {
     h.key("ctrl+p");
     h.type_text(":env local");
     h.key("enter");
-    assert!(h.screen().contains("env: local"));
+    assert!(h.screen().contains("local ▾"));
     // Env editor shows sources, masks secrets.
     h.key("ctrl+w V");
     let sc = h.screen();
@@ -370,7 +371,8 @@ fn flow_history_resend() {
         caps[0].header("authorization").as_deref(),
         Some("Bearer s3cr3t-token")
     );
-    assert!(h.screen().contains("from history ("));
+    let sc = h.screen();
+    assert!(sc.contains("from history ("), "{sc}");
     // The entry keeps the template, and the resent tab has no unsaved edits.
     let t = &h.app.tabs[h.app.active];
     assert_eq!(t.ed.url.text(), "{{base_url}}/users");
@@ -402,14 +404,15 @@ fn flow_vim_mode_editing() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
     h.key("ctrl+w ,");
-    h.key("enter esc");
+    // Vim mode is the third setting (after Theme and Icons).
+    h.key("down down enter esc");
     assert!(h.app.vim);
     open(&mut h, "delete user");
     let sc = h.screen();
-    assert!(sc.contains("-- NORMAL --"), "{sc}");
+    assert!(sc.contains(" NORMAL "), "{sc}");
     // Append to the URL in vim: A, type, Esc.
     h.key("A");
-    assert!(h.screen().contains("-- INSERT --"));
+    assert!(h.screen().contains(" INSERT "));
     h.type_text("/v2");
     h.key("esc");
     assert_eq!(
@@ -456,8 +459,9 @@ fn flow_mouse_drag_in_tree() {
     h.click(x, y);
     let pos = h.find("health").must();
     h.double_click(pos.0 + 1, pos.1);
-    assert!(h.screen().contains("Request · Orders/health.toml"));
-    let send = h.find(" Send ").must();
+    let sc = h.screen();
+    assert!(sc.contains("Orders › health"), "{sc}");
+    let send = h.find(" Send").must();
     h.click(send.0 + 1, send.1);
     h.wait_idle(10);
     assert!(h.screen().contains("200 OK"));
@@ -498,4 +502,84 @@ fn flow_ctrl_s_confirms_a_dialog_from_a_choice_row() {
     h.key("ctrl+s");
     assert!(h.app.overlay.is_none());
     assert!(h.screen().contains("Billing/"));
+}
+
+/// User themes load from the collection, `:theme reload` reads them again,
+/// and the redesigned frame shows focus and dialogs with color.
+#[test]
+fn flow_themes_and_style() {
+    use ratatui::style::Color;
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        let themes = d.join(".sendito/themes");
+        std::fs::create_dir_all(&themes).must();
+        std::fs::write(
+            themes.join("harbor.toml"),
+            "extends = \"dusk\"\n[colors]\naccent = \"#336699\"\nborder_focus = \"#336699\"\n",
+        )
+        .must();
+        std::fs::write(d.join(".sendito/config.toml"), "[ui]\ntheme = \"harbor\"\n").must();
+    });
+    let rgb = |c: Color| sendito_ui::theme::to_rgb(c);
+    assert_eq!(h.app.project.config.ui.theme, "harbor");
+    assert_eq!(rgb(h.app.theme.accent), rgb(Color::Rgb(0x33, 0x66, 0x99)));
+    assert!(h.app.themes.names().contains(&"harbor".to_string()));
+    // The focused pane's border takes the focus color.
+    h.key("ctrl+w h");
+    h.draw();
+    let side = h.app.areas.sidebar;
+    let cell = h.term.backend().buffer()[(side.x, side.y + 2)].clone();
+    assert_eq!(cell.fg, h.app.theme.border_focus);
+    // Edit the file and reload: the new color applies at once.
+    std::fs::write(
+        h.dir.path().join(".sendito/themes/harbor.toml"),
+        "extends = \"daylight\"\n[colors]\naccent = \"#004400\"\n",
+    )
+    .must();
+    h.key("ctrl+p");
+    h.type_text(":theme reload");
+    h.key("enter");
+    assert!(h.app.theme.light);
+    assert_eq!(rgb(h.app.theme.accent), rgb(Color::Rgb(0, 0x44, 0)));
+    // A dialog fades the screen behind it instead of clearing it.
+    h.key("ctrl+p");
+    h.draw();
+    let behind = h.term.backend().buffer()[(side.x + 3, side.y + 1)].clone();
+    assert_eq!(behind.bg, h.app.theme.backdrop);
+    assert_ne!(behind.symbol(), " ");
+    h.key("esc");
+    // :theme switches to a built-in theme.
+    h.key("ctrl+p");
+    h.type_text(":theme ember");
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "ember");
+    assert_eq!(&*h.app.theme.name, "ember");
+}
+
+#[test]
+fn flow_help_two_columns() {
+    use sendito_ui::overlay::Overlay;
+    let cursor = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Help { viewer, .. }) => viewer.cursor_line(),
+        _ => usize::MAX,
+    };
+    // One column: the line is below the first page.
+    let mut h = Harness::new(120, 40);
+    h.key("f1");
+    assert!(h.find("Move down").is_none());
+    // Wide: the right column continues the left one, and a click there
+    // selects the line it shows.
+    let mut h = Harness::new(200, 60);
+    h.key("f1");
+    let (x, y) = h.find("Move down").must();
+    assert!(x > 100, "{x}");
+    h.click(x, y);
+    let wide = cursor(&h);
+    assert_ne!(wide, usize::MAX);
+    assert!(wide > 40, "{wide}");
+    let line = h.screen().lines().nth(y as usize).unwrap_or("").to_string();
+    assert!(line.contains("Move down"));
+    // PgDn moves by both columns at once.
+    h.key("pagedown");
+    assert!(cursor(&h) > wide);
 }

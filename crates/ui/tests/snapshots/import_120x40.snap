@@ -2,43 +2,43 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-
-
-
-
-
-
-
-
-
-
-
-          ┏ Import ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-          ┃ Paste a curl command, or enter the path of a Postman v2.1 collection (.json).                    ┃
-          ┃ Relative paths: the folder where you started Sendito, then the collection.                       ┃
-          ┃ Enter = new line; F5 / Ctrl+S imports.                                                           ┃
-          ┃   curl https://…   or   path/to/collection.postman_collection.json                               ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃                                                                                                  ┃
-          ┃  Import (F5 / Ctrl+S)    Cancel (Esc)                                                            ┃
-          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
-
-
-
-
-
-
-
-
-
- F5 / Ctrl+S import  Esc cancel
- env: local
+ sendito   +                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                        │
+│▸ Users/                    ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
+│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
+│         ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮         │
+│         │                                                                                                  │         │
+│         │  Paste a curl command, or enter the path of a Postman v2.1 collection (.json).                   │         │
+│         │  Relative paths: the folder where you started Sendito, then the collection.                      │         │
+│         │  Enter = new line; F5 / Ctrl+S imports.                                                          │         │
+│         │                                                                                                  │         │
+│         │  ▍  curl https://…   or   path/to/collection.postman_collection.json                             │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │                                                                                                  │         │
+│         │   Import (F5 / Ctrl+S)    Cancel (Esc)                                                           │         │
+│         ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
+│                                                                                                                      │
+│                            ││                                                                                        │
+│                            ││         F7  all history                                                                │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+  F5 / Ctrl+S  import   Esc  cancel
+ demo

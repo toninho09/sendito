@@ -65,6 +65,8 @@ pub enum Hit {
     TreeRow(usize),
     TreeFilter,
     HistoryRow(usize),
+    /// A recent request on the start screen.
+    RecentRow(usize),
     Bar(usize),
     ReqTab(usize),
     ReqField(usize),
@@ -187,6 +189,13 @@ pub struct Areas {
 pub struct App {
     pub project: Project,
     pub theme: Theme,
+    /// Built-in and user themes.
+    pub themes: crate::theme::Registry,
+    pub icons: crate::icons::Icons,
+    /// Advances while a request runs (spinners); stays 0 in tests.
+    pub anim_frame: u64,
+    /// Where the mouse pointer is, for hover highlights.
+    pub hover: Option<(u16, u16)>,
     pub keymap: Keymap,
     pub vim: bool,
     pub tree: TreeState,
@@ -233,6 +242,11 @@ pub struct App {
     pub cursor: Option<(u16, u16)>,
 }
 
+/// `NO_COLOR` is set (and not empty): no colors at all.
+pub fn no_color() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+}
+
 fn vim_label(e: &TextEditor) -> VimMode {
     e.vim
 }
@@ -242,10 +256,22 @@ impl App {
         let mut warnings = project.warnings.clone();
         let (keymap, kw) = Keymap::defaults().with_overrides(&project.config.keymap);
         warnings.extend(kw);
-        let theme = if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        let (files, file_warnings) = sendito_store::themes::discover(&project.theme_dirs);
+        let themes = crate::theme::Registry::from_files(files, file_warnings);
+        warnings.extend(themes.warnings.iter().cloned());
+        let theme_name = &project.config.ui.theme;
+        if !themes.is_known(theme_name) {
+            warnings.push(format!("unknown theme \"{theme_name}\"; using auto"));
+        } else if !themes.notes(theme_name).is_empty() {
+            warnings.push(format!(
+                "theme {theme_name}: {}",
+                themes.notes(theme_name).join("; ")
+            ));
+        }
+        let theme = if no_color() {
             Theme::mono()
         } else {
-            Theme::by_name(&project.config.ui.theme)
+            themes.theme(theme_name)
         };
         let vim = project.config.ui.vim_mode;
         let root = project
@@ -267,9 +293,14 @@ impl App {
             .collect();
         let names = runner::names_scope(&project.envs, active_env.as_deref(), &runtime);
         let (tx, rx) = mpsc::unbounded_channel();
+        let icons = crate::icons::Icons::by_name(&project.config.ui.icons);
         let mut app = App {
             project,
             theme,
+            themes,
+            icons,
+            anim_frame: 0,
+            hover: None,
             keymap,
             vim,
             tree,
@@ -315,6 +346,10 @@ impl App {
         app.restore_tabs(&session);
         if app.tabs.is_empty() {
             app.focus = Focus::Sidebar;
+            // The start screen lists the most recent requests.
+            if app.project.config.history.enabled {
+                app.load_history();
+            }
         }
         if !warnings.is_empty() {
             app.set_status(warnings.join(" · "), StatusKind::Warn);
@@ -434,6 +469,33 @@ impl App {
             if at.elapsed() > Duration::from_secs(ttl) {
                 self.status = None;
             }
+        }
+    }
+
+    /// The vim mode of the editor that has the keyboard, if one does.
+    pub fn focused_vim_mode(&mut self) -> Option<VimMode> {
+        let focus = self.focus;
+        let tab = self.tabs.get_mut(self.active)?;
+        match focus {
+            Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(tab.ed.url.vim),
+            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(tab.ed.target.vim),
+            Focus::ReqBody => match tab.current_field() {
+                Some(f) if f.is_table() => tab
+                    .ed
+                    .table_mut(f)
+                    .and_then(|t| t.editor_mut().map(|e| e.vim)),
+                Some(f) => tab.ed.text_mut(f).map(|e| e.vim),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The terminal window title: the open request and the collection.
+    pub fn window_title(&self) -> String {
+        match self.tab() {
+            Some(t) => format!("sendito · {} · {}", t.title(), self.project.name),
+            None => format!("sendito · {}", self.project.name),
         }
     }
 
@@ -2977,6 +3039,7 @@ impl App {
                 }
             }
             "envs" => self.open_env_editor(),
+            "theme" => self.theme_command(arg),
             "w" | "write" | "save" => self.save(),
             "saveas" => {
                 if let Some(t) = self.tab() {
@@ -3051,6 +3114,7 @@ impl App {
                 }
             }
             SettingId::Theme => ui.theme.clone(),
+            SettingId::Icons => ui.icons.clone(),
             SettingId::Sidebar => ui.sidebar.clone(),
             SettingId::Mouse => {
                 if ui.mouse {
@@ -3076,6 +3140,77 @@ impl App {
         }
     }
 
+    /// Switches to theme `name` (not saved to the config).
+    pub fn apply_theme(&mut self, name: &str) {
+        self.project.config.ui.theme = name.to_string();
+        if !no_color() {
+            self.theme = self.themes.theme(name);
+        }
+    }
+
+    /// Reads the theme files again (`:theme reload`).
+    pub fn reload_themes(&mut self) {
+        let (files, warnings) = sendito_store::themes::discover(&self.project.theme_dirs);
+        self.themes = crate::theme::Registry::from_files(files, warnings);
+        let name = self.project.config.ui.theme.clone();
+        self.apply_theme(&name);
+        let mut problems: Vec<String> = self.themes.warnings.clone();
+        problems.extend(self.themes.notes(&name).iter().cloned());
+        let n = self.themes.names().len() - crate::theme::BUILTIN.len();
+        if problems.is_empty() {
+            self.set_status(
+                format!("themes reloaded: {n} of your own, using {name}"),
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                format!("themes reloaded: {}", problems.join("; ")),
+                StatusKind::Warn,
+            );
+        }
+    }
+
+    /// `:theme [name|reload]`.
+    fn theme_command(&mut self, arg: &str) {
+        let names = self.themes.names();
+        if arg.is_empty() {
+            self.set_status(
+                format!(
+                    "theme: {} (available: {})",
+                    self.project.config.ui.theme,
+                    names.join(", ")
+                ),
+                StatusKind::Info,
+            );
+        } else if arg == "reload" {
+            self.reload_themes();
+        } else if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(arg)).cloned() {
+            self.apply_theme(&n);
+            if let Some(p) = self.project.global_config.clone()
+                && let Err(e) = sendito_store::config::set_value(
+                    &p,
+                    "ui",
+                    "theme",
+                    toml::Value::String(n.clone()),
+                )
+            {
+                self.set_status(format!("could not write settings: {e}"), StatusKind::Error);
+                return;
+            }
+            let notes = self.themes.notes(&n);
+            if notes.is_empty() {
+                self.set_status(format!("theme: {n}"), StatusKind::Ok);
+            } else {
+                self.set_status(format!("theme {n}: {}", notes.join("; ")), StatusKind::Warn);
+            }
+        } else {
+            self.set_status(
+                format!("no theme named \"{arg}\" (available: {})", names.join(", ")),
+                StatusKind::Error,
+            );
+        }
+    }
+
     pub fn change_setting(&mut self, id: SettingId, dir: isize) {
         let (section, key, value) = match id {
             SettingId::Vim => {
@@ -3088,17 +3223,20 @@ impl App {
                 ("ui", "vim_mode", toml::Value::Boolean(self.vim))
             }
             SettingId::Theme => {
-                let names = crate::theme::THEME_NAMES;
+                let names = self.themes.names();
                 let i = names
                     .iter()
                     .position(|n| *n == self.project.config.ui.theme)
                     .unwrap_or(0) as isize;
-                let next = names[((i + dir).rem_euclid(names.len() as isize)) as usize];
-                self.project.config.ui.theme = next.to_string();
-                if std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) {
-                    self.theme = Theme::by_name(next);
-                }
-                ("ui", "theme", toml::Value::String(next.into()))
+                let next = names[((i + dir).rem_euclid(names.len() as isize)) as usize].clone();
+                self.apply_theme(&next);
+                ("ui", "theme", toml::Value::String(next))
+            }
+            SettingId::Icons => {
+                let v = if self.icons.nerd { "unicode" } else { "nerd" };
+                self.project.config.ui.icons = v.into();
+                self.icons = crate::icons::Icons::by_name(v);
+                ("ui", "icons", toml::Value::String(v.into()))
             }
             SettingId::Sidebar => {
                 let v = if self.project.config.ui.sidebar == "right" {
@@ -3547,21 +3685,54 @@ fn ms(d: Option<Duration>) -> String {
         .unwrap_or_else(|| "—".into())
 }
 
-fn bar(d: Option<Duration>, total: Duration, width: usize) -> String {
-    let Some(d) = d else { return String::new() };
-    let frac = if total.is_zero() {
-        0.0
-    } else {
-        d.as_secs_f64() / total.as_secs_f64()
-    };
-    let n = ((frac * width as f64).round() as usize).max(if d.is_zero() { 0 } else { 1 });
-    "█".repeat(n.min(width))
+/// Width of the timing waterfall, in cells.
+const TRACK: usize = 32;
+
+/// One phase on the waterfall: dots for the timeline, blocks from `start`
+/// for `len`, with eighth-of-a-cell precision at the end.
+fn waterfall(start: Duration, len: Duration, total: Duration) -> String {
+    let t = total.as_secs_f64();
+    if t <= 0.0 {
+        return "·".repeat(TRACK);
+    }
+    let scale = (TRACK * 8) as f64 / t;
+    let s8 = ((start.as_secs_f64() * scale).round() as usize).min(TRACK * 8 - 1);
+    let mut e8 = (((start + len).as_secs_f64() * scale).round() as usize).min(TRACK * 8);
+    if !len.is_zero() && e8 <= s8 {
+        e8 = s8 + 1;
+    }
+    const LEFT: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+    (0..TRACK)
+        .map(|cell| {
+            let (c0, c1) = (cell * 8, cell * 8 + 8);
+            let (from, to) = (s8.max(c0), e8.min(c1));
+            if to <= from {
+                '·'
+            } else if from == c0 && to == c1 {
+                '█'
+            } else if from == c0 {
+                LEFT[to - c0 - 1]
+            } else if to == c1 {
+                // Starts inside the cell: right-aligned blocks only come in halves.
+                if c1 - from >= 6 {
+                    '█'
+                } else if c1 - from >= 3 {
+                    '▐'
+                } else {
+                    '▕'
+                }
+            } else {
+                '▎'
+            }
+        })
+        .collect()
 }
 
 pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
     let t = r.timing;
     let total = t.total;
-    // A phase that did not happen says why, on its own row.
+    // A phase that did not happen says why, on its own row. Phases follow
+    // each other, so each starts where the previous one ended.
     let rows = [
         ("DNS lookup", t.dns, "skipped (IP address)"),
         ("TCP connect", t.connect, "skipped (connection reused)"),
@@ -3569,22 +3740,28 @@ pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
         ("Waiting for first byte", Some(t.ttfb), ""),
         ("Download", Some(t.download), ""),
     ];
-    let mut s = String::new();
+    let total_label = ms(Some(total));
+    let scale = format!(
+        "0{}{}",
+        " ".repeat(TRACK.saturating_sub(1 + total_label.trim().len())),
+        total_label.trim()
+    );
+    let mut s = format!("{:<22} {:>9}  {scale}\n", "Phase", "Time");
+    let mut at = Duration::ZERO;
     for (label, d, why) in rows {
         match d {
-            Some(_) => s.push_str(&format!(
-                "{label:<22} {:>9}  {}\n",
-                ms(d),
-                bar(d, total, 20)
-            )),
+            Some(d) => {
+                s.push_str(&format!(
+                    "{label:<22} {:>9}  {}\n",
+                    ms(Some(d)),
+                    waterfall(at, d, total)
+                ));
+                at += d;
+            }
             None => s.push_str(&format!("{label:<22} {:>9}  {why}\n", "—")),
         }
     }
-    s.push_str(&format!(
-        "{:<22} {:>9}  (bars: each phase's share of the total)\n\n",
-        "Total",
-        ms(Some(total))
-    ));
+    s.push_str(&format!("{:<22} {:>9}\n\n", "Total", total_label));
     s.push_str(&format!("Protocol        {}\n", r.version));
     if let Some(a) = r.remote_addr {
         s.push_str(&format!("Remote address  {a}\n"));
@@ -3856,9 +4033,20 @@ fn help_text(km: &Keymap, vim: bool) -> String {
         }
         s.push_str(&format!("  {:<28} {}\n", keys, a.description()));
     }
-    s.push_str("\n── Fixed keys ──\n");
+    // Fixed keys, one section per place they work in.
+    let mut place = "";
+    let kw = crate::keymap::FIXED_KEYS
+        .iter()
+        .map(|(_, k, _)| k.chars().count())
+        .max()
+        .unwrap_or(28)
+        .max(28);
     for (w, k, d) in crate::keymap::FIXED_KEYS {
-        s.push_str(&format!("  {:<16} {:<44} {d}\n", w, k));
+        if *w != place {
+            place = w;
+            s.push_str(&format!("\n── Fixed keys · {w} ──\n"));
+        }
+        s.push_str(&format!("  {k:<kw$}  {d}\n"));
     }
     s.push_str("\n── Symbols ──\n");
     for (sym, what) in crate::keymap::SYMBOLS {
@@ -4674,6 +4862,7 @@ impl App {
 
     pub fn on_mouse(&mut self, m: MouseEvent) {
         let (x, y) = (m.column, m.row);
+        self.hover = Some((x, y));
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // A click starts a new action: an old message no longer applies.
@@ -4907,6 +5096,7 @@ impl App {
                     self.open_history(i, false);
                 }
             }
+            Hit::RecentRow(i) => self.open_history(i, false),
             Hit::Bar(p) => {
                 self.focus = Focus::Bar(p);
                 let kind = self.tab().map(|t| t.ed.kind);
@@ -5164,9 +5354,9 @@ impl App {
                 }
                 keep = false;
             }
-            (Overlay::Help { viewer, .. }, OverlayHit::Item(_)) => {
-                viewer.click(y.saturating_sub(rect.y))
-            }
+            // The right column of a two-column Help continues the left one.
+            (Overlay::Help { viewer, .. }, OverlayHit::Item(off)) => viewer
+                .click((y.saturating_sub(rect.y) as usize + off).min(u16::MAX as usize) as u16),
             _ => {
                 let _ = double;
             }

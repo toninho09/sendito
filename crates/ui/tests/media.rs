@@ -8,7 +8,6 @@ use std::path::PathBuf;
 
 use common::{Harness, Must};
 use sendito_testkit::{grpc_echo, http_echo};
-use sendito_ui::theme::Theme;
 
 fn out_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/media")
@@ -85,10 +84,8 @@ fn servers() -> Servers {
 fn harness(s: &Servers, w: u16, h: u16, theme: &str) -> Harness {
     let (hu, gt) = (s.http.url(), s.grpc.target());
     let mut h = Harness::with(w, h, |d| common::demo_collection(d, &hu, &gt));
-    h.app.theme = match theme {
-        "daylight" => Theme::daylight(),
-        _ => Theme::dusk(),
-    };
+    // Full color whatever the terminal running the test supports.
+    h.app.theme = sendito_ui::theme::Registry::builtin().theme_full(theme);
     h.app.set_env(Some("local".into()));
     h.app.status = None;
     h
@@ -145,6 +142,38 @@ fn screenshots() {
             h.key("esc");
             r.save();
         }
+    }
+    // A gallery: the same screens in the other built-in themes and with
+    // Nerd Font icons.
+    for (theme, nerd) in [
+        ("ember", false),
+        ("linen", false),
+        ("contrast", false),
+        ("ansi", false),
+        ("dusk", true),
+    ] {
+        let name = if nerd {
+            format!("screens-{theme}-120x40-nerd")
+        } else {
+            format!("screens-{theme}-120x40")
+        };
+        let mut r = Recorder::new(&name);
+        let mut h = harness(&s, 120, 40, theme);
+        if nerd {
+            h.app.icons = sendito_ui::icons::Icons::nerd();
+        }
+        r.shot(&mut h, "welcome", 0);
+        open(&mut h, "create user");
+        h.key("f5");
+        h.wait_idle(10);
+        h.key("ctrl+w k alt+3 enter down");
+        r.shot(&mut h, "request-body-and-response", 0);
+        h.key("ctrl+w j alt+3");
+        r.shot(&mut h, "timing", 0);
+        h.key("ctrl+p");
+        r.shot(&mut h, "palette", 0);
+        h.key("esc");
+        r.save();
     }
 }
 
@@ -615,7 +644,7 @@ fn recordings() {
     let pos = h.find("health").must();
     h.double_click(pos.0 + 1, pos.1);
     r.shot(&mut h, "Double-click opens the request", 1200);
-    let send = h.find(" Send ").must();
+    let send = h.find(" Send").must();
     h.click(send.0 + 1, send.1);
     h.wait_idle(10);
     r.shot(&mut h, "Click Send", 1200);

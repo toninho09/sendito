@@ -2,7 +2,7 @@ method: /sendito.test.v1.Echo/Unary
 metadata received:
   te: trailers
   content-type: application/grpc
-  user-agent: sendito/0.1.0 tonic/0.14.9
+  user-agent: sendito/0.2.0 tonic/0.14.9
 messages received: 1
   json: {"fail_code":7,"fail_message":"not allowed","text":"fail"}
   protobuf (base64): CgRmYWls0AIH2gILbm90IGFsbG93ZWQ=

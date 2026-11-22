@@ -277,7 +277,9 @@ ignore = ["target", "node_modules", "vendor", "dist", "build"]
 
 [ui]
 vim_mode = false
-theme = "auto"           # auto | ansi | dusk | daylight | contrast
+theme = "auto"           # auto | dusk | daylight | ember | linen | contrast | ansi,
+                         # or a theme file of yours (docs/THEMES.md)
+icons = "unicode"        # unicode | nerd (Nerd Font icons)
 sidebar = "left"         # left | right
 mouse = true
 confirm_quit = true
@@ -300,6 +302,10 @@ send = ["f9", "ctrl+w e"]
 `NO_COLOR` (any non-empty value) disables colors regardless of the theme.
 `auto` picks `daylight` when `COLORFGBG` reports a light background, else `dusk`.
 Terminals without 24-bit color get the nearest 256-color palette.
+
+Theme files are `*.toml` in `themes/` next to the global config file and in
+`<collection>/.sendito/themes/` (the collection's wins for the same name). Their
+format and every color token are in [docs/THEMES.md](docs/THEMES.md).
 
 ## Local state files
 

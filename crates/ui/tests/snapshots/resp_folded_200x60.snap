@@ -2,13 +2,13 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- GET list users × │ +                                                                                                                                                         env: local ▾  F1 all keys
-╭  Requests  History ────────╮╭ Request · Users/list users.toml ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││ GET    ▾ {{base_url}}/users                                                                                                                                       Send │
-│▾ Users/                    ││ Params (1) │ Headers (1) │ Body │ Auth• │ Scripts │ Options                                                                                                            │
-││   POST  create user       ││    Name                                                             Value                                                                                              │
-││   DEL   delete user       ││[x] page                                                            │1                                                                                                │✕│
-││   GET   list users        ││ +  add name                                                        │                                                                                                   │
+ sendito   GET list users ×    +                                                                                                                                               ● local ▾   F1  all keys
+╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                                     Send
+│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────── Users › list users ─╮
+│▾ Users/                    ││     Name                                                            Value                                                                                              │
+│├ POST  create user         ││ [✓] page                                                           │1                                                                                               │✕ │
+│├ DEL   delete user         ││  +  add name                                                       │                                                                                                   │
+│└ GET   list users          ││                                                                                                                                                                        │
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -30,35 +30,35 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 │                            │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-│                            │┏ Response ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 200 OK  14 ms 219 B ━┓
-│                            │┃ Body │ Headers │ Timing │ Results 2/2 ✓                                                                                                               Pretty  Raw  Hex ┃
-│                            │┃▾ {                                                                                                                                                                     ┃
-│                            │┃▸   "items": [ … 19 lines                                                                                                                                               ┃
-│                            │┃    "count": 2,                                                                                                                                                         ┃
-│                            │┃    "next": "/users?page=2"                                                                                                                                             ┃
-│                            │┃  }                                                                                                                                                                     ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                              line 2/24 ┃
-╰────────────────────────────╯┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- Alt+1-4 tabs  y copy  p/r/x view  / search  s save body  Enter fold  w wrap  Ctrl+P commands  F1 all keys
- env: local │ last request: 200 OK │ 14 ms │ 219 B
+│                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────────────────────────────────────────────────────────────────────────────────────── 200 OK  14 ms 219 B ─╮
+│                            ││  1 ▾ {                                                                                                                                                                 │
+│                            ││  2 ▸   "items": [ … 19 lines                                                                                                                                           │
+│                            ││ 22     "count": 2,                                                                                                                                                     │
+│                            ││ 23     "next": "/users?page=2"                                                                                                                                         │
+│                            ││ 24   }                                                                                                                                                                 │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Ln 2/24 ─╯
+  Alt+1-4  tabs   y  copy   p/r/x  view   /  search   s  save body   Enter  fold   w  wrap   Ctrl+P  commands   F1  all keys
+ demo

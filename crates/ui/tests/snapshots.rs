@@ -307,3 +307,13 @@ fn vim_mode_and_history() {
         snap("history", h);
     });
 }
+
+#[test]
+fn nerd_icons() {
+    each(|h| {
+        h.app.icons = sendito_ui::icons::Icons::nerd();
+        open(h, "list users");
+        fake_response(h, "{\"ok\": true}", 200);
+        snap("nerd_main", h);
+    });
+}

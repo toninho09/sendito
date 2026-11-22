@@ -4,23 +4,7 @@ A terminal API client for **HTTP** and **gRPC**. It runs locally in your termina
 works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
 
-```
- GET list users × │ POST create user ● × │ +                    env: local ▾  F1 all keys
-╭  Requests  History ────╮╭ Request · Users/list users.toml ──────────────────────╮
-│▾ Users/                ││ GET    ▾ {{base_url}}/users                      Send │
-│  POST  create user     ││ Params (1) │ Headers (1) │ Body │ Auth•  │ Scripts │ … │
-│  DEL   delete user     ││    Name               Value                           │
-│  GET   list users      ││[x] page              │1                              ✕│
-│▸ Orders/               ││ +  add name          │                                │
-│  GRPC  echo unary      │╰───────────────────────────────────────────────────────╯
-│  GET   health          │╭ Response ─────────────────────── 200 OK  14 ms 219 B ─╮
-│                        ││ Body │ Headers │ Timing │ Results │  Pretty  Raw  Hex  │
-│                        ││▾ {                                                    │
-│                        ││▾   "items": [                                         │
-╰────────────────────────╯╰───────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 help
- env: local │ 200 OK │ 14 ms │ 219 B
-```
+![Sendito: a POST request with a JSON body and the response](docs/media/hero.png)
 
 * **Correct on the wire.** Sendito sends what the request says: no hidden
   `User-Agent` or `Referer` headers, explicit rules for query and form encoding
@@ -44,7 +28,8 @@ plain TOML files you can version in git.
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
   header, status) after, and assert on them.
 * **History**, **Postman v2.1 import**, **curl import/export**, session restore,
-  themes, and a key map you can change.
+  seven themes plus your own, optional Nerd Font icons, and a key map you can
+  change.
 
 ## Install
 
@@ -53,8 +38,8 @@ Download a release archive for Linux x86_64 or macOS arm64 from the
 binary on your `PATH`:
 
 ```sh
-tar xzf sendito-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
-sha256sum -c sendito-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar xzf sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+sha256sum -c sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 sudo install sendito /usr/local/bin/
 ```
 
@@ -95,27 +80,42 @@ request fails (network error, gRPC status other than OK) and 3 on usage errors.
 
 ## The screen
 
-* **Tab bar** (top): open requests (`●` = unsaved changes, `↻` = running), `+`
-  for a new one, the environment selector and the help button.
-* **Sidebar**: **Requests** (the collection tree) or **History**. Method badges show the type;
-  requests that are open in a tab are in italics. `/` filters. The sidebar can be
-  on the right and resized.
-* **Request**: method / URL (or target / method for gRPC) and **Send**, then the
-  tabs **Params · Headers · Body · Auth · Scripts · Options** (gRPC: **Message ·
-  Metadata · Auth · Scripts · Options**). A tab label shows its number of rows,
-  `Headers (2)`, or `•` when Body or Auth is set.
+* **Top bar**: the name, the open requests (`●` = unsaved changes, a spinner while
+  one runs), `+` for a new one, the environment chip and `F1 all keys`. The
+  environment chip takes its color from the name: `prod`/`live` red,
+  `staging`/`qa`/`test`/`uat` yellow, `local`/`dev` green.
+* **URL strip**: above both panes, the method (a colored chip), the URL with its
+  `{{variables}}` highlighted (or target and method for gRPC) and **Send**.
+* **Sidebar**: **Requests** (the collection tree, with `├ └` connectors) or
+  **History** (grouped by day, status in color). Requests that are open in a tab
+  are in the accent color. `/` filters and highlights the match; the bottom border
+  counts requests and folders. The sidebar can be on the right and resized.
+* **Request**: the tabs **Params · Headers · Body · Auth · Scripts · Options**
+  (gRPC: **Message · Metadata · Auth · Scripts · Options**) sit in the pane's top
+  border, with the folder path of the request (`Users › create user`) on the right.
+  A tab label shows its number of rows, `Headers 2`, or `•` when Body or Auth is
+  set. Editors have line numbers; a JSON body shows `✓ JSON` or
+  `✗ JSON: line, col` and the cursor position (`Ln, Col`) in the bottom border.
 * **Response**: status, time and size in the border, then **Body** (pretty JSON
-  with folding, raw, hex, search) · **Headers** (response and the request that was
-  sent, secrets masked) · **Timing** · **Results** (assertions, extracted
-  variables, notes). For gRPC the tabs are **Body · Metadata · Timing ·
-  Log**, where Log lists every message sent and received (legend pinned on top: `→` sent,
-  `←` received, `■` final status, `+s` seconds since the call started) plus the
-  results.
+  with folding and line numbers, raw, hex, search; `Pretty Raw Hex` and the
+  position in the bottom border) · **Headers** (response and the request that was
+  sent, secrets masked) · **Timing** (a DNS / connect / TLS / wait / download
+  waterfall) · **Results** (assertions, extracted variables, notes). For gRPC the
+  tabs are **Body · Metadata · Timing · Log**, where Log lists every message sent
+  and received (legend pinned on top: `→` sent, `←` received, `■` final status,
+  `+s` seconds since the call started) plus the results.
   gRPC messages are shown as proto3 JSON: fields holding their default value
   are not on the wire and are not shown (assertions still see them, so
   `$.count == 0` works).
-* **Hint row**: the most useful keys for what is focused. **Status line**:
-  environment, unsaved count, last status, time, size, messages, vim mode.
+* Long content has a scrollbar in the pane border. Dialogs open over a dimmed
+  screen.
+* **Hint row**: the most useful keys for what is focused, as key caps.
+  **Status line**: vim mode, unsaved count, undefined variables and messages. The
+  environment is only shown in the top bar; the last request's status, time and
+  size appear here only while the Response pane is hidden.
+
+With no request open, the start screen shows what the collection holds, the keys
+to get going and the most recent requests (click one to open it).
 
 Panels resize with the mouse (drag the borders) or `Ctrl+W <`/`>` and `Ctrl+W +`/`-`;
 `Ctrl+W z` maximizes the focused pane, `Ctrl+B` hides the sidebar.
@@ -228,15 +228,29 @@ The **Scripts** tab has three sections:
 
 Global `~/.config/sendito/config.toml` (respects `XDG_CONFIG_HOME`), overridden by
 the collection's `.sendito/config.toml`. Settings changed in the app are saved to
-the global file. Themes: `auto`, `ansi`, `dusk`, `daylight`, `contrast`;
-`NO_COLOR=1` turns colors off. All keys are described in [FORMAT.md](FORMAT.md).
+the global file. All keys are described in [FORMAT.md](FORMAT.md).
+
+Themes: `auto` (follows the terminal background), `dusk`, `daylight`, `ember`,
+`linen`, `contrast` and `ansi` (the terminal's own 16 colors). `NO_COLOR=1` turns
+colors off. Your own themes are TOML files in `~/.config/sendito/themes/` or the
+collection's `.sendito/themes/`; a theme can extend another and change only some
+colors, see [docs/THEMES.md](docs/THEMES.md). `sendito theme list` shows every
+theme, `sendito theme print dusk > ~/.config/sendito/themes/mine.toml` starts a new
+one, and `:theme mine` or `:theme reload` in the command palette applies it.
+
+| dusk | daylight |
+|---|---|
+| ![dusk](docs/media/screenshots/120x40-dusk-request-body-and-response.png) | ![daylight](docs/media/screenshots/120x40-daylight-request-body-and-response.png) |
+| **ember** | **linen** |
+| ![ember](docs/media/screenshots/120x40-ember-request-body-and-response.png) | ![linen](docs/media/screenshots/120x40-linen-request-body-and-response.png) |
 
 The Settings dialog (`Ctrl+W ,`) changes, at once:
 
 | Setting | What it does |
 |---|---|
-| Vim mode | vim keys in editors and lists (normal / insert modes) |
 | Theme | colors; `auto` follows the terminal background |
+| Icons | `unicode` (works with any font) or `nerd` (needs a [Nerd Font](https://www.nerdfonts.com)) |
+| Vim mode | vim keys in editors and lists (normal / insert modes) |
 | Sidebar position | Requests / History sidebar on the left or right |
 | Mouse support | clicks, wheel scrolling, dragging tree items and pane borders |
 | Confirm quit with unsaved changes | ask before quitting while tabs have unsaved changes |

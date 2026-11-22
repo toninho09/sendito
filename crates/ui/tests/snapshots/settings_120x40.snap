@@ -2,43 +2,43 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-
-
-
-
-
-
-
-
-
-
-
-                            ┏ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                            ┃                                                              ┃
-                            ┃  Vim mode                                           ‹ Off ›  ┃
-                            ┃  Theme                                    ‹ auto › (1 of 5)  ┃
-                            ┃  Sidebar position                                  ‹ left ›  ┃
-                            ┃  Mouse support                                       ‹ On ›  ┃
-                            ┃  Confirm quit with unsaved changes                   ‹ On ›  ┃
-                            ┃  Record history                                      ‹ On ›  ┃
-                            ┃                                                              ┃
-                            ┃ Vim keys in editors and lists (normal / insert modes).       ┃
-                            ┃ Vim mode: On / Off  (← → / Space)                            ┃
-                            ┃                                                              ┃
-                            ┃ Changes apply at once and are saved to                       ┃
-                            ┃ ~/.config/sendito/config.toml                                ┃
-                            ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
-
-
-
-
-
-
-
-
-
-
- ↑↓ move  ←→ Space change  Esc close
- env: local
+ sendito   +                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                        │
+│▸ Users/                    ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                        ╭─ Settings ─────────────────────────────────────────────────────────╮                        │
+│                        │                                                                    │                        │
+│                        │  Appearance                                                        │                        │
+│                        │    Theme                              ███████  ‹ auto › (1 of 7)   │                        │
+│                        │    Icons                                             ‹ unicode ›   │                        │
+│                        │  Editing                                                           │                        │
+│                        │    Vim mode                                              ‹ Off ›   │                        │
+│                        │  Layout                                                            │                        │
+│                        │    Sidebar position                                     ‹ left ›   │                        │
+│                        │  Behavior                                                          │                        │
+│                        │    Mouse support                                          ‹ On ›   │ ds)                    │
+│                        │    Confirm quit with unsaved changes                      ‹ On ›   │ nd                     │
+│                        │    Record history                                         ‹ On ›   │                        │
+│                        │ ────────────────────────────────────────────────────────────────── │ the mouse)             │
+│                        │  Colors: auto follows the terminal; ansi uses your terminal        │ ide                    │
+│                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │
+│                        │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                        │
+│                        │                                                                    │                        │
+│                        │  Changes apply at once and are saved to                            │                        │
+│                        │  ~/.config/sendito/config.toml                                     │                        │
+│                        ╰────────────────────────────────────────────────────────────────────╯                        │
+│                                                                                                                      │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+  ↑↓  move   ←→ Space  change   Esc  close
+ demo

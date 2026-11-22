@@ -171,7 +171,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | Symbol | Meaning |
 |---|---|
 | ● | unsaved changes (tab, status line) |
-| ↻ on a tab | request running |
+| ⠋ on a tab (turning) | request running |
 | Results 2/3 ✗ | on the Results tab: assertions passed / total (✓ all passed, ✗ some failed) |
 | … | text cut short |
 | → ← ■ + in the gRPC Log tab | sent, received, final status, seconds since the call started |
@@ -213,6 +213,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
 | `:settings` | Open settings |
+| `:theme <name>` | Switch theme; :theme reload reads your theme files again |
 | `:help` | Show keys |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |

@@ -76,6 +76,8 @@ struct Snapshot {
 pub enum Highlight {
     None,
     Json,
+    /// Scheme and host dimmed, query keys and values colored.
+    Url,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +103,10 @@ pub struct TextEditor {
     deleting: bool,
     preferred_col: Option<usize>,
     last_size: (u16, u16),
+    /// Line numbers to the left of a multi-line editor.
+    pub gutter: bool,
+    /// Width of the gutter in the last frame (clicks are shifted by it).
+    last_gutter: u16,
 }
 
 fn char_to_byte(s: &str, col: usize) -> usize {
@@ -149,6 +155,8 @@ impl TextEditor {
             deleting: false,
             preferred_col: None,
             last_size: (0, 0),
+            gutter: false,
+            last_gutter: 0,
         };
         e.set_text(text);
         e
@@ -1396,6 +1404,7 @@ impl TextEditor {
 
     /// Places the cursor from a click at (x, y) relative to the text area.
     pub fn click(&mut self, x: u16, y: u16, extend: bool) {
+        let x = x.saturating_sub(self.last_gutter);
         let row = (self.scroll_row + y as usize).min(self.lines.len() - 1);
         let line = &self.lines[row];
         let target = self.scroll_col + x as usize;
@@ -1442,6 +1451,16 @@ impl TextEditor {
         if area.width == 0 || area.height == 0 {
             return None;
         }
+        // Line numbers: right-aligned, one space on each side.
+        let gw: u16 = if self.gutter && !self.single_line && area.width > 12 {
+            let digits = self.lines.len().to_string().len().max(2) as u16;
+            digits + 2
+        } else {
+            0
+        };
+        self.last_gutter = gw;
+        let full = area;
+        let area = Rect::new(area.x + gw, area.y, area.width - gw, area.height);
         self.last_size = (area.width, area.height);
         let h = area.height as usize;
         let w = area.width as usize;
@@ -1473,11 +1492,36 @@ impl TextEditor {
         }
         let sel = self.selection();
         let sel_style = theme.selected();
+        // The current line stands out while the editor has focus.
+        let line_bg = (focused && gw > 0 && !theme.mono).then_some(theme.surface_alt);
         for i in 0..h {
             let row = self.scroll_row + i;
             let y = area.y + i as u16;
+            if gw > 0 {
+                let is_cur = row == self.cursor.row;
+                let num = if row < self.lines.len() {
+                    format!("{:>w$} ", row + 1, w = (gw - 2) as usize)
+                } else {
+                    String::new()
+                };
+                let st = if is_cur && focused {
+                    theme
+                        .fg(theme.fg)
+                        .patch(Style::default().bg(line_bg.unwrap_or(theme.surface)))
+                } else {
+                    theme.fg(theme.gutter)
+                };
+                buf.set_stringn(full.x, y, format!(" {num}"), gw as usize, st);
+                if is_cur && let Some(bg) = line_bg {
+                    for x in area.x..area.x + area.width {
+                        if let Some(c) = buf.cell_mut((x, y)) {
+                            c.set_bg(bg);
+                        }
+                    }
+                }
+            }
             if row >= self.lines.len() {
-                break;
+                continue;
             }
             let line = &self.lines[row];
             let styles = self.line_styles(line, theme, is_defined);
@@ -1546,6 +1590,13 @@ impl TextEditor {
         let base = theme.base();
         let n = char_len(line);
         let mut styles = vec![base; n];
+        if self.highlight == Highlight::Url {
+            for (s, e, st) in url_line_spans(line, theme) {
+                for x in styles.iter_mut().take(e.min(n)).skip(s) {
+                    *x = st;
+                }
+            }
+        }
         if self.highlight == Highlight::Json {
             for (s, e, st) in json_line_spans(line, theme) {
                 for x in styles.iter_mut().take(e.min(n)).skip(s) {
@@ -1582,6 +1633,51 @@ impl TextEditor {
         }
         styles
     }
+}
+
+/// Character spans for a URL: scheme and host dimmed, query keys and values
+/// in the JSON key and string colors (`{{variables}}` are colored on top).
+pub fn url_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = Vec::new();
+    let n = chars.len();
+    let find = |from: usize, pat: &[char]| {
+        (from..n.saturating_sub(pat.len() - 1)).find(|&i| chars[i..i + pat.len()] == *pat)
+    };
+    // "scheme://host" (or a leading {{base}} variable, left to the variable colors).
+    let mut path_start = 0;
+    if let Some(i) = find(0, &[':', '/', '/']) {
+        let host_end = (i + 3..n)
+            .find(|&j| matches!(chars[j], '/' | '?' | '#'))
+            .unwrap_or(n);
+        out.push((0, i + 3, theme.dim()));
+        out.push((i + 3, host_end, theme.fg(theme.fg)));
+        path_start = host_end;
+    }
+    let Some(q) = (path_start..n).find(|&j| chars[j] == '?') else {
+        return out;
+    };
+    out.push((q, q + 1, theme.dim()));
+    let mut i = q + 1;
+    while i < n && chars[i] != '#' {
+        let end = (i..n).find(|&j| matches!(chars[j], '&' | '#')).unwrap_or(n);
+        match (i..end).find(|&j| chars[j] == '=') {
+            Some(eq) => {
+                out.push((i, eq, theme.fg(theme.json_key)));
+                out.push((eq, eq + 1, theme.dim()));
+                out.push((eq + 1, end, theme.fg(theme.json_str)));
+            }
+            None => out.push((i, end, theme.fg(theme.json_key))),
+        }
+        if end < n && chars[end] == '&' {
+            out.push((end, end + 1, theme.dim()));
+        }
+        i = end + 1;
+    }
+    if let Some(h) = (q..n).find(|&j| chars[j] == '#') {
+        out.push((h, n, theme.dim()));
+    }
+    out
 }
 
 /// Character spans (start, end, style) for JSON-ish syntax on one line.
@@ -1883,5 +1979,35 @@ mod tests {
         m.mask = true;
         m.render(Rect::new(0, 0, 20, 1), &mut buf, &theme, false, &|_| true);
         assert_eq!(buf[(0, 0)].symbol(), "•");
+    }
+
+    #[test]
+    fn url_spans_and_gutter() {
+        let theme = Theme::dusk();
+        let spans = url_line_spans("https://api.test/v1/users?page=2&q#top", &theme);
+        let at = |c: usize| {
+            spans
+                .iter()
+                .rev()
+                .find(|(s, e, _)| *s <= c && c < *e)
+                .map(|x| x.2)
+        };
+        assert_eq!(at(0), Some(theme.dim()));
+        assert_eq!(at(26), Some(theme.fg(theme.json_key)));
+        assert_eq!(at(31), Some(theme.fg(theme.json_str)));
+        assert_eq!(at(33), Some(theme.fg(theme.json_key)));
+        assert_eq!(at(35), Some(theme.dim()));
+        assert!(url_line_spans("{{base}}/users", &theme).is_empty());
+        // Line numbers shift the text; a click lands on the right column.
+        let mut e = TextEditor::multi("abc\ndef");
+        e.gutter = true;
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        let pos = e.render(area, &mut buf, &theme, true, &|_| true);
+        assert_eq!(pos, Some((4, 0)));
+        assert_eq!(buf[(2, 1)].symbol(), "2");
+        assert_eq!(buf[(4, 1)].symbol(), "d");
+        e.click(6, 1, false);
+        assert_eq!(e.cursor, Pos { row: 1, col: 2 });
     }
 }

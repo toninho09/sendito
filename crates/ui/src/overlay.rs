@@ -181,6 +181,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (":reload", "Reload the gRPC schema"),
     (":settings", "Open settings"),
+    (
+        ":theme <name>",
+        "Switch theme; :theme reload reads your theme files again",
+    ),
     (":help", "Show keys"),
     (
         ":report",
@@ -257,6 +261,7 @@ impl Palette {
 pub enum SettingId {
     Vim,
     Theme,
+    Icons,
     Sidebar,
     Mouse,
     ConfirmQuit,
@@ -264,8 +269,9 @@ pub enum SettingId {
 }
 
 pub const SETTINGS: &[(SettingId, &str)] = &[
-    (SettingId::Vim, "Vim mode"),
     (SettingId::Theme, "Theme"),
+    (SettingId::Icons, "Icons"),
+    (SettingId::Vim, "Vim mode"),
     (SettingId::Sidebar, "Sidebar position"),
     (SettingId::Mouse, "Mouse support"),
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),

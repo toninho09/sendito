@@ -2,43 +2,43 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-
-
-
-
-
-
-
-
-
-
-
-
-
-                            ┏ New request ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                            ┃                                                              ┃
-                            ┃ Name                                                         ┃
-                            ┃                                                              ┃
-                            ┃ Type       ‹ HTTP ›  ← → change · Space list                 ┃
-                            ┃                                                              ┃
-                            ┃ In folder  ‹ /Orders ›  ← → change · Space list              ┃
-                            ┃                                                              ┃
-                            ┃                                                              ┃
-                            ┃  Create (Enter)    Cancel (Esc)                              ┃
-                            ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- Enter create  Tab next field  Esc cancel
- env: local │ {{order_id}} undefined
+ sendito   GET get order ×    +                                                                ● local ▾   F1  all keys
+╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/orders/{{order_id}}                                       Send
+│▾ Orders/                   │╭─ Params  Headers  Body  Auth  Scripts  Options ─────────────────── Orders › get order ─╮
+│└ GET   get order           ││     Name                            Value                                              │
+│▸ Users/                    ││  +  add name                       │                                                   │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                          ╭─ New request ──────────────────────────────────────────────────╮                          │
+│                          │                                                                │                          │
+│                          │  Name      ▍                                                   │                          │
+│                          │                                                                │                          │
+│                          │  Type       ‹ HTTP ›  ← → change · Space list                  │                          │
+│                          │                                                                │                          │
+│                          │  In folder  ‹ /Orders ›  ← → change · Space list               │ ─────────────────────────╯
+│                          │                                                                │ ─────────────────────────╮
+│                          │                                                                │                          │
+│                          │   Create (Enter)    Cancel (Esc)                               │                          │
+│                          ╰────────────────────────────────────────────────────────────────╯                          │
+│                                                                                                                      │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                            ││                                                                                        │
+│                            ││                               The response appears here.                               │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+  Enter  create   Tab  next field   Esc  cancel
+ demo  {{order_id}} undefined

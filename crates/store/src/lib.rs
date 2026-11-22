@@ -7,6 +7,7 @@ pub mod history;
 pub mod init;
 pub mod request_file;
 pub mod session;
+pub mod themes;
 pub mod tomlfmt;
 
 use std::path::{Path, PathBuf};

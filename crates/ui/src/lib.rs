@@ -4,6 +4,7 @@ pub mod app;
 pub mod draw;
 pub mod editor;
 pub mod form;
+pub mod icons;
 pub mod keymap;
 pub mod overlay;
 pub mod runner;
@@ -59,6 +60,9 @@ impl TermGuard {
         if mouse {
             execute!(out, EnableMouseCapture)?;
         }
+        // Keep the window title to restore it on exit (xterm title stack).
+        let _ = out.write_all(b"\x1b[22;0t");
+        let _ = out.flush();
         // Terminals without the kitty keyboard protocol ignore this.
         let _ = execute!(
             out,
@@ -77,10 +81,13 @@ impl Drop for TermGuard {
         }
         let _ = execute!(
             out,
+            crossterm::cursor::SetCursorStyle::DefaultUserShape,
             DisableBracketedPaste,
             LeaveAlternateScreen,
             crossterm::cursor::Show
         );
+        let _ = out.write_all(b"\x1b[23;0t");
+        let _ = out.flush();
         let _ = disable_raw_mode();
     }
 }
@@ -138,10 +145,31 @@ fn event_loop(
 ) -> io::Result<()> {
     let mut dirty = true;
     let mut last_anim = Instant::now();
+    let mut shape: Option<bool> = None;
+    let mut title = String::new();
     loop {
         if dirty {
             let t0 = Instant::now();
             terminal.draw(|f| draw::draw(app, f))?;
+            // A bar cursor while typing; a block in vim normal mode.
+            if app.last_cursor.is_some() {
+                let bar = !app.vim
+                    || matches!(app.focused_vim_mode(), Some(editor::VimMode::Insert) | None);
+                if shape != Some(bar) {
+                    let st = if bar {
+                        crossterm::cursor::SetCursorStyle::SteadyBar
+                    } else {
+                        crossterm::cursor::SetCursorStyle::SteadyBlock
+                    };
+                    let _ = execute!(io::stdout(), st);
+                    shape = Some(bar);
+                }
+            }
+            let t = app.window_title();
+            if t != title {
+                let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&t));
+                title = t;
+            }
             if let Some(l) = log {
                 let _ = writeln!(l, "frame {}", t0.elapsed().as_micros());
             }
@@ -164,7 +192,7 @@ fn event_loop(
         }
         let busy = app.is_busy();
         let timeout = if busy {
-            Duration::from_millis(50)
+            Duration::from_millis(40)
         } else {
             Duration::from_millis(250)
         };
@@ -200,9 +228,10 @@ fn event_loop(
             }
             dirty = true;
         }
-        // Elapsed-time counters while a request runs.
-        if busy && last_anim.elapsed() > Duration::from_millis(200) {
+        // Elapsed-time counters and spinners while a request runs.
+        if busy && last_anim.elapsed() > Duration::from_millis(100) {
             last_anim = Instant::now();
+            app.anim_frame = app.anim_frame.wrapping_add(1);
             dirty = true;
         }
         let before = app.status.is_some();
