@@ -1,3 +1,13 @@
+# Original specification and verification plan
+
+> **Historical.** This is the prompt the project was built from, kept for
+> reference. Some numbers are superseded: the minimum terminal size is now 40×8
+> (120×40 and 200×60 are the tested sizes), the corpus grew from 40 to 47 HTTP
+> cases plus 15 gRPC and 5 MCP cases, there are seven themes rather than three,
+> and the import/export surface added Insomnia, Bruno and `.http`. For the
+> current state read [README](../README.md), [FORMAT](../FORMAT.md),
+> [FEATURES](FEATURES.md) and [DEBT](DEBT.md).
+
 Build Sendito, an open-source terminal API client for HTTP and gRPC (Postman-style) that runs locally in a developer's terminal, with full mouse, keyboard and vim-style control. It only needs to send correct HTTP and gRPC requests, stay simple to use, and organize saved requests in a sidebar tree.
 
 PRIORITIES (in this order when they conflict)

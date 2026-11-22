@@ -1,13 +1,13 @@
 # Technical debt and known limitations
 
-What v0.1.0 knowingly does not do, or does less well than intended, and what it would
-take to fix each item.
+What the current release knowingly does not do, or does less well than intended,
+and what it would take to fix each item.
 
 ## 1. The HTTP library does not let a client control the wire exactly
 
 Sendito promises to send what the request file defines. The official `reqwest` 0.13
 and `hyper` 1.x get close, but three behaviours cannot be turned off from outside.
-Version 0.1.0 uses the official crates (no vendored patches) and accepts these
+Sendito uses the official crates (no vendored patches) and accepts these
 differences. They are cosmetic or semantically equivalent in HTTP, but they are
 differences, and the correctness corpus and the documentation state them.
 
@@ -52,7 +52,7 @@ allows `accept` as a transport header.
   toolchain has been used.
 * **Terminal sizes.** Screenshots, recordings and snapshot tests cover 120×40 and
   200×60. Smaller terminals work (the layout adapts) but are not covered by snapshots.
-* **Coverage** is measured for the non-UI crates only (90.72%); `sendito-ui` is covered
+* **Coverage** is measured for the non-UI crates only (90.66%); `sendito-ui` is covered
   by the 15 flow tests and the snapshot tests, with no line-coverage figure.
 * **The visual redesign was checked in the test backend only.** The cursor shape (bar
   while typing, block in vim NORMAL), the window title push/pop (`CSI 22;0t` /

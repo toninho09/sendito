@@ -52,8 +52,11 @@ To start from a complete file:
 
 ```sh
 sendito theme print dusk > ~/.config/sendito/themes/mine.toml
-sendito theme list        # every theme, where it comes from and any problem
+sendito theme list --collection .   # every theme, where it comes from and any problem
 ```
+
+Add `--collection <path>` to either command to also search that collection's
+`.sendito/themes/` directory.
 
 While you edit, `:theme reload` in the command palette reads the files again and
 applies the change at once.

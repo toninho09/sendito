@@ -4,6 +4,13 @@ A terminal API client for **HTTP**, **gRPC** and **MCP tools**. It runs locally 
 works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
 
+[![CI](https://github.com/toninho09/sendito/actions/workflows/ci.yml/badge.svg)](https://github.com/toninho09/sendito/actions/workflows/ci.yml)
+![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-blue)
+![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
+
+**[Features](docs/FEATURES.md)** · **[CLI reference](docs/CLI.md)** · **[File formats](FORMAT.md)** · **[Key map](KEYMAP.md)** · **[Limitations](docs/DEBT.md)**
+
 ![Sendito: a POST request with a JSON body and the response](docs/media/hero.png)
 
 * **Correct on the wire.** Sendito sends what the request says: no hidden
@@ -21,22 +28,52 @@ plain TOML files you can version in git.
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
   TLS verification, an optional proxy (`[http] proxy`, including `"env"` for
   `HTTPS_PROXY` and friends), a custom CA and client certificates for mutual
-  TLS (`[http.tls]`), and a DNS / connect / TLS / TTFB / download breakdown.
+  TLS (`[http.tls]`), response decompression (gzip / deflate / br), watch mode and
+  a DNS / connect / TLS / TTFB / download breakdown.
+  → [HTTP features](docs/FEATURES.md#http)
 * **gRPC**: services from server reflection or `.proto` files (compiled in-process,
-  no `protoc`), unary, server-, client- and bidi-streaming calls, JSON messages
-  with generated templates, metadata, TLS, deadlines, cancellation.
+  no `protoc`), unary, server-, client- and bidi-streaming calls, proto3 JSON
+  messages with generated templates, metadata, TLS, deadlines, cancellation, and a
+  Log tab for every message sent and received.
+  → [gRPC features](docs/FEATURES.md#grpc)
 * **MCP tools**: call tools on stdio or Streamable HTTP servers, discover tools
   and generate initial arguments from their input schema, with bearer or OAuth
-  authentication for HTTP servers.
+  2.1 authentication for HTTP servers.
+  → [MCP features](docs/FEATURES.md#mcp)
 * **Environments** with secrets from four sources: the env file, a gitignored
   secrets file, the OS keychain, or a file. Secrets are masked everywhere.
   An opt-in cookie jar keeps cookies per environment; `:cookies` manages them.
   Redirects are not followed while the jar is enabled.
+  → [Variables and secrets](docs/FEATURES.md#variables-and-secrets)
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
   header, status) after, and assert on them.
-* **History**, **Postman / Bruno / Insomnia import**, **curl import/export**, session restore,
-  seven themes plus your own, optional Nerd Font icons, and a key map you can
-  change.
+  → [Scripts](docs/FEATURES.md#scripts)
+* **History**, **Postman / Bruno / Insomnia import**, **curl import/export**,
+  `.http` export, session restore, seven themes plus your own, optional Nerd Font
+  icons, and a key map you can change.
+  → [Import and export](docs/FEATURES.md#import-and-export) ·
+  [Themes](docs/FEATURES.md#themes-and-icons)
+
+## Contents
+
+- [Install](#install)
+- [Quick start](#quick-start)
+- [See it in action](#see-it-in-action)
+- [HTTP](#http)
+- [gRPC](#grpc)
+- [MCP tools](#mcp-tools)
+- [Environments and secrets](#environments-and-secrets)
+- [Scripts (no code)](#scripts-no-code)
+- [Watch, proxy and TLS](#watch-proxy-and-tls)
+- [Cookie jar](#cookie-jar)
+- [Import and export](#import-and-export)
+- [History and session](#history-and-session)
+- [Themes](#themes)
+- [The screen](#the-screen)
+- [Keys](#keys)
+- [Command line](#command-line)
+- [Development](#development)
+- [License](#license)
 
 ## Install
 
@@ -80,14 +117,21 @@ sendito run "Users/list users" --env local     # body to stdout, status to stder
 sendito run checks/health --env prod || echo "an assertion failed"
 sendito run Users --env local                  # every request under Users, in tree order
 sendito run . --env local --report json        # current folder (root = all), JSON summary
+sendito run Users --env local --fail-fast      # stop at the first failure
+sendito run Users --env local -i               # also print the response headers
+sendito run "Users/create user" --no-history --env local
 sendito curl "Users/create user" --env local   # print as curl (secrets stay {{placeholders}})
+sendito http "Users/create user" --env local   # print as an .http file
+sendito curl x --include-secrets --env local   # include secret values
 sendito import acme.postman_collection.json    # Postman or Insomnia JSON
 sendito import path/to/bruno-collection        # Bruno directory
+sendito import acme.json --into "Imported"     # import into a subfolder
 ```
 
 `sendito run` exits with 0 on success, 1 when an assertion fails or an MCP tool
 returns `isError: true`, 2 when the request fails (network error, gRPC status other
-than OK) and 3 on usage errors.
+than OK) and 3 on usage errors or unresolved variables. Every flag is documented in
+the [CLI reference](docs/CLI.md#sendito-run-request).
 
 Given a folder (or `.` for the current folder; at the collection root, `.` means
 everything), `sendito run` sends every request below it in tree order — one
@@ -100,7 +144,54 @@ passed), 1 (an assertion or tool error), 2 (a request failed) or 3 (usage,
 including unresolved variables). Folder runs go to History only when history
 is enabled, exactly like single requests.
 
-### HTTP OAuth quick start
+## See it in action
+
+Twelve short recordings of the main flows, rendered from the app's own frames
+(`make media && make render`) so they never drift from the UI. The full-size
+files are in [`docs/media/recordings/`](docs/media/recordings).
+
+| Flow | Recording |
+|---|---|
+| **Create a folder and a request** | ![Create a folder and a request](docs/media/recordings/01-create-folder-and-request.gif) |
+| **Send a GET, then a POST with a JSON body** | ![Send a GET, then a POST with a JSON body](docs/media/recordings/02-send-get-and-post-json.gif) |
+| **Multipart body with a file part** | ![Multipart body with a file part](docs/media/recordings/03-multipart-upload.gif) |
+| **Undefined variable → switch env → send** | ![Undefined variable, switch environment, send](docs/media/recordings/04-switch-env.gif) |
+| **gRPC unary call via reflection** | ![gRPC unary call via server reflection](docs/media/recordings/05-grpc-unary-reflection.gif) |
+| **gRPC bidi stream: send, half-close** | ![gRPC bidi stream](docs/media/recordings/06-grpc-bidi-stream.gif) |
+| **Import a Postman collection** | ![Import a Postman collection](docs/media/recordings/07-postman-import.gif) |
+| **Paste curl, export as curl** | ![Paste curl, export as curl](docs/media/recordings/08-curl-paste-and-export.gif) |
+| **Resend from History** | ![Resend from History](docs/media/recordings/09-history-resend.gif) |
+| **Vim mode editing** | ![Vim mode editing](docs/media/recordings/10-vim-mode-editing.gif) |
+| **Drag a request into a folder** | ![Drag a request into a folder](docs/media/recordings/11-mouse-drag-in-tree.gif) |
+| **Errors, cancel, delete** | ![Errors, cancel, delete](docs/media/recordings/12-errors-cancel-delete.gif) |
+
+## HTTP
+
+A request is one TOML file. The request tabs are **Params · Headers · Body ·
+Auth · Scripts · Options**, and the wire rules are spelled out in
+[FORMAT.md](FORMAT.md#what-goes-on-the-wire).
+
+* **Bodies**: none, raw, JSON, form-urlencoded, multipart (text and file parts) or
+  a file. A JSON body is validated as you type (`✓ JSON` / `✗ JSON: line, col`).
+* **Auth**: Basic, Bearer, API key (header or query) and OAuth 2 with PKCE. A `401`
+  triggers one token refresh and retry; tokens live in the OS keychain.
+* **Options per request**: timeout, follow redirects (up to 10 hops, no `Referer`),
+  TLS verification and the cookie jar.
+* **Responses**: pretty JSON with folding, raw and hex views, search, the
+  response headers beside the request that was actually sent, and a timing
+  waterfall (DNS / connect / TLS / TTFB / download).
+* **Decoding**: `gzip`, `deflate` and `br` are decompressed for display,
+  extraction and assertions; any other coding is shown as received.
+* **Watch**: `Ctrl+W m` re-sends the active request on an interval and draws a
+  sparkline in Timing.
+
+| | |
+|---|---|
+| ![Sending a GET then a POST with a JSON body](docs/media/recordings/02-send-get-and-post-json.gif) | ![A multipart upload with a file part](docs/media/recordings/03-multipart-upload.gif) |
+
+More, including proxy, TLS and decompression details: [HTTP features](docs/FEATURES.md#http).
+
+### HTTP OAuth
 
 Configure an identity in `.sendito/config.toml`:
 
@@ -120,7 +211,26 @@ identity. A 401 triggers one token refresh and retry. Use `sendito auth logout
 example --env local` or `:auth logout example` to remove them. OAuth endpoints
 and protected URLs must use HTTPS except on loopback. See [FORMAT.md](FORMAT.md).
 
-### MCP quick start
+## gRPC
+
+* Discover services and methods through **server reflection** or from `.proto`
+  files compiled in-process (no `protoc`).
+* **Unary, server-streaming, client-streaming and bidi** calls. The message is
+  proto3 JSON, starting from a template generated from the schema; on an open
+  stream each send pushes one more message and `Ctrl+W d` half-closes.
+* **Metadata** rows, TLS or plaintext, deadlines and cancellation.
+* The **Log** tab lists every message sent and received with a timestamp
+  (`→` sent, `←` received, `■` status, `+s` elapsed).
+
+| | |
+|---|---|
+| ![A gRPC unary call discovered through server reflection](docs/media/recordings/05-grpc-unary-reflection.gif) | ![A bidi stream with several messages](docs/media/recordings/06-grpc-bidi-stream.gif) |
+
+![A gRPC request at 200×60](docs/media/screenshots/200x60-dusk-grpc-unary.png)
+
+More: [gRPC features](docs/FEATURES.md#grpc).
+
+## MCP tools
 
 Configure a server in `.sendito/config.toml`:
 
@@ -148,7 +258,168 @@ Sendito's local loopback listener. Tokens are stored in the OS keychain. Use
 `sendito mcp logout remote` to remove them. See [FORMAT.md](FORMAT.md) for all
 options and [docs/DEBT.md](docs/DEBT.md) for current MCP limitations.
 
+![The command palette, where :newmcp and :mcptools live](docs/media/screenshots/120x40-dusk-palette.png)
+
+More: [MCP features](docs/FEATURES.md#mcp).
+
+## Environments and secrets
+
+Variables are written `{{name}}` anywhere: URL, params, headers, bodies, gRPC
+messages and metadata, auth fields. Collection variables apply to every
+environment; the active environment overrides them; scripts override both.
+Undefined variables are shown in red and named in the status line, and sending
+asks before going ahead. Dynamic values such as `{{$uuid}}`, `{{$timestamp}}` and
+`{{$randomInt}}` are generated once per send.
+
+```toml
+# .sendito/environments/local.toml
+[variables]
+base_url = "http://localhost:8080"          # plain text, versioned
+token = { source = "local" }                # .sendito/secrets.toml (gitignored;
+                                            # "secrets" in the environment editor)
+api_key = { source = "keychain" }           # OS keychain
+client_key = { source = "file", path = "~/.acme/key" }
+```
+
+Set secret values in the environment editor (`Ctrl+W V`), which writes them to
+the right place and shows whether each one is set. Secret values are never
+shown, never written to history and never included in curl exports unless you
+run `:curl!`. When a server echoes a secret back (in a body, a header or gRPC
+metadata), the app shows `••••••` in its place; `sendito run` writes the body
+to stdout unchanged.
+
+| | |
+|---|---|
+| ![Switching environment to resolve an undefined variable](docs/media/recordings/04-switch-env.gif) | ![The environment editor](docs/media/screenshots/200x60-dusk-environments.png) |
+
+More: [variables and secrets](docs/FEATURES.md#variables-and-secrets).
+
+## Scripts (no code)
+
+The **Scripts** tab has three sections:
+
+* **Pre-request**: set variables, e.g. `request_id = req-{{$uuid}}`.
+* **Extract**: after the response, store a JSONPath result, a header or the status
+  in a variable (optionally secret), e.g. `token ← $.access_token`.
+* **Assertions**: check status, a header or a JSONPath value with
+  `== != contains !contains exists !exists < <= > >= matches`. Results appear in
+  the **Results** tab (**Log** for gRPC) and decide the exit code of
+  `sendito run`.
+
+More: [scripts](docs/FEATURES.md#scripts).
+
+## Watch, proxy and TLS
+
+* **Watch** — `Ctrl+W m` or `:watch [seconds]` re-sends the active HTTP request on
+  an interval (`ui.watch_interval_s`, default 5). It stops on cancel, tab close,
+  environment change or unresolved variables and is not written to history.
+* **Proxy** — `[http] proxy` takes a URL (`http://`, `https://`, `socks4/4a/5/5h`,
+  credentials allowed) or `"env"` to read `HTTPS_PROXY` / `HTTP_PROXY` /
+  `ALL_PROXY` / `NO_PROXY` with curl's precedence. HTTP requests and MCP over
+  Streamable HTTP use it; gRPC does not.
+* **TLS** — `[http.tls]` sets a `ca` PEM bundle that replaces the platform roots
+  and a `client_cert` + `client_key` pair for mutual TLS. Paths are relative to the
+  collection root. Used by HTTP, gRPC and MCP over Streamable HTTP.
+
+```toml
+[http]
+timeout_ms = 30000
+max_body_mb = 100
+proxy = "env"
+
+[http.tls]
+ca = "certs/corp-ca.pem"
+client_cert = "certs/client.pem"
+client_key = "certs/client.key"
+```
+
+More: [HTTP features](docs/FEATURES.md#http).
+
+## Cookie jar
+
+The cookie jar is opt-in (`[options] cookies = true` or `[http] cookie_jar = true`).
+Cookies are isolated by environment, parsed with RFC 6265 and the public suffix
+list, and stored in a private file with a cross-process lock. `:cookies` lists
+them masked, `:cookies delete <n>` removes one, `:cookies clear` empties the
+environment's jar, and `sendito run --no-cookies` disables it for a run.
+**Redirects are not followed while the jar is enabled**, so a forwarded `Cookie`
+cannot escape its path or origin scope.
+
+More: [HTTP features](docs/FEATURES.md#http) · [FORMAT.md](FORMAT.md#cookie-jar).
+
+## Import and export
+
+* `Ctrl+W i` (or `:import path`) imports a Postman Collection v2.1, an Insomnia
+  v4/v5 JSON export, or a Bruno collection directory. Relative paths are looked up
+  in the working directory, then the collection folder. Supported requests,
+  folders, authentication and variables are imported; selectable environments
+  are created with unique names. A report lists skipped or changed items. Private
+  Insomnia environments and Bruno secret variables are not imported; configure
+  their secrets separately. Scripts, advanced template expressions, and unsupported
+  auth/body types are reported rather than silently converted.
+* Paste a `curl …` command into the URL field or the import dialog to turn it into
+  a request. `Ctrl+W u` (or `:curl`) copies the request as curl; `:httpfile` (or
+  `sendito http <request>`) copies it as an `.http` file (JetBrains HTTP client /
+  VS Code REST Client). Both keep secrets as `{{placeholders}}` unless you run
+  `:curl!` / `:httpfile!`. For Basic auth with unresolved credentials, `.http`
+  export requires `{{sendito_basic_credentials}}` to be set to base64(username:password).
+
+| | |
+|---|---|
+| ![Importing a Postman collection](docs/media/recordings/07-postman-import.gif) | ![Pasting curl and exporting as curl](docs/media/recordings/08-curl-paste-and-export.gif) |
+
+More: [import and export](docs/FEATURES.md#import-and-export).
+
+## History and session
+
+Every sent request is appended to `.sendito/history.jsonl` with its
+`{{variables}}` intact and secrets masked (no bodies), and trimmed at
+`history.max_entries` (default 10 000). `F7` opens History grouped by day with
+the status in color; opening or resending an entry resolves it again with the
+active environment. Open tabs, drafts, the active environment and the layout are
+restored from `.sendito/session.toml` on the next start.
+
+![Resending a request from History](docs/media/recordings/09-history-resend.gif)
+
+More: [storage](docs/FEATURES.md#storage) · [FORMAT.md](FORMAT.md#local-state-files).
+
+## Themes
+
+`auto` follows the terminal background; the rest are `dusk`, `daylight`, `ember`,
+`linen`, `contrast` and `ansi` (the terminal's own 16 colors). `NO_COLOR=1` turns
+colors off. Your own themes are TOML files in `~/.config/sendito/themes/` or the
+collection's `.sendito/themes/`; a theme can extend another and change only some
+colors. `sendito theme list` shows every theme (add `--collection <path>` to
+include that collection's themes), `sendito theme print dusk >
+~/.config/sendito/themes/mine.toml` starts a new one, and `:theme mine` or
+`:theme reload` applies it. See [docs/THEMES.md](docs/THEMES.md).
+
+| dusk | daylight |
+|---|---|
+| ![dusk](docs/media/screenshots/120x40-dusk-request-body-and-response.png) | ![daylight](docs/media/screenshots/120x40-daylight-request-body-and-response.png) |
+| **ember** | **linen** |
+| ![ember](docs/media/screenshots/120x40-ember-request-body-and-response.png) | ![linen](docs/media/screenshots/120x40-linen-request-body-and-response.png) |
+| **contrast** | **ansi** |
+| ![contrast](docs/media/screenshots/120x40-contrast-request-body-and-response.png) | ![ansi](docs/media/screenshots/120x40-ansi-request-body-and-response.png) |
+
+![The dusk theme with Nerd Font icons](docs/media/screenshots/120x40-dusk-nerd-palette.png)
+
+The Settings dialog (`Ctrl+W ,`) changes, at once:
+
+| Setting | What it does |
+|---|---|
+| Theme | colors; `auto` follows the terminal background |
+| Icons | `unicode` (works with any font) or `nerd` (needs a [Nerd Font](https://www.nerdfonts.com)) |
+| Vim mode | vim keys in editors and lists (normal / insert modes) |
+| Sidebar position | Requests / History sidebar on the left or right |
+| Mouse support | clicks, wheel scrolling, dragging tree items and pane borders |
+| Confirm quit with unsaved changes | ask before quitting while tabs have unsaved changes |
+| Record history | keep sent requests in History (`F7`) to reopen or resend |
+| Watch interval | default seconds between watch re-sends (`ui.watch_interval_s`) |
+
 ## The screen
+
+![The main screen at 200×60](docs/media/screenshots/200x60-dusk-request-body-and-response.png)
 
 * **Top bar**: the name, the open requests (`●` = unsaved changes, a spinner while
   one runs), `+` for a new one, the environment chip and `F1 all keys`. The
@@ -187,8 +458,11 @@ options and [docs/DEBT.md](docs/DEBT.md) for current MCP limitations.
 With no request open, the start screen shows what the collection holds, the keys
 to get going and the most recent requests (click one to open it).
 
+![The start screen](docs/media/screenshots/200x60-dusk-welcome.png)
+
 Panels resize with the mouse (drag the borders) or `Ctrl+W <`/`>` and `Ctrl+W +`/`-`;
-`Ctrl+W z` maximizes the focused pane, `Ctrl+B` hides the sidebar.
+`Ctrl+W z` maximizes the focused pane, `Ctrl+B` hides the sidebar. 120×40 and
+200×60 are the tested sizes; smaller terminals adapt down to 40×8.
 
 ## Keys
 
@@ -238,6 +512,8 @@ Click to focus, select rows, switch and close tabs (middle-click closes too) and
 press buttons; double-click opens a request; drag a tree item onto a folder to
 move it; drag pane borders to resize; the wheel scrolls the pane under the pointer.
 
+![Dragging a request into a folder](docs/media/recordings/11-mouse-drag-in-tree.gif)
+
 ### Vim mode
 
 Editors are modal (normal / insert / visual / visual-line) with `hjkl`, `w b e`,
@@ -245,94 +521,23 @@ Editors are modal (normal / insert / visual / visual-line) with `hjkl`, `w b e`,
 the palette in command mode (`:w`, `:send`, `:env dev`, `:q`). The tree and the
 response viewer use `hjkl`, `gg`/`G` and `/`. The status line shows the mode.
 
-## Environments and secrets
+![Editing in vim mode](docs/media/recordings/10-vim-mode-editing.gif)
 
-Variables are written `{{name}}` anywhere: URL, params, headers, bodies, gRPC
-messages and metadata, auth fields. Collection variables apply to every
-environment; the active environment overrides them; scripts override both.
-Undefined variables are shown in red and named in the status line, and sending
-asks before going ahead.
+## Command line
 
-```toml
-# .sendito/environments/local.toml
-[variables]
-base_url = "http://localhost:8080"          # plain text, versioned
-token = { source = "local" }                # .sendito/secrets.toml (gitignored;
-                                            # "secrets" in the environment editor)
-api_key = { source = "keychain" }           # OS keychain
-client_key = { source = "file", path = "~/.acme/key" }
-```
+Every subcommand, flag and exit code is in the [CLI reference](docs/CLI.md).
 
-Set secret values in the environment editor (`Ctrl+W V`), which writes them to
-the right place and shows whether each one is set. Secret values are never
-shown, never written to history and never included in curl exports unless you
-run `:curl!`. When a server echoes a secret back (in a body, a header or gRPC
-metadata), the app shows `••••••` in its place; `sendito run` writes the body
-to stdout unchanged.
-
-History keeps each request as written, with its `{{variables}}`: opening or
-resending an entry resolves it again with the active environment.
-
-## Scripts (no code)
-
-The **Scripts** tab has three sections:
-
-* **Pre-request**: set variables, e.g. `request_id = req-{{$uuid}}`.
-* **Extract**: after the response, store a JSONPath result, a header or the status
-  in a variable (optionally secret), e.g. `token ← $.access_token`.
-* **Assertions**: check status, a header or a JSONPath value with
-  `== != contains !contains exists !exists < <= > >= matches`. Results appear in
-  the **Results** tab (**Log** for gRPC) and decide the exit code of
-  `sendito run`.
-
-## Import and export
-
-* `Ctrl+W i` (or `:import path`) imports a Postman Collection v2.1, an Insomnia
-  v4/v5 JSON export, or a Bruno collection directory. Relative paths are looked up
-  in the working directory, then the collection folder. Supported requests,
-  folders, authentication and variables are imported; selectable environments
-  are created with unique names. A report lists skipped or changed items. Private
-  Insomnia environments and Bruno secret variables are not imported; configure
-  their secrets separately. Scripts, advanced template expressions, and unsupported
-  auth/body types are reported rather than silently converted.
-* Paste a `curl …` command into the URL field or the import dialog to turn it into
-  a request. `Ctrl+W u` (or `:curl`) copies the request as curl; `:httpfile` (or
-  `sendito http <request>`) copies it as an `.http` file (JetBrains HTTP client /
-  VS Code REST Client). Both keep secrets as `{{placeholders}}` unless you run
-  `:curl!` / `:httpfile!`. For Basic auth with unresolved credentials, `.http`
-  export requires `{{sendito_basic_credentials}}` to be set to base64(username:password).
-
-## Configuration
-
-Global `~/.config/sendito/config.toml` (respects `XDG_CONFIG_HOME`), overridden by
-the collection's `.sendito/config.toml`. Settings changed in the app are saved to
-the global file. All keys are described in [FORMAT.md](FORMAT.md).
-
-Themes: `auto` (follows the terminal background), `dusk`, `daylight`, `ember`,
-`linen`, `contrast` and `ansi` (the terminal's own 16 colors). `NO_COLOR=1` turns
-colors off. Your own themes are TOML files in `~/.config/sendito/themes/` or the
-collection's `.sendito/themes/`; a theme can extend another and change only some
-colors, see [docs/THEMES.md](docs/THEMES.md). `sendito theme list` shows every
-theme, `sendito theme print dusk > ~/.config/sendito/themes/mine.toml` starts a new
-one, and `:theme mine` or `:theme reload` in the command palette applies it.
-
-| dusk | daylight |
+| Command | What it does |
 |---|---|
-| ![dusk](docs/media/screenshots/120x40-dusk-request-body-and-response.png) | ![daylight](docs/media/screenshots/120x40-daylight-request-body-and-response.png) |
-| **ember** | **linen** |
-| ![ember](docs/media/screenshots/120x40-ember-request-body-and-response.png) | ![linen](docs/media/screenshots/120x40-linen-request-body-and-response.png) |
-
-The Settings dialog (`Ctrl+W ,`) changes, at once:
-
-| Setting | What it does |
-|---|---|
-| Theme | colors; `auto` follows the terminal background |
-| Icons | `unicode` (works with any font) or `nerd` (needs a [Nerd Font](https://www.nerdfonts.com)) |
-| Vim mode | vim keys in editors and lists (normal / insert modes) |
-| Sidebar position | Requests / History sidebar on the left or right |
-| Mouse support | clicks, wheel scrolling, dragging tree items and pane borders |
-| Confirm quit with unsaved changes | ask before quitting while tabs have unsaved changes |
-| Record history | keep sent requests in History (`F7`) to reopen or resend |
+| `sendito [PATH]` | Open the collection (nearest `.sendito/`, else the current directory) |
+| `sendito init [PATH]` | Create a collection |
+| `sendito run <request\|folder>` | Send one request or a whole folder headless |
+| `sendito curl <request>` | Print the request as curl |
+| `sendito http <request>` | Print the request as an `.http` file |
+| `sendito auth login\|logout <name>` | HTTP OAuth with PKCE, tokens in the OS keychain |
+| `sendito mcp login\|logout <server>` | OAuth login for an MCP server |
+| `sendito theme list` / `print <name>` | List themes / print one as a file |
+| `sendito import <file\|dir>` | Import Postman, Insomnia or Bruno |
 
 ## Development
 
@@ -342,11 +547,30 @@ cargo run -p sendito-testkit --bin echo-servers   # HTTP echo :8787, gRPC echo :
 cargo clippy --all-targets -- -D warnings && cargo fmt --check
 ```
 
+The `Makefile` wraps the recurring commands with quiet, token-efficient output
+(`make help` lists them):
+
+| Target | Does |
+|---|---|
+| `make build` / `make check` | Build the workspace / type-check only |
+| `make test` | Full test suite (unit, integration, corpus, UI) |
+| `make lint` / `make fmt` / `make deny` | Clippy `-D warnings` / rustfmt / cargo-deny |
+| `make ci` | `fmt-check` + `lint` + `deny` + `test`, in order |
+| `make corpus` / `make corpus-update` | Run the wire corpus / rewrite its goldens |
+| `make keymap` | Regenerate `KEYMAP.md` |
+| `make snap` | Accept the insta UI snapshots |
+| `make media` / `make render` | Generate the frames / render screenshots and GIFs |
+| `make bundles` | Build the reviewer bundles |
+| `make cov` / `make bench` | Coverage of the non-UI crates / benchmarks |
+
 Crates: `sendito-core` (model, variables, resolution, scripts), `sendito-http`,
 `sendito-grpc`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
-`sendito-store` (files, environments, secrets, config, history),
-`sendito-import` (Postman, curl), `sendito-ui` (terminal UI and the send
-pipeline), `sendito-testkit` (test servers) and the `sendito` binary.
+`sendito-store` (files, request format, environments, secrets, config, history,
+cookies, session, themes), `sendito-import` (Postman, Insomnia, Bruno, curl,
+`.http`), `sendito-ui` (terminal UI and the send pipeline), `sendito-testkit`
+(test servers) and the `sendito` binary. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and the test
+layers, and [AGENTS.md](AGENTS.md) for the rules that keep them green.
 
 Dependencies are the official crates.io releases (no vendored or patched crates).
 Known limitations and trade-offs are listed in [docs/DEBT.md](docs/DEBT.md).
@@ -355,8 +579,24 @@ The correctness corpus lives in `tests/corpus`: every request there is sent to t
 echo servers and the exact bytes received are compared with
 `tests/corpus/expected`. `UPDATE_CORPUS=1 cargo test --test corpus` rewrites them.
 
+## Documentation
+
+Start at the [documentation index](docs/README.md).
+
+| Document | Contents |
+|---|---|
+| [docs/FEATURES.md](docs/FEATURES.md) | Every feature, grouped by area |
+| [docs/CLI.md](docs/CLI.md) | Every subcommand, flag, exit code, JSON report |
+| [FORMAT.md](FORMAT.md) | Request / environment / config schema and wire rules |
+| [KEYMAP.md](KEYMAP.md) | Generated key map |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crates, send pipeline, tests |
+| [docs/THEMES.md](docs/THEMES.md) | Theme format and color tokens |
+| [docs/DEBT.md](docs/DEBT.md) | Known limitations |
+| [docs/media/README.md](docs/media/README.md) | How the screenshots and GIFs are made |
+| [docs/reports/](docs/reports/) | Coverage, performance, UX and correctness reports |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option. The vendored `reqwest` and `hyper` keep
-their own licenses in `vendor/`.
+[MIT license](LICENSE-MIT) at your option.

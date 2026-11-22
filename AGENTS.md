@@ -19,13 +19,16 @@ Instructions for AI coding agents working in this repository.
 
 Sendito is a terminal API client for HTTP, gRPC and MCP tools (Rust, edition 2024).
 Workspace crates: `core` (model, variables, scripts), `http`, `grpc`, `mcp` (MCP
-client: stdio and Streamable HTTP, OAuth), `store` (files, environments, config,
-history), `import` (Postman, curl), `ui` (ratatui TUI and the send pipeline),
-`testkit` (echo servers), plus the `sendito` binary in `src/`.
+client: stdio and Streamable HTTP, OAuth), `store` (files, request format,
+environments, secrets, config, history, cookies, session, themes), `import`
+(Postman, Insomnia, Bruno, curl, `.http`), `ui` (ratatui TUI and the send
+pipeline), `testkit` (echo servers), plus the `sendito` binary in `src/`.
 
 Read before changing behaviour: `README.md`, `FORMAT.md` (request file format and
 exact wire rules), `KEYMAP.md` (generated), `docs/DEBT.md` (known limits),
-`docs/PLAN.md` (original specification and verification plan).
+`docs/PLAN.md` (original specification and verification plan). The documentation
+index is `docs/README.md`; it points at `docs/FEATURES.md`, `docs/CLI.md` and
+`docs/ARCHITECTURE.md`.
 
 ## Build and test
 

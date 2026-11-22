@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — documentation
+
+* **Rewritten documentation.** The README is now a showcase with the hero image,
+  a gallery of the twelve flow recordings (previously never referenced) and
+  screenshots in each feature section. New reference pages cover the whole
+  surface: `docs/FEATURES.md` (every feature), `docs/CLI.md` (every subcommand,
+  flag, exit code and the JSON report), `docs/ARCHITECTURE.md` (crates, the send
+  pipeline, the test layers) and `docs/README.md` (the index). `docs/media/README.md`
+  documents the screenshot/GIF pipeline. The previously undocumented `-i`,
+  `--no-history`, `--no-cookies`, `--allow-unresolved`, `--include-secrets`,
+  `--into`, `theme --collection` and the hidden benchmark flags are now written
+  down, and stale claims were corrected (the non-existent `vendor/` license
+  note, the coverage figure, the crate descriptions, the settings table and the
+  VHS note).
+
 ## Unreleased — folder runs
 
 * **`sendito run <folder>`** (or `.` for the current folder, which at the
