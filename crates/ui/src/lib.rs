@@ -8,6 +8,7 @@ pub mod filter;
 pub mod form;
 pub mod icons;
 pub mod keymap;
+pub mod list;
 pub mod overlay;
 pub mod runner;
 pub mod tab;

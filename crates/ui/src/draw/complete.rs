@@ -3,14 +3,13 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::widgets::{Clear, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Hit};
 use crate::complete::Completion;
 use crate::theme::Theme;
 
+use super::dialog::popup;
 use super::kit::*;
 
 pub(super) fn draw_complete(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
@@ -60,24 +59,24 @@ pub(super) fn draw_complete(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         .min(area.x + area.width.saturating_sub(w + 2))
         .max(area.x + 1);
     let rect = Rect::new(x, y, w, h);
-    shadow(buf, rect, area, theme);
-    Clear.render(rect, buf);
-    let inner = frame_with(buf, rect, theme, false, theme.surface());
+    let inner = popup(buf, rect, area, theme.surface(), theme);
     let mut dy = 0u16;
     for (i, item) in c.items.iter().enumerate().skip(c.scroll).take(rows) {
         let y = inner.y + dy;
         let selected = i == c.sel;
         let row = Rect::new(inner.x, y, inner.width, 1);
-        if selected {
-            fill(buf, row, theme.selected());
-        }
-        let st = if selected {
-            theme.selected()
-        } else {
-            theme.surface()
-        };
+        let base = row_style(
+            if selected {
+                RowState::Selected
+            } else {
+                RowState::Plain
+            },
+            theme.surface(),
+            theme,
+        );
+        fill(buf, row, base);
         let label = format!("{:<width$}", truncate(&item.name, name_w), width = name_w);
-        let x = put(buf, inner.x, y, &label, name_w as u16, st);
+        let x = put(buf, inner.x, y, &label, name_w as u16, base);
         let room = inner.width.saturating_sub(x - inner.x + 1);
         put(
             buf,
@@ -113,7 +112,7 @@ pub(super) fn draw_complete(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
             inner.y + dy,
             &format!("loading {what}…"),
             inner.width.saturating_sub(2),
-            theme.dim().add_modifier(Modifier::ITALIC),
+            theme.italic(theme.dim()),
         );
     }
     app.complete = Some(c);

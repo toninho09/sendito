@@ -13,11 +13,6 @@ use crate::theme::Theme;
 
 use super::kit::*;
 
-fn hovered(app: &App, r: Rect) -> bool {
-    app.hover
-        .is_some_and(|(x, y)| r.contains(ratatui::layout::Position { x, y }))
-}
-
 pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
     fill(buf, area, theme.bar());
     let icons = app.icons;
@@ -30,10 +25,7 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         area.y,
         &brand,
         area.width,
-        theme
-            .bar()
-            .patch(theme.accent())
-            .add_modifier(Modifier::BOLD),
+        theme.bold(theme.bar().patch(theme.accent())),
     );
     x += 1;
     // Right side: the environment chip and the help key.
@@ -93,18 +85,16 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
                 Style::default()
             }
         } else if active {
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.surface)
-                .add_modifier(Modifier::BOLD)
+            theme.bold(theme.surface())
         } else if hover {
-            Style::default().fg(theme.fg).bg(theme.keycap_bg)
+            theme.raised()
         } else {
             theme.bar().patch(theme.dim())
         };
         fill(buf, rect, base);
         let badge = tab.badge();
         let mut cx = put(buf, x, area.y, " ", 1, base);
+        // The method keeps its color over the tab's own background.
         let bst =
             method_style(theme, &badge).patch(Style::default().bg(base.bg.unwrap_or(theme.bar_bg)));
         cx = put(buf, cx, area.y, short_method(&badge), 6, bst);
@@ -153,10 +143,7 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         if plus_hover {
             theme.chip(theme.accent)
         } else {
-            theme
-                .bar()
-                .patch(theme.accent())
-                .add_modifier(Modifier::BOLD)
+            theme.bold(theme.bar().patch(theme.accent()))
         },
     );
     app.hits
@@ -166,7 +153,7 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
     let ew = env_label.width() as u16;
     let env_rect = Rect::new(ex, area.y, ew, 1);
     let est = if hovered(app, env_rect) {
-        Style::default().fg(theme.fg).bg(theme.keycap_bg)
+        theme.raised()
     } else {
         theme.bar()
     };
@@ -183,19 +170,18 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         1,
         est.patch(theme.fg(dot_color)),
     );
-    cx = put(
+    put(
         buf,
         cx,
         area.y,
         &format!(" {env_name} ▾ "),
         ew.saturating_sub(2),
         if env.is_some() {
-            est.add_modifier(Modifier::BOLD)
+            theme.bold(est)
         } else {
             est.patch(theme.dim())
         },
     );
-    let _ = cx;
     app.hits.push((env_rect, Hit::EnvSelector));
     let hx = ex + ew + 1;
     let hx2 = keycap(buf, hx, area.y, "F1", maxx, theme);
@@ -278,7 +264,7 @@ pub(super) fn draw_status(
         area.y,
         &truncate(&app.project.name, 24),
         maxx.saturating_sub(x),
-        bar.patch(theme.dim()).add_modifier(Modifier::BOLD),
+        theme.bold(bar.patch(theme.dim())),
     );
     x = gap(buf, x);
     let dirty = app.tabs.iter().filter(|t| t.dirty()).count();
@@ -322,8 +308,7 @@ pub(super) fn draw_status(
             area.y,
             &format!("\u{21bb} {} s", w.interval.as_secs()),
             maxx.saturating_sub(x),
-            bar.patch(theme.fg(theme.accent))
-                .add_modifier(Modifier::BOLD),
+            theme.bold(bar.patch(theme.fg(theme.accent))),
         );
         x = gap(buf, x);
     }
@@ -358,13 +343,13 @@ pub(super) fn draw_status(
     {
         let s = &r.summary;
         if !s.status.is_empty() {
-            let color = match s.code {
-                Some(c) => theme.status_color(c),
-                None if t.running.is_some() => theme.accent,
-                None if s.error.as_deref() == Some("cancelled") => theme.warn,
-                None if s.ok => theme.ok,
-                None => theme.err,
-            };
+            let color = result_color(
+                theme,
+                s.code,
+                s.ok,
+                s.error.as_deref() == Some("cancelled"),
+                t.running.is_some(),
+            );
             x = put(buf, x, area.y, "last request ", 13, bar.patch(theme.dim()));
             x = put(
                 buf,
@@ -372,7 +357,7 @@ pub(super) fn draw_status(
                 area.y,
                 &truncate(&s.status, 28),
                 maxx.saturating_sub(x),
-                bar.patch(theme.fg(color)).add_modifier(Modifier::BOLD),
+                theme.bold(bar.patch(theme.fg(color))),
             );
             let mut extra = String::new();
             if let Some(ms) = s.time_ms {
@@ -410,7 +395,7 @@ pub(super) fn draw_status(
             area.y,
             icon,
             1,
-            bar.patch(theme.fg(color)).add_modifier(Modifier::BOLD),
+            theme.bold(bar.patch(theme.fg(color))),
         );
         cx = put(buf, cx, area.y, " ", 1, bar);
         put(

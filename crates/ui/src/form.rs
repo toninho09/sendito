@@ -275,8 +275,7 @@ impl Table {
         self.ensure_row();
         match (col, self.cell_mut()) {
             (Some(ColKind::Choice(opts)), Some(Cell::Choice(i))) => {
-                let n = opts.len() as isize;
-                *i = ((*i as isize + dir).rem_euclid(n)) as usize;
+                *i = crate::list::cycle(*i, dir, opts.len());
                 true
             }
             (Some(ColKind::Toggle), Some(Cell::Toggle(b))) => {
@@ -471,14 +470,7 @@ impl Table {
     }
 
     pub fn ensure_visible(&mut self, height: usize) {
-        if height == 0 {
-            return;
-        }
-        if self.sel_row < self.scroll {
-            self.scroll = self.sel_row;
-        } else if self.sel_row >= self.scroll + height {
-            self.scroll = self.sel_row + 1 - height;
-        }
+        self.scroll = crate::list::keep_visible(self.sel_row, self.scroll, height);
     }
 
     /// Whether the selected cell is a text editor in vim insert mode (or conventional).

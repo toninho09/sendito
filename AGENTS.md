@@ -27,8 +27,8 @@ pipeline), `testkit` (echo servers), plus the `sendito` binary in `src/`.
 Read before changing behaviour: `README.md`, `FORMAT.md` (request file format and
 exact wire rules), `KEYMAP.md` (generated), `docs/DEBT.md` (known limits),
 `docs/PLAN.md` (original specification and verification plan). The documentation
-index is `docs/README.md`; it points at `docs/FEATURES.md`, `docs/CLI.md` and
-`docs/ARCHITECTURE.md`.
+index is `docs/README.md`; it points at `docs/FEATURES.md`, `docs/CLI.md`,
+`docs/ARCHITECTURE.md` and `docs/MAP.md` (feature → file and symbol index).
 
 ## Build and test
 

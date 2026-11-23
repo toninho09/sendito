@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                          × Cancel   Send
 │── 21 Nov 2026 (UTC) ───────│╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────── Users › list users ─╮
 │ GET    200  list users     ││     Name                                                            Value                                                                                              │
-│  /users           10:15:30 ││ [✓] page                                                           │1                                                                                               │✕ │
+│  /users           10:15:30 ││ [✓] page                                                           │1                                                                                               │× │
 │ GRPC   14  echo unary      ││  +  add name                                                       │                                                                                                   │
 │  …t.v1.Echo/Unary 10:14:02 ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

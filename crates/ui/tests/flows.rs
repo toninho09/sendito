@@ -1054,13 +1054,14 @@ fn flow_env_editor_chrome_clicks_stay_inside() {
     h.click(tx, ty);
     assert_eq!(state(&h), Some((rows, false)));
 
-    // The ✕ on a row deletes it instead of leaving the dialog.
+    // The delete icon on a row deletes it instead of leaving the dialog.
     let (_, vy) = h.find("grpc").unwrap();
     let line = h.screen().split('\n').nth(vy as usize).unwrap().to_string();
+    let close = sendito_ui::icons::Icons::by_name("unicode").close;
     let dx = line
         .char_indices()
         .rev()
-        .find(|(_, c)| *c == '✕')
+        .find(|(_, c)| c.to_string() == close)
         .map(|(i, _)| line[..i].chars().count())
         .unwrap() as u16;
     h.click(dx, vy);
@@ -2168,4 +2169,74 @@ fn flow_dialogs_fit_a_small_terminal() {
         h.app.run_command("mcpservers");
         h.draw();
     }
+}
+
+/// A prompt with typed text asks before a click outside drops it; an untouched
+/// prompt still closes on the same click, and "Keep editing" returns to it.
+#[test]
+fn flow_dirty_prompt_outside_click_asks_before_discarding() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+w h");
+    h.key("n");
+    let dialog = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Prompt(p)) => Some(p.input.text()),
+        _ => None,
+    };
+
+    // Untouched: the click closes it.
+    assert_eq!(dialog(&h), Some(String::new()));
+    h.click(1, 38);
+    assert!(h.app.overlay.is_none());
+
+    // Typed text: the click parks the prompt behind a discard confirmation.
+    h.key("n");
+    h.type_text("half-typed");
+    h.draw();
+    h.click(1, 38);
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::DialogClose)
+    ));
+    assert!(h.screen().contains("Unsaved text"));
+
+    // Keep editing brings the prompt back with the text intact.
+    h.key("enter");
+    assert_eq!(dialog(&h), Some("half-typed".to_string()));
+
+    // Discard drops it for real.
+    h.click(1, 38);
+    h.key("left enter");
+    assert!(h.app.overlay.is_none());
+}
+
+/// The import dialog follows the same rule: typed text is not dropped silently.
+#[test]
+fn flow_dirty_import_outside_click_asks_before_discarding() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("import");
+    assert!(matches!(h.app.overlay, Some(Overlay::Import(_))));
+    h.click(1, 38);
+    assert!(
+        h.app.overlay.is_none(),
+        "an untouched dialog closes at once"
+    );
+
+    h.app.run_command("import");
+    h.paste("curl https://example.test/users");
+    h.draw();
+    h.click(1, 38);
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::DialogClose)
+    ));
+    h.key("enter");
+    assert!(matches!(
+        &h.app.overlay,
+        Some(Overlay::Import(i)) if i.input.text() == "curl https://example.test/users"
+    ));
+    h.click(1, 38);
+    h.key("left enter");
+    assert!(h.app.overlay.is_none());
 }

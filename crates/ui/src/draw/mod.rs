@@ -9,15 +9,19 @@ use crate::theme::Theme;
 
 mod chrome;
 mod complete;
+mod dialog;
+mod editor;
 mod kit;
 mod overlay;
 mod request;
 mod response;
 mod sidebar;
+mod table;
 mod welcome;
 
 use chrome::*;
 use complete::*;
+
 use kit::*;
 use overlay::*;
 use request::*;

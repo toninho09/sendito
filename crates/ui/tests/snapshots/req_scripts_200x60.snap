@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────────────────────────────────────────────────────────────── Users › create user ─╮
 │▾ Users/                    ││ Section        After response: assertions (1) ▾  Enter to switch                                                                                                       │
 │├ POST  create user         ││ From        JSONPath / header                                                     Op           Expected                                                                │
-│├ DEL   delete user         ││ ‹status›   │                                                                     │‹==›        │200                                                                  │✕ │
+│├ DEL   delete user         ││ ‹status›   │                                                                     │‹==›        │200                                                                  │× │
 │└ GET   list users          ││ add from   │                                                                     │            │                                                                        │
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │

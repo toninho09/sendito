@@ -705,8 +705,7 @@ impl Viewer {
         if s.matches.is_empty() {
             return false;
         }
-        let n = s.matches.len() as isize;
-        s.current = ((s.current as isize + dir).rem_euclid(n)) as usize;
+        s.current = crate::list::cycle(s.current, dir, s.matches.len());
         self.jump_to_match();
         true
     }
@@ -815,11 +814,7 @@ impl Viewer {
         let h = area.height as usize;
         let total = self.row_count();
         self.cursor = self.cursor.min(total.saturating_sub(1));
-        if self.cursor < self.scroll {
-            self.scroll = self.cursor;
-        } else if self.cursor >= self.scroll + h {
-            self.scroll = self.cursor + 1 - h;
-        }
+        self.scroll = crate::list::keep_visible(self.cursor, self.scroll, h);
         let base = theme.base();
         let pretty_json = self.mode == ViewMode::Pretty && self.doc.pretty.is_some();
         for i in 0..h {

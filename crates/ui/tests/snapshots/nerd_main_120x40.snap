@@ -6,7 +6,7 @@ expression: screen
 ╭  Requests   History ─────╮  GET    ▾  ▍{{base_url}}/users                                         Cancel    Send
 │▸  Orders/                 │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────── Users › list users ─╮
 │▾  Users/                  ││     Name                            Value                                              │
-│├ POST  create user         ││ [✓] page                           │1                                               │✕ │
+│├ POST  create user         ││ [✓] page                           │1                                               │× │
 │├ DEL   delete user         ││  +  add name                       │                                                   │
 │└ GET   list users          ││                                                                                        │
 │  GRPC  echo unary          ││                                                                                        │

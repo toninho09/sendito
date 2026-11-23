@@ -2,9 +2,8 @@
 //! dialog is faded (not cleared) and every dialog casts a shadow.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Clear, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
@@ -12,8 +11,10 @@ use crate::overlay::*;
 use crate::theme::Theme;
 use crate::viewer::ViewMode;
 
+use super::dialog;
+use super::dialog::{buttons, inset, popup, shell, shell_at};
+use super::editor::{self, EditorDialog, EditorHits};
 use super::kit::*;
-use super::request::draw_table;
 
 /// Character positions of `q` in `label` (case-insensitive): a substring
 /// when there is one, else the letters of a fuzzy match.
@@ -83,13 +84,40 @@ fn settings_lines(rows: &[(Option<&'static str>, usize)]) -> Vec<SettingsLine> {
     out
 }
 
-fn overlay_style(theme: &Theme) -> Style {
-    Style::default().fg(theme.fg).bg(theme.overlay_bg)
+/// Where the environment editor's clicks go.
+struct EnvHits;
+
+impl EditorHits for EnvHits {
+    fn tab(&self, i: usize) -> OverlayHit {
+        OverlayHit::EnvTab(i)
+    }
+    fn cell(&self, row: usize, col: usize) -> OverlayHit {
+        OverlayHit::EnvCell { row, col }
+    }
+    fn delete(&self, row: usize) -> OverlayHit {
+        OverlayHit::EnvDelete(row)
+    }
+    fn button(&self, i: usize) -> OverlayHit {
+        OverlayHit::Button(i)
+    }
 }
 
-fn hovered(app: &App, r: Rect) -> bool {
-    app.hover
-        .is_some_and(|(x, y)| r.contains(Position { x, y }))
+/// Where the MCP servers editor's clicks go.
+struct McpHits;
+
+impl EditorHits for McpHits {
+    fn tab(&self, i: usize) -> OverlayHit {
+        OverlayHit::Item(i)
+    }
+    fn cell(&self, row: usize, col: usize) -> OverlayHit {
+        OverlayHit::McpCell { row, col }
+    }
+    fn delete(&self, row: usize) -> OverlayHit {
+        OverlayHit::McpDelete(row)
+    }
+    fn button(&self, i: usize) -> OverlayHit {
+        OverlayHit::McpButton(i)
+    }
 }
 
 pub(super) fn draw_overlay(
@@ -102,14 +130,12 @@ pub(super) fn draw_overlay(
     let mut cursor = None;
     let names = app.names.clone();
     let is_def = move |n: &str| names.is_defined(n);
-    let push =
-        |hits: &mut Vec<(Rect, Hit)>, r: Rect, h: OverlayHit| hits.push((r, Hit::Overlay(h)));
-    push(&mut app.hits, area, OverlayHit::Outside);
+    app.hits.push((area, Hit::Overlay(OverlayHit::Outside)));
     // Dialogs leave the hint and status rows as they are: they describe the
     // dialog. The rest of the screen fades behind it.
     let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
     backdrop(buf, body, theme);
-    let ost = overlay_style(theme);
+    let ost = theme.overlay();
     match &mut ov {
         Overlay::Palette(p) => {
             let h = (area.height * 2 / 3)
@@ -119,20 +145,13 @@ pub(super) fn draw_overlay(
             // Near the top, where the eye already is.
             let top = body.y + (body.height.saturating_sub(h) / 3).max(1);
             let r = Rect::new(body.x + (body.width - w) / 2, top, w, h);
-            let (r, inner) = modal_at(buf, r, body, "Command palette", theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
-            let ir = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1);
-            let tr = input_box(buf, ir, true, theme);
-            push(&mut app.hits, tr, OverlayHit::Input);
-            cursor = p.input.render(tr, buf, theme, true, &is_def);
+            let (r, inner) = shell_at(app, buf, r, body, "Command palette", theme);
+            let (tr, c) = dialog::input(app, buf, inner, &mut p.input, &is_def, theme);
+            cursor = c;
             let vis = p.visible();
             p.sel = p.sel.min(vis.len().saturating_sub(1));
             let lh = inner.height.saturating_sub(2) as usize;
-            if p.sel < p.scroll {
-                p.scroll = p.sel;
-            } else if p.sel >= p.scroll + lh {
-                p.scroll = p.sel + 1 - lh;
-            }
+            p.scroll = crate::list::keep_visible(p.sel, p.scroll, lh);
             if !vis.is_empty() {
                 // Position in the list, so it is clear that it scrolls.
                 let count = if p.armed {
@@ -163,23 +182,21 @@ pub(super) fn draw_overlay(
                 let (item, label, detail) = &p.items[*idx];
                 let sel = p.armed && row + p.scroll == p.sel;
                 let rr = Rect::new(inner.x, y, inner.width, 1);
-                let base = if sel {
-                    theme.selected()
-                } else if hovered(app, rr) {
-                    ost.bg(theme.surface_alt)
-                } else {
-                    ost
-                };
+                let plain = ost;
+                let base = row_style(
+                    if sel {
+                        RowState::Selected
+                    } else if hovered(app, rr) {
+                        RowState::Hover
+                    } else {
+                        RowState::Plain
+                    },
+                    plain,
+                    theme,
+                );
                 fill(buf, rr, base);
                 if sel {
-                    put(
-                        buf,
-                        inner.x,
-                        y,
-                        "▌",
-                        1,
-                        base.patch(theme.fg(theme.on_selection(theme.accent))),
-                    );
+                    selection_bar(buf, rr, base, theme);
                 }
                 let mut x = inner.x + 2;
                 let dw = detail.width() as u16 + 1;
@@ -205,8 +222,11 @@ pub(super) fn draw_overlay(
                         y,
                         m,
                         m.width() as u16,
-                        base.patch(theme.fg(if sel { theme.on_selection(c) } else { c }))
-                            .add_modifier(Modifier::BOLD),
+                        theme.bold(base.patch(theme.fg(if sel {
+                            theme.on_selection(c)
+                        } else {
+                            c
+                        }))),
                     );
                 }
                 // The typed letters, marked in the label.
@@ -233,33 +253,16 @@ pub(super) fn draw_overlay(
                     };
                     put(buf, dx, y, detail, dw, st);
                 }
-                push(&mut app.hits, rr, OverlayHit::Item(row + p.scroll));
+                app.hits
+                    .push((rr, Hit::Overlay(OverlayHit::Item(row + p.scroll))));
             }
             // Rows above and below the visible window, said in the frame.
             let below = vis.len().saturating_sub(p.scroll + lh);
             if below > 0 {
-                let t = format!(" ↓ {below} more ");
-                let tw = t.width() as u16;
-                put(
-                    buf,
-                    r.x + r.width - tw - 2,
-                    r.y + r.height - 1,
-                    &t,
-                    tw,
-                    theme.accent().bg(theme.overlay_bg),
-                );
+                border_count(buf, r, r.y + r.height - 1, below, false, theme);
             }
             if p.scroll > 0 {
-                let t = format!(" ↑ {} more ", p.scroll);
-                let tw = t.width() as u16;
-                put(
-                    buf,
-                    inner.x + inner.width - tw,
-                    inner.y + 1,
-                    &t,
-                    tw,
-                    theme.dim().bg(theme.overlay_bg),
-                );
+                border_count(buf, r, inner.y + 1, p.scroll, true, theme);
             }
             scrollbar(buf, r, p.scroll, vis.len(), lh, true, theme);
             if vis.is_empty() {
@@ -269,7 +272,7 @@ pub(super) fn draw_overlay(
                     inner.y + 2,
                     "No match. Commands start with ':' (e.g. :env dev).",
                     inner.width.saturating_sub(3),
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
             }
         }
@@ -281,7 +284,8 @@ pub(super) fn draw_overlay(
             } else {
                 110
             };
-            let (r, inner) = modal(
+            let (r, inner) = shell(
+                app,
                 buf,
                 body,
                 mw,
@@ -289,23 +293,15 @@ pub(super) fn draw_overlay(
                 "Help — keys and actions (Esc closes)",
                 theme,
             );
-            push(&mut app.hits, r, OverlayHit::Dialog);
             let ir = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1);
-            put(
-                buf,
-                ir.x,
-                ir.y,
-                "Search ",
-                7,
-                theme.dim().bg(theme.overlay_bg),
-            );
+            put(buf, ir.x, ir.y, "Search ", 7, theme.dialog_dim());
             let er = input_box(
                 buf,
                 Rect::new(ir.x + 7, ir.y, ir.width.saturating_sub(7), 1),
                 true,
                 theme,
             );
-            push(&mut app.hits, er, OverlayHit::Input);
+            app.hits.push((er, Hit::Overlay(OverlayHit::Input)));
             cursor = filter.render(er, buf, theme, true, &is_def);
             // Scroll position, so it is clear that more keys follow.
             let pos = format!(" {} · ↑↓ PgUp PgDn ", viewer.status());
@@ -329,12 +325,13 @@ pub(super) fn draw_overlay(
             viewer.syntax = crate::viewer::Syntax::Help;
             let shown = if two_cols {
                 let (left, right) = help_columns(buf, vr, viewer, theme);
-                push(&mut app.hits, left, OverlayHit::Item(0));
-                push(&mut app.hits, right, OverlayHit::Item(left.height as usize));
+                app.hits.push((left, Hit::Overlay(OverlayHit::Item(0))));
+                app.hits
+                    .push((right, Hit::Overlay(OverlayHit::Item(left.height as usize))));
                 left.height as usize * 2
             } else {
                 viewer.render(vr, buf, theme, true);
-                push(&mut app.hits, vr, OverlayHit::Item(0));
+                app.hits.push((vr, Hit::Overlay(OverlayHit::Item(0))));
                 vr.height as usize
             };
             set_bg_unset(buf, vr, theme);
@@ -353,8 +350,7 @@ pub(super) fn draw_overlay(
             let lines = settings_lines(&rows);
             let last = lines.len() as u16;
             let h = last + 10;
-            let (r, inner) = modal(buf, body, 70, h, "Settings", theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
+            let (_, inner) = shell(app, buf, body, 70, h, "Settings", theme);
             // The path is pinned to the bottom and the description block sits
             // above it; the list takes what is left and scrolls to keep the
             // selection visible on a short terminal.
@@ -382,10 +378,7 @@ pub(super) fn draw_overlay(
                             y,
                             hd,
                             inner.width.saturating_sub(2),
-                            theme
-                                .dim()
-                                .bg(theme.overlay_bg)
-                                .add_modifier(Modifier::BOLD),
+                            theme.bold(theme.dialog_dim()),
                         );
                         y += 1;
                     }
@@ -431,7 +424,7 @@ pub(super) fn draw_overlay(
                     &v,
                     vw,
                     if s {
-                        base.add_modifier(Modifier::BOLD)
+                        theme.bold(base)
                     } else {
                         base.patch(theme.accent())
                     },
@@ -461,12 +454,9 @@ pub(super) fn draw_overlay(
                         );
                     }
                 }
-                push(&mut app.hits, rr, OverlayHit::Item(*i));
-                push(
-                    &mut app.hits,
-                    Rect::new(vx, y, vw, 1),
-                    OverlayHit::Value(*i),
-                );
+                app.hits.push((rr, Hit::Overlay(OverlayHit::Item(*i))));
+                app.hits
+                    .push((Rect::new(vx, y, vw, 1), Hit::Overlay(OverlayHit::Value(*i))));
                 y += 1;
             }
             if info > 0 {
@@ -535,15 +525,7 @@ pub(super) fn draw_overlay(
                     None => String::new(),
                 };
                 let tw = inner.width.saturating_sub(4);
-                put_wrapped(
-                    buf,
-                    inner.x + 2,
-                    y + 1,
-                    &what,
-                    tw,
-                    y + 3,
-                    theme.fg(theme.fg).bg(theme.overlay_bg),
-                );
+                put_wrapped(buf, inner.x + 2, y + 1, &what, tw, y + 3, theme.overlay());
                 let vline = format!(
                     "{}: {values}  (← → / Space)",
                     SETTINGS.get(*sel).map(|(_, l)| *l).unwrap_or("")
@@ -554,7 +536,7 @@ pub(super) fn draw_overlay(
                     y + 3,
                     &truncate(&vline, tw as usize),
                     tw,
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
             }
             if footer > 0 {
@@ -571,7 +553,7 @@ pub(super) fn draw_overlay(
                     inner.y + inner.height.saturating_sub(2),
                     "Changes apply at once and are saved to",
                     tw,
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
                 put(
                     buf,
@@ -579,14 +561,13 @@ pub(super) fn draw_overlay(
                     inner.y + inner.height.saturating_sub(1),
                     &truncate_left(&path, tw as usize),
                     tw,
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
             }
         }
         Overlay::Confirm(c) => {
             let lines = wrap_text(&c.message, 56);
-            let (r, inner) = modal(buf, body, 64, lines.len() as u16 + 6, &c.title, theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
+            let (_, inner) = shell(app, buf, body, 64, lines.len() as u16 + 6, &c.title, theme);
             // Leave the button row for the buttons on a short terminal.
             let room = inner.height.saturating_sub(2) as usize;
             for (i, l) in lines.iter().take(room).enumerate() {
@@ -599,34 +580,36 @@ pub(super) fn draw_overlay(
                     ost,
                 );
             }
-            let by = inner.y + inner.height.saturating_sub(1);
-            let mut x = inner.x + 2;
             // Every button names its key, as in the other dialogs.
             let keys: &[&str] = if c.buttons.len() == 3 {
                 &["s", "d", "Esc"]
             } else {
                 &["y", "Esc"]
             };
-            for (i, b) in c.buttons.iter().enumerate() {
-                let start = x;
-                let lab = match keys.get(i) {
+            let labels: Vec<String> = c
+                .buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| match keys.get(i) {
                     Some(k) => format!("{b} ({k})"),
                     None => b.clone(),
-                };
-                x = button(buf, x, by, &lab, i == c.sel, theme);
-                push(
-                    &mut app.hits,
-                    Rect::new(start, by, x - start, 1),
-                    OverlayHit::Button(i),
-                );
-                x += 2;
-            }
+                })
+                .collect();
+            let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+            buttons(
+                app,
+                buf,
+                inset(inner, 2, 0),
+                &labels,
+                Some(c.sel),
+                &|i| OverlayHit::Button(i),
+                theme,
+            );
         }
         Overlay::Prompt(p) => {
             let has_msg = p.error.is_some() || p.note.is_some();
             let h = 7 + 2 * p.choices.len() as u16 + if has_msg { 2 } else { 0 };
-            let (r, inner) = modal(buf, body, 66, h, &p.title, theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
+            let (_, inner) = shell(app, buf, body, 66, h, &p.title, theme);
             let lw = 10;
             let by = inner.y + inner.height.saturating_sub(1);
             // The choice rows keep their spacing when there is room; on a
@@ -644,7 +627,7 @@ pub(super) fn draw_overlay(
                     inner.y + 1,
                     &p.label,
                     lw,
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
                 let er = input_box(
                     buf,
@@ -661,7 +644,7 @@ pub(super) fn draw_overlay(
                 if p.focus == 0 {
                     cursor = c;
                 }
-                push(&mut app.hits, er, OverlayHit::Input);
+                app.hits.push((er, Hit::Overlay(OverlayHit::Input)));
             }
             let mut choices_end = inner.y + 1;
             for (k, (label, opts, i)) in p.choices.iter().enumerate() {
@@ -669,14 +652,7 @@ pub(super) fn draw_overlay(
                 if y >= by {
                     break;
                 }
-                put(
-                    buf,
-                    inner.x + 2,
-                    y,
-                    label,
-                    lw,
-                    theme.dim().bg(theme.overlay_bg),
-                );
+                put(buf, inner.x + 2, y, label, lw, theme.dialog_dim());
                 let v = format!(" ‹ {} › ", opts.get(*i).cloned().unwrap_or_default());
                 put(
                     buf,
@@ -690,11 +666,10 @@ pub(super) fn draw_overlay(
                         theme.bar()
                     },
                 );
-                push(
-                    &mut app.hits,
+                app.hits.push((
                     Rect::new(inner.x + 2 + lw, y, v.width() as u16, 1),
-                    OverlayHit::Choice(k),
-                );
+                    Hit::Overlay(OverlayHit::Choice(k)),
+                ));
                 let hx = inner.x + 2 + lw + v.width() as u16 + 1;
                 put(
                     buf,
@@ -702,7 +677,7 @@ pub(super) fn draw_overlay(
                     y,
                     "← → change · Space list",
                     (inner.x + inner.width).saturating_sub(hx),
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
                 choices_end = y;
             }
@@ -725,21 +700,17 @@ pub(super) fn draw_overlay(
                     );
                 }
             }
-            let x0 = inner.x + 2;
             // The confirm button says what it does.
             let verb = crate::app::prompt_verb(&p.action);
             let ok = format!("{}{} (Enter)", verb[..1].to_uppercase(), &verb[1..]);
-            let x1 = button(buf, x0, by, &ok, false, theme);
-            push(
-                &mut app.hits,
-                Rect::new(x0, by, x1 - x0, 1),
-                OverlayHit::Button(0),
-            );
-            let x2 = button(buf, x1 + 2, by, "Cancel (Esc)", false, theme);
-            push(
-                &mut app.hits,
-                Rect::new(x1 + 2, by, x2 - x1 - 2, 1),
-                OverlayHit::Button(1),
+            buttons(
+                app,
+                buf,
+                inset(inner, 2, 0),
+                &[&ok, "Cancel (Esc)"],
+                None,
+                &|i| OverlayHit::Button(i),
+                theme,
             );
             // The open option list drops down under its choice row.
             if let (Some(hl), Some((_, opts, cur))) = (
@@ -755,9 +726,7 @@ pub(super) fn draw_overlay(
                 let shown = (opts.len() as u16).min(room);
                 if shown > 0 && w >= 4 && y0 < area.y + area.height {
                     let lr = Rect::new(inner.x + 2 + lw, y0, w, shown + 2);
-                    shadow(buf, lr, body, theme);
-                    Clear.render(lr, buf);
-                    let li = frame_with(buf, lr, theme, true, ost);
+                    let li = popup(buf, lr, body, ost, theme);
                     let first = (hl as u16 + 1).saturating_sub(shown) as usize;
                     for (row, (j, o)) in opts
                         .iter()
@@ -771,11 +740,10 @@ pub(super) fn draw_overlay(
                         fill(buf, Rect::new(li.x, y, li.width, 1), st);
                         let mark = if j == *cur { "✓ " } else { "  " };
                         put(buf, li.x, y, &format!("{mark}{o}"), li.width, st);
-                        push(
-                            &mut app.hits,
+                        app.hits.push((
                             Rect::new(li.x, y, li.width, 1),
-                            OverlayHit::PromptOption(j),
-                        );
+                            Hit::Overlay(OverlayHit::PromptOption(j)),
+                        ));
                     }
                 }
             }
@@ -795,12 +763,9 @@ pub(super) fn draw_overlay(
                 .max()
                 .unwrap_or(30)
                 .clamp(38, 130) as u16;
-            let (r, inner) = modal(buf, body, w, h, &p.title, theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
-            let ir = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1);
-            let tr = input_box(buf, ir, true, theme);
-            push(&mut app.hits, tr, OverlayHit::Input);
-            cursor = p.filter.render(tr, buf, theme, true, &is_def);
+            let (r, inner) = shell(app, buf, body, w, h, &p.title, theme);
+            let (_tr, c) = dialog::input(app, buf, inner, &mut p.filter, &is_def, theme);
+            cursor = c;
             p.sel = p.sel.min(vis.len().saturating_sub(1));
             let lh = inner.height.saturating_sub(2 + u16::from(has_details)) as usize;
             // The selected item's full detail (rows may cut it short).
@@ -815,45 +780,37 @@ pub(super) fn draw_overlay(
                         inner.width.saturating_sub(3) as usize,
                     ),
                     inner.width.saturating_sub(3),
-                    theme.accent().bg(theme.overlay_bg),
+                    theme.dialog_accent(),
                 );
             }
-            if p.sel < p.scroll {
-                p.scroll = p.sel;
-            } else if p.sel >= p.scroll + lh {
-                p.scroll = p.sel + 1 - lh;
-            }
+            p.scroll = crate::list::keep_visible(p.sel, p.scroll, lh);
             let methods = matches!(p.action, PickAction::Method);
             let envs = matches!(p.action, PickAction::Env);
             for (row, idx) in vis.iter().skip(p.scroll).take(lh).enumerate() {
                 let y = inner.y + 2 + row as u16;
                 let s = row + p.scroll == p.sel;
                 let rr = Rect::new(inner.x, y, inner.width, 1);
-                let base = if s {
-                    theme.selected()
-                } else if hovered(app, rr) {
-                    ost.bg(theme.surface_alt)
-                } else {
-                    ost
-                };
+                let base = row_style(
+                    if s {
+                        RowState::Selected
+                    } else if hovered(app, rr) {
+                        RowState::Hover
+                    } else {
+                        RowState::Plain
+                    },
+                    ost,
+                    theme,
+                );
                 fill(buf, rr, base);
                 if s {
-                    put(
-                        buf,
-                        inner.x,
-                        y,
-                        "▌",
-                        1,
-                        base.patch(theme.fg(theme.on_selection(theme.accent))),
-                    );
+                    selection_bar(buf, rr, base, theme);
                 }
                 let item = &p.items[*idx];
                 let mut x = inner.x + 2;
                 // Methods in their colors; environments with their marker.
                 let item_st = if methods {
                     let c = theme.method_color(item);
-                    base.patch(theme.fg(if s { theme.on_selection(c) } else { c }))
-                        .add_modifier(Modifier::BOLD)
+                    theme.bold(base.patch(theme.fg(if s { theme.on_selection(c) } else { c })))
                 } else {
                     base
                 };
@@ -893,7 +850,8 @@ pub(super) fn draw_overlay(
                         if s { base } else { base.patch(theme.dim()) },
                     );
                 }
-                push(&mut app.hits, rr, OverlayHit::Item(row + p.scroll));
+                app.hits
+                    .push((rr, Hit::Overlay(OverlayHit::Item(row + p.scroll))));
             }
             scrollbar(buf, r, p.scroll, vis.len(), lh, true, theme);
             if vis.is_empty() {
@@ -903,34 +861,11 @@ pub(super) fn draw_overlay(
                     inner.y + 2,
                     "No match",
                     inner.width.saturating_sub(3),
-                    theme.dim().bg(theme.overlay_bg),
+                    theme.dialog_dim(),
                 );
             }
         }
         Overlay::Env(e) => {
-            // Unsaved edits are marked, as on request tabs.
-            let title = if e.dirty {
-                "Environments ● unsaved"
-            } else {
-                "Environments"
-            };
-            let (mr, inner) = modal(
-                buf,
-                body,
-                112,
-                area.height.saturating_sub(4).max(12),
-                title,
-                theme,
-            );
-            // The frame itself is inert: dead space inside the dialog must
-            // not fall through to the Outside that leaves the editor.
-            push(&mut app.hits, mr, OverlayHit::Dialog);
-            let inner = Rect::new(
-                inner.x + 1,
-                inner.y,
-                inner.width.saturating_sub(2),
-                inner.height,
-            );
             let labels: Vec<String> = e
                 .envs
                 .iter()
@@ -945,38 +880,6 @@ pub(super) fn draw_overlay(
                     }
                 })
                 .collect();
-            let rects = tab_strip(
-                buf,
-                inner.x,
-                inner.y,
-                inner.x + inner.width,
-                &labels,
-                e.current,
-                TabLook::Strong,
-                theme,
-            );
-            for (i, r) in rects.into_iter().enumerate() {
-                push(&mut app.hits, r, OverlayHit::EnvTab(i));
-            }
-            let legend = "Source says where a value lives (Space changes it). For secrets \
-                and keychain, select Secret value and type the value. ✕ deletes a row (Ctrl+D). \
-                Ctrl+S saves; Esc asks before discarding unsaved changes.";
-            let ly = put_wrapped(
-                buf,
-                inner.x,
-                inner.y + 2,
-                legend,
-                inner.width,
-                (inner.y + 7).min(inner.y + inner.height.saturating_sub(4)),
-                theme.dim().bg(theme.overlay_bg),
-            );
-            let tr = Rect::new(
-                inner.x,
-                ly + 1,
-                inner.width,
-                (inner.y + inner.height).saturating_sub(ly + 1 + 4),
-            );
-            // What the selected row's source means.
             let src = e
                 .table
                 .rows
@@ -992,117 +895,33 @@ pub(super) fn draw_overlay(
                 Some(3) => "file: read from the file at the path.",
                 _ => "Type a name in the last row to add a variable.",
             };
-            put(
-                buf,
-                inner.x,
-                inner.y + inner.height.saturating_sub(3),
-                &truncate(explain, inner.width as usize),
-                inner.width,
-                theme.fg(theme.info).bg(theme.overlay_bg),
-            );
-            let mut tmp_hits = Vec::new();
-            cursor = draw_table(
-                buf,
-                tr,
-                theme,
-                &mut e.table,
-                true,
-                "",
-                &is_def,
-                &mut tmp_hits,
-                0,
-                app.hover,
-            );
-            for (rect, h) in tmp_hits {
-                match h {
-                    Hit::TableCell { row, col, .. } => {
-                        push(&mut app.hits, rect, OverlayHit::EnvCell { row, col });
-                    }
-                    Hit::TableDelete { row, .. } => {
-                        push(&mut app.hits, rect, OverlayHit::EnvDelete(row));
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(err) = &e.error {
-                put(
-                    buf,
-                    inner.x,
-                    inner.y + inner.height.saturating_sub(2),
-                    &truncate(err, inner.width as usize),
-                    inner.width,
-                    theme.fg(theme.err).bg(theme.overlay_bg),
-                );
-            } else if e.dirty {
-                put(
-                    buf,
-                    inner.x,
-                    inner.y + inner.height.saturating_sub(2),
-                    "● unsaved changes",
-                    inner.width,
-                    theme.fg(theme.warn).bg(theme.overlay_bg),
-                );
-            }
-            let by = inner.y + inner.height.saturating_sub(1);
-            let mut bx = inner.x;
-            for (i, label) in ["Save (Ctrl+S)", "New env (Ctrl+N)", "Close (Esc)"]
-                .iter()
-                .enumerate()
-            {
-                let start = bx;
-                bx = button(buf, bx, by, label, false, theme);
-                push(
-                    &mut app.hits,
-                    Rect::new(start, by, bx - start, 1),
-                    OverlayHit::Button(i),
-                );
-                bx += 2;
-            }
-        }
-        Overlay::Mcp(m) => {
-            let title = if m.dirty {
-                "MCP servers ● unsaved"
-            } else {
-                "MCP servers"
-            };
-            let (mr, inner) = modal(
+            let legend = "Source says where a value lives (Space changes it). For secrets \
+                and keychain, select Secret value and type the value. ✕ deletes a row (Ctrl+D). \
+                Ctrl+S saves; Esc asks before discarding unsaved changes.";
+            cursor = editor::render(
+                app,
                 buf,
                 body,
-                108,
-                // The frame grows with the list: a few servers get a short
-                // dialog, a long list scrolls inside the screen height.
-                (m.table.rows.len() as u16 + 12).min(area.height.saturating_sub(4).max(12)),
-                title,
                 theme,
+                EditorDialog {
+                    title: "Environments",
+                    width: 112,
+                    height: area.height.saturating_sub(4).max(12),
+                    tabs: labels,
+                    tab_sel: e.current,
+                    reserved: 4,
+                    legend,
+                    explain,
+                    error: e.error.as_deref(),
+                    dirty: e.dirty,
+                    buttons: ["Save (Ctrl+S)", "New env (Ctrl+N)", "Close (Esc)"],
+                    is_def: &is_def,
+                },
+                &mut e.table,
+                &EnvHits,
             );
-            push(&mut app.hits, mr, OverlayHit::Dialog);
-            let inner = Rect::new(
-                inner.x + 1,
-                inner.y,
-                inner.width.saturating_sub(2),
-                inner.height,
-            );
-            let legend = "Each row is a [mcp.servers] entry: a name, the kind (Space changes it) \
-                and the URL or command. Typing in the last row adds one; ✕ deletes a row (Ctrl+D). \
-                Args, env, headers and auth are edited in the config file. Ctrl+S saves to \
-                .sendito/config.toml; Esc asks before discarding unsaved changes.";
-            let ly = put_wrapped(
-                buf,
-                inner.x,
-                inner.y + 1,
-                legend,
-                inner.width,
-                inner.y + 7,
-                theme.dim().bg(theme.overlay_bg),
-            );
-            let tr = Rect::new(
-                inner.x,
-                ly + 1,
-                inner.width,
-                // Three rows are left for the explanation, the unsaved marker
-                // and the buttons; the rest shows the table and its add row.
-                (inner.y + inner.height).saturating_sub(ly + 1 + 3),
-            );
+        }
+        Overlay::Mcp(m) => {
             let explain = match m.table.rows.get(m.table.sel_row) {
                 Some(r) => match r.cells.get(1).map(|c| c.choice()) {
                     Some(1) => "stdio: started as a child process; the value is the command.",
@@ -1110,78 +929,41 @@ pub(super) fn draw_overlay(
                 },
                 None => "Type a name in the last row to add a server.",
             };
-            put(
+            let legend = "Each row is a [mcp.servers] entry: a name, the kind (Space changes it) \
+                and the URL or command. Typing in the last row adds one; ✕ deletes a row (Ctrl+D). \
+                Args, env, headers and auth are edited in the config file. Ctrl+S saves to \
+                .sendito/config.toml; Esc asks before discarding unsaved changes.";
+            cursor = editor::render(
+                app,
                 buf,
-                inner.x,
-                inner.y + inner.height.saturating_sub(3),
-                &truncate(explain, inner.width as usize),
-                inner.width,
-                theme.fg(theme.info).bg(theme.overlay_bg),
-            );
-            let mut tmp_hits = Vec::new();
-            cursor = draw_table(
-                buf,
-                tr,
+                body,
                 theme,
+                EditorDialog {
+                    title: "MCP servers",
+                    width: 108,
+                    // The frame grows with the list: a few servers get a short
+                    // dialog, a long list scrolls inside the screen height.
+                    height: (m.table.rows.len() as u16 + 12)
+                        .min(area.height.saturating_sub(4).max(12)),
+                    tabs: Vec::new(),
+                    tab_sel: 0,
+                    reserved: 3,
+                    legend,
+                    explain,
+                    error: m.error.as_deref(),
+                    dirty: m.dirty,
+                    buttons: ["Save (Ctrl+S)", "Add row (Ctrl+N)", "Close (Esc)"],
+                    is_def: &is_def,
+                },
                 &mut m.table,
-                true,
-                "",
-                &is_def,
-                &mut tmp_hits,
-                0,
-                app.hover,
+                &McpHits,
             );
-            for (rect, h) in tmp_hits {
-                match h {
-                    Hit::TableCell { row, col, .. } => {
-                        push(&mut app.hits, rect, OverlayHit::McpCell { row, col });
-                    }
-                    Hit::TableDelete { row, .. } => {
-                        push(&mut app.hits, rect, OverlayHit::McpDelete(row));
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(err) = &m.error {
-                put(
-                    buf,
-                    inner.x,
-                    inner.y + inner.height.saturating_sub(2),
-                    &truncate(err, inner.width as usize),
-                    inner.width,
-                    theme.fg(theme.err).bg(theme.overlay_bg),
-                );
-            } else if m.dirty {
-                put(
-                    buf,
-                    inner.x,
-                    inner.y + inner.height.saturating_sub(2),
-                    "● unsaved changes",
-                    inner.width,
-                    theme.fg(theme.warn).bg(theme.overlay_bg),
-                );
-            }
-            let by = inner.y + inner.height.saturating_sub(1);
-            let mut bx = inner.x;
-            for (i, label) in ["Save (Ctrl+S)", "Add row (Ctrl+N)", "Close (Esc)"]
-                .iter()
-                .enumerate()
-            {
-                let start = bx;
-                bx = button(buf, bx, by, label, false, theme);
-                push(
-                    &mut app.hits,
-                    Rect::new(start, by, bx - start, 1),
-                    OverlayHit::McpButton(i),
-                );
-                bx += 2;
-            }
         }
+
         Overlay::Import(i) => {
-            let (r, inner) = modal(buf, body, 100, 17, "Import", theme);
-            push(&mut app.hits, r, OverlayHit::Dialog);
+            let (_, inner) = shell(app, buf, body, 100, 17, "Import", theme);
             let tw = inner.width.saturating_sub(4);
-            let note = theme.dim().bg(theme.overlay_bg);
+            let note = theme.dialog_dim();
             put(
                 buf,
                 inner.x + 2,
@@ -1209,7 +991,7 @@ pub(super) fn draw_overlay(
             let er = Rect::new(inner.x + 2, inner.y + 5, tw, inner.height.saturating_sub(8));
             let tr = input_box(buf, er, true, theme);
             cursor = i.input.render(tr, buf, theme, true, &is_def);
-            push(&mut app.hits, tr, OverlayHit::Input);
+            app.hits.push((tr, Hit::Overlay(OverlayHit::Input)));
             if let Some(e) = &i.error {
                 put(
                     buf,
@@ -1217,21 +999,17 @@ pub(super) fn draw_overlay(
                     inner.y + inner.height.saturating_sub(2),
                     &truncate(e, tw as usize),
                     tw,
-                    theme.fg(theme.err).bg(theme.overlay_bg),
+                    theme.on_overlay(theme.err),
                 );
             }
-            let by = inner.y + inner.height.saturating_sub(1);
-            let x1 = button(buf, inner.x + 2, by, "Import (F5 / Ctrl+S)", false, theme);
-            push(
-                &mut app.hits,
-                Rect::new(inner.x + 2, by, x1 - inner.x - 2, 1),
-                OverlayHit::Button(0),
-            );
-            let x2 = button(buf, x1 + 2, by, "Cancel (Esc)", false, theme);
-            push(
-                &mut app.hits,
-                Rect::new(x1 + 2, by, x2 - x1 - 2, 1),
-                OverlayHit::Button(1),
+            buttons(
+                app,
+                buf,
+                inset(inner, 2, 0),
+                &["Import (F5 / Ctrl+S)", "Cancel (Esc)"],
+                None,
+                &|i| OverlayHit::Button(i),
+                theme,
             );
         }
         Overlay::Report(rep) => {
@@ -1240,7 +1018,8 @@ pub(super) fn draw_overlay(
                 .map(|i| wrap_text(&rep.viewer.doc.line_ref(ViewMode::Raw, i), w).len())
                 .sum();
             let lines = lines.min(u16::MAX as usize) as u16;
-            let (r, inner) = modal(
+            let (r, inner) = shell(
+                app,
                 buf,
                 body,
                 100,
@@ -1250,7 +1029,6 @@ pub(super) fn draw_overlay(
                 &rep.title,
                 theme,
             );
-            push(&mut app.hits, r, OverlayHit::Dialog);
             // Padding around the text; a blank row separates it from the buttons.
             let vr = Rect::new(
                 inner.x + 2,
@@ -1276,12 +1054,12 @@ pub(super) fn draw_overlay(
             } else {
                 "Copy (y)"
             };
-            let x1 = button(buf, inner.x + 2, by, copy, false, theme);
-            push(
-                &mut app.hits,
-                Rect::new(inner.x + 2, by, x1 - inner.x - 2, 1),
-                OverlayHit::Button(0),
-            );
+            let bar = inset(inner, 2, 0);
+            let x1 = button(buf, bar.x, by, copy, false, theme);
+            app.hits.push((
+                Rect::new(bar.x, by, x1 - bar.x, 1),
+                Hit::Overlay(OverlayHit::Button(0)),
+            ));
             let x2 = button(buf, x1 + 2, by, "Close (Esc)", false, theme);
             // Where the view is, so a long report reads as scrollable.
             if rep.viewer.row_count() > vr.height as usize {
@@ -1294,15 +1072,14 @@ pub(super) fn draw_overlay(
                         by,
                         &pos,
                         pw,
-                        theme.dim().bg(theme.overlay_bg),
+                        theme.dialog_dim(),
                     );
                 }
             }
-            push(
-                &mut app.hits,
+            app.hits.push((
                 Rect::new(x1 + 2, by, x2 - x1 - 2, 1),
-                OverlayHit::Button(1),
-            );
+                Hit::Overlay(OverlayHit::Button(1)),
+            ));
         }
     }
     app.overlay = Some(ov);
@@ -1338,14 +1115,7 @@ fn help_columns(
     // The gap between the columns: a faint rule.
     let rx = area.x + col_w + gap / 2;
     for y in area.y..area.y + area.height {
-        put(
-            buf,
-            rx,
-            y,
-            "│",
-            1,
-            theme.fg(theme.border).bg(theme.overlay_bg),
-        );
+        put(buf, rx, y, "│", 1, theme.on_overlay(theme.border));
     }
     (left, right)
 }

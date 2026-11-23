@@ -1,8 +1,8 @@
 //! The sidebar: request tree and history.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
@@ -128,10 +128,7 @@ pub(super) fn draw_sidebar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
     if app.tree.rows.is_empty() {
         let lines: Vec<Spans> = if app.tree.filter.is_empty() {
             vec![
-                vec![(
-                    "No requests yet.".into(),
-                    theme.fg(theme.fg).add_modifier(Modifier::BOLD),
-                )],
+                vec![("No requests yet.".into(), theme.bold(theme.fg(theme.fg)))],
                 Vec::new(),
                 vec![
                     (" n ".into(), theme.keycap()),
@@ -198,24 +195,19 @@ pub(super) fn draw_sidebar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         let y = tree_area.y + i as u16;
         let rect = Rect::new(tree_area.x, y, tree_area.width, 1);
         let selected = idx == app.tree.selected;
-        let hover = app
-            .hover
-            .is_some_and(|(x, y)| rect.contains(Position { x, y }));
         let drop =
             dragging && row.is_folder() && app.drop_target.as_deref() == Some(row.rel.as_str());
         let sel_focus = (selected && focused) || drop;
-        let base = if sel_focus {
-            theme.selected()
+        let state = if sel_focus {
+            RowState::Selected
         } else if selected {
-            Style::default()
-                .fg(theme.fg)
-                .bg(theme.surface_alt)
-                .add_modifier(Modifier::BOLD)
-        } else if hover {
-            Style::default().fg(theme.fg).bg(theme.surface_alt)
+            RowState::SelectedQuiet
+        } else if hovered(app, rect) {
+            RowState::Hover
         } else {
-            theme.surface()
+            RowState::Plain
         };
+        let base = row_style(state, theme.surface(), theme);
         // The drop target is unmistakable: the selection colors, bold, and a label.
         let base = if drop {
             base.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -286,7 +278,7 @@ pub(super) fn draw_sidebar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
                         base.patch(theme.fg(theme.on_selection(theme.accent))),
                     );
                 }
-                name_st = base.add_modifier(Modifier::BOLD);
+                name_st = theme.bold(base);
                 let name = format!("{}/", row.name);
                 let nx = x;
                 x = put(
@@ -303,20 +295,7 @@ pub(super) fn draw_sidebar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
                 if row.depth == 0 {
                     x += 2;
                 }
-                let b = format!("{:<5}", short_method(badge));
-                let mc = if sel_focus {
-                    theme.on_selection(theme.method_color(badge))
-                } else {
-                    theme.method_color(badge)
-                };
-                x = put(
-                    buf,
-                    x,
-                    y,
-                    &b,
-                    maxx.saturating_sub(x),
-                    theme.fg(mc).bg(bg).add_modifier(Modifier::BOLD),
-                );
+                x = method_cell(buf, x, y, badge, base, sel_focus, theme);
                 x = put(buf, x, y, " ", 1, base);
                 let open = app
                     .tabs
@@ -475,35 +454,20 @@ pub(super) fn draw_history(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         }
         let sel = idx == app.history_sel;
         let rect = Rect::new(area.x, y, area.width, 2);
-        let hover = app
-            .hover
-            .is_some_and(|(x, y)| rect.contains(Position { x, y }));
-        let base = if sel && focused {
-            theme.selected()
-        } else if sel || hover {
-            Style::default().fg(theme.fg).bg(theme.surface_alt)
+        let state = if sel && focused {
+            RowState::Selected
+        } else if sel {
+            RowState::SelectedQuiet
+        } else if hovered(app, rect) {
+            RowState::Hover
         } else {
-            theme.surface()
+            RowState::Plain
         };
+        let base = row_style(state, theme.surface(), theme);
         let bg = base.bg.unwrap_or(theme.surface);
         let sel_focus = sel && focused;
         fill(buf, rect, base);
-        let mc = theme.method_color(&e.badge);
-        let mut x = put(
-            buf,
-            area.x + 1,
-            y,
-            &format!("{:<5}", short_method(&e.badge)),
-            5,
-            theme
-                .fg(if sel_focus {
-                    theme.on_selection(mc)
-                } else {
-                    mc
-                })
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        );
+        let mut x = method_cell(buf, area.x + 1, y, &e.badge, base, sel_focus, theme);
         x = put(buf, x, y, " ", 1, base);
         let non_http = matches!(e.badge.as_str(), "GRPC" | "MCP");
         let status = match (e.status, &e.error) {
@@ -533,10 +497,7 @@ pub(super) fn draw_history(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
             })
             .unwrap_or(theme.err);
         let sst = if sel_focus {
-            theme
-                .fg(theme.on_selection(sc))
-                .bg(bg)
-                .add_modifier(Modifier::BOLD)
+            theme.bold(theme.fg(theme.on_selection(sc)).bg(bg))
         } else {
             theme.badge(sc)
         };

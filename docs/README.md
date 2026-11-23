@@ -11,6 +11,7 @@ a gallery of the main flows. Everything else is here.
 | [CLI.md](CLI.md) | Every subcommand, flag, exit code and the JSON report | You script Sendito |
 | [FEATURES.md](FEATURES.md) | Every feature, grouped by area | You want the complete picture |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Crates, the send pipeline, tests, changing behaviour | You work on the code |
+| [MAP.md](MAP.md) | Feature → file and symbol index, tests per feature | You need to find where a feature lives |
 | [THEMES.md](THEMES.md) | Theme format, tokens, icons | You want your own theme |
 | [DEBT.md](DEBT.md) | Known limitations and how to remove them | Something is missing |
 | [media/README.md](media/README.md) | How screenshots and GIFs are produced | You add or refresh media |
@@ -36,4 +37,4 @@ Some documents are produced from the code. Do not hand-edit them; regenerate:
 * **New user**: README → FEATURES → KEYMAP.
 * **Integrating in CI**: README (quick start) → CLI → FORMAT (`[http]`,
   `[oauth]`, `[mcp]`).
-* **Contributor**: ARCHITECTURE → AGENTS.md → FORMAT → DEBT.
+* **Contributor**: ARCHITECTURE → MAP → AGENTS.md → FORMAT → DEBT.

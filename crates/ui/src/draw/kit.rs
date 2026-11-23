@@ -7,12 +7,13 @@
 //! current value that does not have the keyboard.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::App;
 use crate::icons::{Icons, SPINNER};
 use crate::theme::Theme;
 
@@ -169,7 +170,7 @@ pub(super) fn title(buf: &mut Buffer, area: Rect, text: &str, focused: bool, the
     let st = if focused {
         theme.chip(theme.accent)
     } else {
-        theme.fg(theme.title).add_modifier(Modifier::BOLD)
+        theme.title_style()
     };
     let max = (area.x + area.width).saturating_sub(2);
     put(
@@ -220,7 +221,7 @@ pub(super) fn tab_strip(
             match look {
                 TabLook::Strong => theme.chip(theme.accent),
                 TabLook::Soft => theme.badge(theme.accent),
-                TabLook::Quiet => theme.accent().add_modifier(Modifier::BOLD),
+                TabLook::Quiet => theme.bold(theme.accent()),
             }
         };
         put(buf, x, y, &text, w, st);
@@ -241,7 +242,7 @@ pub(super) fn fit_labels(candidates: Vec<Vec<String>>, w: u16) -> Vec<String> {
 }
 
 pub(super) fn method_style(theme: &Theme, m: &str) -> Style {
-    theme.fg(theme.method_color(m)).add_modifier(Modifier::BOLD)
+    theme.bold(theme.fg(theme.method_color(m)))
 }
 
 /// Method label that fits the 5-column badge.
@@ -252,6 +253,42 @@ pub fn short_method(m: &str) -> &str {
         "CONNECT" => "CONN",
         m if m.len() > 5 => &m[..5],
         m => m,
+    }
+}
+
+/// A 5-column method badge, in the method's color over the row's own
+/// background (the selection's text color when the row is selected).
+pub(super) fn method_cell(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    method: &str,
+    base: Style,
+    selected: bool,
+    theme: &Theme,
+) -> u16 {
+    let c = theme.method_color(method);
+    let c = if selected { theme.on_selection(c) } else { c };
+    let st = theme.bold(base.patch(theme.fg(c)));
+    put(buf, x, y, &format!("{:<5}", short_method(method)), 5, st)
+}
+
+/// The color of a call's result, wherever it is shown: the status code when
+/// there is one, otherwise what is known about the call.
+pub(super) fn result_color(
+    theme: &Theme,
+    code: Option<u16>,
+    ok: bool,
+    cancelled: bool,
+    running: bool,
+) -> Color {
+    match code {
+        Some(c) => theme.status_color(c),
+        // A call in progress is not an error.
+        None if running => theme.accent,
+        None if cancelled => theme.warn,
+        None if ok => theme.ok,
+        None => theme.err,
     }
 }
 
@@ -360,10 +397,7 @@ pub(super) fn button_style(kind: Btn, selected: bool, theme: &Theme) -> Style {
         (Btn::Danger, true) => theme.chip(theme.err),
         (Btn::Danger, false) => theme.badge(theme.err),
         (Btn::Secondary, true) => theme.chip(theme.fg),
-        (Btn::Secondary, false) => Style::default()
-            .fg(theme.fg)
-            .bg(theme.keycap_bg)
-            .add_modifier(Modifier::BOLD),
+        (Btn::Secondary, false) => theme.bold(theme.raised()),
     }
 }
 
@@ -438,7 +472,7 @@ pub(super) fn rule(buf: &mut Buffer, x: u16, y: u16, w: u16, label: &str, theme:
             y,
             &format!(" {label} "),
             max_x.saturating_sub(cx),
-            theme.fg(theme.title).add_modifier(Modifier::BOLD),
+            theme.title_style(),
         );
     }
     while cx < max_x {
@@ -554,36 +588,71 @@ pub(super) fn shadow(buf: &mut Buffer, r: Rect, limit: Rect, theme: &Theme) {
     }
 }
 
-/// A dialog of about `w`×`h` centered in `body`, with its shadow and title.
-/// Returns (outer, inner).
-pub(super) fn modal(
-    buf: &mut Buffer,
-    body: Rect,
-    w: u16,
-    h: u16,
-    title_text: &str,
-    theme: &Theme,
-) -> (Rect, Rect) {
-    let r = centered(body, w, h);
-    modal_at(buf, r, body, title_text, theme)
+/// Whether the mouse is over `r`.
+pub(super) fn hovered(app: &App, r: Rect) -> bool {
+    app.hover
+        .is_some_and(|(x, y)| r.contains(Position { x, y }))
 }
 
-/// A dialog at `r` (see [`modal`]).
-pub(super) fn modal_at(
+/// How a list row reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RowState {
+    Plain,
+    /// Under the mouse.
+    Hover,
+    /// Selected, and the list has the keyboard.
+    Selected,
+    /// Selected, but the keyboard is elsewhere.
+    SelectedQuiet,
+}
+
+/// The style of a list row; `plain` is the row's own background (a pane's
+/// surface, or a dialog's).
+pub(super) fn row_style(state: RowState, plain: Style, theme: &Theme) -> Style {
+    match state {
+        RowState::Plain => plain,
+        RowState::Hover => theme.hover(),
+        RowState::Selected => theme.selected(),
+        RowState::SelectedQuiet => theme.bold(theme.hover()),
+    }
+}
+
+/// The accent bar that marks the selected row.
+pub(super) fn selection_bar(buf: &mut Buffer, r: Rect, base: Style, theme: &Theme) {
+    put(
+        buf,
+        r.x,
+        r.y,
+        "▌",
+        1,
+        base.patch(theme.fg(theme.on_selection(theme.accent))),
+    );
+}
+
+/// "↑ 3 more" / "↓ 3 more" in a dialog's border row.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn border_count(
     buf: &mut Buffer,
     r: Rect,
-    body: Rect,
-    title_text: &str,
+    y: u16,
+    count: usize,
+    up: bool,
     theme: &Theme,
-) -> (Rect, Rect) {
-    shadow(buf, r, body, theme);
-    Clear.render(r, buf);
-    let fill_st = Style::default().fg(theme.fg).bg(theme.overlay_bg);
-    let inner = frame_with(buf, r, theme, true, fill_st);
-    if !title_text.is_empty() {
-        title(buf, r, title_text, true, theme);
-    }
-    (r, inner)
+) {
+    let text = if up {
+        format!(" ↑ {count} more ")
+    } else {
+        format!(" ↓ {count} more ")
+    };
+    let w = text.width() as u16;
+    let right = r.x + r.width;
+    let x = right.saturating_sub(w + 2);
+    let st = if up {
+        theme.dialog_dim()
+    } else {
+        theme.dialog_accent()
+    };
+    put(buf, x, y, &text, w, st);
 }
 
 pub(super) fn wrap_text(s: &str, w: usize) -> Vec<String> {
@@ -657,5 +726,74 @@ mod tests {
         let mono = Theme::mono();
         backdrop(&mut buf, Rect::new(0, 0, 4, 1), &mono);
         assert_eq!(buf[(0, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn row_states_read_in_order() {
+        let theme = Theme::dusk();
+        let plain = theme.overlay();
+        assert_eq!(row_style(RowState::Plain, plain, &theme), plain);
+        assert_eq!(row_style(RowState::Hover, plain, &theme), theme.hover());
+        assert_eq!(
+            row_style(RowState::Selected, plain, &theme),
+            theme.selected()
+        );
+        assert_eq!(
+            row_style(RowState::SelectedQuiet, plain, &theme),
+            theme.bold(theme.hover())
+        );
+        // Over a dialog, the plain row keeps the dialog's background.
+        assert_eq!(
+            row_style(RowState::Plain, plain, &theme).bg,
+            Some(theme.overlay_bg)
+        );
+    }
+
+    #[test]
+    fn result_color_prefers_the_code() {
+        let theme = Theme::dusk();
+        assert_eq!(
+            result_color(&theme, Some(204), true, false, false),
+            theme.ok
+        );
+        assert_eq!(
+            result_color(&theme, Some(404), false, false, false),
+            theme.warn
+        );
+        assert_eq!(
+            result_color(&theme, Some(500), false, false, false),
+            theme.err
+        );
+        // A call in progress outranks the rest.
+        assert_eq!(result_color(&theme, None, false, false, true), theme.accent);
+        assert_eq!(result_color(&theme, None, false, true, false), theme.warn);
+        assert_eq!(result_color(&theme, None, true, false, false), theme.ok);
+        assert_eq!(result_color(&theme, None, false, false, false), theme.err);
+    }
+
+    #[test]
+    fn method_cell_pads_and_follows_the_selection() {
+        let theme = Theme::dusk();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 6, 1));
+        assert_eq!(
+            method_cell(&mut buf, 0, 0, "DELETE", theme.bar(), false, &theme),
+            5
+        );
+        assert_eq!(buf[(0, 0)].symbol(), "D");
+        assert_eq!(buf[(1, 0)].symbol(), "E");
+        assert_eq!(buf[(3, 0)].symbol(), " ");
+        method_cell(&mut buf, 0, 0, "GET", theme.selected(), true, &theme);
+        assert_eq!(
+            buf[(0, 0)].fg,
+            theme.on_selection(theme.method_color("GET"))
+        );
+        assert_eq!(buf[(0, 0)].bg, theme.selected().bg.unwrap_or(theme.bg));
+        // The pad keeps every badge five columns wide.
+        let mut b = Buffer::empty(Rect::new(0, 0, 6, 1));
+        assert_eq!(
+            method_cell(&mut b, 0, 0, "GET", theme.bar(), false, &theme),
+            5
+        );
+        assert_eq!(b[(3, 0)].symbol(), " ");
     }
 }

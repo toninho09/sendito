@@ -3,7 +3,6 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
@@ -39,18 +38,17 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         };
         spans.push((
             format!(" {what} {:.1}s ", el.as_secs_f64()),
-            theme.fg(theme.accent).add_modifier(Modifier::BOLD),
+            theme.bold(theme.fg(theme.accent)),
         ));
     }
     if !summary.status.is_empty() {
-        let color = match summary.code {
-            Some(c) => theme.status_color(c),
-            // A call in progress is not an error.
-            None if running.is_some() => theme.accent,
-            None if summary.error.as_deref() == Some("cancelled") => theme.warn,
-            None if summary.ok => theme.ok,
-            None => theme.err,
-        };
+        let color = result_color(
+            theme,
+            summary.code,
+            summary.ok,
+            summary.error.as_deref() == Some("cancelled"),
+            running.is_some(),
+        );
         spans.push((
             format!(" {} ", truncate(&summary.status, 40)),
             theme.chip(color),
@@ -239,7 +237,7 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                                 spinner(frame_no),
                                 el.as_secs_f64()
                             ),
-                            theme.fg(theme.accent).add_modifier(Modifier::BOLD),
+                            theme.bold(theme.fg(theme.accent)),
                         )],
                         vec![(bar, theme.fg(theme.accent))],
                         vec![
@@ -264,17 +262,11 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                 let legend = kind == Kind::Grpc && resp_tab == 3 && view.height > 3;
                 if legend {
                     let l: Spans = vec![
-                        (
-                            "→".into(),
-                            theme.fg(theme.accent).add_modifier(Modifier::BOLD),
-                        ),
+                        ("→".into(), theme.bold(theme.fg(theme.accent))),
                         (" sent  ".into(), theme.dim()),
-                        ("←".into(), theme.fg(theme.ok).add_modifier(Modifier::BOLD)),
+                        ("←".into(), theme.bold(theme.fg(theme.ok))),
                         (" received  ".into(), theme.dim()),
-                        (
-                            "■".into(),
-                            theme.fg(theme.warn).add_modifier(Modifier::BOLD),
-                        ),
+                        ("■".into(), theme.bold(theme.fg(theme.warn))),
                         (" final status  ".into(), theme.dim()),
                         ("+s".into(), theme.fg(theme.fg)),
                         (" since start".into(), theme.dim()),

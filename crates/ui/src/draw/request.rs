@@ -2,17 +2,17 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
-use crate::form::{Cell, ColKind, Table};
+use crate::form::Table;
 use crate::icons::Icons;
 use crate::keymap::Action;
 use crate::tab::{Field, Kind};
 use crate::theme::Theme;
 
 use super::kit::*;
+use super::table::{TableHit, draw_table};
 
 pub(super) fn short_label(f: Field) -> &'static str {
     match f {
@@ -749,8 +749,9 @@ pub(super) fn draw_fields(
         if f.is_table() {
             let label = short_label(*f);
             let tbl = tab.ed.table_mut(*f);
-            if let Some(tbl) = tbl
-                && let Some(c) = draw_table(
+            if let Some(tbl) = tbl {
+                let field = i;
+                if let Some(c) = draw_table(
                     buf,
                     rect,
                     theme,
@@ -758,12 +759,18 @@ pub(super) fn draw_fields(
                     is_sel,
                     label,
                     is_def,
-                    &mut app.hits,
-                    i,
+                    &mut |r, h| {
+                        let hit = match h {
+                            TableHit::Cell { row, col } => Hit::TableCell { field, row, col },
+                            TableHit::Toggle { row } => Hit::TableToggle { field, row },
+                            TableHit::Delete { row } => Hit::TableDelete { field, row },
+                        };
+                        app.hits.push((r, hit));
+                    },
                     app.hover,
-                )
-            {
-                cursor = Some(c);
+                ) {
+                    cursor = Some(c);
+                }
             }
         } else if f.is_multiline() {
             let ed = tab.ed.text_mut(*f);
@@ -777,7 +784,7 @@ pub(super) fn draw_fields(
             app.hits.push((rect, Hit::TextArea { field: i }));
         } else {
             let lst = if is_sel {
-                theme.accent().add_modifier(Modifier::BOLD)
+                theme.bold(theme.accent())
             } else {
                 theme.dim()
             };
@@ -797,14 +804,7 @@ pub(super) fn draw_fields(
                 } else {
                     theme.bar()
                 };
-                put(
-                    buf,
-                    vr.x,
-                    y,
-                    &label,
-                    vr.width,
-                    st.add_modifier(Modifier::BOLD),
-                );
+                put(buf, vr.x, y, &label, vr.width, theme.bold(st));
                 let hint = choice_hint(*f);
                 let hx = vr.x + label.width() as u16 + 1;
                 let room = (vr.x + vr.width).saturating_sub(hx);
@@ -831,14 +831,7 @@ pub(super) fn draw_fields(
                 } else {
                     theme.bar()
                 };
-                put(
-                    buf,
-                    vr.x,
-                    y,
-                    &label,
-                    vr.width,
-                    st.add_modifier(Modifier::BOLD),
-                );
+                put(buf, vr.x, y, &label, vr.width, theme.bold(st));
                 let hx = vr.x + label.width() as u16 + 1;
                 put(
                     buf,
@@ -909,272 +902,4 @@ pub(super) fn toggle_hint(f: Field) -> &'static str {
         Field::Tls => "or prefix the target with https://",
         _ => "",
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn draw_table(
-    buf: &mut Buffer,
-    area: Rect,
-    theme: &Theme,
-    t: &mut Table,
-    focused: bool,
-    label: &str,
-    is_def: &dyn Fn(&str) -> bool,
-    hits: &mut Vec<(Rect, Hit)>,
-    field: usize,
-    hover: Option<(u16, u16)>,
-) -> Option<(u16, u16)> {
-    if area.height == 0 {
-        return None;
-    }
-    let check_w: u16 = if t.has_enable { 4 } else { 0 };
-    // "│✕": the delete button is a column of its own, separated like the others.
-    let del_w: u16 = 2;
-    let ncol = t.columns.len() as u16;
-    let seps = ncol.saturating_sub(1);
-    let fixed: u16 = t
-        .columns
-        .iter()
-        .map(|c| match c.kind {
-            ColKind::Choice(opts) => opts.iter().map(|o| o.len()).max().unwrap_or(4) as u16 + 3,
-            ColKind::Toggle => 5,
-            ColKind::Text => 0,
-        })
-        .sum();
-    let text_weights: u16 = t
-        .columns
-        .iter()
-        .filter(|c| c.kind == ColKind::Text)
-        .map(|c| c.weight)
-        .sum::<u16>()
-        .max(1);
-    let avail = area.width.saturating_sub(check_w + del_w + seps + fixed);
-    let widths: Vec<u16> = t
-        .columns
-        .iter()
-        .map(|c| match c.kind {
-            ColKind::Choice(opts) => opts.iter().map(|o| o.len()).max().unwrap_or(4) as u16 + 3,
-            ColKind::Toggle => 5,
-            ColKind::Text => (avail as u32 * c.weight as u32 / text_weights as u32) as u16,
-        })
-        .collect();
-    let sep_st = theme.fg(theme.border);
-    // Header row.
-    let mut x = area.x;
-    if !label.is_empty() {
-        let lw = (label.width() as u16 + 1).min(check_w.max(label.width() as u16 + 1));
-        put(
-            buf,
-            x,
-            area.y,
-            label,
-            lw,
-            theme.accent().add_modifier(Modifier::BOLD),
-        );
-        x += lw;
-        if x < area.x + check_w {
-            x = area.x + check_w;
-        }
-    } else {
-        x += check_w;
-    }
-    for (i, c) in t.columns.iter().enumerate() {
-        let w = if i == 0 && x > area.x + check_w {
-            widths[0].saturating_sub(x - area.x - check_w)
-        } else {
-            widths[i]
-        };
-        put(
-            buf,
-            x,
-            area.y,
-            &truncate(c.title, w as usize),
-            w,
-            theme.dim().add_modifier(Modifier::BOLD),
-        );
-        x += w + 1;
-    }
-    let body_h = area.height.saturating_sub(1) as usize;
-    if focused {
-        t.ensure_visible(body_h);
-    }
-    let total = t.rows.len() + 1;
-    let mut cursor = None;
-    for vis in 0..body_h {
-        let r = t.scroll + vis;
-        if r >= total {
-            break;
-        }
-        let y = area.y + 1 + vis as u16;
-        let row_rect = Rect::new(area.x, y, area.width, 1);
-        let row_sel = focused && r == t.sel_row;
-        let is_new = r == t.rows.len();
-        let row_hover =
-            hover.is_some_and(|(hx, hy)| hy == y && hx >= area.x && hx < area.x + area.width);
-        // Alternate rows are shaded so wide rows stay readable.
-        let zebra = r % 2 == 1 && !theme.mono && !is_new;
-        let row_bg = if zebra {
-            theme.surface_alt
-        } else {
-            theme.surface
-        };
-        let base = Style::default().fg(theme.fg).bg(row_bg);
-        fill(buf, row_rect, base);
-        let mut x = area.x;
-        if t.has_enable {
-            if is_new {
-                put(buf, x, y, " +  ", check_w, theme.accent().bg(row_bg));
-            } else {
-                let on = t.rows[r].enabled;
-                let x2 = put(buf, x, y, "[", 1, base.patch(theme.dim()));
-                let x2 = put(
-                    buf,
-                    x2,
-                    y,
-                    if on { "✓" } else { " " },
-                    1,
-                    base.patch(theme.fg(theme.ok)).add_modifier(Modifier::BOLD),
-                );
-                put(buf, x2, y, "] ", 2, base.patch(theme.dim()));
-                hits.push((Rect::new(x, y, 3, 1), Hit::TableToggle { field, row: r }));
-            }
-            x += check_w;
-        }
-        let enabled = is_new || t.rows[r].enabled;
-        for (c, w) in widths.iter().enumerate() {
-            let cell_rect = Rect::new(x, y, *w, 1);
-            let cell_sel = row_sel && c == t.sel_col;
-            if is_new {
-                let ph = t.placeholder.get(c).copied().unwrap_or("");
-                let st = if cell_sel {
-                    theme.selected()
-                } else {
-                    theme.dim().add_modifier(Modifier::ITALIC).bg(row_bg)
-                };
-                if cell_sel {
-                    fill(buf, cell_rect, theme.selected());
-                }
-                let text = if c == 0 {
-                    format!("add {}", ph.to_lowercase())
-                } else {
-                    String::new()
-                };
-                put(buf, x, y, &truncate(&text, *w as usize), *w, st);
-                if cell_sel {
-                    cursor = Some((x, y));
-                }
-            } else {
-                let kind = t.columns[c].kind;
-                // No guess from a half-typed path.
-                let auto = if row_sel && t.sel_col == 2 {
-                    None
-                } else {
-                    auto_value(t, r, c)
-                };
-                match (&mut t.rows[r].cells[c], kind) {
-                    (Cell::Text(ed), _) => {
-                        if cell_sel {
-                            fill(buf, cell_rect, theme.bar());
-                        }
-                        if let Some(cp) = ed.render(cell_rect, buf, theme, cell_sel, is_def) {
-                            cursor = Some(cp);
-                        }
-                        // An empty cell whose value is derived shows it.
-                        if let Some(a) = auto.filter(|_| ed.text().is_empty() && !cell_sel) {
-                            // Too narrow for the "(auto)" marker: show the bare value.
-                            let a = if a.chars().count() > *w as usize {
-                                a.strip_suffix(" (auto)").unwrap_or(&a).to_string()
-                            } else {
-                                a
-                            };
-                            put(
-                                buf,
-                                x,
-                                y,
-                                &truncate(&a, *w as usize),
-                                *w,
-                                theme.dim().add_modifier(Modifier::ITALIC),
-                            );
-                        }
-                        // The row's background, then the selected cell on top.
-                        set_bg(
-                            buf,
-                            cell_rect,
-                            if cell_sel && !theme.mono {
-                                theme.sel_bg
-                            } else {
-                                row_bg
-                            },
-                        );
-                        if !enabled {
-                            for xx in cell_rect.x..cell_rect.x + cell_rect.width {
-                                if let Some(cell) = buf.cell_mut((xx, y)) {
-                                    cell.set_style(
-                                        theme.dim().add_modifier(Modifier::CROSSED_OUT).bg(row_bg),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    (Cell::Choice(i), ColKind::Choice(opts)) => {
-                        // ‹ › marks a value that Space cycles (as in dialogs and
-                        // settings); ▾ is kept for real menus.
-                        let label = format!("‹{}›", opts.get(*i).copied().unwrap_or(""));
-                        put(
-                            buf,
-                            x,
-                            y,
-                            &label,
-                            *w,
-                            if cell_sel {
-                                theme.selected()
-                            } else {
-                                theme.fg(theme.info).bg(row_bg)
-                            },
-                        );
-                    }
-                    (Cell::Toggle(b), _) => {
-                        put(
-                            buf,
-                            x,
-                            y,
-                            if *b { "[✓]" } else { "[ ]" },
-                            *w,
-                            if cell_sel { theme.selected() } else { base },
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            hits.push((
-                cell_rect,
-                Hit::TableCell {
-                    field,
-                    row: r,
-                    col: c,
-                },
-            ));
-            x += w;
-            if c + 1 < widths.len() {
-                put(buf, x, y, "│", 1, sep_st.bg(row_bg));
-                x += 1;
-            }
-        }
-        if !is_new {
-            let dx = area.x + area.width - del_w;
-            put(buf, dx, y, "│", 1, sep_st.bg(row_bg));
-            // The delete button is quiet until its row is selected or pointed at.
-            let del_st = if row_sel || row_hover {
-                theme.fg(theme.err).add_modifier(Modifier::BOLD)
-            } else {
-                theme.dim()
-            };
-            put(buf, dx + 1, y, "✕", 1, del_st.bg(row_bg));
-            hits.push((
-                Rect::new(dx, y, del_w, 1),
-                Hit::TableDelete { field, row: r },
-            ));
-        }
-    }
-    if focused { cursor } else { None }
 }

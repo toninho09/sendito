@@ -10,9 +10,9 @@ expression: screen
 │  GET   health              ││             │ the value. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.               │                                           │
 │                            ││             │                                                                                                              │                                           │
 │                            ││             │ Variable                   Source      Value, key or path                      Secret value                  │                                           │
-│                            ││             │ base_url                  │‹plain›    │http://127.0.0.1:9                     │                           │✕ │                                           │
-│                            ││             │ grpc                      │‹plain›    │127.0.0.1:9                            │                           │✕ │                                           │
-│                            ││             │ token                     │‹secrets›  │                                       │set                        │✕ │                                           │
+│                            ││             │ base_url                  │‹plain›    │http://127.0.0.1:9                     │                           │× │                                           │
+│                            ││             │ grpc                      │‹plain›    │127.0.0.1:9                            │                           │× │                                           │
+│                            ││             │ token                     │‹secrets›  │                                       │set                        │× │                                           │
 │                            ││             │ add variable              │           │                                       │                              │                                           │
 │                            ││             │                                                                                                              │                                           │
 │                            ││             │                                                                                                              │                                           │

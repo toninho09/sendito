@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   │╭─ Params  Headers  Body•  Auth  Scripts  Options ───────────────── Users › delete user ─╮
 │▾ Users/                    ││ Body type      Multipart ▾  Enter or Space to change                                   │
 │├ POST  create user         ││     Name          Kind    Value / path  Filename             Content-Type              │
-│├ DEL   delete user         ││ [✓] avatar       │‹file› │files/me.png │me.png (auto)       │image/png              │✕ │
+│├ DEL   delete user         ││ [✓] avatar       │‹file› │files/me.png │me.png (auto)       │image/png              │× │
 │└ GET   list users          ││  +  add name     │       │             │                    │                          │
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │

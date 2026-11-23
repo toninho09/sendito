@@ -991,7 +991,7 @@ impl Editors {
 
     /// Cycles a choice (dir = ±1) or flips a toggle. Returns true if changed.
     pub fn cycle(&mut self, f: Field, dir: isize) -> bool {
-        let step = |i: usize, n: usize| ((i as isize + dir).rem_euclid(n as isize)) as usize;
+        let step = |i: usize, n: usize| crate::list::cycle(i, dir, n);
         match f {
             Field::BodyKind => {
                 let i = BodyKind::ALL

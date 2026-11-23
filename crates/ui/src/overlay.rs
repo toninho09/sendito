@@ -19,6 +19,9 @@ pub enum ConfirmAction {
     EnvClose,
     /// MCP servers editor closing with changes: 0 = save, 1 = discard.
     McpClose,
+    /// Prompt or import dialog closing with typed text: 0 = discard,
+    /// 1 = keep editing.
+    DialogClose,
     ClearHistory,
 }
 
@@ -62,6 +65,8 @@ pub struct Prompt {
     pub title: String,
     pub label: String,
     pub input: TextEditor,
+    /// The field's text when the dialog opened: a different text is pending.
+    pub initial: String,
     /// Choice rows (e.g. HTTP / gRPC, target folder): (label, options, selected).
     pub choices: Vec<(String, Vec<String>, usize)>,
     /// 0 = input, 1.. = choice rows.
@@ -72,6 +77,36 @@ pub struct Prompt {
     pub note: Option<String>,
     /// The option list of the focused choice row is open, with this row highlighted.
     pub open: Option<usize>,
+}
+
+impl Prompt {
+    /// A prompt whose pending state is the text its field was opened with.
+    pub fn new(
+        title: &str,
+        label: &str,
+        input: TextEditor,
+        choices: Vec<(String, Vec<String>, usize)>,
+        action: PromptAction,
+    ) -> Self {
+        let initial = input.text();
+        Self {
+            title: title.to_string(),
+            label: label.to_string(),
+            input,
+            initial,
+            choices,
+            focus: 0,
+            action,
+            error: None,
+            note: None,
+            open: None,
+        }
+    }
+
+    /// The field holds text typed after the dialog opened (closing would drop it).
+    pub fn pending(&self) -> bool {
+        self.input.text() != self.initial
+    }
 }
 
 pub struct Picker {
@@ -602,7 +637,26 @@ pub struct Report {
 
 pub struct Import {
     pub input: TextEditor,
+    /// The field's text when the dialog opened: a different text is pending.
+    pub initial: String,
     pub error: Option<String>,
+}
+
+impl Import {
+    /// An import dialog whose pending state is the text its field was opened with.
+    pub fn new(input: TextEditor) -> Self {
+        let initial = input.text();
+        Self {
+            input,
+            initial,
+            error: None,
+        }
+    }
+
+    /// The field holds text typed after the dialog opened (closing would drop it).
+    pub fn pending(&self) -> bool {
+        self.input.text() != self.initial
+    }
 }
 
 pub enum Overlay {

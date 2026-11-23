@@ -505,7 +505,8 @@ onto a folder to move it; drag pane borders to resize; the wheel scrolls the
 pane under the pointer. Inside a dialog, clicks act inside it: fields take the
 caret, list rows and buttons act, and its own frame is inert; the wheel acts
 only while the pointer is over the dialog. A click truly outside closes it,
-except confirmations and the environment/MCP editors, which ask to save first.
+except confirmations and the environment/MCP editors, which ask to save first,
+and a prompt or import dialog with typed text, which asks before discarding it.
 
 **Vim mode** (`[ui] vim_mode` or Settings): modal editors (normal / insert /
 visual / visual-line) with `hjkl`, `w b e`, `0 ^ $`, `gg G`,
@@ -666,6 +667,7 @@ place. `—` means it is described only here.
 | [KEYMAP.md](../KEYMAP.md) | Every key, generated |
 | [CLI.md](CLI.md) | Every subcommand, flag, exit code |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Crates, data flow, tests, extending |
+| [MAP.md](MAP.md) | Which file and symbol implements each feature, and its tests |
 | [THEMES.md](THEMES.md) | Theme format and color tokens |
 | [DEBT.md](DEBT.md) | Known limitations |
 | [media/README.md](media/README.md) | Screenshots and GIFs |

@@ -110,46 +110,26 @@ impl Completion {
     }
 
     pub fn up(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-        self.sel = if self.sel == 0 {
-            self.items.len() - 1
-        } else {
-            self.sel - 1
-        };
+        self.sel = crate::list::cycle(self.sel, -1, self.items.len());
         self.keep_visible();
     }
 
     pub fn down(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-        self.sel = (self.sel + 1) % self.items.len();
+        self.sel = crate::list::cycle(self.sel, 1, self.items.len());
         self.keep_visible();
     }
 
     pub fn keep_visible(&mut self) {
-        if self.sel < self.scroll {
-            self.scroll = self.sel;
-        } else if self.sel >= self.scroll + Self::ROWS {
-            self.scroll = self.sel + 1 - Self::ROWS;
-        }
+        self.scroll = crate::list::keep_visible(self.sel, self.scroll, Self::ROWS);
     }
 
     pub fn page_up(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-        self.sel = self.sel.saturating_sub(Self::ROWS);
+        self.sel = crate::list::page(self.sel, -1, Self::ROWS, self.items.len());
         self.keep_visible();
     }
 
     pub fn page_down(&mut self) {
-        if self.items.is_empty() {
-            return;
-        }
-        self.sel = (self.sel + Self::ROWS).min(self.items.len() - 1);
+        self.sel = crate::list::page(self.sel, 1, Self::ROWS, self.items.len());
         self.keep_visible();
     }
 

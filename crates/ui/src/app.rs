@@ -329,6 +329,8 @@ pub struct App {
     pub parked_env: Option<EnvEditor>,
     /// The MCP servers editor parked behind its save/discard confirmation.
     pub parked_mcp: Option<McpEditor>,
+    /// The prompt or import dialog parked behind its discard confirmation.
+    pub parked_dialog: Option<Overlay>,
     /// The last report dialog (title, text), reopened by :report.
     pub last_report: Option<(String, String)>,
     pub cursor: Option<(u16, u16)>,
@@ -442,6 +444,7 @@ impl App {
             size: (80, 24),
             parked_env: None,
             parked_mcp: None,
+            parked_dialog: None,
             last_report: None,
             cursor: None,
             complete: None,
@@ -1036,8 +1039,9 @@ impl App {
                         .iter()
                         .position(|m| *m == t.ed.method)
                         .unwrap_or(0) as isize;
-                    let n = HTTP_METHODS.len() as isize;
-                    t.ed.method = HTTP_METHODS[((i + dir).rem_euclid(n)) as usize].to_string();
+                    t.ed.method = HTTP_METHODS
+                        [crate::list::cycle(i as usize, dir, HTTP_METHODS.len())]
+                    .to_string();
                 }
                 self.changed();
             }
@@ -1527,17 +1531,15 @@ impl App {
             let n = self.history.as_ref().map(|h| h.len()).unwrap_or(0);
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.history_sel = self.history_sel.saturating_sub(1)
+                    self.history_sel = crate::list::step(self.history_sel, -1, n)
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    self.history_sel = (self.history_sel + 1).min(n.saturating_sub(1))
+                    self.history_sel = crate::list::step(self.history_sel, 1, n)
                 }
                 KeyCode::Home => self.history_sel = 0,
                 KeyCode::End => self.history_sel = n.saturating_sub(1),
-                KeyCode::PageUp => self.history_sel = self.history_sel.saturating_sub(10),
-                KeyCode::PageDown => {
-                    self.history_sel = (self.history_sel + 10).min(n.saturating_sub(1))
-                }
+                KeyCode::PageUp => self.history_sel = crate::list::step(self.history_sel, -10, n),
+                KeyCode::PageDown => self.history_sel = crate::list::step(self.history_sel, 10, n),
                 KeyCode::Enter => self.open_history(self.history_sel, false),
                 KeyCode::Char('s') => self.save_history_prompt(self.history_sel),
                 KeyCode::Esc => self.toggle_history(),
@@ -1813,8 +1815,7 @@ impl App {
             f => f,
         };
         let i = order.iter().position(|f| *f == cur).unwrap_or(0) as isize;
-        let n = order.len() as isize;
-        let next = order[((i + dir).rem_euclid(n)) as usize];
+        let next = order[crate::list::cycle(i as usize, dir, order.len())];
         if next == Focus::ReqBody {
             let count = self.tab().map(|t| t.fields().len()).unwrap_or(0);
             if count == 0 {
@@ -1869,11 +1870,10 @@ impl App {
         let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
         let Some(t) = self.tab_mut() else { return };
         if resp {
-            let n = crate::tab::RESP_TABS.len() as isize;
-            t.resp_tab = ((t.resp_tab as isize + dir).rem_euclid(n)) as usize;
+            t.resp_tab = crate::list::cycle(t.resp_tab, dir, crate::tab::RESP_TABS.len());
         } else {
-            let n = t.ed.tab_names().len() as isize;
-            t.req_tab = ((t.req_tab as isize + dir).rem_euclid(n)) as usize;
+            let n = t.ed.tab_names().len();
+            t.req_tab = crate::list::cycle(t.req_tab, dir, n);
             t.field = 0;
             let empty = t.fields().is_empty();
             if self.focus == Focus::ReqBody && empty {
@@ -1907,8 +1907,7 @@ impl App {
         if self.tabs.is_empty() {
             return;
         }
-        let n = self.tabs.len() as isize;
-        self.active = ((self.active as isize + dir).rem_euclid(n)) as usize;
+        self.active = crate::list::cycle(self.active, dir, self.tabs.len());
         self.session_dirty = true;
     }
 
@@ -2125,17 +2124,13 @@ impl App {
             name
         });
         input.move_to_end();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save request".into(),
-            label: "Name".into(),
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "Save request",
+            "Name",
             input,
-            choices: vec![("In folder".into(), labels, idx)],
-            focus: 0,
-            action: PromptAction::SaveAs { tab },
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![("In folder".into(), labels, idx)],
+            PromptAction::SaveAs { tab },
+        )));
     }
 
     pub fn rescan(&mut self) {
@@ -3623,22 +3618,19 @@ impl App {
             );
             return;
         }
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: format!("Add the MCP server \"{}\"", name.trim()),
-            label: "URL or command".into(),
-            input: TextEditor::single(""),
-            choices: vec![("Kind".into(), vec!["http".into(), "stdio".into()], 0)],
-            focus: 0,
-            action: PromptAction::McpServer {
+        let mut prompt = Prompt::new(
+            &format!("Add the MCP server \"{}\"", name.trim()),
+            "URL or command",
+            TextEditor::single(""),
+            vec![("Kind".into(), vec!["http".into(), "stdio".into()], 0)],
+            PromptAction::McpServer {
                 name: name.trim().to_string(),
             },
-            error: None,
-            note: Some(
-                "http takes a URL (https://host/mcp); stdio a command line, split on spaces."
-                    .into(),
-            ),
-            open: None,
-        }));
+        );
+        prompt.note = Some(
+            "http takes a URL (https://host/mcp); stdio a command line, split on spaces.".into(),
+        );
+        self.overlay = Some(Overlay::Prompt(prompt));
     }
 
     /// Replaces `[mcp.servers]` in the project config with the editor's rows,
@@ -3820,17 +3812,15 @@ impl App {
             // A suggested name: selected, so typing replaces it.
             input.select_all();
         }
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save request (from history)".into(),
-            label: "Name".into(),
+        let mut prompt = Prompt::new(
+            "Save request (from history)",
+            "Name",
             input,
-            choices: vec![("In folder".into(), labels, idx)],
-            focus: 0,
-            action: PromptAction::SaveHistory(i),
-            error: None,
-            note,
-            open: None,
-        }));
+            vec![("In folder".into(), labels, idx)],
+            PromptAction::SaveHistory(i),
+        );
+        prompt.note = note;
+        self.overlay = Some(Overlay::Prompt(prompt));
     }
 
     // ----- tree operations ----------------------------------------------
@@ -3870,11 +3860,11 @@ impl App {
 
     fn prompt_new_request(&mut self) {
         let folder = self.tree.target_folder();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "New request".into(),
-            label: "Name".into(),
-            input: TextEditor::single(""),
-            choices: vec![
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "New request",
+            "Name",
+            TextEditor::single(""),
+            vec![
                 (
                     "Type".into(),
                     vec![
@@ -3887,27 +3877,19 @@ impl App {
                 ),
                 self.folder_choice(),
             ],
-            focus: 0,
-            action: PromptAction::NewRequest { folder },
-            error: None,
-            note: None,
-            open: None,
-        }));
+            PromptAction::NewRequest { folder },
+        )));
     }
 
     fn prompt_new_folder(&mut self) {
         let folder = self.tree.target_folder();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "New folder".into(),
-            label: "Name".into(),
-            input: TextEditor::single(""),
-            choices: vec![self.folder_choice()],
-            focus: 0,
-            action: PromptAction::NewFolder { folder },
-            error: None,
-            note: None,
-            open: None,
-        }));
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "New folder",
+            "Name",
+            TextEditor::single(""),
+            vec![self.folder_choice()],
+            PromptAction::NewFolder { folder },
+        )));
     }
 
     fn prompt_rename(&mut self) {
@@ -3916,20 +3898,16 @@ impl App {
         };
         let mut input = TextEditor::single(&row.name);
         input.select_all();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: format!(
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            &format!(
                 "Rename {}",
                 if row.is_folder() { "folder" } else { "request" }
             ),
-            label: "New name".into(),
+            "New name",
             input,
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::Rename(row.rel),
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![],
+            PromptAction::Rename(row.rel),
+        )));
     }
 
     fn tree_duplicate(&mut self) {
@@ -4148,17 +4126,13 @@ impl App {
             self.set_status("no response to search yet", StatusKind::Info);
             return;
         }
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Search response".into(),
-            label: "Find".into(),
-            input: TextEditor::single(""),
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::Search,
-            error: None,
-            note: None,
-            open: None,
-        }));
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "Search response",
+            "Find",
+            TextEditor::single(""),
+            vec![],
+            PromptAction::Search,
+        )));
     }
 
     fn open_filter(&mut self) {
@@ -4171,17 +4145,15 @@ impl App {
             .and_then(|t| t.response.as_ref())
             .and_then(|r| r.jq.clone())
             .unwrap_or_default();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Filter response (jq)".into(),
-            label: "jq".into(),
-            input: TextEditor::single(&current).with_placeholder(".data.items[] | select(.ok)"),
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::Filter,
-            error: None,
-            note: Some("Enter applies · an empty expression clears the filter".into()),
-            open: None,
-        }));
+        let mut prompt = Prompt::new(
+            "Filter response (jq)",
+            "jq",
+            TextEditor::single(&current).with_placeholder(".data.items[] | select(.ok)"),
+            vec![],
+            PromptAction::Filter,
+        );
+        prompt.note = Some("Enter applies · an empty expression clears the filter".into());
+        self.overlay = Some(Overlay::Prompt(prompt));
     }
 
     /// Applies (or clears) the jq filter on the active tab's response body and
@@ -4204,7 +4176,7 @@ impl App {
         let mut input = TextEditor::multi(prefill)
             .with_placeholder("curl https://…   or   path/to/collection.json or Bruno directory");
         input.move_to_end();
-        self.overlay = Some(Overlay::Import(Import { input, error: None }));
+        self.overlay = Some(Overlay::Import(Import::new(input)));
     }
 
     fn import_curl(&mut self, text: &str) {
@@ -4566,17 +4538,13 @@ impl App {
             .unwrap_or_default();
         let mut input = TextEditor::single(&suggestion);
         input.move_to_end();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save response body".into(),
-            label: "File".into(),
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "Save response body",
+            "File",
             input,
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::SaveBody,
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![],
+            PromptAction::SaveBody,
+        )));
     }
 
     pub fn save_body(&mut self, path: &str) -> Result<String, String> {
@@ -5015,7 +4983,7 @@ impl App {
                     .iter()
                     .position(|n| *n == self.project.config.ui.theme)
                     .unwrap_or(0) as isize;
-                let next = names[((i + dir).rem_euclid(names.len() as isize)) as usize].clone();
+                let next = names[crate::list::cycle(i as usize, dir, names.len())].clone();
                 self.apply_theme(&next);
                 ("ui", "theme", toml::Value::String(next))
             }
@@ -5064,7 +5032,7 @@ impl App {
                     .iter()
                     .position(|s| *s == self.project.config.ui.watch_interval_s)
                     .unwrap_or(0) as isize;
-                let next = STEPS[((i + dir).rem_euclid(STEPS.len() as isize)) as usize];
+                let next = STEPS[crate::list::cycle(i as usize, dir, STEPS.len())];
                 self.project.config.ui.watch_interval_s = next;
                 ("ui", "watch_interval_s", toml::Value::Integer(next as i64))
             }
@@ -6228,11 +6196,11 @@ impl App {
             Overlay::Settings { sel } => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => false,
                 KeyCode::Up | KeyCode::Char('k') => {
-                    *sel = sel.saturating_sub(1);
+                    *sel = crate::list::step(*sel, -1, SETTINGS.len());
                     true
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *sel = (*sel + 1).min(SETTINGS.len() - 1);
+                    *sel = crate::list::step(*sel, 1, SETTINGS.len());
                     true
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
@@ -6256,11 +6224,11 @@ impl App {
                     false
                 }
                 KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
-                    c.sel = c.sel.saturating_sub(1);
+                    c.sel = crate::list::step(c.sel, -1, c.buttons.len());
                     true
                 }
                 KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
-                    c.sel = (c.sel + 1).min(c.buttons.len() - 1);
+                    c.sel = crate::list::step(c.sel, 1, c.buttons.len());
                     true
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => {
@@ -6295,19 +6263,19 @@ impl App {
                 match key.code {
                     KeyCode::Esc => false,
                     KeyCode::Up => {
-                        p.sel = p.sel.saturating_sub(1);
+                        p.sel = crate::list::step(p.sel, -1, vis.len());
                         true
                     }
                     KeyCode::Down => {
-                        p.sel = (p.sel + 1).min(vis.len().saturating_sub(1));
+                        p.sel = crate::list::step(p.sel, 1, vis.len());
                         true
                     }
                     KeyCode::PageUp => {
-                        p.sel = p.sel.saturating_sub(10);
+                        p.sel = crate::list::page(p.sel, -1, 10, vis.len());
                         true
                     }
                     KeyCode::PageDown => {
-                        p.sel = (p.sel + 10).min(vis.len().saturating_sub(1));
+                        p.sel = crate::list::page(p.sel, 1, 10, vis.len());
                         true
                     }
                     KeyCode::Enter => {
@@ -6333,14 +6301,14 @@ impl App {
                 match key.code {
                     KeyCode::Esc => false,
                     KeyCode::Up => {
-                        p.sel = p.sel.saturating_sub(1);
+                        p.sel = crate::list::step(p.sel, -1, vis.len());
                         p.armed = true;
                         true
                     }
                     KeyCode::Down | KeyCode::Tab => {
                         // The first move highlights the first row.
                         if p.armed {
-                            p.sel = (p.sel + 1).min(vis.len().saturating_sub(1));
+                            p.sel = crate::list::step(p.sel, 1, vis.len());
                         }
                         p.armed = true;
                         true
@@ -6475,8 +6443,7 @@ impl App {
                     KeyCode::Left | KeyCode::Right if p.focus > 0 => {
                         if let Some((_, opts, i)) = p.choices.get_mut(p.focus - 1) {
                             let dir: isize = if key.code == KeyCode::Left { -1 } else { 1 };
-                            *i = ((*i as isize + dir).rem_euclid(opts.len().max(1) as isize))
-                                as usize;
+                            *i = crate::list::cycle(*i, dir, opts.len().max(1));
                         }
                         true
                     }
@@ -6587,17 +6554,13 @@ impl App {
                         },
                     );
                     self.parked_env = Some(ed);
-                    self.overlay = Some(Overlay::Prompt(Prompt {
-                        title: "New environment".into(),
-                        label: "Name".into(),
-                        input: TextEditor::single(""),
-                        choices: vec![],
-                        focus: 0,
-                        action: PromptAction::NewEnv,
-                        error: None,
-                        note: None,
-                        open: None,
-                    }));
+                    self.overlay = Some(Overlay::Prompt(Prompt::new(
+                        "New environment",
+                        "Name",
+                        TextEditor::single(""),
+                        vec![],
+                        PromptAction::NewEnv,
+                    )));
                     return false;
                 }
                 if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
@@ -6605,9 +6568,8 @@ impl App {
                         e.error = Some("save (Ctrl+S) or discard changes before switching".into());
                         return true;
                     }
-                    let n = e.envs.len() as isize;
                     let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
-                    e.current = ((e.current as isize + d).rem_euclid(n)) as usize;
+                    e.current = crate::list::cycle(e.current, d, e.envs.len());
                     let mut ed = std::mem::replace(
                         e,
                         EnvEditor {
@@ -6817,6 +6779,17 @@ impl App {
                     _ => self.overlay = Some(Overlay::Mcp(ed)),
                 }
             }
+            ConfirmAction::DialogClose => {
+                let Some(dialog) = self.parked_dialog.take() else {
+                    return;
+                };
+                self.overlay = Some(dialog);
+                // Discarding goes through Esc: it closes the dialog and
+                // restores whatever was parked behind it (the env editor).
+                if sel == 0 {
+                    self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                }
+            }
             ConfirmAction::ClearHistory => {
                 if sel == 0 {
                     let _ = sendito_store::history::clear(&sendito_store::history::history_path(
@@ -6843,17 +6816,13 @@ impl App {
             }
             PickAction::Method => {
                 if item == "Custom…" {
-                    self.overlay = Some(Overlay::Prompt(Prompt {
-                        title: "Custom HTTP method".into(),
-                        label: "Method".into(),
-                        input: TextEditor::single(""),
-                        choices: vec![],
-                        focus: 0,
-                        action: PromptAction::CustomMethod,
-                        error: None,
-                        note: None,
-                        open: None,
-                    }));
+                    self.overlay = Some(Overlay::Prompt(Prompt::new(
+                        "Custom HTTP method",
+                        "Method",
+                        TextEditor::single(""),
+                        vec![],
+                        PromptAction::CustomMethod,
+                    )));
                     return;
                 }
                 if let Some(t) = self.tab_mut() {
@@ -7169,20 +7138,15 @@ impl App {
                     Overlay::Help { viewer, .. } => viewer.scroll_by(d),
                     Overlay::Picker(p) => {
                         let n = p.visible().len();
-                        p.sel = ((p.sel as isize + d.signum())
-                            .clamp(0, n.saturating_sub(1) as isize))
-                            as usize;
+                        p.sel = crate::list::step(p.sel, d.signum(), n);
                     }
                     Overlay::Palette(p) => {
                         p.armed = true;
                         let n = p.visible().len();
-                        p.sel = ((p.sel as isize + d.signum())
-                            .clamp(0, n.saturating_sub(1) as isize))
-                            as usize;
+                        p.sel = crate::list::step(p.sel, d.signum(), n);
                     }
                     Overlay::Settings { sel } => {
-                        let last = SETTINGS.len().saturating_sub(1) as isize;
-                        *sel = ((*sel as isize + d.signum()).clamp(0, last)) as usize;
+                        *sel = crate::list::step(*sel, d.signum(), SETTINGS.len());
                     }
                     Overlay::Env(e) => e.table.move_selection(d.signum()),
                     Overlay::Mcp(m) => m.table.move_selection(d.signum()),
@@ -7193,9 +7157,7 @@ impl App {
                                 .get(p.focus.wrapping_sub(1))
                                 .map_or(0, |c| c.1.len());
                             if n > 0 {
-                                p.open = Some(
-                                    (hl as isize + d.signum()).rem_euclid(n as isize) as usize
-                                );
+                                p.open = Some(crate::list::cycle(hl, d.signum(), n));
                             }
                         }
                     }
@@ -7562,6 +7524,31 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
+            // A prompt or import dialog drops what was typed in it: ask first.
+            (Overlay::Prompt(p), OverlayHit::Outside) if p.pending() => {
+                let title = p.title.clone();
+                self.parked_dialog = Some(ov);
+                self.overlay = Some(Overlay::Confirm(Confirm {
+                    title: "Unsaved text".into(),
+                    message: format!("Discard the text typed into \"{title}\"?"),
+                    buttons: vec!["Discard".into(), "Keep editing".into()],
+                    sel: 1,
+                    action: ConfirmAction::DialogClose,
+                }));
+                return;
+            }
+            (Overlay::Import(i), OverlayHit::Outside) if i.pending() => {
+                self.parked_dialog = Some(ov);
+                self.overlay = Some(Overlay::Confirm(Confirm {
+                    title: "Unsaved text".into(),
+                    message: "Discard the text typed into \"Import\"?".into(),
+                    buttons: vec!["Discard".into(), "Keep editing".into()],
+                    sel: 1,
+                    action: ConfirmAction::DialogClose,
+                }));
+                return;
+            }
+            (Overlay::Import(_), OverlayHit::Outside) => keep = false,
             (_, OverlayHit::Outside) => keep = matches!(ov, Overlay::Confirm(_)),
             (Overlay::Picker(p), OverlayHit::Input) => {
                 p.filter.click(x.saturating_sub(rect.x), 0, false);

@@ -12,3 +12,4 @@
 .DS_Store
 /bench/results/*
 !/bench/results/REPORT.md
+.sendito

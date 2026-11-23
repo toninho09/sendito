@@ -659,6 +659,49 @@ impl Theme {
         Style::default().fg(self.fg).bg(self.bar_bg)
     }
 
+    /// A list row under the mouse.
+    pub fn hover(&self) -> Style {
+        Style::default().fg(self.fg).bg(self.surface_alt)
+    }
+
+    /// The top bar and chips under the mouse (and the quiet button).
+    pub fn raised(&self) -> Style {
+        Style::default().fg(self.fg).bg(self.keycap_bg)
+    }
+
+    /// The content of a dialog.
+    pub fn overlay(&self) -> Style {
+        Style::default().fg(self.fg).bg(self.overlay_bg)
+    }
+
+    /// `c` as text on a dialog's background.
+    pub fn on_overlay(&self, c: Color) -> Style {
+        self.fg(c).bg(self.overlay_bg)
+    }
+
+    /// Secondary text inside a dialog.
+    pub fn dialog_dim(&self) -> Style {
+        self.dim().bg(self.overlay_bg)
+    }
+
+    /// Emphasis inside a dialog.
+    pub fn dialog_accent(&self) -> Style {
+        self.accent().bg(self.overlay_bg)
+    }
+
+    /// A pane or dialog heading.
+    pub fn title_style(&self) -> Style {
+        self.bold(self.fg(self.title))
+    }
+
+    pub fn bold(&self, st: Style) -> Style {
+        st.add_modifier(Modifier::BOLD)
+    }
+
+    pub fn italic(&self, st: Style) -> Style {
+        st.add_modifier(Modifier::ITALIC)
+    }
+
     /// An input field: the bar color, or an underline when the bar has no
     /// color of its own (the `ansi` theme).
     pub fn field(&self) -> Style {

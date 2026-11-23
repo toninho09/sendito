@@ -31,8 +31,8 @@ expression: screen
 │                            ││               │ file. Ctrl+S saves to .sendito/config.toml; Esc asks before discarding unsaved changes.                  │                                             │
 │                            ││               │                                                                                                          │                                             │
 │                            ││               │ Name                       Kind     URL or command                                                       │  here.                                      │
-│                            ││               │ echo                      │‹http›  │http://127.0.0.1:9/mcp                                            │✕ │                                             │
-│                            ││               │ files                     │‹stdio› │npx -y @mcp/server-fs                                             │✕ │                                             │
+│                            ││               │ echo                      │‹http›  │http://127.0.0.1:9/mcp                                            │× │                                             │
+│                            ││               │ files                     │‹stdio› │npx -y @mcp/server-fs                                             │× │                                             │
 │                            ││               │ add name                  │        │                                                                     │                                             │
 │                            ││               │ http: a URL the tool calls go to (variables allowed).                                                    │                                             │
 │                            ││               │                                                                                                          │                                             │

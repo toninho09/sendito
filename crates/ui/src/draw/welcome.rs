@@ -3,7 +3,6 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
@@ -81,10 +80,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
     walk(&app.tree.root, &mut reqs, &mut dirs);
     let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
     let mut summary: Spans = vec![
-        (
-            app.project.name.clone(),
-            theme.fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
+        (app.project.name.clone(), theme.bold(theme.fg(theme.fg))),
         (format!("  ·  {}", plural(reqs, "request")), theme.dim()),
     ];
     if dirs > 0 {
@@ -152,7 +148,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
                     y,
                     &ch.to_string(),
                     1,
-                    theme.fg(c).add_modifier(Modifier::BOLD),
+                    theme.bold(theme.fg(c)),
                 );
             }
             y += 1;
@@ -176,7 +172,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
             y,
             t,
             inner.width,
-            theme.accent().add_modifier(Modifier::BOLD),
+            theme.bold(theme.accent()),
         );
         y += 1;
     }
@@ -195,14 +191,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
     let x0 = center(total_w);
     let bottom = inner.y + inner.height;
     let heading = |buf: &mut Buffer, x: u16, y: u16, text: &str, w: u16| {
-        put(
-            buf,
-            x,
-            y,
-            text,
-            w,
-            theme.fg(theme.title).add_modifier(Modifier::BOLD),
-        );
+        put(buf, x, y, text, w, theme.title_style());
     };
     heading(buf, x0, y, "Start", col_w);
     if two_cols {
@@ -256,23 +245,14 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
             break;
         }
         let r = Rect::new(rx, y, recent_w, 1);
-        let hover = app
-            .hover
-            .is_some_and(|(x, yy)| r.contains(ratatui::layout::Position { x, y: yy }));
-        let base = if hover {
-            Style::default().fg(theme.fg).bg(theme.surface_alt)
+        let state = if hovered(app, r) {
+            RowState::Hover
         } else {
-            theme.surface()
+            RowState::Plain
         };
+        let base = row_style(state, theme.surface(), theme);
         fill(buf, r, base);
-        let mut x = put(
-            buf,
-            rx,
-            y,
-            &format!("{:<5}", short_method(badge)),
-            5,
-            method_style(theme, badge).bg(base.bg.unwrap_or(theme.surface)),
-        );
+        let mut x = method_cell(buf, rx, y, badge, base, false, theme);
         x = put(buf, x, y, " ", 1, base);
         let tw = time.width() as u16;
         put(

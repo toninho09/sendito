@@ -264,11 +264,7 @@ impl TreeState {
         if height == 0 {
             return;
         }
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + height {
-            self.scroll = self.selected + 1 - height;
-        }
+        self.scroll = crate::list::keep_visible(self.selected, self.scroll, height);
         let max_scroll = self.rows.len().saturating_sub(height);
         self.scroll = self.scroll.min(max_scroll);
     }
