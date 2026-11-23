@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET get order ×    +                                                                                                                                                ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾  ▍{{base_url}}/orders/{{order_id}}                                                                                                                       Send
+╭ Requests  History ─────────╮  GET    ▾  ▍{{base_url}}/orders/{{order_id}}                                                                                                            × Cancel   Send
 │▾ Orders/                   │╭─ Params  Headers  Body  Auth  Scripts  Options ─────────────────────────────────────────────────────────────────────────────────────────────────── Orders › get order ─╮
 │└ GET   get order           ││     Name                                                            Value                                                                                              │
 │▸ Users/                    ││  +  add name                                                       │                                                                                                   │

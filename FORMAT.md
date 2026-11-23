@@ -353,8 +353,11 @@ value = "true"
 to `{}`; an explicitly empty string omits the `arguments` property on the wire.
 The text is stored and read as written (a half-typed object is a valid file) and
 is rejected only when the call is sent. Server, tool and arguments are rendered
-with the active scope. Authentication is configured on the server, not on the
-request. The timeout covers the entire session; it defaults to `[mcp] timeout_ms`
+with the active scope. `server` is either a name from `[mcp.servers]` or a
+`http(s)://` URL, which connects directly (Streamable HTTP, no configured
+auth; variables may hold the whole URL). Authentication is configured on the
+server, not on the request. The timeout covers the entire session; it defaults
+to `[mcp] timeout_ms`
 (30000 ms). Scripts see the full tool result as JSON; status is 0 for success or
 1 for `isError: true`.
 

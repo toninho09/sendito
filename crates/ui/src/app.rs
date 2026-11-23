@@ -120,9 +120,27 @@ pub enum OverlayHit {
     Button(usize),
     Input,
     Choice(usize),
-    Close,
+    /// The value chip of a settings row (clicking it cycles the value).
+    Value(usize),
+    /// An entry of an open prompt option list, by its position in the list.
+    PromptOption(usize),
     EnvTab(usize),
-    EnvCell { row: usize, col: usize },
+    EnvCell {
+        row: usize,
+        col: usize,
+    },
+    EnvDelete(usize),
+    /// A cell of the MCP servers editor.
+    McpCell {
+        row: usize,
+        col: usize,
+    },
+    /// The ✕ of an MCP servers row.
+    McpDelete(usize),
+    /// A button of the MCP servers editor (0 = save, 1 = add, 2 = close).
+    McpButton(usize),
+    /// Dead space inside a dialog frame; clicking it does nothing.
+    Dialog,
     Outside,
 }
 
@@ -262,6 +280,9 @@ pub struct App {
     pub history: Option<Vec<HistoryEntry>>,
     pub history_sel: usize,
     pub history_scroll: usize,
+    /// Whether the next draw should scroll `history_sel` into view; the wheel
+    /// disarms it to allow free browsing (same idea as `TreeState::follow`).
+    pub history_follow: bool,
     pub tabs: Vec<Tab>,
     pub active: usize,
     pub focus: Focus,
@@ -306,6 +327,8 @@ pub struct App {
     pub osc52: Vec<String>,
     pub size: (u16, u16),
     pub parked_env: Option<EnvEditor>,
+    /// The MCP servers editor parked behind its save/discard confirmation.
+    pub parked_mcp: Option<McpEditor>,
     /// The last report dialog (title, text), reopened by :report.
     pub last_report: Option<(String, String)>,
     pub cursor: Option<(u16, u16)>,
@@ -377,6 +400,7 @@ impl App {
             history: None,
             history_sel: 0,
             history_scroll: 0,
+            history_follow: true,
             tabs: Vec::new(),
             active: 0,
             focus: Focus::Sidebar,
@@ -417,6 +441,7 @@ impl App {
             osc52: Vec::new(),
             size: (80, 24),
             parked_env: None,
+            parked_mcp: None,
             last_report: None,
             cursor: None,
             complete: None,
@@ -643,10 +668,7 @@ impl App {
         let focus = self.focus;
         let tab = self.tabs.get_mut(self.active)?;
         match focus {
-            Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(tab.ed.url.vim),
-            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(tab.ed.target.vim),
-            Focus::Bar(0) if tab.ed.kind == Kind::Ws => Some(tab.ed.url.vim),
-            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(tab.ed.mcp_server.vim),
+            Focus::Bar(p) => tab.ed.bar_text(p).map(|e| e.vim),
             Focus::ReqBody => match tab.current_field() {
                 Some(f) if f.is_table() => tab
                     .ed
@@ -698,6 +720,7 @@ impl App {
                     p.armed = true;
                 }
                 Overlay::Env(e) => e.table.paste(s),
+                Overlay::Mcp(m) => m.table.paste(s),
                 _ => {}
             }
             return;
@@ -738,11 +761,7 @@ impl App {
         let focus = self.focus;
         let tab = self.tabs.get_mut(self.active)?;
         match focus {
-            Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(&mut tab.ed.url),
-            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.target),
-            Focus::Bar(0) if tab.ed.kind == Kind::Ws => Some(&mut tab.ed.url),
-            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => Some(&mut tab.ed.mcp_server),
-            Focus::Bar(1) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.grpc_method_text),
+            Focus::Bar(p) => tab.ed.bar_text(p),
             Focus::ReqBody => {
                 let f = tab.current_field()?;
                 tab.ed.text_mut(f)
@@ -792,11 +811,7 @@ impl App {
         let tab = self.tabs.get_mut(self.active)?;
         let cb = &mut self.clipboard;
         let ed = match focus {
-            Focus::Bar(1) if tab.ed.kind == Kind::Http => &mut tab.ed.url,
-            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => &mut tab.ed.target,
-            Focus::Bar(0) if tab.ed.kind == Kind::Ws => &mut tab.ed.url,
-            Focus::Bar(0) if tab.ed.kind == Kind::Mcp => &mut tab.ed.mcp_server,
-            Focus::Bar(1) if tab.ed.kind == Kind::Grpc => &mut tab.ed.grpc_method_text,
+            Focus::Bar(p) => tab.ed.bar_text(p)?,
             Focus::ReqBody => {
                 let fld = tab.current_field()?;
                 tab.ed.text_mut(fld)?
@@ -949,14 +964,24 @@ impl App {
         let Some(kind) = self.tab().map(|t| t.ed.kind) else {
             return;
         };
-        if kind == Kind::Mcp && part == 0 && key.code == KeyCode::F(2) {
-            self.open_mcp_server_picker();
+        if kind == Kind::Mcp && key.code == KeyCode::F(2) {
+            // F2 on the server input lists the configured servers (a direct
+            // URL needs none); on the tool chip it discovers the tools.
+            if part == 1
+                && self
+                    .tab()
+                    .is_some_and(|t| t.ed.mcp_server.text().is_empty())
+            {
+                self.open_mcp_server_picker();
+            } else {
+                self.load_mcp_tools(true);
+            }
             return;
         }
         let vim = self.vim;
-        let is_text = (kind == Kind::Http && part == 1)
-            || (matches!(kind, Kind::Grpc | Kind::Ws | Kind::Mcp) && part == 0)
-            || (kind == Kind::Grpc && part == 1);
+        // Part 1 is the endpoint input of every kind; the gRPC method and MCP
+        // tool chips (part 0) are editable inline.
+        let is_text = part == 1 || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0);
         if is_text {
             let Some(out) = self.with_text(|e, cb| e.handle_key(&key, vim, cb)) else {
                 return;
@@ -972,15 +997,16 @@ impl App {
                 }
                 Outcome::Submit => {
                     self.complete = None;
-                    if matches!(kind, Kind::Http | Kind::Ws) {
-                        self.dispatch(Action::Send);
-                    } else if kind == Kind::Mcp {
-                        self.focus = Focus::ReqTabs;
-                    } else if part == 1 {
-                        // Enter on the method field opens the full list.
-                        self.open_grpc_method_picker();
-                    } else {
-                        self.focus = Focus::Bar(1);
+                    match (kind, part) {
+                        // Enter on any endpoint input sends.
+                        (Kind::Http | Kind::Ws | Kind::Grpc | Kind::Mcp, 1) => {
+                            self.dispatch(Action::Send)
+                        }
+                        // Enter on the method chip opens the full list.
+                        (Kind::Grpc, 0) => self.open_grpc_method_picker(),
+                        // Enter on the tool chip discovers and lists the tools.
+                        (Kind::Mcp, 0) => self.load_mcp_tools(true),
+                        _ => {}
                     }
                 }
                 Outcome::Leave => self.complete = None,
@@ -1015,7 +1041,6 @@ impl App {
                 }
                 self.changed();
             }
-            (1, KeyCode::Char(' ')) if kind == Kind::Grpc => self.open_grpc_method_picker(),
             (_, KeyCode::Down) => self.focus = Focus::ReqTabs,
             _ => {}
         }
@@ -1171,8 +1196,13 @@ impl App {
     /// Which completion belongs to the focused widget, if any.
     fn complete_kind(&self) -> Option<CompleteKind> {
         let t = self.tab()?;
-        if self.focus == Focus::Bar(1) && t.ed.kind == Kind::Grpc {
-            return Some(CompleteKind::GrpcMethod);
+        match (self.focus, t.ed.kind) {
+            // The gRPC method chip completes from the schema; the MCP tool
+            // input completes from the discovered tool list.
+            (Focus::Bar(0), Kind::Grpc) => return Some(CompleteKind::GrpcMethod),
+            (Focus::Bar(1), Kind::Mcp) => return Some(CompleteKind::McpServer),
+            (Focus::Bar(0), Kind::Mcp) => return Some(CompleteKind::McpTool),
+            _ => {}
         }
         if self.focus != Focus::ReqBody {
             return None;
@@ -1333,7 +1363,7 @@ impl App {
     /// Loads the schema or tools a missing completion needs, without opening a
     /// picker when they arrive. While one is in flight, typing does not start
     /// another, and a load that already failed is not retried here (Enter on
-    /// the method field or F2 on the tool field asks again).
+    /// the method chip or F2 on the tool field asks again).
     fn start_complete_fetch(&mut self, kind: CompleteKind) {
         let Some(t) = self.tab() else {
             return;
@@ -1513,6 +1543,7 @@ impl App {
                 KeyCode::Esc => self.toggle_history(),
                 _ => {}
             }
+            self.history_follow = true;
         }
     }
 
@@ -1568,6 +1599,7 @@ impl App {
             Action::Settings => self.overlay = Some(Overlay::Settings { sel: 0 }),
             Action::SelectEnv => self.open_env_picker(),
             Action::ManageEnvs => self.open_env_editor(),
+            Action::ManageMcpServers => self.open_mcp_editor(),
             Action::History => self.toggle_history(),
             Action::ToggleSidebar => {
                 self.layout.sidebar_visible = !self.layout.sidebar_visible;
@@ -1719,15 +1751,10 @@ impl App {
         self.session_dirty = true;
     }
 
-    /// The top bar part to focus for the active tab: HTTP has a method chip
-    /// (part 0) and a URL (part 1); gRPC, WebSocket and MCP only have the
-    /// address/server (part 0).
+    /// The top bar part to focus for the active tab: every kind draws the
+    /// same `[picker chip][endpoint input]` strip, and the input is part 1.
     fn top_bar_focus(&self) -> Focus {
-        if self.tab().is_some_and(|t| t.ed.kind == Kind::Http) {
-            Focus::Bar(1)
-        } else {
-            Focus::Bar(0)
-        }
+        Focus::Bar(1)
     }
 
     fn focus_order(&self) -> Vec<Focus> {
@@ -1736,10 +1763,20 @@ impl App {
             v.push(Focus::Sidebar);
         }
         if !self.tabs.is_empty() {
-            v.push(Focus::Bar(0));
-            // Only gRPC has a second bar part (the method).
-            if self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc) {
-                v.push(Focus::Bar(1));
+            // Every kind has the chip (part 0) except WebSocket, whose chip is
+            // a static badge; the endpoint input (part 1) follows. gRPC and MCP
+            // draw [input][chip], so their cycle reads left to right: the
+            // input first, then the chip.
+            match self.tab().map(|t| t.ed.kind) {
+                Some(Kind::Grpc | Kind::Mcp) => {
+                    v.push(Focus::Bar(1));
+                    v.push(Focus::Bar(0));
+                }
+                Some(Kind::Ws) => v.push(Focus::Bar(1)),
+                _ => {
+                    v.push(Focus::Bar(0));
+                    v.push(Focus::Bar(1));
+                }
             }
             v.extend([
                 Focus::Bar(2),
@@ -1804,18 +1841,15 @@ impl App {
             if toward_sidebar && !in_sidebar && self.layout.sidebar_visible {
                 self.focus = Focus::Sidebar;
             } else if !toward_sidebar && in_sidebar && !self.tabs.is_empty() {
-                self.focus = Focus::Bar(if self.tab().is_some_and(|t| t.ed.kind != Kind::Http) {
-                    0
-                } else {
-                    1
-                });
+                self.focus = Focus::Bar(1);
             } else if let Focus::Bar(p) = self.focus {
-                let mcp = self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp);
-                self.focus = Focus::Bar(if mcp {
-                    if dx < 0 { 0 } else { 2 }
+                // WebSocket has no chip to focus; its strip starts at the URL.
+                let min = if self.tab().is_some_and(|t| t.ed.kind == Kind::Ws) {
+                    1
                 } else {
-                    (p as i32 + dx).clamp(0, 2) as usize
-                });
+                    0
+                };
+                self.focus = Focus::Bar(((p as i32 + dx).clamp(min, 2)) as usize);
             }
             return;
         }
@@ -1826,8 +1860,7 @@ impl App {
         if dy > 0 && in_request {
             self.focus = Focus::RespBody;
         } else if dy < 0 && !in_request {
-            let non_http = self.tab().is_some_and(|t| t.ed.kind != Kind::Http);
-            self.focus = Focus::Bar(if non_http { 0 } else { 1 });
+            self.focus = Focus::Bar(1);
         }
     }
 
@@ -1903,11 +1936,7 @@ impl App {
         }
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
-        self.focus = if matches!(req, Request::Grpc(_) | Request::Mcp(_) | Request::Ws(_)) {
-            Focus::Bar(0)
-        } else {
-            Focus::Bar(1)
-        };
+        self.focus = self.top_bar_focus();
         self.session_dirty = true;
     }
 
@@ -1956,21 +1985,25 @@ impl App {
     fn close_tab(&mut self, force: bool) {
         self.complete = None;
         let Some(t) = self.tab() else { return };
-        if t.dirty() && !force {
+        if !force && t.running.is_some() {
             let id = t.id;
             let name = t.title();
-            let message = if t.path.is_none() {
-                format!("\"{name}\" has no file yet. Save it? (Save asks for a name and a folder.)")
+            let what = if t.running.as_ref().is_some_and(|r| r.streaming_input) {
+                "an open session"
             } else {
-                format!("\"{name}\" has unsaved changes.")
+                "a request in flight"
             };
             self.overlay = Some(Overlay::Confirm(Confirm {
-                title: "Unsaved changes".into(),
-                message,
-                buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                title: "Still running".into(),
+                message: format!("\"{name}\" has {what}. Close the tab anyway?"),
+                buttons: vec!["Close".into(), "Cancel".into()],
                 sel: 0,
-                action: ConfirmAction::CloseTab(id),
+                action: ConfirmAction::CloseTabRunning(id),
             }));
+            return;
+        }
+        if t.dirty() && !force {
+            self.prompt_close_dirty();
             return;
         }
         if let Some(mut t) = (self.active < self.tabs.len()).then(|| self.tabs.remove(self.active))
@@ -1987,19 +2020,53 @@ impl App {
         self.session_dirty = true;
     }
 
+    /// The Save/Discard/Cancel prompt for closing the active dirty tab.
+    fn prompt_close_dirty(&mut self) {
+        let Some(t) = self.tab() else { return };
+        let id = t.id;
+        let name = t.title();
+        let message = if t.path.is_none() {
+            format!("\"{name}\" has no file yet. Save it? (Save asks for a name and a folder.)")
+        } else {
+            format!("\"{name}\" has unsaved changes.")
+        };
+        self.overlay = Some(Overlay::Confirm(Confirm {
+            title: "Unsaved changes".into(),
+            message,
+            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+            sel: 0,
+            action: ConfirmAction::CloseTab(id),
+        }));
+    }
+
     fn request_quit(&mut self) {
         let dirty = self.tabs.iter().filter(|t| t.dirty()).count();
-        if dirty > 0 && self.project.config.ui.confirm_quit {
-            self.overlay = Some(Overlay::Confirm(Confirm {
-                title: "Quit Sendito?".into(),
-                message: format!(
-                    "{} unsaved changes. They are kept as drafts and restored next time.",
+        let live = self.tabs.iter().filter(|t| t.running.is_some()).count();
+        if (dirty > 0 || live > 0) && self.project.config.ui.confirm_quit {
+            let mut message = String::new();
+            if dirty > 0 {
+                message.push_str(&format!(
+                    "{} unsaved changes, kept as drafts and restored next time.",
                     if dirty == 1 {
                         "1 tab has".to_string()
                     } else {
                         format!("{dirty} tabs have")
                     }
-                ),
+                ));
+            }
+            if live > 0 {
+                message.push_str(&format!(
+                    " {} a request or session still running.",
+                    if live == 1 {
+                        "1 tab has".to_string()
+                    } else {
+                        format!("{live} tabs have")
+                    }
+                ));
+            }
+            self.overlay = Some(Overlay::Confirm(Confirm {
+                title: "Quit Sendito?".into(),
+                message: format!("{} Quit anyway?", message.trim()),
                 buttons: vec!["Quit".into(), "Cancel".into()],
                 sel: 0,
                 action: ConfirmAction::Quit,
@@ -2155,9 +2222,9 @@ impl App {
         if let Request::Grpc(g) = &req
             && (g.service.is_empty() || g.method.is_empty())
         {
-            self.focus = Focus::Bar(1);
+            self.focus = Focus::Bar(0);
             self.set_status(
-                "choose a method first: Enter on the method field lists the services",
+                "choose a method first: Enter on the method chip lists the services",
                 StatusKind::Warn,
             );
             return;
@@ -2174,7 +2241,7 @@ impl App {
         {
             self.focus = Focus::ReqTabs;
             self.set_status(
-                "choose a server and a tool first: F2 on each field lists them",
+                "choose a server and a tool first: F2 lists servers, Enter on the tool chip lists tools",
                 StatusKind::Warn,
             );
             return;
@@ -2864,6 +2931,7 @@ impl App {
             AppMsg::History(h) => {
                 self.history_sel = h.len().saturating_sub(1).min(self.history_sel);
                 self.history_sel = 0;
+                self.history_follow = true;
                 let mut h = h;
                 h.reverse();
                 self.history = Some(h);
@@ -3300,7 +3368,10 @@ impl App {
         let tab = t.id;
         let server = t.ed.mcp_server.text();
         if server.trim().is_empty() {
-            self.set_status("choose an MCP server first", StatusKind::Warn);
+            self.set_status(
+                "set the MCP server first: a name from [mcp.servers] or an http(s):// URL",
+                StatusKind::Warn,
+            );
             return;
         }
         let info = runner::McpRunInfo::of(&self.project);
@@ -3520,6 +3591,112 @@ impl App {
         };
         self.set_status(format!("saved {label}"), StatusKind::Ok);
         true
+    }
+
+    // ----- MCP servers --------------------------------------------------
+
+    /// The project config file (`<root>/.sendito/config.toml`), where servers
+    /// added from the interface are written.
+    fn project_config_path(&self) -> std::path::PathBuf {
+        sendito_store::config::project_path(&self.project.root)
+    }
+
+    pub fn open_mcp_editor(&mut self) {
+        self.clear_transient_status();
+        let mut ed = McpEditor {
+            table: McpEditor::table(),
+            dirty: false,
+            error: None,
+        };
+        ed.load(&self.project.config.mcp.servers);
+        self.overlay = Some(Overlay::Mcp(ed));
+    }
+
+    /// `:mcpadd <name>`: asks for the URL or command and writes it at once (the
+    /// editor is for reviewing and fixing what is already there).
+    fn prompt_mcp_add(&mut self, name: &str) {
+        self.clear_transient_status();
+        if name.trim().is_empty() {
+            self.set_status(
+                "usage: :mcpadd <name> (then the URL or command, and the kind)",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        self.overlay = Some(Overlay::Prompt(Prompt {
+            title: format!("Add the MCP server \"{}\"", name.trim()),
+            label: "URL or command".into(),
+            input: TextEditor::single(""),
+            choices: vec![("Kind".into(), vec!["http".into(), "stdio".into()], 0)],
+            focus: 0,
+            action: PromptAction::McpServer {
+                name: name.trim().to_string(),
+            },
+            error: None,
+            note: Some(
+                "http takes a URL (https://host/mcp); stdio a command line, split on spaces."
+                    .into(),
+            ),
+            open: None,
+        }));
+    }
+
+    /// Replaces `[mcp.servers]` in the project config with the editor's rows,
+    /// keeping what the table does not show (env, headers, auth) for a row
+    /// whose name and command/URL did not change.
+    fn save_mcp_editor(&mut self, ed: &mut McpEditor) -> bool {
+        let mut servers = std::collections::BTreeMap::new();
+        for (name, kind, value) in ed.rows() {
+            if value.is_empty() {
+                ed.error = Some(format!("{name}: set a URL or a command"));
+                return false;
+            }
+            let old = self.project.config.mcp.servers.get(&name).cloned();
+            servers.insert(name, mcp_server_entry(kind, &value, old));
+        }
+        let path = self.project_config_path();
+        if let Err(e) = sendito_store::config::set_mcp_servers(&path, &servers) {
+            ed.error = Some(e.to_string());
+            return false;
+        }
+        let n = servers.len();
+        self.project.config.mcp.servers = servers;
+        ed.load(&self.project.config.mcp.servers);
+        self.set_status(
+            format!("saved {n} MCP server(s) to {}", path.display()),
+            StatusKind::Ok,
+        );
+        true
+    }
+
+    /// `:mcpadd` confirm: one server added to the project config.
+    fn add_mcp_server(&mut self, name: &str, kind: usize, value: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a server needs a name".into());
+        }
+        if name.contains(char::is_whitespace) {
+            return Err("a server name has no spaces (it is the [mcp.servers.<name>] key)".into());
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(if kind == 1 {
+                "a stdio server needs a command".into()
+            } else {
+                "an http server needs a URL".into()
+            });
+        }
+        let mut servers = self.project.config.mcp.servers.clone();
+        let old = servers.get(name).cloned();
+        servers.insert(name.to_string(), mcp_server_entry(kind, value, old));
+        let path = self.project_config_path();
+        sendito_store::config::set_mcp_servers(&path, &servers).map_err(|e| e.to_string())?;
+        self.project.config.mcp.servers = servers;
+        self.set_status(
+            format!("added MCP server {name} to {}", path.display()),
+            StatusKind::Ok,
+        );
+        Ok(())
     }
 
     // ----- history ------------------------------------------------------
@@ -4646,7 +4823,9 @@ impl App {
             "newgrpc" => self.new_tab(Request::new_grpc()),
             "newws" => self.new_tab(Request::new_ws()),
             "newmcp" => self.new_tab(Request::new_mcp()),
+            "mcpservers" if arg == "edit" => self.open_mcp_editor(),
             "mcpservers" => self.open_mcp_server_picker(),
+            "mcpadd" => self.prompt_mcp_add(arg),
             "mcptools" => self.load_mcp_tools(true),
             "import" => {
                 if arg.is_empty() {
@@ -5004,6 +5183,26 @@ impl App {
                         .into(),
                     ),
                 ]),
+                Overlay::Mcp(m) => v.extend([
+                    ("Ctrl+S".into(), "save".into()),
+                    ("Ctrl+N".into(), "add row".into()),
+                    ("Ctrl+D".into(), "delete row".into()),
+                    ("Space".into(), "kind".into()),
+                    if m.table.sel_row >= m.table.rows.len() {
+                        ("type".into(), "add server".into())
+                    } else {
+                        ("Enter".into(), "next cell".into())
+                    },
+                    (
+                        "Esc".into(),
+                        if m.dirty {
+                            "close (asks to save)"
+                        } else {
+                            "close"
+                        }
+                        .into(),
+                    ),
+                ]),
                 Overlay::Import(_) => v.extend([
                     ("F5 / Ctrl+S".into(), "import".into()),
                     ("Esc".into(), "cancel".into()),
@@ -5143,8 +5342,11 @@ impl App {
                     (Focus::ReqBody, Some(Field::McpTool)) => {
                         v.push(("F2".into(), "choose tool".into()))
                     }
-                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
+                    (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
                         v.push(("F2".into(), "choose server".into()))
+                    }
+                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
+                        v.push(("Enter".into(), "choose tool".into()))
                     }
                     (Focus::ReqBody, Some(f)) if f.is_table() => {
                         // A choice column (e.g. a multipart part's kind).
@@ -5183,10 +5385,11 @@ impl App {
                         }
                         v.push((k(self, Action::FormatBody), "format JSON".into()));
                     }
-                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Http) => {
-                        v.push(("Enter".into(), "choose method".into()))
-                    }
-                    (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc) => {
+                    (Focus::Bar(0), _)
+                        if self
+                            .tab()
+                            .is_some_and(|t| matches!(t.ed.kind, Kind::Http | Kind::Grpc)) =>
+                    {
                         v.push(("Enter".into(), "choose method".into()))
                     }
                     _ => {}
@@ -5221,6 +5424,39 @@ impl App {
     }
 }
 
+/// The server config for one editor row. A row that keeps its name and its
+/// command line/URL keeps everything else it had (env, headers, auth), which
+/// the table does not show; changing either rebuilds the entry from scratch.
+fn mcp_server_entry(
+    kind: usize,
+    value: &str,
+    old: Option<sendito_store::config::McpServer>,
+) -> sendito_store::config::McpServer {
+    use sendito_store::config::{McpHttpServer, McpServer, McpStdioServer};
+    match (kind, old) {
+        (0, Some(McpServer::Http(old))) if old.url == value => McpServer::Http(old),
+        (1, Some(McpServer::Stdio(old)))
+            if stdio_command_line(&old.command, &old.args) == value =>
+        {
+            McpServer::Stdio(old)
+        }
+        (1, _) => {
+            let (command, args) = split_command_line(value);
+            McpServer::Stdio(McpStdioServer {
+                command,
+                args,
+                env: Default::default(),
+            })
+        }
+        _ => McpServer::Http(McpHttpServer {
+            url: value.to_string(),
+            headers: Default::default(),
+            verify_tls: true,
+            auth: None,
+        }),
+    }
+}
+
 /// What confirming a prompt does, for its button and the hint row.
 pub fn prompt_verb(a: &PromptAction) -> &'static str {
     match a {
@@ -5234,6 +5470,7 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
         PromptAction::Search => "search",
         PromptAction::Filter => "apply",
         PromptAction::CustomMethod => "use",
+        PromptAction::McpServer { .. } => "add",
     }
 }
 
@@ -5936,6 +6173,7 @@ impl App {
                 KeyCode::Char('y') => {
                     self.clipboard.set(r.copy_text.clone(), false);
                     self.osc52.push(r.copy_text.clone());
+                    r.copied = true;
                     self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
                     true
                 }
@@ -6009,12 +6247,12 @@ impl App {
             },
             Overlay::Confirm(c) => match key.code {
                 KeyCode::Esc => {
-                    // Cancelling is an answer too: say what was kept.
+                    // Cancelling is an answer too: it is the last button, and
+                    // it restores whatever the dialog was guarding (an editor,
+                    // a tab).
                     let action = c.action.clone();
-                    let cancel = c.buttons.len() - 1;
-                    if matches!(action, ConfirmAction::Delete(_)) {
-                        self.confirm(action, cancel);
-                    }
+                    let cancel = c.buttons.len().saturating_sub(1);
+                    self.confirm(action, cancel);
                     false
                 }
                 KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
@@ -6047,9 +6285,7 @@ impl App {
                 }
                 KeyCode::Char('n') if c.buttons.len() == 2 => {
                     let action = c.action.clone();
-                    if matches!(action, ConfirmAction::Delete(_)) {
-                        self.confirm(action, 1);
-                    }
+                    self.confirm(action, 1);
                     false
                 }
                 _ => true,
@@ -6212,7 +6448,17 @@ impl App {
                     };
                 }
                 match key.code {
-                    KeyCode::Esc => false,
+                    // A "new environment" prompt was opened from the env
+                    // editor, which is parked behind it: cancelling returns
+                    // to the editor with its changes intact.
+                    KeyCode::Esc => {
+                        if matches!(p.action, PromptAction::NewEnv)
+                            && let Some(ed) = self.parked_env.take()
+                        {
+                            self.overlay = Some(Overlay::Env(ed));
+                        }
+                        false
+                    }
                     // Space opens a choice row's list; Enter always confirms.
                     KeyCode::Char(' ') if p.focus > 0 => {
                         p.open = p.choices.get(p.focus - 1).map(|c| c.2);
@@ -6377,8 +6623,9 @@ impl App {
                     return true;
                 }
                 if ctrl && key.code == KeyCode::Char('d') {
-                    e.table.delete_row();
-                    e.dirty = true;
+                    if e.table.delete_row() {
+                        e.dirty = true;
+                    }
                     return true;
                 }
                 if key.code == KeyCode::Enter {
@@ -6387,6 +6634,67 @@ impl App {
                 }
                 match e.table.handle_key(&key, false, &mut self.clipboard) {
                     TableOutcome::Changed => e.dirty = true,
+                    TableOutcome::Leave => return false,
+                    _ => {}
+                }
+                true
+            }
+            Overlay::Mcp(m) => {
+                if key.code == KeyCode::Esc {
+                    if m.dirty {
+                        // Keep the editor open behind the confirm dialog.
+                        let ed = std::mem::replace(
+                            m,
+                            McpEditor {
+                                table: McpEditor::table(),
+                                dirty: false,
+                                error: None,
+                            },
+                        );
+                        self.parked_mcp = Some(ed);
+                        self.overlay = Some(Overlay::Confirm(Confirm {
+                            title: "Unsaved MCP server changes".into(),
+                            message: "Save the changes to the project config?".into(),
+                            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                            sel: 0,
+                            action: ConfirmAction::McpClose,
+                        }));
+                        return false;
+                    }
+                    return false;
+                }
+                if ctrl && key.code == KeyCode::Char('s') {
+                    let mut ed = std::mem::replace(
+                        m,
+                        McpEditor {
+                            table: McpEditor::table(),
+                            dirty: false,
+                            error: None,
+                        },
+                    );
+                    self.save_mcp_editor(&mut ed);
+                    *m = ed;
+                    return true;
+                }
+                if ctrl && key.code == KeyCode::Char('d') {
+                    if m.table.delete_row() {
+                        m.dirty = true;
+                    }
+                    return true;
+                }
+                if ctrl && key.code == KeyCode::Char('n') {
+                    // The trailing row is the one typed into to add a server.
+                    m.table.sel_row = m.table.rows.len();
+                    m.table.sel_col = 0;
+                    m.table.ensure_row();
+                    return true;
+                }
+                if key.code == KeyCode::Enter || key.code == KeyCode::Tab {
+                    m.table.next_cell();
+                    return true;
+                }
+                match m.table.handle_key(&key, false, &mut self.clipboard) {
+                    TableOutcome::Changed => m.dirty = true,
                     TableOutcome::Leave => return false,
                     _ => {}
                 }
@@ -6429,7 +6737,7 @@ impl App {
                 if sel == 0 {
                     self.quit = true;
                 } else {
-                    self.set_status("staying: the unsaved tabs are still open", StatusKind::Info);
+                    self.set_status("staying: the tabs are still open", StatusKind::Info);
                 }
             }
             ConfirmAction::CloseTab(id) => {
@@ -6455,6 +6763,32 @@ impl App {
                     }
                 }
             }
+            ConfirmAction::CloseTabRunning(id) => {
+                let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
+                    return;
+                };
+                self.active = i;
+                if sel != 0 {
+                    let what = if self.tabs[i]
+                        .running
+                        .as_ref()
+                        .is_some_and(|r| r.streaming_input)
+                    {
+                        "session"
+                    } else {
+                        "request"
+                    };
+                    self.set_status(
+                        format!("kept open: the {what} is still running"),
+                        StatusKind::Info,
+                    );
+                } else if self.tabs[i].dirty() {
+                    // Unsaved edits still get their Save/Discard/Cancel.
+                    self.prompt_close_dirty();
+                } else {
+                    self.close_tab(true);
+                }
+            }
             ConfirmAction::EnvClose => {
                 let Some(mut ed) = self.parked_env.take() else {
                     return;
@@ -6467,6 +6801,20 @@ impl App {
                     }
                     1 => {}
                     _ => self.overlay = Some(Overlay::Env(ed)),
+                }
+            }
+            ConfirmAction::McpClose => {
+                let Some(mut ed) = self.parked_mcp.take() else {
+                    return;
+                };
+                match sel {
+                    0 => {
+                        if !self.save_mcp_editor(&mut ed) {
+                            self.overlay = Some(Overlay::Mcp(ed));
+                        }
+                    }
+                    1 => {}
+                    _ => self.overlay = Some(Overlay::Mcp(ed)),
                 }
             }
             ConfirmAction::ClearHistory => {
@@ -6732,6 +7080,9 @@ impl App {
                 }
                 self.changed();
             }
+            PromptAction::McpServer { name } => {
+                self.add_mcp_server(&name, choice, &value)?;
+            }
         }
         Ok(())
     }
@@ -6766,18 +7117,12 @@ impl App {
                         double,
                         m.modifiers.contains(KeyModifiers::SHIFT),
                     );
-                } else if self.overlay.is_some() {
-                    // Click outside a dialog closes it (except confirmations).
-                    if !matches!(
-                        self.overlay,
-                        Some(Overlay::Confirm(_)) | Some(Overlay::Env(_))
-                    ) {
-                        self.overlay = None;
-                    }
                 }
             }
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some((_, Hit::Tab(i))) = self.hit_at(x, y) {
+                if self.overlay.is_none()
+                    && let Some((_, Hit::Tab(i))) = self.hit_at(x, y)
+                {
                     self.active = i;
                     self.close_tab(false);
                 }
@@ -6809,22 +7154,53 @@ impl App {
 
     fn scroll_at(&mut self, x: u16, y: u16, d: isize) {
         let inside = |r: Rect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        if let Some(ov) = &mut self.overlay {
-            match ov {
-                Overlay::Report(r) => r.viewer.scroll_by(d),
-                Overlay::Help { viewer, .. } => viewer.scroll_by(d),
-                Overlay::Picker(p) => {
-                    let n = p.visible().len();
-                    p.sel = ((p.sel as isize + d.signum()).clamp(0, n.saturating_sub(1) as isize))
-                        as usize;
+        if self.overlay.is_some() {
+            // Only the wheel over the dialog acts; the screen behind is modal.
+            let over_dialog = matches!(
+                self.hit_at(x, y),
+                Some((_, Hit::Overlay(h))) if h != OverlayHit::Outside
+            );
+            if !over_dialog {
+                return;
+            }
+            if let Some(ov) = &mut self.overlay {
+                match ov {
+                    Overlay::Report(r) => r.viewer.scroll_by(d),
+                    Overlay::Help { viewer, .. } => viewer.scroll_by(d),
+                    Overlay::Picker(p) => {
+                        let n = p.visible().len();
+                        p.sel = ((p.sel as isize + d.signum())
+                            .clamp(0, n.saturating_sub(1) as isize))
+                            as usize;
+                    }
+                    Overlay::Palette(p) => {
+                        p.armed = true;
+                        let n = p.visible().len();
+                        p.sel = ((p.sel as isize + d.signum())
+                            .clamp(0, n.saturating_sub(1) as isize))
+                            as usize;
+                    }
+                    Overlay::Settings { sel } => {
+                        let last = SETTINGS.len().saturating_sub(1) as isize;
+                        *sel = ((*sel as isize + d.signum()).clamp(0, last)) as usize;
+                    }
+                    Overlay::Env(e) => e.table.move_selection(d.signum()),
+                    Overlay::Mcp(m) => m.table.move_selection(d.signum()),
+                    Overlay::Prompt(p) => {
+                        if let Some(hl) = p.open {
+                            let n = p
+                                .choices
+                                .get(p.focus.wrapping_sub(1))
+                                .map_or(0, |c| c.1.len());
+                            if n > 0 {
+                                p.open = Some(
+                                    (hl as isize + d.signum()).rem_euclid(n as isize) as usize
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                Overlay::Palette(p) => {
-                    p.armed = true;
-                    let n = p.visible().len();
-                    p.sel = ((p.sel as isize + d.signum()).clamp(0, n.saturating_sub(1) as isize))
-                        as usize;
-                }
-                _ => {}
             }
             return;
         }
@@ -6993,13 +7369,41 @@ impl App {
             }
             Hit::RecentRow(i) => self.open_history(i, false),
             Hit::Bar(p) => {
-                self.focus = Focus::Bar(p);
+                // The Cancel button (3) is mouse-only: it stays out of the
+                // keyboard focus cycle (ctrl+w x cancels).
+                if p != 3 {
+                    self.focus = Focus::Bar(p);
+                }
                 let kind = self.tab().map(|t| t.ed.kind);
                 match (kind, p) {
                     (Some(_), 2) => self.dispatch(Action::Send),
+                    (Some(_), 3) => {
+                        // Disabled does nothing: cancel() would also stop
+                        // background jobs that do not belong to this tab.
+                        if self.tab().is_some_and(|t| t.running.is_some()) {
+                            self.dispatch(Action::Cancel);
+                        }
+                    }
                     (Some(Kind::Http), 0) => self.open_method_picker(None),
-                    (Some(Kind::Grpc), 1) => self.open_grpc_method_picker(),
-                    (Some(Kind::Http), 1) | (Some(Kind::Grpc), 0) => {
+                    (Some(Kind::Grpc), 0) => self.open_grpc_method_picker(),
+                    // The tool chip: a click places the caret (part 1 does the
+                    // same for the server input); the ▾ area opens the list.
+                    (Some(Kind::Mcp), 0) => {
+                        let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
+                        if rx + 3 >= rect.width {
+                            self.load_mcp_tools(true);
+                        } else {
+                            if let Some(e) = self.focused_text() {
+                                e.click(rx, ry, shift);
+                            }
+                            self.drag = Some(Drag::Text {
+                                field: None,
+                                bar: true,
+                            });
+                        }
+                    }
+                    // The endpoint input of every kind: place the caret.
+                    (Some(_), 1) => {
                         let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
                         if let Some(e) = self.focused_text() {
                             e.click(rx, ry, shift);
@@ -7060,10 +7464,14 @@ impl App {
                         && let Some(tb) = t.ed.table_mut(f)
                     {
                         tb.select(row, col);
-                        if !tb.editing_text() {
+                        if tb.editing_text() {
+                            // Clicking the trailing "add" row creates it.
+                            tb.ensure_row();
+                            if let Some(e) = tb.editor_mut() {
+                                e.click(rx, ry, false);
+                            }
+                        } else {
                             changed = tb.activate(1);
-                        } else if let Some(e) = tb.editor_mut() {
-                            e.click(rx, ry, false);
                         }
                     }
                 }
@@ -7142,8 +7550,21 @@ impl App {
         };
         let mut keep = true;
         match (&mut ov, oh) {
-            (_, OverlayHit::Close) | (_, OverlayHit::Outside) => {
-                keep = matches!(ov, Overlay::Confirm(_))
+            // The env and MCP editors route outside clicks through Esc so a
+            // dirty editor still asks to save instead of dropping changes.
+            (Overlay::Env(_), OverlayHit::Outside) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::Outside) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            (_, OverlayHit::Outside) => keep = matches!(ov, Overlay::Confirm(_)),
+            (Overlay::Picker(p), OverlayHit::Input) => {
+                p.filter.click(x.saturating_sub(rect.x), 0, false);
             }
             (Overlay::Picker(p), OverlayHit::Item(i)) => {
                 p.sel = i;
@@ -7157,8 +7578,13 @@ impl App {
                 }
                 keep = false;
             }
+            (Overlay::Palette(p), OverlayHit::Input) => {
+                p.input.click(x.saturating_sub(rect.x), 0, false);
+            }
             (Overlay::Palette(p), OverlayHit::Item(i)) => {
                 p.sel = i;
+                // Running the row is what Enter would do: it needs `armed`.
+                p.armed = true;
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;
@@ -7168,15 +7594,28 @@ impl App {
                 self.confirm(action, i);
                 keep = false;
             }
+            // A click selects a setting; the value chip (or a double click)
+            // changes it, matching the keyboard's ←/→.
             (Overlay::Settings { sel }, OverlayHit::Item(i)) => {
+                *sel = i;
+                if double {
+                    self.change_setting(SETTINGS[i].0, 1);
+                }
+            }
+            (Overlay::Settings { sel }, OverlayHit::Value(i)) => {
                 *sel = i;
                 self.change_setting(SETTINGS[i].0, 1);
             }
             (Overlay::Prompt(p), OverlayHit::Choice(k)) => {
                 p.focus = k + 1;
-                if let Some((_, opts, i)) = p.choices.get_mut(k) {
-                    *i = (*i + 1) % opts.len().max(1);
+                p.open = p.choices.get(k).map(|c| c.2);
+            }
+            (Overlay::Prompt(p), OverlayHit::PromptOption(j)) => {
+                if let Some(c) = p.choices.get_mut(p.focus.wrapping_sub(1)) {
+                    c.2 = j.min(c.1.len().saturating_sub(1));
                 }
+                p.open = None;
+                p.focus = 0;
             }
             (Overlay::Prompt(p), OverlayHit::Input) => {
                 p.focus = 0;
@@ -7187,7 +7626,11 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;
             }
-            (Overlay::Prompt(_), OverlayHit::Button(_)) => keep = false,
+            (Overlay::Prompt(_), OverlayHit::Button(_)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
             (Overlay::Import(i), OverlayHit::Input) => {
                 i.input
                     .click(x.saturating_sub(rect.x), y.saturating_sub(rect.y), false)
@@ -7198,6 +7641,13 @@ impl App {
                 return;
             }
             (Overlay::Import(_), OverlayHit::Button(_)) => keep = false,
+            (Overlay::Env(e), OverlayHit::EnvDelete(row)) => {
+                // The row's ✕, same as Ctrl+D.
+                e.table.sel_row = row.min(e.table.rows.len());
+                if e.table.delete_row() {
+                    e.dirty = true;
+                }
+            }
             (Overlay::Env(e), OverlayHit::EnvTab(i)) => {
                 if e.dirty {
                     e.error = Some("save (Ctrl+S) or discard changes before switching".into());
@@ -7219,10 +7669,13 @@ impl App {
             }
             (Overlay::Env(e), OverlayHit::EnvCell { row, col }) => {
                 e.table.select(row, col);
-                if !e.table.editing_text() && e.table.activate(1) {
+                if e.table.editing_text() {
+                    e.table.ensure_row();
+                    if let Some(ed) = e.table.editor_mut() {
+                        ed.click(x.saturating_sub(rect.x), 0, false);
+                    }
+                } else if e.table.activate(1) {
                     e.dirty = true;
-                } else if let Some(ed) = e.table.editor_mut() {
-                    ed.click(x.saturating_sub(rect.x), 0, false);
                 }
             }
             (Overlay::Env(_), OverlayHit::Button(0)) => {
@@ -7240,9 +7693,42 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
+            (Overlay::Mcp(m), OverlayHit::McpDelete(row)) => {
+                m.table.sel_row = row.min(m.table.rows.len());
+                if m.table.delete_row() {
+                    m.dirty = true;
+                }
+            }
+            (Overlay::Mcp(m), OverlayHit::McpCell { row, col }) => {
+                m.table.select(row, col);
+                if m.table.editing_text() {
+                    m.table.ensure_row();
+                    if let Some(ed) = m.table.editor_mut() {
+                        ed.click(x.saturating_sub(rect.x), 0, false);
+                    }
+                } else if m.table.activate(1) {
+                    m.dirty = true;
+                }
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(0)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(1)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(_)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
             (Overlay::Report(r), OverlayHit::Button(0)) => {
                 self.clipboard.set(r.copy_text.clone(), false);
                 self.osc52.push(r.copy_text.clone());
+                r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
             }
             (Overlay::Report(r), OverlayHit::Button(_)) => {
@@ -7250,6 +7736,9 @@ impl App {
                     self.set_status(m, StatusKind::Ok);
                 }
                 keep = false;
+            }
+            (Overlay::Help { filter, .. }, OverlayHit::Input) => {
+                filter.click(x.saturating_sub(rect.x), 0, false);
             }
             // The right column of a two-column Help continues the left one.
             (Overlay::Help { viewer, .. }, OverlayHit::Item(off)) => viewer

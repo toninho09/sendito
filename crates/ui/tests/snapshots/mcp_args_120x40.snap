@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   MCP untitled ● ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮ mcp  example/search   example                                                      Send
+╭ Requests  History ─────────╮  example                http://127.0.0.1:9/mcp  search               ▾  × Cancel   Send
 │▸ Orders/                   │╭─ Tool  Args  Scripts  Options ────────────── untitled · no file yet (Ctrl+S saves it) ─╮
 │▸ Users/                    ││   1 {"query":"hello"}                                                                  │
 │  GRPC  echo unary          ││                                                                                        │

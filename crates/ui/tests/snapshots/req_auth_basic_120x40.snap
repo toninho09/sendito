@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   DEL delete user ● ×    +                                                            ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  DELETE ▾  ▍{{base_url}}/users/42                                                  Send
+╭ Requests  History ─────────╮  DELETE ▾  ▍{{base_url}}/users/42                                       × Cancel   Send
 │▸ Orders/                   │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────── Users › delete user ─╮
 │▾ Users/                    ││ Auth type      Basic ▾  Enter or Space to change · values may use {{variables}}        │
 │├ POST  create user         ││ Username                                                                               │

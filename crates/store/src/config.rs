@@ -330,6 +330,29 @@ pub fn load(global: Option<&Path>, project: Option<&Path>) -> (Config, Vec<Strin
     (cfg, warnings)
 }
 
+/// Replaces `[mcp.servers]` in a config file, keeping the rest of the file.
+/// An empty map removes the table.
+pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Result<()> {
+    let mut t = read_table(path)
+        .map_err(StoreError::Invalid)?
+        .unwrap_or_default();
+    let mcp = t
+        .entry("mcp".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let toml::Value::Table(mcp) = mcp else {
+        return Err(StoreError::Invalid("[mcp] is not a table".into()));
+    };
+    if servers.is_empty() {
+        mcp.remove("servers");
+    } else {
+        let value = toml::Value::try_from(servers)
+            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
+        mcp.insert("servers".to_string(), value);
+    }
+    let text = toml::to_string(&t).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    write_atomic(path, text.as_bytes())
+}
+
 /// Sets `section.key = value` in a config file, keeping other content.
 pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
     let mut t = read_table(path)
@@ -458,6 +481,45 @@ scopes = ["read"]
         let (c, w) = load(None, Some(&d.path().join("missing.toml")));
         assert!(w.is_empty());
         assert_eq!(c, Config::default());
+    }
+
+    #[test]
+    fn set_mcp_servers_preserves_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        fs::write(
+            &p,
+            "[collection]\nname = \"x\"\n[mcp]\ntimeout_ms = 5\n\
+             [mcp.servers.old]\nurl = \"https://old\"\n[mcp.servers.old.headers]\na = \"b\"\n",
+        )
+        .unwrap();
+        let mut servers = BTreeMap::new();
+        servers.insert(
+            "new".to_string(),
+            McpServer::Http(McpHttpServer {
+                url: "https://new/mcp".into(),
+                headers: BTreeMap::new(),
+                verify_tls: false,
+                auth: Some(McpServerAuth::Bearer {
+                    token: "{{t}}".into(),
+                }),
+            }),
+        );
+        set_mcp_servers(&p, &servers).unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty());
+        // The other sections survive, and the old server is gone.
+        assert_eq!(c.collection.name.as_deref(), Some("x"));
+        assert_eq!(c.mcp.timeout_ms, 5);
+        assert_eq!(c.mcp.servers, servers);
+        // An empty map removes the table without touching [mcp] itself.
+        set_mcp_servers(&p, &BTreeMap::new()).unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty());
+        assert!(c.mcp.servers.is_empty());
+        assert_eq!(c.mcp.timeout_ms, 5);
+        fs::write(&p, "mcp = 1").unwrap();
+        assert!(set_mcp_servers(&p, &BTreeMap::new()).is_err());
     }
 
     #[test]

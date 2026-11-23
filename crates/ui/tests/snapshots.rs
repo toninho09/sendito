@@ -199,7 +199,7 @@ fn request_body_kinds_and_auth() {
 fn grpc_request() {
     each(|h| {
         open(h, "echo unary");
-        h.app.focus = Focus::Bar(0);
+        h.app.focus = Focus::Bar(1);
         snap("grpc_message", h);
         h.key("alt+5");
         snap("grpc_options", h);
@@ -210,6 +210,16 @@ fn grpc_request() {
 fn mcp_request() {
     each(|h| {
         h.app.run_command("newmcp");
+        // A configured server, so the bar shows where the call goes.
+        h.app.project.config.mcp.servers.insert(
+            "example".into(),
+            sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
+                url: "http://127.0.0.1:9/mcp".into(),
+                headers: Default::default(),
+                verify_tls: true,
+                auth: None,
+            }),
+        );
         let t = &mut h.app.tabs[h.app.active];
         t.ed.mcp_server.set_text("example");
         t.ed.mcp_tool.set_text("search");
@@ -278,6 +288,26 @@ fn overlays() {
         snap("env_picker", h);
         h.key("esc ctrl+w V");
         snap("env_editor", h);
+        // The MCP servers editor, from the demo config's own servers.
+        h.app.project.config.mcp.servers.insert(
+            "echo".into(),
+            sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
+                url: "http://127.0.0.1:9/mcp".into(),
+                headers: Default::default(),
+                verify_tls: true,
+                auth: None,
+            }),
+        );
+        h.app.project.config.mcp.servers.insert(
+            "files".into(),
+            sendito_store::config::McpServer::Stdio(sendito_store::config::McpStdioServer {
+                command: "npx".into(),
+                args: vec!["-y".into(), "@mcp/server-fs".into()],
+                env: Default::default(),
+            }),
+        );
+        h.key("esc ctrl+w S");
+        snap("mcp_servers", h);
         h.key("esc ctrl+w i");
         snap("import", h);
         h.key("esc");
@@ -393,7 +423,7 @@ fn completion_popup() {
         snap("grpc_field_completion_filtered", h);
         h.key("esc");
         // The method field completes from the same schema.
-        h.app.focus = Focus::Bar(1);
+        h.app.focus = Focus::Bar(0);
         h.app.tabs[h.app.active]
             .ed
             .grpc_method_text

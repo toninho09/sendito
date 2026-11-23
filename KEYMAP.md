@@ -49,6 +49,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
+| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the project config |
 | `history` | `F7`, `Ctrl+W r` | `F7`, `Ctrl+W r` | Show request history in the sidebar (toggle) |
 | `toggle_sidebar` | `Ctrl+B`, `Ctrl+W b` | `Ctrl+B`, `Ctrl+W b` | Show or hide the sidebar |
 | `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
@@ -215,6 +216,8 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:newws` | New WebSocket request (Ctrl+W y) |
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
+| `:mcpservers edit` | Edit the MCP servers in the project config (Ctrl+W S) |
+| `:mcpadd <name>` | Add an MCP server to the project config (asks for the URL or command) |
 | `:mcptools` | Discover and choose an MCP tool |
 | `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |

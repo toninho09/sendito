@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GRPC echo unary ● ×    +                                                            ● local ▾   F1  all keys
-╭ Requests  History ─────────╮ target  {{grpc}}                                    method  Echo/Unary         ▾   Send
+╭ Requests  History ─────────╮  {{grpc}}                                       Echo/Unary           ▾  × Cancel   Send
 │▸ Orders/                   │╭─ Message  Metadata  Auth  Scripts  Options ─────────────────────────────── echo unary ─╮
 │▸ Users/                    ││   1 {                                                                                  │
 │  GRPC  echo unary          ││   2   "in                                                                              │

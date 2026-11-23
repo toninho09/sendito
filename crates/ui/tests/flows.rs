@@ -45,6 +45,35 @@ fn open(h: &mut Harness, name: &str) {
     h.draw();
 }
 
+/// An `http(s)://` URL in the server field connects without a config entry.
+#[test]
+fn flow_mcp_direct_url_server() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+    });
+    h.app.run_command("newmcp");
+    // Type the URL straight into the server input (no [mcp.servers] entry).
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.type_text(&format!("{}/mcp", echo.url()));
+    h.draw();
+    // The tool chip discovers tools from that URL.
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("enter");
+    h.wait_for("Choose an MCP tool", 10);
+    h.type_text("add");
+    h.key("enter");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_tool.text(), "add");
+    h.key("f5");
+    h.wait_idle(10);
+    assert!(
+        echo.captured()
+            .iter()
+            .any(|c| c.method_of_body() == "tools/call")
+    );
+}
+
 #[test]
 fn flow_mcp_discover_and_call() {
     let rt = tokio::runtime::Runtime::new().must();
@@ -61,8 +90,14 @@ fn flow_mcp_discover_and_call() {
         );
     });
     h.app.run_command("newmcp");
-    h.key("f2 enter");
+    // The server input takes a config name; F2 lists the configured servers.
+    h.key("f2");
+    h.key("enter");
     assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
+    // The bar shows where the call goes: the configured server's URL, when
+    // the strip is wide enough (120 columns: the test harness).
+    h.key("right");
+    assert!(h.screen().contains("/mcp") || h.screen().contains("127.0.0.1"));
     h.app.run_command("mcptools");
     h.wait_for("Choose an MCP tool", 5);
     h.key("enter");
@@ -195,7 +230,7 @@ fn mcp_success_status_is_not_an_http_error_code() {
 }
 
 #[test]
-fn mcp_up_from_tabs_focuses_the_server_bar() {
+fn mcp_up_from_tabs_focuses_the_tool_input() {
     let mut h = Harness::with(120, 40, |d| {
         common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
     });
@@ -203,10 +238,10 @@ fn mcp_up_from_tabs_focuses_the_server_bar() {
     h.app.tabs[h.app.active].ed.mcp_server.set_text("echo");
     h.app.tabs[h.app.active].refresh_model();
     h.key("alt+1");
-    // Up from the tabs must land on the only bar part MCP has (the server),
-    // never on the HTTP URL slot it does not draw.
+    // Up from the tabs lands on the endpoint input every kind draws (the
+    // tool for MCP), never on a slot it does not draw.
     h.key("up");
-    assert_eq!(h.app.focus, sendito_ui::app::Focus::Bar(0));
+    assert_eq!(h.app.focus, sendito_ui::app::Focus::Bar(1));
 }
 
 #[test]
@@ -270,6 +305,163 @@ fn flow_create_folder_and_request() {
     assert!(h.screen().contains("Delete the request"));
     h.key("left enter");
     assert!(!h.dir.path().join("Payments/refund.toml").exists());
+}
+
+/// A large tree can be browsed with the mouse wheel without snapping back
+/// to the selection; moving the selection still scrolls it into view.
+#[test]
+fn flow_tree_wheel_scrolls_freely() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    for i in 0..60 {
+        common::write(
+            h.dir.path(),
+            &format!("Big/route {i:02}.toml"),
+            &format!("kind = \"http\"\nmethod = \"GET\"\nurl = \"{{{{base_url}}}}/r{i}\"\n"),
+        );
+    }
+    h.app.rescan();
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("Big");
+    h.draw();
+    h.key("right"); // expand
+    for _ in 0..55 {
+        h.key("down");
+    }
+    // Keyboard navigation keeps the selection on screen.
+    let name = h
+        .app
+        .tree
+        .selected_rel()
+        .must()
+        .rsplit('/')
+        .next()
+        .must()
+        .trim_end_matches(".toml")
+        .to_string();
+    assert!(h.screen().contains(&name), "{name} not visible");
+    // The wheel browses freely: scrolling back to the top stays at the top.
+    let tr = h.app.areas.tree;
+    let (wx, wy) = (tr.x + 2, tr.y + 2);
+    for _ in 0..30 {
+        h.scroll(wx, wy, false);
+    }
+    let sc = h.screen();
+    assert!(
+        sc.contains("route 00") && sc.contains("route 01"),
+        "wheel scroll snapped back to the selection\n{sc}"
+    );
+    // Moving the selection again scrolls it back into view.
+    h.key("down");
+    let name = h
+        .app
+        .tree
+        .selected_rel()
+        .must()
+        .rsplit('/')
+        .next()
+        .must()
+        .trim_end_matches(".toml")
+        .to_string();
+    assert!(h.screen().contains(&name), "{name} not visible");
+}
+
+/// The history sidebar behaves the same way: free wheel browsing, selection
+/// kept visible while navigating with the keyboard.
+#[test]
+fn flow_history_wheel_scrolls_freely() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    let entries: Vec<_> = (0..80)
+        .map(|i| sendito_store::history::HistoryEntry {
+            ts: format!("2026-01-{:02}T10:00:00Z", 1 + i % 28),
+            name: format!("hist{i:02}"),
+            path: None,
+            env: None,
+            badge: "GET".into(),
+            target: format!("http://x/r{i}"),
+            template: String::new(),
+            request: String::new(),
+            status: Some(200),
+            duration_ms: 1,
+            size: 1,
+            error: None,
+        })
+        .collect();
+    h.key("f7");
+    h.key("ctrl+w h");
+    h.app.history = Some(entries);
+    h.draw();
+    for _ in 0..75 {
+        h.key("j");
+    }
+    // Keyboard navigation keeps the selection on screen.
+    let sel = |h: &Harness| {
+        h.app
+            .history
+            .as_ref()
+            .map(|v| v[h.app.history_sel].name.clone())
+            .must()
+    };
+    let name = sel(&h);
+    assert!(h.screen().contains(&name), "{name} not visible");
+    // The wheel browses freely back to the top.
+    let sr = h.app.areas.sidebar;
+    let (wx, wy) = (sr.x + 2, sr.y + 2);
+    for _ in 0..30 {
+        h.scroll(wx, wy, false);
+    }
+    let sc = h.screen();
+    assert!(sc.contains("hist00"), "wheel scroll snapped back\n{sc}");
+    // Moving the selection again scrolls it back into view.
+    h.key("j");
+    let name = sel(&h);
+    assert!(h.screen().contains(&name), "{name} not visible");
+}
+
+/// Every kind draws the same URL strip: a picker chip (part 0) and one
+/// endpoint input (part 1) — WebSocket has no chip, only the input.
+#[test]
+fn flow_bar_has_the_same_parts_for_every_kind() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    use sendito_ui::app::Focus;
+
+    // HTTP: method chip + URL input.
+    open(&mut h, "list users");
+    h.app.focus = Focus::Bar(1);
+    h.key("ctrl+a");
+    h.type_text("http://x/1");
+    assert_eq!(h.app.tabs[h.app.active].ed.url.text(), "http://x/1");
+
+    // gRPC: method chip + target input.
+    open(&mut h, "echo unary");
+    h.app.focus = Focus::Bar(0);
+    h.key("enter");
+    assert!(h.wait_for("Choose a gRPC method", 5).contains("Echo/Unary"));
+    h.key("esc");
+    h.app.focus = Focus::Bar(1);
+    h.key("ctrl+a");
+    h.type_text("127.0.0.1:1");
+    assert_eq!(h.app.tabs[h.app.active].ed.target.text(), "127.0.0.1:1");
+
+    // WebSocket: static badge + URL input (part 0 does not exist).
+    h.app.run_command("newws");
+    h.app.focus = Focus::Bar(1);
+    h.type_text("ws://x/1");
+    assert_eq!(h.app.tabs[h.app.active].ed.url.text(), "ws://x/1");
+    // No chip part: shift+tab from the input reaches the sidebar directly.
+    h.key("shift+tab");
+    assert_eq!(h.app.focus, Focus::Sidebar);
+
+    // MCP: server input + tool chip, like gRPC's target + method chip.
+    h.app.run_command("newmcp");
+    h.app.focus = Focus::Bar(1);
+    h.type_text("search");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "search");
+    h.app.focus = Focus::Bar(0);
+    h.type_text("tool");
+    assert_eq!(h.app.tabs[h.app.active].ed.mcp_tool.text(), "tool");
 }
 
 #[test]
@@ -465,7 +657,7 @@ fn flow_unary_grpc_reflection() {
     assert!(sc.contains("\"text\": \"hello\""), "{sc}");
     // Method picker from reflection, template generation.
     h.key("ctrl+w k");
-    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
     h.key("enter");
     let sc = h.wait_for("Choose a gRPC method", 5);
     assert!(sc.contains("sendito.test.v1.Echo/Bidi"), "{sc}");
@@ -784,6 +976,101 @@ fn flow_untouched_palette_highlights_a_harmless_first_row() {
     assert!(h.app.overlay.is_none());
 }
 
+/// Clicking outside a dirty env editor asks to save instead of closing
+/// silently; a clean editor still closes on the same click.
+#[test]
+fn flow_env_editor_outside_click_asks_when_dirty() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+
+    // Clean editor: a click truly outside (below the modal) closes it.
+    h.key("ctrl+w V");
+    assert!(matches!(h.app.overlay, Some(Overlay::Env(_))));
+    h.click(1, 28);
+    assert!(h.app.overlay.is_none());
+
+    // Dirty editor: the click parks it behind a save confirmation.
+    h.key("ctrl+w V");
+    h.key("ctrl+d");
+    h.click(1, 28);
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::EnvClose)
+    ));
+    assert!(h.screen().contains("Unsaved environment changes"));
+    // Discard closes for real.
+    h.key("right enter");
+    assert!(h.app.overlay.is_none());
+}
+
+/// A secret typed into a new env row is masked on screen right away,
+/// not only after a save reloads the table.
+#[test]
+fn flow_env_editor_masks_new_secrets() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    h.key("ctrl+w V");
+    // Walk down to the trailing "add" row.
+    for _ in 0..32 {
+        let at_add = match &h.app.overlay {
+            Some(Overlay::Env(e)) => e.table.sel_row >= e.table.rows.len(),
+            _ => false,
+        };
+        if at_add {
+            break;
+        }
+        h.key("down");
+    }
+    h.type_text("tok");
+    h.key("right");
+    h.key("space"); // source: secrets
+    h.key("right right");
+    h.type_text("hunter2");
+    let screen = h.screen();
+    assert!(!screen.contains("hunter2"));
+    assert!(screen.contains('•'));
+}
+
+/// Clicks on the env dialog's own chrome (title, legend) and on a row's ✕
+/// act inside the dialog; only the X, Esc or a truly outside click leave it.
+#[test]
+fn flow_env_editor_chrome_clicks_stay_inside() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    h.app.set_env(Some("local".into()));
+    h.key("ctrl+w V");
+    let state = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Env(e)) => Some((e.table.rows.len(), e.dirty)),
+        _ => None,
+    };
+    let (rows, dirty) = state(&h).unwrap();
+    assert!(rows >= 2 && !dirty);
+
+    // A click on the dialog's title does nothing.
+    let (tx, ty) = h.find("Environments").unwrap();
+    h.click(tx, ty);
+    assert_eq!(state(&h), Some((rows, false)));
+
+    // The ✕ on a row deletes it instead of leaving the dialog.
+    let (_, vy) = h.find("grpc").unwrap();
+    let line = h.screen().split('\n').nth(vy as usize).unwrap().to_string();
+    let dx = line
+        .char_indices()
+        .rev()
+        .find(|(_, c)| *c == '✕')
+        .map(|(i, _)| line[..i].chars().count())
+        .unwrap() as u16;
+    h.click(dx, vy);
+    assert_eq!(state(&h), Some((rows - 1, true)));
+
+    // A click truly outside (below the modal) still asks before discarding.
+    h.click(1, 28);
+    assert!(matches!(h.app.overlay, Some(Overlay::Confirm(_))));
+}
+
 #[test]
 fn flow_ctrl_s_confirms_a_dialog_from_a_choice_row() {
     let s = servers();
@@ -941,7 +1228,7 @@ fn flow_grpc_message_completion() {
     open(&mut h, "echo unary");
     // Load the schema.
     h.key("ctrl+w k");
-    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
     h.key("enter");
     let _ = h.wait_for("Choose a gRPC method", 5);
     h.key("esc");
@@ -977,7 +1264,7 @@ fn flow_grpc_method_completion() {
     let mut h = harness(&s, 110, 32);
     open(&mut h, "echo unary");
     h.key("ctrl+w k");
-    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
     h.key("enter");
     let _ = h.wait_for("Choose a gRPC method", 5);
     h.key("esc");
@@ -1013,7 +1300,9 @@ fn flow_mcp_completion() {
         );
     });
     h.app.run_command("newmcp");
-    h.key("f2 enter");
+    // The server input takes a config name; F2 lists the configured servers.
+    h.key("f2");
+    h.key("enter");
     assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
     // The tool field pulls the tool list in the background, then filters it.
     h.app.focus = sendito_ui::app::Focus::ReqBody;
@@ -1055,7 +1344,7 @@ fn flow_completion_closes() {
     let mut h = harness(&s, 110, 32);
     open(&mut h, "echo unary");
     h.key("ctrl+w k");
-    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
     h.key("enter");
     let _ = h.wait_for("Choose a gRPC method", 5);
     h.key("esc");
@@ -1216,7 +1505,7 @@ fn flow_completion_closes_on_navigation() {
     let mut h = harness(&s, 110, 32);
     open(&mut h, "echo unary");
     h.key("ctrl+w k");
-    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
     h.key("enter");
     let _ = h.wait_for("Choose a gRPC method", 5);
     h.key("esc");
@@ -1286,6 +1575,129 @@ fn flow_websocket_session() {
     assert!(closed, "{:?}", cap.frames);
 }
 
+/// Closing a tab with an open session asks first: Cancel keeps it,
+/// Close ends the session and the tab.
+#[test]
+fn flow_close_tab_with_open_session_asks() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.key("ctrl+p");
+    h.type_text(":newws");
+    h.key("enter");
+    h.type_text(&s.ws.url("/echo"));
+    h.key("f5");
+    h.wait_for("101 Switching Protocols", 10);
+    let n = h.app.tabs.len();
+
+    h.key("ctrl+w c");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::CloseTabRunning(_))
+    ));
+    assert_eq!(h.app.tabs.len(), n, "the tab is still open");
+
+    // Cancel keeps the tab and the open session.
+    h.key("right enter");
+    assert!(h.app.overlay.is_none());
+    assert_eq!(h.app.tabs.len(), n);
+    assert!(
+        h.app.tabs[h.app.active]
+            .running
+            .as_ref()
+            .is_some_and(|r| r.streaming_input)
+    );
+
+    // Close confirms, then the unsaved edits still get their own prompt.
+    h.key("ctrl+w c");
+    h.key("enter");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::CloseTab(_))
+    ));
+    h.key("right enter"); // Discard
+    assert_eq!(h.app.tabs.len(), n - 1);
+}
+
+/// An in-flight unary request also asks before its tab closes.
+#[test]
+fn flow_close_tab_with_inflight_request_asks() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "list users");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("ctrl+a");
+    h.type_text(&format!("{}/delay/5000", s.http.url()));
+    h.key("f5");
+    h.wait_for("sending", 5);
+
+    h.key("ctrl+w c");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::CloseTabRunning(_))
+    ));
+    let sc = h.screen();
+    assert!(sc.contains("a request in flight"), "{sc}");
+
+    // Cancel keeps the tab and the request running.
+    h.key("right enter");
+    assert!(h.app.overlay.is_none());
+    assert!(h.app.tabs[h.app.active].running.is_some());
+}
+
+/// The Cancel button next to Send stops a running request; with nothing
+/// running it is disabled and does nothing.
+#[test]
+fn flow_cancel_button_stops_running_request() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "list users");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.key("ctrl+a");
+    h.type_text(&format!("{}/delay/5000", s.http.url()));
+    h.key("f5");
+    h.wait_for("sending", 5);
+    assert!(h.app.tabs[h.app.active].running.is_some());
+
+    let (cx, cy) = h.find("Cancel").unwrap();
+    h.click(cx + 1, cy);
+    h.wait_for("Cancelled", 5);
+    assert!(h.app.tabs[h.app.active].running.is_none());
+
+    // Disabled: a click neither cancels nor reports "nothing is running".
+    let (cx, cy) = h.find("Cancel").unwrap();
+    h.click(cx + 1, cy);
+    assert!(!h.screen().contains("nothing is running"));
+}
+
+/// Quitting with a live session asks too, even with no unsaved edits.
+#[test]
+fn flow_quit_with_live_session_asks() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.key("ctrl+p");
+    h.type_text(":newws");
+    h.key("enter");
+    h.type_text(&s.ws.url("/echo"));
+    h.key("f5");
+    h.wait_for("101 Switching Protocols", 10);
+
+    h.key("ctrl+q");
+    assert!(matches!(h.app.overlay, Some(Overlay::Confirm(_))));
+    let sc = h.screen();
+    assert!(sc.contains("still running"), "{sc}");
+    assert!(!h.app.quit);
+
+    // Cancel stays; Quit quits.
+    h.key("right enter");
+    assert!(!h.app.quit);
+    h.key("ctrl+q");
+    h.key("enter");
+    assert!(h.app.quit);
+}
+
 #[test]
 fn flow_websocket_snapshot_state() {
     let s = servers();
@@ -1307,4 +1719,453 @@ fn flow_websocket_snapshot_state() {
         Some(sendito_ui::tab::Field::WsMessages)
     );
     assert!(sc.contains("WS"), "{sc}");
+}
+
+/// Servers can be added, renamed and removed from the interface: the project
+/// config keeps its other content, and settings the table does not show
+/// (auth, headers, env) survive a save that leaves the entry alone.
+#[test]
+fn flow_mcp_editor_adds_and_keeps_servers() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[collection]\nname = \"demo\"\n\n\
+         [mcp.servers.remote]\nurl = \"https://example.test/mcp\"\nverify_tls = false\n\
+         [mcp.servers.remote.headers]\nx-key = \"{{token}}\"\n\
+         [mcp.servers.remote.auth]\ntype = \"bearer\"\ntoken = \"{{token}}\"\n\n\
+         [mcp.servers.files]\ncommand = \"npx\"\nargs = [\"-y\", \"@mcp/server-fs\", \".\"]\n",
+    );
+    // Re-read the config the file now holds.
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        None,
+    );
+
+    h.key("ctrl+w S");
+    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+    let sc = h.screen();
+    assert!(sc.contains("MCP servers"), "{sc}");
+    assert!(sc.contains("remote") && sc.contains("files"), "{sc}");
+    // stdio rows read back as the command line they start.
+    assert!(sc.contains("npx -y @mcp/server-fs ."), "{sc}");
+
+    // Walk to the trailing row and add an HTTP server.
+    for _ in 0..10 {
+        let at_add = match &h.app.overlay {
+            Some(Overlay::Mcp(m)) => m.table.sel_row >= m.table.rows.len(),
+            _ => false,
+        };
+        if at_add {
+            break;
+        }
+        h.key("down");
+    }
+    h.type_text("ledger");
+    h.key("tab");
+    assert_eq!(
+        h.app.overlay.as_ref().map(|o| match o {
+            Overlay::Mcp(m) => m.table.rows.last().map(|r| r.cells[1].choice()),
+            _ => None,
+        }),
+        Some(Some(0)),
+        "a new row starts as http"
+    );
+    h.key("tab");
+    h.type_text("http://127.0.0.1:9/mcp");
+    // Ctrl+S writes the table back.
+    h.key("ctrl+s");
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(text.contains("[mcp.servers.ledger]"), "{text}");
+    assert!(text.contains("http://127.0.0.1:9/mcp"), "{text}");
+    // The untouched remote entry kept its verification, headers and auth.
+    assert!(text.contains("verify_tls = false"), "{text}");
+    assert!(text.contains("x-key"), "{text}");
+    assert!(text.contains("type = \"bearer\""), "{text}");
+    // So did the stdio entry's split args.
+    assert!(text.contains("\"@mcp/server-fs\""), "{text}");
+    assert_eq!(h.app.project.config.mcp.servers.len(), 3);
+}
+
+/// `Esc` on a dirty editor asks before discarding; Discard drops the edit and
+/// leaves the file alone.
+#[test]
+fn flow_mcp_editor_asks_before_discarding() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.key("ctrl+w S");
+    h.type_text("only");
+    h.key("esc");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::McpClose)
+    ));
+    assert!(h.screen().contains("Unsaved MCP server changes"));
+    // Cancel keeps the editor and the typed row.
+    h.key("right right enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+    // Discard closes without writing.
+    h.key("esc right enter");
+    assert!(h.app.overlay.is_none());
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(!text.contains("[mcp.servers"), "{text}");
+}
+
+/// `:mcpadd` asks for the URL (or command) and writes the server at once.
+#[test]
+fn flow_mcp_add_command_writes_the_project_config() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.app.run_command("mcpadd ledger");
+    h.type_text("http://127.0.0.1:9/mcp");
+    h.key("enter");
+    assert!(h.app.overlay.is_none(), "the prompt closes on Enter");
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(text.contains("[mcp.servers.ledger]"), "{text}");
+    assert!(text.contains("http://127.0.0.1:9/mcp"), "{text}");
+    assert_eq!(
+        h.app
+            .project
+            .config
+            .mcp
+            .servers
+            .get("ledger")
+            .map(|s| match s {
+                sendito_store::config::McpServer::Http(h) => h.url.as_str(),
+                _ => "",
+            }),
+        Some("http://127.0.0.1:9/mcp")
+    );
+
+    // The name is required; without it the command says how to use it.
+    h.app.run_command("mcpadd");
+    assert!(h.app.overlay.is_none());
+    assert!(h.screen().contains("usage: :mcpadd"), "{}", h.screen());
+}
+
+/// Clicks inside a dialog act inside it: its own frame and text never dismiss
+/// it, and the fields take the caret (the dialog is modal, not a backdrop).
+#[test]
+fn flow_dialogs_ignore_clicks_on_their_own_chrome() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    let mut h = harness(&servers(), 120, 40);
+    for cmd in ["settings", "help", "import"] {
+        h.app.run_command(cmd);
+        h.draw();
+        let r = h
+            .app
+            .hits
+            .iter()
+            .rev()
+            .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Dialog)))
+            .map(|(r, _)| *r)
+            .must();
+        h.click(r.x + 2, r.y);
+        assert!(
+            h.app.overlay.is_some(),
+            "{cmd}: clicking its title must not close it"
+        );
+        h.key("esc");
+    }
+    // A report's text is inert too; only its buttons act.
+    h.key("ctrl+w h");
+    h.app.tree.set_filter("health");
+    h.key("enter");
+    h.app.tree.set_filter("");
+    h.app.run_command("curl");
+    h.draw();
+    let (x, y) = h.find("curl ").must();
+    h.click(x + 2, y);
+    assert!(matches!(
+        h.app.overlay,
+        Some(sendito_ui::overlay::Overlay::Report(_))
+    ));
+}
+
+/// The palette's search field takes the caret instead of closing the palette.
+#[test]
+fn flow_palette_input_takes_the_mouse() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.open_palette("health");
+    h.draw();
+    let input = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Input)))
+        .map(|(r, _)| *r)
+        .must();
+    h.click(input.x + 2, input.y);
+    assert!(matches!(h.app.overlay, Some(Overlay::Palette(_))));
+    // Clicking a row still runs it.
+    let (x, y) = h.find("health").must();
+    h.click(x + 2, y);
+    assert!(
+        h.screen().contains("health"),
+        "the row opened the request: {}",
+        h.screen()
+    );
+}
+
+/// An open prompt option list is clickable; choosing an entry sets the value
+/// and closes the list (keyboard Space/Enter stay the same).
+#[test]
+fn flow_prompt_dropdown_option_takes_the_mouse() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("mcpadd demo");
+    h.key("tab space");
+    h.draw();
+    let opt = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::PromptOption(1))))
+        .map(|(r, _)| *r)
+        .must();
+    h.click(opt.x + 1, opt.y);
+    match &h.app.overlay {
+        Some(Overlay::Prompt(p)) => {
+            assert_eq!(p.choices[0].2, 1, "stdio was chosen");
+            assert!(p.open.is_none(), "the list closes");
+        }
+        _ => panic!("clicking an option must keep the prompt open"),
+    }
+}
+
+/// A settings row click selects it; the value chip changes it, so a click on
+/// the row no longer rewrites the config.
+#[test]
+fn flow_settings_click_selects_and_the_value_changes() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("settings");
+    h.draw();
+    let theme = |h: &Harness| h.app.project.config.ui.theme.clone();
+    let before = theme(&h);
+    let row = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Item(0))))
+        .map(|(r, _)| *r)
+        .must();
+    h.click(row.x + 2, row.y);
+    assert_eq!(theme(&h), before, "a click only selects the row");
+    let value = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Value(0))))
+        .map(|(r, _)| *r)
+        .must();
+    h.click(value.x + 1, value.y);
+    assert_ne!(theme(&h), before, "the value chip changes the setting");
+}
+
+/// Clicking the trailing "add" row starts it, like typing in it does.
+#[test]
+fn flow_table_add_row_takes_the_mouse() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("envs");
+    h.draw();
+    let before = match &h.app.overlay {
+        Some(Overlay::Env(e)) => e.table.rows.len(),
+        _ => panic!("the env editor did not open"),
+    };
+    let (x, y) = h.find("add variable").must();
+    h.click(x + 1, y);
+    h.type_text("token");
+    h.draw();
+    match &h.app.overlay {
+        Some(Overlay::Env(e)) => {
+            assert_eq!(e.table.rows.len(), before + 1);
+            assert_eq!(e.table.rows.last().must().cells[0].text(), "token");
+            assert!(e.dirty);
+        }
+        _ => panic!("the env editor closed"),
+    }
+}
+
+/// Ctrl+N in the MCP editor adds a row, and the button does the same.
+#[test]
+fn flow_mcp_editor_adds_rows() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("mcpservers edit");
+    h.draw();
+    h.key("ctrl+n");
+    h.type_text("echo");
+    h.draw();
+    match &h.app.overlay {
+        Some(Overlay::Mcp(m)) => {
+            assert_eq!(m.table.rows.len(), 1, "Ctrl+N created the row");
+            assert_eq!(m.table.rows[0].cells[0].text(), "echo");
+        }
+        _ => panic!("the MCP editor closed"),
+    }
+    let (x, y) = h.find("Add row (Ctrl+N)").must();
+    h.click(x + 1, y);
+    h.draw();
+    match &h.app.overlay {
+        Some(Overlay::Mcp(m)) => assert_eq!(m.table.rows.len(), 2, "the button added a row"),
+        _ => panic!("the MCP editor closed"),
+    }
+}
+
+/// Cancelling keeps the editor: Esc on the save prompt returns to the env
+/// editor, and cancelling Ctrl+N's prompt does too.
+#[test]
+fn flow_cancelling_a_prompt_keeps_the_editor() {
+    use sendito_ui::overlay::{ConfirmAction, Overlay};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("envs");
+    h.type_text("edit");
+    h.key("esc");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::EnvClose)
+    ));
+    h.key("esc");
+    assert!(
+        matches!(h.app.overlay, Some(Overlay::Env(_))),
+        "Esc on the prompt means cancel, not close"
+    );
+    // Ctrl+N parks the editor; cancelling the name prompt goes back to it.
+    h.key("ctrl+n");
+    h.key("esc");
+    assert!(matches!(h.app.overlay, Some(Overlay::Env(_))));
+    assert!(h.app.parked_env.is_none());
+}
+
+/// Ctrl+D on the trailing row (nothing to delete) is not a change: Esc then
+/// closes without asking to save.
+#[test]
+fn flow_ctrl_d_on_the_add_row_is_not_a_change() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("envs");
+    h.draw();
+    for _ in 0..30 {
+        h.key("down");
+    }
+    h.key("ctrl+d");
+    h.draw();
+    assert!(matches!(&h.app.overlay, Some(Overlay::Env(e)) if !e.dirty));
+    h.key("esc");
+    assert!(h.app.overlay.is_none(), "a clean editor closes at once");
+}
+
+/// Copying from a report flips the button to "Copy again", by key or click.
+#[test]
+fn flow_report_copy_button_flips_the_label() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.show_report("Report", "one\ntwo\nthree");
+    h.draw();
+    assert!(!h.screen().contains("Copy again"));
+    h.key("y");
+    assert!(h.screen().contains("Copy again"), "{}", h.screen());
+    // A fresh report: the button does the same.
+    h.app.show_report("Report", "one\ntwo\nthree");
+    h.draw();
+    let btn = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Button(0))))
+        .map(|(r, _)| *r)
+        .must();
+    h.click(btn.x + 1, btn.y);
+    assert!(h.screen().contains("Copy again"), "{}", h.screen());
+}
+
+/// The wheel acts on the dialog only when the pointer is over it, and it
+/// scrolls the settings and the env table too.
+#[test]
+fn flow_wheel_over_the_dialog() {
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("settings");
+    h.draw();
+    let sel = |h: &Harness| match &h.app.overlay {
+        Some(sendito_ui::overlay::Overlay::Settings { sel }) => *sel,
+        _ => usize::MAX,
+    };
+    // Outside the dialog (sidebar) does nothing.
+    h.scroll(2, 20, true);
+    assert_eq!(sel(&h), 0);
+    // Over the dialog moves the selection.
+    let (x, y) = h.find("Appearance").must();
+    h.scroll(x, y, true);
+    assert_eq!(sel(&h), 1, "the wheel moved the settings selection");
+
+    // The env table follows the wheel as well (keyboard arrows already did).
+    let mut h = harness(&servers(), 120, 40);
+    h.app.set_env(Some("local".into()));
+    h.app.run_command("envs");
+    h.draw();
+    let (x, y) = h.find("Variable").must();
+    h.scroll(x + 2, y + 1, true);
+    match &h.app.overlay {
+        Some(sendito_ui::overlay::Overlay::Env(e)) => assert!(e.table.sel_row > 0),
+        _ => panic!("the env editor closed"),
+    }
+}
+
+/// Every dialog fits the smallest supported terminal instead of panicking.
+#[test]
+fn flow_dialogs_fit_a_small_terminal() {
+    for (w, hgt) in [(100u16, 14u16), (100, 8), (40, 8)] {
+        for cmd in [
+            "settings",
+            "help",
+            "import",
+            "envs",
+            "mcpservers edit",
+            "mcpadd probe",
+        ] {
+            let mut h = Harness::with(w, hgt, |d| {
+                common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+            });
+            h.app.run_command(cmd);
+            h.draw();
+        }
+        let mut h = Harness::with(w, hgt, |d| {
+            common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        });
+        h.app.show_report("Report", &"line\n".repeat(40));
+        h.draw();
+        let mut h = Harness::with(w, hgt, |d| {
+            common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        });
+        h.app.open_palette("");
+        h.draw();
+    }
+    // The picker needs a server list.
+    for hgt in [8u16, 10, 12] {
+        let mut h = Harness::with(120, hgt, |d| {
+            common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+            common::write(
+                d,
+                ".sendito/config.toml",
+                "[collection]\nname = \"demo\"\n[mcp.servers.echo]\nurl = \"http://127.0.0.1:9/mcp\"\n",
+            );
+        });
+        h.app.run_command("newmcp");
+        h.app.run_command("mcpservers");
+        h.draw();
+    }
 }

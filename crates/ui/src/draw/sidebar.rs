@@ -174,7 +174,19 @@ pub(super) fn draw_sidebar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         }
         return;
     }
-    app.tree.ensure_visible(tree_area.height as usize);
+    // The wheel scrolls the list freely; only a selection change (follow)
+    // scrolls the selection back into view.
+    if app.tree.follow {
+        app.tree.follow = false;
+        app.tree.ensure_visible(tree_area.height as usize);
+    } else {
+        let max = app
+            .tree
+            .rows
+            .len()
+            .saturating_sub(tree_area.height as usize);
+        app.tree.scroll = app.tree.scroll.min(max);
+    }
     let dragging = matches!(app.drag, Some(Drag::Tree { active: true, .. }));
     let guides = tree_guides(&app.tree.rows);
     let filter = app.tree.filter.to_lowercase();
@@ -435,14 +447,23 @@ pub(super) fn draw_history(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         }
         out
     };
-    if app.history_sel < app.history_scroll {
-        app.history_scroll = app.history_sel;
-    }
-    let mut rows = layout(app.history_scroll);
-    while app.history_scroll < app.history_sel
-        && rows.last().is_none_or(|(i, _, _)| *i < app.history_sel)
-    {
-        app.history_scroll += 1;
+    // The wheel scrolls freely; only a selection change (history_follow)
+    // scrolls the selection back into view.
+    let mut rows;
+    if app.history_follow {
+        app.history_follow = false;
+        if app.history_sel < app.history_scroll {
+            app.history_scroll = app.history_sel;
+        }
+        rows = layout(app.history_scroll);
+        while app.history_scroll < app.history_sel
+            && rows.last().is_none_or(|(i, _, _)| *i < app.history_sel)
+        {
+            app.history_scroll += 1;
+            rows = layout(app.history_scroll);
+        }
+    } else {
+        app.history_scroll = app.history_scroll.min(h.len().saturating_sub(1));
         rows = layout(app.history_scroll);
     }
     let h = app.history.as_deref().unwrap_or(&[]);

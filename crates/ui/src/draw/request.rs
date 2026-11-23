@@ -214,6 +214,12 @@ pub(super) fn draw_url_strip(
     let send_label = format!(" {}{send_text} ", Icons::pre(icons.send));
     let send_w = send_label.width() as u16;
     let send_x = right.saturating_sub(send_w);
+    // Cancel sits left of Send: always present, dim when nothing runs.
+    let cancel_label = format!(" {}Cancel ", Icons::pre(icons.close));
+    let cancel_w = cancel_label.width() as u16;
+    let cancel_x = send_x.saturating_sub(cancel_w + 1);
+    // The input fields end where Cancel starts.
+    let fields_right = cancel_x;
     let mut cursor = None;
     match app.tabs[app.active].ed.kind {
         Kind::Http => {
@@ -228,7 +234,7 @@ pub(super) fn draw_url_strip(
             };
             put(buf, x0, y, &ml, mw, mst);
             app.hits.push((Rect::new(x0, y, mw, 1), Hit::Bar(0)));
-            let ur = Rect::new(x0 + mw + 1, y, send_x.saturating_sub(x0 + mw + 2), 1);
+            let ur = Rect::new(x0 + mw + 1, y, fields_right.saturating_sub(x0 + mw + 2), 1);
             let tr = input_box(buf, ur, focus == Focus::Bar(1), theme);
             app.areas.bar_url = tr;
             let tab = &mut app.tabs[app.active];
@@ -242,22 +248,20 @@ pub(super) fn draw_url_strip(
             app.hits.push((tr, Hit::Bar(1)));
         }
         Kind::Grpc => {
-            let label_st = theme.fg(theme.grpc).add_modifier(Modifier::BOLD);
-            // "target" labels the address field, as the method menu does for HTTP.
-            let label = format!("{}target ", Icons::pre(icons.grpc));
-            let lw = label.width() as u16;
-            put(buf, x0, y, &label, lw, label_st);
-            // "method" labels the method menu (dropped when the strip is narrow).
-            let mlabel = " method ";
-            let avail = send_x.saturating_sub(x0 + lw + 2);
-            let mlw = if avail > 40 { mlabel.width() as u16 } else { 0 };
-            let avail = avail.saturating_sub(mlw);
-            let mw = (avail / 3).clamp(10, 40);
-            let tw = avail.saturating_sub(mw);
+            // The target input leads the strip; the method chip sits at the
+            // right end, by Cancel/Send. Same parts as every kind: 0=chip,
+            // 1=input — only the visual order differs.
+            let avail = fields_right.saturating_sub(x0 + 1);
+            let cw = if avail >= 36 {
+                (avail / 3).clamp(16, 44)
+            } else {
+                16
+            };
+            let cx = fields_right.saturating_sub(cw);
             let tr = input_box(
                 buf,
-                Rect::new(x0 + lw, y, tw, 1),
-                focus == Focus::Bar(0),
+                Rect::new(x0, y, cx.saturating_sub(x0 + 1), 1),
+                focus == Focus::Bar(1),
                 theme,
             );
             app.areas.bar_url = tr;
@@ -265,27 +269,15 @@ pub(super) fn draw_url_strip(
             if let Some(c) = tab
                 .ed
                 .target
-                .render(tr, buf, theme, focus == Focus::Bar(0), &is_def)
+                .render(tr, buf, theme, focus == Focus::Bar(1), &is_def)
             {
                 cursor = Some(c);
             }
-            app.hits.push((tr, Hit::Bar(0)));
-            let mut mx = x0 + lw + tw;
-            if mlw > 0 {
-                mx = put(buf, mx, y, mlabel, mlw, label_st);
-            } else {
-                mx += 1;
-            }
-            // The method field is editable: the schema completes it inline.
-            // Unfocused it shows the short form (`Echo/Unary`), because a fully
-            // qualified service does not fit; focused it scrolls to the cursor.
-            let focused = focus == Focus::Bar(1);
-            let mr = input_box(
-                buf,
-                Rect::new(mx, y, mw.saturating_sub(2), 1),
-                focused,
-                theme,
-            );
+            app.hits.push((tr, Hit::Bar(1)));
+            // The method chip is editable inline; ▾ opens the schema picker.
+            let mr = Rect::new(cx, y, cw.saturating_sub(3), 1);
+            let focused = focus == Focus::Bar(0);
+            input_box(buf, mr, focused, theme);
             let mut shown = None;
             if focused {
                 if let Some(tab) = app.tabs.get_mut(app.active) {
@@ -311,24 +303,22 @@ pub(super) fn draw_url_strip(
                     theme.badge(theme.grpc),
                 );
             }
-            let suffix = mx + mw.saturating_sub(2);
-            put(buf, suffix, y, " ▾ ", 3, theme.badge(theme.grpc));
+            put(buf, cx + cw - 3, y, " ▾", 2, theme.badge(theme.grpc));
             if let Some(c) = shown {
                 app.areas.caret = Some(c);
                 cursor = Some(c);
             }
-            app.hits.push((Rect::new(mx, y, mw, 1), Hit::Bar(1)));
+            app.hits.push((Rect::new(cx, y, cw, 1), Hit::Bar(0)));
         }
         Kind::Ws => {
-            let label_st = theme.fg(theme.grpc).add_modifier(Modifier::BOLD);
-            let label = format!("{}ws ", Icons::pre(icons.ws));
-            let lw = label.width() as u16;
-            put(buf, x0, y, &label, lw, label_st);
-            let avail = send_x.saturating_sub(x0 + lw + 2);
+            // A static badge where the other kinds have their picker chip.
+            let ml = format!(" {:<8}", "WS");
+            let mw = ml.width() as u16;
+            put(buf, x0, y, &ml, mw, theme.badge(theme.grpc));
             let tr = input_box(
                 buf,
-                Rect::new(x0 + lw, y, avail, 1),
-                focus == Focus::Bar(0),
+                Rect::new(x0 + mw + 1, y, fields_right.saturating_sub(x0 + mw + 2), 1),
+                focus == Focus::Bar(1),
                 theme,
             );
             app.areas.bar_url = tr;
@@ -336,44 +326,101 @@ pub(super) fn draw_url_strip(
             if let Some(c) = tab
                 .ed
                 .url
-                .render(tr, buf, theme, focus == Focus::Bar(0), &is_def)
+                .render(tr, buf, theme, focus == Focus::Bar(1), &is_def)
             {
                 cursor = Some(c);
             }
-            app.hits.push((tr, Hit::Bar(0)));
+            app.hits.push((tr, Hit::Bar(1)));
         }
         Kind::Mcp => {
-            let server = app.tabs[app.active].ed.mcp_server.text();
-            let tool = app.tabs[app.active].ed.mcp_tool.text();
-            let ml = if server.is_empty() {
-                " server ".to_string()
-            } else if tool.is_empty() {
-                format!(" {server} ")
+            // Like the gRPC strip: the server input leads (a name from the
+            // config or a direct http(s):// URL), the tool chip sits at the
+            // right end by Cancel/Send. Parts as every kind: 0=chip, 1=input.
+            let strip = fields_right.saturating_sub(x0 + 1);
+            let cw = if strip >= 36 {
+                (strip / 3).clamp(16, 44)
             } else {
-                format!(" {server}/{tool} ")
+                16
             };
-            let label_st = theme.fg(theme.grpc).add_modifier(Modifier::BOLD);
-            let label = format!("{}mcp ", Icons::pre(icons.grpc));
-            let lw = label.width() as u16;
-            put(buf, x0, y, &label, lw, label_st);
-            let mlw = (ml.width() as u16).min(28);
-            put(buf, x0 + lw, y, &ml, mlw, label_st);
-            let avail = send_x.saturating_sub(x0 + lw + mlw + 2);
-            let tr = input_box(
-                buf,
-                Rect::new(x0 + lw + mlw + 1, y, avail, 1),
-                focus == Focus::Bar(0),
-                theme,
-            );
+            let cx = fields_right.saturating_sub(cw);
+            // Where the call goes when the input holds a config name: the HTTP
+            // server's URL or the stdio command, dim before the chip. Space is
+            // reserved for it first, so the input never swallows it.
+            let server = app.tabs[app.active].ed.mcp_server.text();
+            let addr = app
+                .project
+                .config
+                .mcp
+                .servers
+                .get(&server)
+                .map(|s| match s {
+                    sendito_store::config::McpServer::Stdio(s) => {
+                        format!("{} {}", s.command, s.args.join(" "))
+                    }
+                    sendito_store::config::McpServer::Http(h) => h.url.clone(),
+                })
+                .unwrap_or_default();
+            let avail = cx.saturating_sub(x0 + 1);
+            // The address is dropped when it would leave less than 18 columns
+            // for the server input.
+            let aw = if addr.is_empty() || avail < 40 {
+                0
+            } else {
+                (addr.width() as u16).min(40).min(avail - 20)
+            };
+            if aw > 0 {
+                put(
+                    buf,
+                    cx - aw - 2,
+                    y,
+                    &truncate(&addr, aw as usize),
+                    aw,
+                    theme.dim(),
+                );
+            }
+            let iw = avail.saturating_sub(if aw > 0 { aw + 2 } else { 0 });
+            let tr = input_box(buf, Rect::new(x0, y, iw, 1), focus == Focus::Bar(1), theme);
+            app.areas.bar_url = tr;
             let tab = &mut app.tabs[app.active];
             if let Some(c) =
                 tab.ed
                     .mcp_server
-                    .render(tr, buf, theme, focus == Focus::Bar(0), &is_def)
+                    .render(tr, buf, theme, focus == Focus::Bar(1), &is_def)
             {
                 cursor = Some(c);
             }
-            app.hits.push((tr, Hit::Bar(0)));
+            app.hits.push((tr, Hit::Bar(1)));
+            // The tool chip is editable inline; the arrow discovers tools.
+            let mr = Rect::new(cx, y, cw.saturating_sub(3), 1);
+            let focused = focus == Focus::Bar(0);
+            input_box(buf, mr, focused, theme);
+            let mut shown = None;
+            if focused {
+                if let Some(tab) = app.tabs.get_mut(app.active) {
+                    shown = tab.ed.mcp_tool.render(mr, buf, theme, true, &is_def);
+                }
+            } else {
+                let tool = app.tabs[app.active].ed.mcp_tool.text();
+                let short = if tool.is_empty() {
+                    "none".to_string()
+                } else {
+                    tool
+                };
+                put(
+                    buf,
+                    mr.x,
+                    y,
+                    &truncate(&short, mr.width as usize),
+                    mr.width,
+                    theme.badge(theme.grpc),
+                );
+            }
+            put(buf, cx + cw - 3, y, " ▾", 2, theme.badge(theme.grpc));
+            if let Some(c) = shown {
+                app.areas.caret = Some(c);
+                cursor = Some(c);
+            }
+            app.hits.push((Rect::new(cx, y, cw, 1), Hit::Bar(0)));
         }
     }
     let send_st = if !has_method {
@@ -387,6 +434,14 @@ pub(super) fn draw_url_strip(
     } else {
         button_style(Btn::Primary, focus == Focus::Bar(2), theme)
     };
+    let cancel_st = if running {
+        theme.badge(theme.warn)
+    } else {
+        theme.bar().patch(theme.dim())
+    };
+    put(buf, cancel_x, y, &cancel_label, cancel_w, cancel_st);
+    app.hits
+        .push((Rect::new(cancel_x, y, cancel_w, 1), Hit::Bar(3)));
     put(buf, send_x, y, &send_label, send_w, send_st);
     app.hits
         .push((Rect::new(send_x, y, send_w, 1), Hit::Bar(2)));

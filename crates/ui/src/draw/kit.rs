@@ -23,6 +23,17 @@ pub(super) fn put(buf: &mut Buffer, x: u16, y: u16, s: &str, max: u16, st: Style
     if max == 0 {
         return x;
     }
+    // Content that does not fit the screen is dropped rather than written:
+    // a dialog on a terminal too short for it must not panic.
+    let area = *buf.area();
+    let (right, bottom) = (
+        area.x.saturating_add(area.width),
+        area.y.saturating_add(area.height),
+    );
+    if y < area.y || y >= bottom || x >= right {
+        return x;
+    }
+    let max = max.min(right - x);
     let (nx, _) = buf.set_stringn(x, y, s, max as usize, st);
     nx
 }
@@ -410,12 +421,16 @@ pub(super) fn scrollbar(
 
 /// "── Label ─────" across `w` columns.
 pub(super) fn rule(buf: &mut Buffer, x: u16, y: u16, w: u16, label: &str, theme: &Theme) {
-    if w == 0 {
+    let area = *buf.area();
+    if w == 0 || y < area.y || y >= area.y.saturating_add(area.height) {
         return;
     }
     let line = theme.fg(theme.border);
-    let max_x = x + w;
-    let mut cx = put(buf, x, y, "──", w.min(2), line);
+    let max_x = x.saturating_add(w).min(area.x.saturating_add(area.width));
+    if max_x <= x {
+        return;
+    }
+    let mut cx = put(buf, x, y, "──", max_x - x, line);
     if !label.is_empty() {
         cx = put(
             buf,
@@ -427,7 +442,11 @@ pub(super) fn rule(buf: &mut Buffer, x: u16, y: u16, w: u16, label: &str, theme:
         );
     }
     while cx < max_x {
-        cx = put(buf, cx, y, "─", 1, line);
+        let next = put(buf, cx, y, "─", 1, line);
+        if next <= cx {
+            break;
+        }
+        cx = next;
     }
 }
 
@@ -464,7 +483,9 @@ pub(super) fn put_wrapped(
     let mut y = y;
     let lines = wrap_text(text, w.max(1) as usize);
     for l in lines {
-        if y >= bottom {
+        // Also bounded by the screen: `bottom` may lie past it on a short
+        // terminal.
+        if y >= bottom || y >= buf.area().y.saturating_add(buf.area().height) {
             break;
         }
         put(buf, x, y, &truncate(&l, w as usize), w, st);

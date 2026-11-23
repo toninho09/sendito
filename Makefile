@@ -9,7 +9,7 @@ TT ?= 2
 OUT ?= target/critic-bundles  # destination of make bundles
 
 .DEFAULT_GOAL := help
-.PHONY: help build check run fmt fmt-check lint deny ci test corpus corpus-update keymap snap media render bundles cov bench
+.PHONY: help build check run servers fmt fmt-check lint deny ci test corpus corpus-update keymap snap media render bundles cov bench
 
 help: ## List the available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -24,6 +24,9 @@ check: ## Only check types, without producing a binary (quick feedback)
 
 run: ## Run the binary: make run ARGS="req.http"
 	cargo run -q -- $(ARGS)
+
+servers: ## Run the echo servers for manual tests (HTTP, gRPC, WS, MCP; Ctrl+C stops)
+	cargo run -q -p sendito-testkit --bin echo-servers
 
 # --- CI gates (make ci runs everything in order) ---
 

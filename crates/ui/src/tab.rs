@@ -317,6 +317,20 @@ fn t(s: &str) -> Cell {
 }
 
 impl Editors {
+    /// The request bar's text editor. Every kind draws the same strip
+    /// `[picker chip][endpoint input]` (gRPC and MCP draw `[input][chip]`):
+    /// part 1 is the endpoint input (URL, target or server), part 0 the
+    /// inline-editable chip (gRPC method, MCP tool).
+    pub fn bar_text(&mut self, part: usize) -> Option<&mut TextEditor> {
+        match (self.kind, part) {
+            (Kind::Http, 1) | (Kind::Ws, 1) => Some(&mut self.url),
+            (Kind::Grpc, 1) => Some(&mut self.target),
+            (Kind::Mcp, 1) => Some(&mut self.mcp_server),
+            (Kind::Grpc, 0) => Some(&mut self.grpc_method_text),
+            (Kind::Mcp, 0) => Some(&mut self.mcp_tool),
+            _ => None,
+        }
+    }
     pub fn from_request(req: &Request) -> Self {
         let mut e = Editors {
             kind: Kind::Http,
@@ -451,7 +465,8 @@ impl Editors {
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
-            mcp_server: TextEditor::single("").with_placeholder("server name from [mcp.servers]"),
+            mcp_server: TextEditor::single("")
+                .with_placeholder("server name from [mcp.servers] or http(s):// URL"),
             mcp_tool: TextEditor::single("").with_placeholder("tool name"),
             ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
             script_section: 0,

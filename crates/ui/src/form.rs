@@ -79,6 +79,8 @@ pub struct Table {
     /// Show the enable checkbox column.
     pub has_enable: bool,
     pub placeholder: Vec<&'static str>,
+    /// Indices of text columns whose editors mask what they hold (secrets).
+    pub masked_cols: Vec<usize>,
 }
 
 impl Table {
@@ -92,6 +94,7 @@ impl Table {
             scroll: 0,
             has_enable,
             placeholder,
+            masked_cols: Vec::new(),
         }
     }
 
@@ -119,8 +122,13 @@ impl Table {
             cells: self
                 .columns
                 .iter()
-                .map(|c| match c.kind {
-                    ColKind::Text => Cell::Text(TextEditor::single("")),
+                .enumerate()
+                .map(|(i, c)| match c.kind {
+                    ColKind::Text => {
+                        let mut e = TextEditor::single("");
+                        e.mask = self.masked_cols.contains(&i);
+                        Cell::Text(e)
+                    }
                     ColKind::Choice(_) => Cell::Choice(0),
                     ColKind::Toggle => Cell::Toggle(false),
                 })
@@ -163,12 +171,24 @@ impl Table {
         }
     }
 
-    fn ensure_row(&mut self) {
+    /// Creates the trailing "add" row when the selection is past the last
+    /// row, so typing (or clicking) into it has an editor to go to.
+    pub fn ensure_row(&mut self) {
         if self.sel_row >= self.rows.len() {
             let r = self.new_row();
             self.rows.push(r);
             self.sel_row = self.rows.len() - 1;
         }
+    }
+
+    /// Moves the selection by `delta` rows (used by the mouse wheel).
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let last = self.rows.len() - 1;
+        let n = (self.sel_row as isize + delta).clamp(0, last as isize) as usize;
+        self.select(n, self.sel_col);
     }
 
     fn drop_trailing_empty(&mut self) {

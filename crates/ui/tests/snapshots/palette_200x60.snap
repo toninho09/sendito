@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/74   ┃                                                 │
+│                            ││                   │ ▍  type to search actions and requests, or : for commands                                 1/75   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -40,14 +40,14 @@ expression: screen
 │                            ││                   │  Open settings                                                                         Ctrl+W ,  │                                                 │
 │                            ││                   │  Choose the active environment                                                    F4 / Ctrl+W v  │                                                 │
 │                            ││                   │  Edit environments and their variables                                                 Ctrl+W V  │                                                 │
+│                            ││                   │  Edit the MCP servers in the project config                                            Ctrl+W S  │                                                 │
 │                            ││                   │  Show request history in the sidebar (toggle)                                     F7 / Ctrl+W r  │                                                 │
 │                            ││                   │  Show or hide the sidebar                                                     Ctrl+B / Ctrl+W b  │                                                 │
 │                            ││                   │  Import a collection or a curl command                                                 Ctrl+W i  │                                                 │
 │                            ││                   │  Copy the request as curl (secrets stay {{placeholders}})                              Ctrl+W u  │                                                 │
 │                            ││                   │  Pretty-print the JSON body / message                                                  Ctrl+W f  │                                                 │
 │                            ││                   │  Maximize or restore the focused pane                                                  Ctrl+W z  │                                                 │
-│                            ││                   │  Widen the sidebar                                                                     Ctrl+W >  │                                                 │
-│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 38 more ─╯                                                 │
+│                            ││                   ╰────────────────────────────────────────────────────────────────────────────────────── ↓ 39 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

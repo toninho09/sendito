@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    +                                                                                                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                                     Send
+╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                          × Cancel   Send
 │▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────── Users › list users ─╮
 │▾ Users/                    ││     Name                                                            Value                                                                                              │
 │├ POST  create user         ││ [✓] page                                                           │1                                                                                               │✕ │

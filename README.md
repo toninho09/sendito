@@ -291,6 +291,11 @@ server and tool names, or use F2 on the server or tool field to choose from the
 configured servers or discover tools. Tool selection fills initial arguments when
 the unchanged editor is empty or contains `{}`. Set the arguments and press F5 to call.
 
+Servers can also be added from the interface: `Ctrl+W S` (or `:mcpservers edit`)
+lists them as a table and saves `[mcp.servers]` to the project config, and
+`:mcpadd <name>` asks for the URL or command and adds one at once. The server field
+takes a configured name or a direct `http(s)://` URL.
+
 For OAuth instead of bearer, use `type = "oauth"` in the auth table and run
 `sendito mcp login remote` from the collection before calling. The authorization
 URL is printed and a browser is opened when available; the redirect must reach
@@ -465,8 +470,13 @@ The Settings dialog (`Ctrl+W ,`) changes, at once:
   one runs), `+` for a new one, the environment chip and `F1 all keys`. The
   environment chip takes its color from the name: `prod`/`live` red,
   `staging`/`qa`/`test`/`uat` yellow, `local`/`dev` green.
-* **URL strip**: above both panes, the method (a colored chip), the URL with its
-  `{{variables}}` highlighted (or target and method for gRPC) and **Send**.
+* **URL strip**: above both panes, the same parts for every kind — a chip
+  (HTTP method, gRPC method, MCP tool; WebSocket a static `WS` badge) and one
+  endpoint input (URL, gRPC target or MCP server) with its `{{variables}}`
+  highlighted, then **Cancel** and **Send**. HTTP and WebSocket draw
+  `[chip][input]`; gRPC draws `[target][method ▾]`; MCP draws
+  `[server][address][tool ▾]`. The MCP server input takes a name from
+  `[mcp.servers]` or a direct `http(s)://` URL.
 * **Sidebar**: **Requests** (the collection tree, with `├ └` connectors) or
   **History** (grouped by day, status in color). Requests that are open in a tab
   are in the accent color. `/` filters and highlights the match; the bottom border
@@ -583,7 +593,7 @@ Every subcommand, flag and exit code is in the [CLI reference](docs/CLI.md).
 
 ```sh
 cargo test --workspace            # unit, integration, corpus, UI flows, snapshots
-cargo run -p sendito-testkit --bin echo-servers   # HTTP echo :8787, gRPC echo :50051
+cargo run -p sendito-testkit --bin echo-servers   # or make servers: HTTP :8787, gRPC :50051, WS :8788, MCP :8789
 cargo clippy --all-targets -- -D warnings && cargo fmt --check
 ```
 
@@ -593,6 +603,7 @@ The `Makefile` wraps the recurring commands with quiet, token-efficient output
 | Target | Does |
 |---|---|
 | `make build` / `make check` | Build the workspace / type-check only |
+| `make servers` | Echo servers for manual tests (HTTP, gRPC, WS, MCP) |
 | `make test` | Full test suite (unit, integration, corpus, UI) |
 | `make lint` / `make fmt` / `make deny` | Clippy `-D warnings` / rustfmt / cargo-deny |
 | `make ci` | `fmt-check` + `lint` + `deny` + `test`, in order |

@@ -4,43 +4,44 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/223 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/226 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
-│  G│ All keys, including any you changed in the config.                                           │   N                            New folder in the selected folder                              ┃   │
-│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   r, F2                        Rename the selected item                                       ┃   │
-│   │                                                                                              │   d                            Duplicate the selected item                                    ┃   │
-│   │ ── Global ──                                                                                 │   Delete, x                    Delete the selected item (asks first)                          ┃   │
-│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   m                            Move the selected item to another folder                       ┃   │
-│   │   Ctrl+W x                     Cancel the running request or stream                          │   /                            Filter the tree by name                                        ┃   │
-│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   Up                           Move up                                                        ┃   │
-│   │   Ctrl+W m                     Re-send the active request on an interval (watch)             │   Down                         Move down                                                      ┃   │
-│   │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   PageUp                       Page up                                                        ┃   │
-│   │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   PageDown                     Page down                                                      ┃   │
-│   │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   Home                         Go to the first line                                           ┃   │
-│   │   Ctrl+W g                     Open a new unsaved gRPC request tab                           │   End                          Go to the last line                                            ┃   │
-│   │   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │                                                                                               ┃   │
-│   │   Ctrl+W c                     Close the current tab                                         │ ── Text editing (conventional mode) ──                                                        ┃   │
-│   │   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │   Ctrl+Z                       Undo                                                           ┃   │
-│   │   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │   Ctrl+Y                       Redo                                                           ┃   │
-│   │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Ctrl+A                       Select all text                                                ┃   │
-│   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+C                       Copy selection (whole field if nothing selected)               ┃   │
-│   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+X                       Cut selection                                                  ┃   │
-│   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+V                       Paste                                                          ┃   │
-│   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │                                                                                               │   │
-│   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │ ── Params / headers / form tables ──                                                          │   │
-│   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Enter                        Edit the next cell (name → value → next row)                   │   │
-│   │   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+T                       Enable or disable the row                                      │   │
-│   │   Alt+1                        Jump to tab 1 of the focused pane                             │   Ctrl+D                       Delete the row                                                 │   │
-│   │   Alt+2                        Jump to tab 2 of the focused pane                             │                                                                                               │   │
-│   │   Alt+3                        Jump to tab 3 of the focused pane                             │ ── Response viewer ──                                                                         │   │
-│   │   Alt+4                        Jump to tab 4 of the focused pane                             │   Up                           Move up                                                        │   │
-│   │   Alt+5                        Jump to tab 5 of the focused pane                             │   Down                         Move down                                                      │   │
-│   │   Alt+6                        Jump to tab 6 of the focused pane                             │   PageUp                       Page up                                                        │   │
-│   │   Ctrl+P                       Open the command palette                                      │   PageDown                     Page down                                                      │   │
-│   │   F1, Ctrl+W ?                 Show all keys and actions                                     │   Home, Ctrl+Home              Go to the first line                                           │   │
-│   │   Ctrl+W ,                     Open settings                                                 │   End, Ctrl+End                Go to the last line                                            │   │
-│   │   F4, Ctrl+W v                 Choose the active environment                                 │   Left                         Scroll left                                                    │   │
-│   │   Ctrl+W V                     Edit environments and their variables                         │   Right                        Scroll right                                                   │   │
+│  G│ All keys, including any you changed in the config.                                           │   n                            New request in the selected folder                             ┃   │
+│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   N                            New folder in the selected folder                              ┃   │
+│   │                                                                                              │   r, F2                        Rename the selected item                                       ┃   │
+│   │ ── Global ──                                                                                 │   d                            Duplicate the selected item                                    ┃   │
+│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   Delete, x                    Delete the selected item (asks first)                          ┃   │
+│   │   Ctrl+W x                     Cancel the running request or stream                          │   m                            Move the selected item to another folder                       ┃   │
+│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   /                            Filter the tree by name                                        ┃   │
+│   │   Ctrl+W m                     Re-send the active request on an interval (watch)             │   Up                           Move up                                                        ┃   │
+│   │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   Down                         Move down                                                      ┃   │
+│   │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   PageUp                       Page up                                                        ┃   │
+│   │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   PageDown                     Page down                                                      ┃   │
+│   │   Ctrl+W g                     Open a new unsaved gRPC request tab                           │   Home                         Go to the first line                                           ┃   │
+│   │   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │   End                          Go to the last line                                            ┃   │
+│   │   Ctrl+W c                     Close the current tab                                         │                                                                                               ┃   │
+│   │   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │ ── Text editing (conventional mode) ──                                                        ┃   │
+│   │   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │   Ctrl+Z                       Undo                                                           ┃   │
+│   │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Ctrl+Y                       Redo                                                           ┃   │
+│   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+A                       Select all text                                                ┃   │
+│   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+C                       Copy selection (whole field if nothing selected)               ┃   │
+│   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+X                       Cut selection                                                  ┃   │
+│   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │   Ctrl+V                       Paste                                                          │   │
+│   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │                                                                                               │   │
+│   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │ ── Params / headers / form tables ──                                                          │   │
+│   │   Ctrl+W [                     Previous tab of the focused pane                              │   Enter                        Edit the next cell (name → value → next row)                   │   │
+│   │   Alt+1                        Jump to tab 1 of the focused pane                             │   Ctrl+T                       Enable or disable the row                                      │   │
+│   │   Alt+2                        Jump to tab 2 of the focused pane                             │   Ctrl+D                       Delete the row                                                 │   │
+│   │   Alt+3                        Jump to tab 3 of the focused pane                             │                                                                                               │   │
+│   │   Alt+4                        Jump to tab 4 of the focused pane                             │ ── Response viewer ──                                                                         │   │
+│   │   Alt+5                        Jump to tab 5 of the focused pane                             │   Up                           Move up                                                        │   │
+│   │   Alt+6                        Jump to tab 6 of the focused pane                             │   Down                         Move down                                                      │   │
+│   │   Ctrl+P                       Open the command palette                                      │   PageUp                       Page up                                                        │   │
+│   │   F1, Ctrl+W ?                 Show all keys and actions                                     │   PageDown                     Page down                                                      │   │
+│   │   Ctrl+W ,                     Open settings                                                 │   Home, Ctrl+Home              Go to the first line                                           │   │
+│   │   F4, Ctrl+W v                 Choose the active environment                                 │   End, Ctrl+End                Go to the last line                                            │   │
+│   │   Ctrl+W V                     Edit environments and their variables                         │   Left                         Scroll left                                                    │   │
+│   │   Ctrl+W S                     Edit the MCP servers in the project config                    │   Right                        Scroll right                                                   │   │
 │   │   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   p                            Body view: pretty (JSON formatted and highlighted)             │   │
 │   │   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   r                            Body view: raw text                                            │   │
 │   │   Ctrl+W i                     Import a collection or a curl command                         │   x                            Body view: hex dump                                            │   │
@@ -57,7 +58,6 @@ expression: screen
 │   │   Enter                        Open the selected request / toggle the folder                 │                                                                                               │   │
 │   │   Right                        Expand folder                                                 │ ── Fixed keys · Text editing ──                                                               │   │
 │   │   Left                         Collapse folder or go to parent                               │   Arrows, Home, End, PageUp, PageDown                     Move the cursor                     │   │
-│   │   n                            New request in the selected folder                            │   Shift+Arrows, Shift+Home/End                            Extend the selection                │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 ╰───                                                                                                                                                                                                 ──╯
   type  search   ↑↓ PgUp PgDn  scroll   Esc  close

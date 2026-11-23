@@ -1412,6 +1412,19 @@ pub fn mcp_transport(
     scope: &Scope,
 ) -> Result<sendito_mcp::Transport, String> {
     let r = |s: &str| scope.render(s).text;
+    // An `http(s)://` address connects directly, without a config entry:
+    // no static auth, the platform roots and the global proxy apply.
+    let rendered = r(server);
+    if rendered.starts_with("http://") || rendered.starts_with("https://") {
+        return Ok(sendito_mcp::Transport::Http {
+            url: rendered,
+            headers: Vec::new(),
+            verify_tls: true,
+            proxy: info.proxy.clone(),
+            tls: info.tls.clone(),
+            auth: None,
+        });
+    }
     let cfg = info.servers.get(server).ok_or_else(|| {
         format!("server {server:?} is not defined in [mcp.servers] of the config")
     })?;

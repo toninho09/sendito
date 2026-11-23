@@ -82,6 +82,7 @@ actions! {
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
+    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the project config";
     History => "history", "Show request history in the sidebar (toggle)";
     ToggleSidebar => "toggle_sidebar", "Show or hide the sidebar";
     Import => "import", "Import a collection or a curl command";
@@ -345,6 +346,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Settings, Global, Both, &["ctrl+w ,"]),
         (SelectEnv, Global, Both, &["f4", "ctrl+w v"]),
         (ManageEnvs, Global, Both, &["ctrl+w V"]),
+        (ManageMcpServers, Global, Both, &["ctrl+w S"]),
         (History, Global, Both, &["f7", "ctrl+w r"]),
         (ToggleSidebar, Global, Both, &["ctrl+b", "ctrl+w b"]),
         (Import, Global, Both, &["ctrl+w i"]),

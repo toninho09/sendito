@@ -266,6 +266,13 @@ from the request.
   servers; F2 on the tool field lists the tools and, when the arguments editor is
   empty or `{}`, fills an argument template from the tool's input schema.
   `:mcpservers` and `:mcptools` run the same pickers from the palette.
+* **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) opens the
+  servers as a table — name, kind (`http`/`stdio`) and the URL or command line —
+  and `Ctrl+S` writes `[mcp.servers]` to the project config
+  (`.sendito/config.toml`), keeping the rest of the file. Rows whose name and
+  URL/command line did not change keep their `args`, `env`, `headers` and `auth`,
+  which are edited in the file. `:mcpadd <name>` asks for the URL or command and
+  adds one server at once.
 * **Auth**:
   * static **bearer** (`{{variables}}` allowed);
   * **OAuth 2.1** — metadata discovery (RFC 9728 / RFC 8414), PKCE, dynamic
@@ -422,8 +429,14 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   while running, `+` new), the environment chip and `F1 all keys`. The
   environment chip is coloured by name: `prod`/`live` red,
   `staging`/`qa`/`test`/`uat` yellow, `local`/`dev` green.
-* **URL strip**: above both panes — method chip, URL with `{{variables}}`
-  highlighted, and **Send** (for gRPC: target and method).
+* **URL strip**: above both panes, the same parts for every kind — a chip
+  (HTTP method, gRPC method, MCP tool; WebSocket shows a static `WS` badge) and
+  one endpoint input (URL, gRPC target or MCP server) with `{{variables}}`
+  highlighted, then **Cancel** (dim while nothing runs) and **Send**. HTTP and
+  WebSocket draw `[chip][input]`; gRPC draws `[target][method ▾]` and MCP
+  `[server][address][tool ▾]`, where the address is the configured server's URL
+  or command (dim). The MCP server input takes a name from `[mcp.servers]` or a
+  direct `http(s)://` URL.
 * **Sidebar**: **Requests** (the tree, with `├ └` connectors, open-in-tab
   accent, filter with `/`, request and folder counts) or **History** (grouped
   by day, status in colour). It can sit on the right and be resized.
@@ -453,6 +466,9 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
   folder), the environment editor, the import dialog and the report dialog.
+  Clicks inside a dialog act inside it; only the controls do something. A
+  settings row is selected by a click and changed by its value chip (or a
+  double click), like ←/→ on the keyboard.
 * **Layout**: panes resize with the mouse or `Ctrl+W <`/`>` and `Ctrl+W +`/`-`;
   `Ctrl+W z` maximises the focused pane; `Ctrl+B` hides the sidebar. Below
   40×8 a message replaces the layout; 120×40 and 200×60 are the tested sizes.
@@ -472,6 +488,7 @@ all environments, and the `:commands`.
 | `:w`, `:saveas <name>`, `:wq`, `:q`, `:q!` | Save / save as / save and quit / quit / quit without saving |
 | `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request |
 | `:mcpservers`, `:mcptools` | Choose an MCP server / discover and choose a tool |
+| `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the project config / add one |
 | `:import [path]` | Import a collection or paste curl |
 | `:curl`, `:curl!`, `:httpfile`, `:httpfile!` | Export (without / with secrets) |
 | `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar |
@@ -485,7 +502,10 @@ all environments, and the `:commands`.
 **Mouse**: click to focus, select rows, switch and close tabs (middle-click
 closes too) and press buttons; double-click opens a request; drag a tree item
 onto a folder to move it; drag pane borders to resize; the wheel scrolls the
-pane under the pointer.
+pane under the pointer. Inside a dialog, clicks act inside it: fields take the
+caret, list rows and buttons act, and its own frame is inert; the wheel acts
+only while the pointer is over the dialog. A click truly outside closes it,
+except confirmations and the environment/MCP editors, which ask to save first.
 
 **Vim mode** (`[ui] vim_mode` or Settings): modal editors (normal / insert /
 visual / visual-line) with `hjkl`, `w b e`, `0 ^ $`, `gg G`,
