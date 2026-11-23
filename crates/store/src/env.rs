@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use sendito_core::VarValue;
 
-use crate::collection::{META_DIR, write_atomic};
+use crate::collection::{META_DIR, make_private, write_atomic, write_private};
 use crate::tomlfmt::{Writer, quote_basic};
 use crate::{Result, StoreError};
 
@@ -344,8 +344,12 @@ impl Envs {
     }
 
     fn load_local(&self) -> std::result::Result<toml::Table, String> {
-        match fs::read_to_string(self.secrets_path()) {
-            Ok(t) => toml::from_str(&t).map_err(|e| format!("secrets.toml: {e}")),
+        let path = self.secrets_path();
+        match fs::read_to_string(&path) {
+            Ok(t) => {
+                make_private(&path);
+                toml::from_str(&t).map_err(|e| format!("secrets.toml: {e}"))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
             Err(e) => Err(format!("secrets.toml: {e}")),
         }
@@ -438,7 +442,7 @@ impl Envs {
                     key.clone().unwrap_or_else(|| var.name.clone()),
                     toml::Value::String(value.into()),
                 );
-                write_atomic(&self.secrets_path(), secrets_to_toml(&t).as_bytes())
+                write_private(&self.secrets_path(), secrets_to_toml(&t).as_bytes())
             }
             VarSource::Keychain { key } => self
                 .keychain
@@ -446,7 +450,7 @@ impl Envs {
                 .map_err(StoreError::Secret),
             VarSource::File { path } => {
                 let p = expand(&self.root, path);
-                write_atomic(&p, value.as_bytes())
+                write_private(&p, value.as_bytes())
             }
             VarSource::Plain(_) => Err(StoreError::Invalid(
                 "plain variables are stored in the environment file".into(),
@@ -606,6 +610,53 @@ mod tests {
         assert_eq!(e.keychain_account("dev", "kc", &None), "acme/dev/kc");
         e.store_secret("dev", env.get("f").unwrap(), "new").unwrap();
         assert_eq!(e.resolve(&loaded).vars["f"], VarValue::secret("new"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secret_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (d, e) = envs();
+        let mut env = EnvFile::new("dev");
+        env.set(EnvVar {
+            name: "loc".into(),
+            source: VarSource::Local { key: None },
+        });
+        env.set(EnvVar {
+            name: "f".into(),
+            source: VarSource::File {
+                path: "token.txt".into(),
+            },
+        });
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let (secrets, file) = (e.secrets_path(), d.path().join("token.txt"));
+        e.store_secret("dev", env.get("loc").unwrap(), "local-secret")
+            .unwrap();
+        e.store_secret("dev", env.get("f").unwrap(), "file-secret")
+            .unwrap();
+        assert_eq!(mode(&secrets), 0o600);
+        assert_eq!(mode(&file), 0o600);
+        for p in [&secrets, &file] {
+            fs::set_permissions(p, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        e.store_secret("dev", env.get("loc").unwrap(), "rotated")
+            .unwrap();
+        e.store_secret("dev", env.get("f").unwrap(), "rotated")
+            .unwrap();
+        assert_eq!(mode(&secrets), 0o600);
+        assert_eq!(mode(&file), 0o600);
+        fs::set_permissions(&secrets, fs::Permissions::from_mode(0o664)).unwrap();
+        let r = e.resolve(&env);
+        assert_eq!(r.vars["loc"], VarValue::secret("rotated"));
+        assert_eq!(mode(&secrets), 0o600);
+        assert_eq!(r.vars["f"], VarValue::secret("rotated"));
+        let leftovers: Vec<_> = fs::read_dir(e.meta())
+            .unwrap()
+            .flatten()
+            .map(|x| x.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]

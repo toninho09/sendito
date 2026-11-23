@@ -1104,7 +1104,11 @@ fn flow_themes_and_style() {
     });
     let rgb = |c: Color| sendito_ui::theme::to_rgb(c);
     assert_eq!(h.app.project.config.ui.theme, "harbor");
-    assert_eq!(rgb(h.app.theme.accent), rgb(Color::Rgb(0x33, 0x66, 0x99)));
+    assert_eq!(
+        rgb(h.app.themes.theme_full("harbor").accent),
+        rgb(Color::Rgb(0x33, 0x66, 0x99))
+    );
+    assert_eq!(h.app.theme.accent, h.app.themes.theme("harbor").accent);
     assert!(h.app.themes.names().contains(&"harbor".to_string()));
     // The focused pane's border takes the focus color.
     h.key("ctrl+w h");
@@ -1122,7 +1126,11 @@ fn flow_themes_and_style() {
     h.type_text(":theme reload");
     h.key("enter");
     assert!(h.app.theme.light);
-    assert_eq!(rgb(h.app.theme.accent), rgb(Color::Rgb(0, 0x44, 0)));
+    assert_eq!(
+        rgb(h.app.themes.theme_full("harbor").accent),
+        rgb(Color::Rgb(0, 0x44, 0))
+    );
+    assert_eq!(h.app.theme.accent, h.app.themes.theme("harbor").accent);
     // A dialog fades the screen behind it instead of clearing it.
     h.key("ctrl+p");
     h.draw();

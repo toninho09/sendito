@@ -19,8 +19,13 @@ fn read(p: &Path) -> String {
 
 fn write(root: &Path, rel: &str, text: &str) {
     let p = root.join(rel);
-    std::fs::create_dir_all(p.parent().unwrap_or(root)).unwrap();
-    std::fs::write(p, text).unwrap();
+    let dir = p.parent().unwrap_or(root);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        panic!("{}: {e}", dir.display());
+    }
+    if let Err(e) = std::fs::write(&p, text) {
+        panic!("{}: {e}", p.display());
+    }
 }
 
 /// Postman v2.1 fixture (32 requests): every request is imported and every
@@ -383,14 +388,14 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base}}/x?t={{tok}}\"\n\n[[headers]]\nname = \"X-K\"\nvalue = \"{{key}}\"\n\n[[headers]]\nname = \"X-F\"\nvalue = \"{{f}}\"\n\n[auth]\ntype = \"basic\"\nusername = \"u\"\npassword = \"{{tok}}\"\n\n[body]\ntype = \"json\"\ntext = \"{\\\"t\\\": \\\"{{tok}}\\\"}\"\n",
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let p = sendito_ui::runner::Project::open_with(dir.path(), kc, None);
+    let p = sendito_pipeline::runner::Project::open_with(dir.path(), kc, None);
     let Request::Http(req) = p.coll.load("r.toml").unwrap_or_else(|e| panic!("{e}")) else {
         panic!()
     };
     let (scope, errors) =
-        sendito_ui::runner::build_scope(&p.envs, Some("dev"), &Default::default());
+        sendito_pipeline::runner::build_scope(&p.envs, Some("dev"), &Default::default());
     assert!(errors.is_empty(), "{errors:?}");
-    let ctx = sendito_ui::runner::RunCtx {
+    let ctx = sendito_pipeline::runner::RunCtx {
         root: dir.path().to_path_buf(),
         send: p.send_options(),
         history: Some((dir.path().join(".sendito/history.jsonl"), 100)),
@@ -404,7 +409,7 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         cookie_jar: false,
         oauth: None,
     };
-    let o = rt.block_on(sendito_ui::runner::exec_http(
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx,
         &req,
         scope.clone(),
@@ -444,12 +449,12 @@ fn cookie_jar_fails_closed_for_insecure_file() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let http = rt.block_on(sendito_testkit::http_echo::start()).unwrap();
-    let p = sendito_ui::runner::Project::open_with(
+    let p = sendito_pipeline::runner::Project::open_with(
         dir.path(),
-        sendito_ui::runner::default_keychain(),
+        sendito_pipeline::runner::default_keychain(),
         None,
     );
-    let ctx = sendito_ui::runner::RunCtx {
+    let ctx = sendito_pipeline::runner::RunCtx {
         root: dir.path().to_path_buf(),
         send: p.send_options(),
         history: None,
@@ -472,7 +477,7 @@ fn cookie_jar_fails_closed_for_insecure_file() {
     let jar = dir.path().join(".sendito/cookies.toml");
     std::fs::write(&jar, "[jars]\n").unwrap();
     std::fs::set_permissions(&jar, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let result = rt.block_on(sendito_ui::runner::exec_http(
+    let result = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx,
         &req,
         Scope::new(),
@@ -506,9 +511,12 @@ fn cookie_jar_stores_and_replays() {
         "echo.toml",
         "kind = \"http\"\nmethod = \"GET\"\nurl = \"{{base}}/echo\"\n\n[options]\ncookies = true\n",
     );
-    let p =
-        sendito_ui::runner::Project::open_with(root, sendito_ui::runner::default_keychain(), None);
-    let ctx = |name: &str| sendito_ui::runner::RunCtx {
+    let p = sendito_pipeline::runner::Project::open_with(
+        root,
+        sendito_pipeline::runner::default_keychain(),
+        None,
+    );
+    let ctx = |name: &str| sendito_pipeline::runner::RunCtx {
         root: root.to_path_buf(),
         send: p.send_options(),
         history: None,
@@ -528,10 +536,10 @@ fn cookie_jar_stores_and_replays() {
         panic!("not http")
     };
     let (scope, errors) =
-        sendito_ui::runner::build_scope(&p.envs, Some("dev"), &Default::default());
+        sendito_pipeline::runner::build_scope(&p.envs, Some("dev"), &Default::default());
     assert!(errors.is_empty(), "{errors:?}");
     // 1. The login response sets two cookies.
-    let o = rt.block_on(sendito_ui::runner::exec_http(
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx("login"),
         &login,
         scope.clone(),
@@ -546,7 +554,7 @@ fn cookie_jar_stores_and_replays() {
     assert!(text.contains("session"));
     assert!(text.contains("theme"));
     // 2. The next request replays them.
-    let o = rt.block_on(sendito_ui::runner::exec_http(
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx("echo"),
         &echo,
         scope.clone(),
@@ -574,7 +582,7 @@ fn cookie_jar_stores_and_replays() {
             expr: "set-cookie".into(),
             secret: false,
         });
-    let masked = rt.block_on(sendito_ui::runner::exec_http(
+    let masked = rt.block_on(sendito_pipeline::runner::exec_http(
         &masked_ctx,
         &with_extract,
         scope.clone(),
@@ -593,7 +601,7 @@ fn cookie_jar_stores_and_replays() {
     // Do not forward cookies across a redirect even on the same host.
     let mut redirected = echo.clone();
     redirected.url = "{{base}}/redirect/1".into();
-    let o = rt.block_on(sendito_ui::runner::exec_http(
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx("redirect"),
         &redirected,
         scope.clone(),
@@ -610,7 +618,7 @@ fn cookie_jar_stores_and_replays() {
     // 3. Without `cookies = true` nothing is sent or stored.
     let mut plain = echo.clone();
     plain.options.cookies = Some(false);
-    let o = rt.block_on(sendito_ui::runner::exec_http(
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx("echo"),
         &plain,
         scope,
@@ -924,7 +932,7 @@ fn http_oauth_login_refresh_and_send() {
         // Force a 401 to exercise the one-retry path, rather than a pre-send refresh.
         tokens.expires_at = None;
         let kc = Arc::new(MemoryKeychain::default());
-        let mut p = sendito_ui::runner::Project::open_with(dir.path(), kc.clone(), None);
+        let mut p = sendito_pipeline::runner::Project::open_with(dir.path(), kc.clone(), None);
         p.config.oauth.insert(
             "service".into(),
             sendito_store::config::OAuthIdentity {
@@ -935,9 +943,10 @@ fn http_oauth_login_refresh_and_send() {
                 scopes: vec![],
             },
         );
-        let account = sendito_ui::runner::oauth_token_account(&p.name, Some("dev"), "service");
+        let account =
+            sendito_pipeline::runner::oauth_token_account(&p.name, Some("dev"), "service");
         kc.set(&account, &tokens.to_json()).unwrap();
-        let ctx = sendito_ui::runner::RunCtx {
+        let ctx = sendito_pipeline::runner::RunCtx {
             root: dir.path().to_path_buf(),
             send: p.send_options(),
             history: None,
@@ -949,7 +958,7 @@ fn http_oauth_login_refresh_and_send() {
             ws_timeout_ms: 0,
             mask_echoed_secrets: true,
             cookie_jar: false,
-            oauth: Some(sendito_ui::runner::OAuthRunInfo::of(&p)),
+            oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
         };
         let req = HttpRequest {
             url: format!("{}/http-api", srv.url()),
@@ -967,7 +976,7 @@ fn http_oauth_login_refresh_and_send() {
             expr: "$.token".into(),
             secret: false,
         });
-        let o = sendito_ui::runner::exec_http(&ctx, &req, Scope::new(), vec![]).await;
+        let o = sendito_pipeline::runner::exec_http(&ctx, &req, Scope::new(), vec![]).await;
         assert_eq!(o.response.as_ref().unwrap().status, 200);
         assert!(o.scripts.extracts[0].value.as_ref().unwrap().secret);
         assert_eq!(srv.http_requests(), 2);
@@ -988,14 +997,14 @@ fn http_oauth_login_refresh_and_send() {
         explicit
             .headers
             .push(KeyValue::new("Authorization", "Bearer explicit"));
-        let o = sendito_ui::runner::exec_http(&ctx, &explicit, Scope::new(), vec![]).await;
+        let o = sendito_pipeline::runner::exec_http(&ctx, &explicit, Scope::new(), vec![]).await;
         assert_eq!(o.response.unwrap().status, 401);
         assert_eq!(srv.http_requests(), 3);
         assert_eq!(srv.refreshes(), 1);
         // Different environments cannot use each other's stored tokens.
         let mut other = ctx;
         other.env = Some("other".into());
-        let o = sendito_ui::runner::exec_http(&other, &req, Scope::new(), vec![]).await;
+        let o = sendito_pipeline::runner::exec_http(&other, &req, Scope::new(), vec![]).await;
         assert!(o.response.is_err());
         assert_eq!(srv.http_requests(), 3);
     });
@@ -1020,9 +1029,12 @@ fn ws_session_replays_the_cookie_jar() {
         "chat.toml",
         "kind = \"websocket\"\nurl = \"{{base}}/echo\"\nmessages = '''\"hi\"'''\n\n[options]\ncookies = true\n",
     );
-    let p =
-        sendito_ui::runner::Project::open_with(root, sendito_ui::runner::default_keychain(), None);
-    let ctx = sendito_ui::runner::RunCtx {
+    let p = sendito_pipeline::runner::Project::open_with(
+        root,
+        sendito_pipeline::runner::default_keychain(),
+        None,
+    );
+    let ctx = sendito_pipeline::runner::RunCtx {
         root: root.to_path_buf(),
         send: p.send_options(),
         history: None,
@@ -1044,13 +1056,13 @@ fn ws_session_replays_the_cookie_jar() {
     sendito_store::cookies::store_response(root, "dev", &http_url, &["sid=corpus-1".into()])
         .unwrap();
     let (scope, errors) =
-        sendito_ui::runner::build_scope(&p.envs, Some("dev"), &Default::default());
+        sendito_pipeline::runner::build_scope(&p.envs, Some("dev"), &Default::default());
     assert!(errors.is_empty(), "{errors:?}");
     let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
     let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
     drop(ctl_tx);
     rt.block_on(async {
-        let run = sendito_ui::runner::exec_ws(&ctx, &req, scope, vec![], utx, ctl_rx);
+        let run = sendito_pipeline::runner::exec_ws(&ctx, &req, scope, vec![], utx, ctl_rx);
         let collect = async { while urx.recv().await.is_some() {} };
         tokio::join!(run, collect);
     });

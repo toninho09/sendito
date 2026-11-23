@@ -13,6 +13,7 @@ sendito-grpc.workspace = true
 sendito-mcp.workspace = true
 sendito-ws.workspace = true
 sendito-store.workspace = true
+sendito-pipeline.workspace = true
 sendito-import.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true

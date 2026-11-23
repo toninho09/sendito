@@ -583,14 +583,14 @@ macro_rules! reflect_impl {
                             files.insert(name, fd);
                         }
                     }
-                    Some(MessageResponse::ErrorResponse(e)) => {
-                        // A missing well-known import is filled in locally below.
-                        if !e.error_message.contains("google/protobuf/") {
-                            return Err(tonic::Status::new(
-                                tonic::Code::from_i32(e.error_code),
-                                e.error_message,
-                            ));
-                        }
+                    // A missing well-known import is filled in locally below.
+                    Some(MessageResponse::ErrorResponse(e))
+                        if !e.error_message.contains("google/protobuf/") =>
+                    {
+                        return Err(tonic::Status::new(
+                            tonic::Code::from_i32(e.error_code),
+                            e.error_message,
+                        ));
                     }
                     _ => {}
                 }

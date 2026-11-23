@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use sendito_core::resolve::{HeaderOrigin, ResolvedBody, ResolvedHttp};
 use sendito_http::{ProxySpec, SendOptions, send};
+use sendito_pipeline::runner::Project;
 use sendito_testkit::{http_echo, mcp_echo, proxy};
-use sendito_ui::runner::Project;
 
 trait Must<T> {
     fn must(self) -> T;

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use sendito_core::resolve::{HeaderOrigin, ResolvedBody, ResolvedHttp};
 use sendito_grpc::{ConnSettings, connect};
 use sendito_http::{TlsMaterial, send};
+use sendito_pipeline::runner::Project;
 use sendito_testkit::{grpc_echo, http_echo, tls};
-use sendito_ui::runner::Project;
 
 trait Must<T> {
     fn must(self) -> T;

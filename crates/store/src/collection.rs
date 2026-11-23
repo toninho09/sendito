@@ -3,7 +3,8 @@
 //! Paths handed out by this module are relative to the collection root and use
 //! `/` separators, so they are stable across platforms and safe to store.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sendito_core::Request;
@@ -405,6 +406,14 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 
 /// Writes through a temporary file and renames it into place.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_temp(path, bytes, false)
+}
+
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_temp(path, bytes, true)
+}
+
+fn write_temp(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
     }
@@ -415,11 +424,42 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .unwrap_or_default(),
         std::process::id()
     ));
-    fs::write(&tmp, bytes).map_err(|e| StoreError::io(&tmp, e))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if private {
+        owner_only(&mut options);
+    }
+    let written = options.open(&tmp).and_then(|mut f| f.write_all(bytes));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(StoreError::io(&tmp, e));
+    }
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         StoreError::io(path, e)
     })
+}
+
+#[cfg(unix)]
+fn owner_only(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
+}
+
+#[cfg(not(unix))]
+fn owner_only(_: &mut OpenOptions) {}
+
+pub(crate) fn make_private(_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(_path)
+            && meta.permissions().mode() & 0o077 != 0
+        {
+            let mode = meta.permissions().mode() & !0o077;
+            let _ = fs::set_permissions(_path, fs::Permissions::from_mode(mode));
+        }
+    }
 }
 
 /// Reads badges for many files, spreading the work over a few threads.

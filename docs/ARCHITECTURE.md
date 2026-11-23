@@ -21,7 +21,8 @@ library. The non-UI crates build and test without a terminal.
 │   ├── mcp/                 # stdio and Streamable HTTP transports, protocol, OAuth
 │   ├── store/               # collection, request files, config, env, history, cookies, session, themes
 │   ├── import/              # Postman, Insomnia, Bruno, curl, .http
-│   ├── ui/                  # ratatui app, draw, editors, keymap, theme, send pipeline
+│   ├── pipeline/            # the send pipeline the UI and the CLI share; response documents
+│   ├── ui/                  # ratatui app, draw, editors, keymap, theme
 │   └── testkit/             # echo servers, MCP OAuth server, proxy, test PKI
 ├── tests/                   # integration, corpus (exact bytes), TLS, proxy
 ├── docs/                    # this documentation
@@ -37,13 +38,14 @@ library. The non-UI crates build and test without a terminal.
 | `sendito-mcp` | JSON-RPC 2.0, stdio and Streamable HTTP transports, `tools/list` / `tools/call`, OAuth 2.1 with metadata discovery, PKCE and dynamic registration |
 | `sendito-store` | The collection tree on disk, canonical request files, layered config, environments and the four secret sources, cookie jar, history, session restore, themes, `init` |
 | `sendito-import` | Postman v2.1, Insomnia v4/v5, Bruno, curl (import and export), `.http` export, importing into a folder |
-| `sendito-ui` | The ratatui/crossterm app, drawing, editors, key map, themes, and `runner` — the send pipeline that both the UI and the CLI use |
+| `sendito-pipeline` | `runner`, the send pipeline that both the UI and the CLI use (scope → pre-request script → resolve → send → extract/assert → history), and the response document the viewer reads (pretty JSON with folding, raw text, hex, search) |
+| `sendito-ui` | The ratatui/crossterm app, drawing, editors, key map and themes |
 | `sendito-testkit` | HTTP/gRPC/WebSocket/MCP echo servers that record exact bytes, a fake MCP OAuth server, a forward proxy and a test CA / server / client |
 | `sendito` (binary) | Argument parsing, the headless `run`, `curl` / `http` export, OAuth login/logout, `import`, `theme` |
 
 ## How a request is sent
 
-The UI and the CLI share one path in `sendito-ui::runner`:
+The UI and the CLI share one path in `sendito-pipeline::runner`:
 
 ```text
 file (.toml)
@@ -54,7 +56,8 @@ file (.toml)
   → http / grpc / mcp            send
   → core        run extract scripts (store values, possibly secret)
   → core        run assertions
-  → ui          render the tabs; append to history (masked)
+  → pipeline     append to history (masked)
+  → ui / cli    render the tabs, or print the response
 ```
 
 Consequences worth knowing:
@@ -76,7 +79,7 @@ Consequences worth knowing:
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in each crate | `make test` |
-| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (47 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
+| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (48 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
 | Rewrite corpus goldens | same | `make corpus-update` |
 | Integration (HTTP, TLS, proxy) | `tests/integration.rs`, `tests/tls.rs`, `tests/proxy.rs` | `make test` |
 | gRPC calls, MCP client and OAuth | `crates/{grpc,mcp}/tests/` | `make test` |
@@ -84,13 +87,15 @@ Consequences worth knowing:
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs` | `make test` |
 | UI snapshots (insta, 120×40 and 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
 | Screenshots and GIFs | `crates/ui/tests/media.rs` + `docs/media/render.py` | `make media && make render` |
-| Coverage (non-UI, ≥ 80 % lines) | cargo-llvm-cov | `make cov` |
+| Coverage (all but `ui` and `testkit`, ≥ 80 % lines) | cargo-llvm-cov, by the whole test suite | `make cov` |
 | Performance | `bench/run.sh` (hyperfine, `script(1)`) | `make bench` |
 | Reviewer bundles | `scripts/critic-bundles.sh` | `make bundles` |
+| Documentation currency (cited paths, symbols, `make` targets, links) | `tests/docs.rs` | `make docs` |
 
-CI (`.github/workflows/ci.yml`) runs `fmt --check`, clippy with `-D warnings`,
-`cargo deny`, the workspace tests on Ubuntu and macOS, the OS-keychain tests and
-the coverage gate. Run one heavy job at a time locally: workspace tests, media,
+CI (`.github/workflows/ci.yml`) runs on the toolchain pinned in
+`rust-toolchain.toml`: `fmt --check`, clippy with `-D warnings`, `cargo deny`,
+the workspace tests on Ubuntu and macOS, the OS-keychain tests and the coverage
+gate. Run one heavy job at a time locally: workspace tests, media,
 benchmarks and coverage must not overlap.
 
 ## Changing behaviour
@@ -126,5 +131,5 @@ non-test code.
 
 * [Features](FEATURES.md) — what each crate exposes to the user.
 * [CLI](CLI.md) — the binary's commands and flags.
-* [AGENTS.md](../AGENTS.md) — the build, corpus, key-map and media rules.
+* [AGENTS.md](../AGENTS.md) — where to start, the commands, the corpus, key-map and media rules.
 * [reports/](reports/) — coverage, performance and the critic reports.

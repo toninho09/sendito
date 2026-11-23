@@ -4,6 +4,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use sendito_pipeline::human_size;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
@@ -68,7 +69,7 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
     if start > 0 {
         x = put(buf, x, area.y, "‹ ", 2, theme.bar().patch(theme.dim()));
     }
-    for i in start..app.tabs.len() {
+    for (i, tab) in app.tabs.iter().enumerate().skip(start) {
         let w = tab_w(i);
         if x + w + 4 > tabs_end {
             put(buf, x, area.y, "›", 1, theme.bar().patch(theme.dim()));
@@ -77,7 +78,6 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         let active = i == app.active;
         let rect = Rect::new(x, area.y, w, 1);
         let hover = hovered(app, rect);
-        let tab = &app.tabs[i];
         let base = if theme.mono {
             if active {
                 Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)

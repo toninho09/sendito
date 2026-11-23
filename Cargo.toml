@@ -22,6 +22,7 @@ sendito-core = { path = "crates/core" }
 sendito-http = { path = "crates/http" }
 sendito-grpc = { path = "crates/grpc" }
 sendito-mcp = { path = "crates/mcp" }
+sendito-pipeline = { path = "crates/pipeline" }
 sendito-store = { path = "crates/store" }
 sendito-import = { path = "crates/import" }
 sendito-ui = { path = "crates/ui" }
@@ -102,6 +103,7 @@ sendito-ws.workspace = true
 sendito-store.workspace = true
 sendito-import.workspace = true
 sendito-ui.workspace = true
+sendito-pipeline.workspace = true
 clap.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

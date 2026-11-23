@@ -3,6 +3,7 @@
 //! Routes:
 //! * `/status/<code>` — reply with that status
 //! * `/redirect/<n>` — redirect chain ending at `/echo`
+//! * `/redirect-other-host` — 302 to `/echo` on `localhost` (another origin)
 //! * `/delay/<ms>` — wait before replying
 //! * `/bytes/<n>` — reply with `n` bytes
 //! * `/json/<n>` — reply with a JSON document of about `n` bytes
@@ -190,7 +191,7 @@ pub async fn start_on(addr: &str) -> std::io::Result<HttpEcho> {
         while let Ok((sock, _)) = listener.accept().await {
             let c = c2.clone();
             tokio::spawn(async move {
-                let _ = serve(sock, c).await;
+                let _ = serve(sock, c, addr.port()).await;
             });
         }
     });
@@ -221,7 +222,7 @@ pub async fn start_tls(
             let a = acceptor.clone();
             tokio::spawn(async move {
                 if let Ok(sock) = a.accept(sock).await {
-                    let _ = serve(sock, c).await;
+                    let _ = serve(sock, c, addr.port()).await;
                 }
             });
         }
@@ -238,7 +239,11 @@ fn find(h: &[u8], pat: &[u8]) -> Option<usize> {
     h.windows(pat.len()).position(|w| w == pat)
 }
 
-async fn serve<S>(mut sock: S, captures: Arc<Mutex<Vec<Captured>>>) -> std::io::Result<()>
+async fn serve<S>(
+    mut sock: S,
+    captures: Arc<Mutex<Vec<Captured>>>,
+    port: u16,
+) -> std::io::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -303,7 +308,7 @@ where
         if let Ok(mut c) = captures.lock() {
             c.push(cap.clone());
         }
-        let (status, extra, body, delay) = respond(&cap);
+        let (status, extra, body, delay) = respond(&cap, port);
         if let Some(d) = delay {
             tokio::time::sleep(d).await;
         }
@@ -334,7 +339,7 @@ where
 
 type Reply = (u16, Vec<(String, String)>, Vec<u8>, Option<Duration>);
 
-fn respond(c: &Captured) -> Reply {
+fn respond(c: &Captured, port: u16) -> Reply {
     let target = c.target();
     let path = target.split('?').next().unwrap_or("/").to_string();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -355,6 +360,12 @@ fn respond(c: &Captured) -> Reply {
             };
             (302, vec![("Location".into(), to)], Vec::new(), None)
         }
+        ["redirect-other-host"] => (
+            302,
+            vec![("Location".into(), format!("http://localhost:{port}/echo"))],
+            Vec::new(),
+            None,
+        ),
         ["set-cookie"] => (
             200,
             vec![

@@ -45,15 +45,21 @@ allows `accept` as a transport header.
   (VHS and ttyd were not installed). The GIFs in `docs/media/recordings` are rendered
   from the application's own frames, not from a terminal, and the tape set has 11 of
   the 12 flows.
-* **Only Linux was run locally.** The CI matrix includes macOS arm64 and the OS keychain
-  tests, but none of that has run yet; the release workflow has not run either.
-* **Minimum Rust version is unverified.** The code needs at least Rust 1.89
-  (edition 2024 let chains; the `jaq` jq library sets this floor); other
-  dependencies may need more. Only the current stable toolchain has been used.
+* **macOS and the OS keychains have only CI behind them.** The `test` matrix
+  (Ubuntu and macOS arm64, with the Secret Service and Keychain steps) and the
+  release workflow (Linux x86_64 and macOS arm64) went green once, for v0.1.0 on
+  2026-11-21. The OS-keychain tests run only with `SENDITO_TEST_OS_KEYCHAIN=1`,
+  which CI sets.
+* **Minimum Rust version is unverified.** `rust-toolchain.toml` pins 1.100.0,
+  the toolchain CI and the release build use. The code needs at least Rust 1.89
+  (edition 2024 let chains; the `jaq` jq library sets this floor) and other
+  dependencies may need more; nothing between 1.89 and 1.100.0 has been tried.
 * **Terminal sizes.** Screenshots, recordings and snapshot tests cover 120×40 and
   200×60. Smaller terminals work (the layout adapts) but are not covered by snapshots.
-* **Coverage** is measured for the non-UI crates only (90.66%); `sendito-ui` is covered
-  by the 15 flow tests and the snapshot tests, with no line-coverage figure.
+* **Coverage** is measured for everything but `sendito-ui` and `sendito-testkit`,
+  by the whole test suite (`docs/reports/coverage.md`). The CLI's `src/main.rs`
+  counts, and the tests reach only the commands they run. `sendito-ui` is covered
+  by the flow tests and the snapshot tests, with no line-coverage figure.
 * **The visual redesign was checked in the test backend only.** The cursor shape (bar
   while typing, block in vim NORMAL), the window title push/pop (`CSI 22;0t` /
   `CSI 23;0t`), mouse hover, the Braille spinner in fonts without Braille, Nerd Font
@@ -93,6 +99,12 @@ allows `accept` as a transport header.
   `debug` logs nowhere (no logger is initialized) and `input`/`inputs` yield
   nothing (no further inputs). Removing the freeze needs a step budget or
   a cancellable worker thread, neither of which jaq's `run` API offers.
+* **Echo masking is textual.** A secret is masked in responses when it appears
+  as sent, JSON-escaped or percent-encoded (form and query, either hex case).
+  Other encodings — base64, HTML entities, `\uXXXX` escapes of non-ASCII
+  characters, hashes — are not recognised, and a secret shorter than 3
+  characters is never masked in what a server sends back. Closing the gap needs
+  decoding the response by content type before matching.
 * HTTP/3 is not supported.
 * gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
   support yet. HTTP requests, MCP servers over Streamable HTTP and WebSocket
@@ -141,4 +153,4 @@ allows `accept` as a transport header.
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  47 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  48 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.

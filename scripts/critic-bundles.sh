@@ -84,7 +84,9 @@ same name stay in file order), and "Accept: */*" is added when the request defin
 no enabled Accept header (added by the HTTP library). When [options] cookies = true,
 matching cookies from the per-environment jar are sent in a Cookie header. Redirects
 are not followed with the jar enabled. Cases 45 and 46 cover cookie storage and replay.
-Case 47 uses a keychain-sourced OAuth bearer token. Also: metadata keys ending in "-bin" take a
+Case 47 uses a keychain-sourced OAuth bearer token. Case 48 follows a redirect to another
+origin (other scheme, host or port): the API-key header, like Authorization and Cookie,
+is not sent to the new origin. Also: metadata keys ending in "-bin" take a
 base64 value in the request file (as on the gRPC wire); the client decodes it
 and sends those bytes, so the server sees the same base64 text and, decoded,
 the bytes shown under it. An HTTP request with no body (type "none" or no

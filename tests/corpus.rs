@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sendito_core::Request;
+use sendito_pipeline::runner::{self, GrpcUpdate, Project, RunCtx};
 use sendito_store::env::{Keychain, MemoryKeychain};
 use sendito_testkit::{grpc_echo, http_echo, mcp_echo};
-use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
 
 /// `unwrap` for test helpers (the workspace denies `unwrap_used`).
 pub trait Must<T> {
@@ -229,7 +229,9 @@ fn normalize_http(
         }
         body_text = body_text.replace(&b, "<boundary>");
     }
-    let s = format!("{head}{body_text}").replace(&format!("127.0.0.1:{port}"), "127.0.0.1:<port>");
+    let s = format!("{head}{body_text}")
+        .replace(&format!("127.0.0.1:{port}"), "127.0.0.1:<port>")
+        .replace(&format!("localhost:{port}"), "localhost:<port>");
     mask_secrets(s, secrets)
 }
 
@@ -565,9 +567,15 @@ async fn ws_corpus() {
     let mut failures = Vec::new();
     let names = cases(&root, "ws");
     assert!(names.len() >= 12, "only {} WebSocket cases", names.len());
+    let mut passed = 0;
     for file in &names {
+        let before = failures.len();
         run_ws_case(&e, &p, file, &mut failures).await;
+        if failures.len() == before {
+            passed += 1;
+        }
     }
+    write_summary("ws", names.len(), passed, &failures);
     if !failures.is_empty() {
         panic!(
             "{} WebSocket failures:\n{}",

@@ -1,0 +1,9 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/redirect-other-host"
+
+[auth]
+type = "apikey"
+key = "X-API-Key"
+value = "{{keychain_key}}"
+in = "header"

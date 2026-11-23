@@ -6,10 +6,12 @@
 # cargo jobs and test threads (heavy suite; see AGENTS.md)
 J ?= 4
 TT ?= 2
+P :=
+F :=
 OUT ?= target/critic-bundles  # destination of make bundles
 
 .DEFAULT_GOAL := help
-.PHONY: help build check run servers fmt fmt-check lint deny ci test corpus corpus-update keymap snap media render bundles cov bench
+.PHONY: help build check run servers fmt fmt-check lint deny ci test docs corpus corpus-update keymap snap media render bundles cov bench
 
 help: ## List the available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -19,8 +21,8 @@ help: ## List the available targets
 build: ## Build the workspace (one-line summary)
 	@bash scripts/quiet.sh build cargo build -j $(J) -q
 
-check: ## Only check types, without producing a binary (quick feedback)
-	@bash scripts/quiet.sh check cargo check -j $(J) -q --workspace
+check: ## Type-check only, quick feedback (P=<package> for one crate)
+	@bash scripts/quiet.sh check cargo check -j $(J) -q $(if $(P),-p $(P),--workspace)
 
 run: ## Run the binary: make run ARGS="req.http"
 	cargo run -q -- $(ARGS)
@@ -36,16 +38,21 @@ fmt: ## Format the code (one-line summary)
 fmt-check: ## Fail if any code is unformatted (one-line summary)
 	@bash scripts/quiet.sh fmt-check cargo fmt --all --check
 
-lint: ## Clippy with -D warnings (one line per diagnostic)
-	@bash scripts/quiet.sh lint cargo clippy -j $(J) -q --workspace --all-targets --message-format short -- -D warnings
+lint: ## Clippy with -D warnings, one line per diagnostic (P=<package> for one crate)
+	@bash scripts/quiet.sh lint cargo clippy -j $(J) -q $(if $(P),-p $(P),--workspace) --all-targets --message-format short -- -D warnings
 
 deny: ## cargo deny (licenses/advisories), one-line summary
 	@bash scripts/quiet.sh deny cargo deny check --hide-inclusion-graph
 
 ci: fmt-check lint deny test ## All gates: fmt + clippy + deny + tests
 
-test: ## Full suite (one summary line; failure prints the whole log)
-	@bash scripts/quiet.sh test cargo test -j $(J) -q --workspace -- --test-threads=$(TT)
+test: ## Full suite, one summary line (P=<package> for one crate, F=<name> filters)
+	@bash scripts/quiet.sh test cargo test -j $(J) -q $(if $(P),-p $(P),--workspace) $(if $(F),$(F) )-- --test-threads=$(TT)
+	@if [ -n "$(F)" ] && ! awk '/^test result:/ { ran += $$4 + $$8 } END { exit !(ran > 0) }' target/test.log; then \
+	  echo "make test: no test matched F=$(F)" >&2; exit 1; fi
+
+docs: ## Check that the paths, symbols and make targets the documentation cites exist
+	@bash scripts/quiet.sh docs cargo test -j $(J) -q --test docs
 
 # --- goldens and generated files ---
 
@@ -75,9 +82,9 @@ render: ## Render the generated media (docs/media/render.py)
 bundles: ## Build the reviewer bundles (OUT= changes the destination)
 	bash scripts/critic-bundles.sh $(OUT)
 
-cov: ## Line coverage (non-UI crates), 80% gate
-	@bash scripts/quiet.sh cov cargo llvm-cov -j $(J) -q -p sendito-core -p sendito-http -p sendito-grpc \
-	  -p sendito-ws -p sendito-store -p sendito-import -p sendito-mcp \
+cov: ## Line coverage (all but the UI, by the whole test suite), 80% gate
+	@bash scripts/quiet.sh cov cargo llvm-cov -j $(J) -q --workspace \
+	  --ignore-filename-regex 'crates/(ui|testkit)/' \
 	  --fail-under-lines 80 --summary-only -- --test-threads=$(TT)
 
 bench: ## Benchmarks (needs hyperfine; see bench/run.sh)

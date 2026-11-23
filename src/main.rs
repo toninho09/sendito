@@ -9,7 +9,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use sendito_core::Request;
 use sendito_core::script::RUNTIME_LAYER;
 use sendito_core::vars::Scope;
-use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
+use sendito_pipeline::human_size;
+use sendito_pipeline::runner::{self, GrpcUpdate, Project, RunCtx};
 
 #[derive(Parser)]
 #[command(
@@ -630,13 +631,7 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                     let decoded = r
                         .decoded
                         .as_ref()
-                        .map(|d| {
-                            format!(
-                                ", {} {} decoded",
-                                d.encoding,
-                                sendito_ui::app::human_size(d.raw_len)
-                            )
-                        })
+                        .map(|d| format!(", {} {} decoded", d.encoding, human_size(d.raw_len)))
                         .unwrap_or_default();
                     eprintln!(
                         "{} {} {}  ({} ms, {}{})",
@@ -644,7 +639,7 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                         r.status,
                         r.reason,
                         r.timing.total.as_millis(),
-                        sendito_ui::app::human_size(o.body_size),
+                        human_size(o.body_size),
                         decoded
                     );
                     if include {
@@ -1253,7 +1248,7 @@ fn print_scripts(s: &runner::ScriptResults) -> usize {
                 "set {} = {}",
                 e.var,
                 if v.secret {
-                    sendito_ui::MASK.to_string()
+                    sendito_core::vars::MASK.to_string()
                 } else {
                     v.value.clone()
                 }

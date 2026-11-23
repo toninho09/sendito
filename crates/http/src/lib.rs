@@ -8,6 +8,7 @@ use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -19,7 +20,7 @@ use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, NamedGroup, SignatureScheme};
-use sendito_core::resolve::{PartData, ResolvedBody, ResolvedHttp};
+use sendito_core::resolve::{HeaderOrigin, PartData, ResolvedBody, ResolvedHttp};
 
 /// Phase durations. `None` when the phase did not happen (e.g. no DNS for an IP
 /// literal, no TLS for `http://`).
@@ -664,70 +665,199 @@ pub fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, HttpError> 
     Ok(map)
 }
 
-/// Sends a resolved request and reads the whole response.
-pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse, HttpError> {
-    let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
-        url: req.url.clone(),
-        msg: e.to_string(),
-    })?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(HttpError::Url {
-            url: req.url.clone(),
-            msg: "scheme must be http or https".into(),
-        });
-    }
-    let marks: Shared = Arc::new(Mutex::new(Marks::default()));
-    // PEM files are only read for TLS: a plain `http://` request must not fail
-    // because `[http.tls]` points at a missing file, and a folder run must not
-    // re-read them once per request.
-    let plain = TlsMaterial::default();
-    let material = if url.scheme() == "https" {
-        &opts.tls
-    } else {
-        &plain
-    };
-    let mut tls =
-        tls_config(req.verify_tls, &[b"h2", b"http/1.1"], material).map_err(HttpError::Tls)?;
-    tls.resumption = Resumption::store(Arc::new(TimedSessions {
-        inner: ClientSessionMemoryCache::new(8),
-        marks: marks.clone(),
-    }));
-    let timeout = req
-        .timeout_ms
-        .map(Duration::from_millis)
-        .unwrap_or(opts.default_timeout);
-    let mut builder = reqwest::Client::builder()
-        .tls_backend_preconfigured(tls)
-        .dns_resolver(Arc::new(TimedResolver(marks.clone())))
-        .connector_layer(TimingLayer(marks.clone()))
-        .redirect(if req.follow_redirects {
-            reqwest::redirect::Policy::limited(10)
-        } else {
-            reqwest::redirect::Policy::none()
-        })
-        .timeout(timeout)
-        // No implicit Referer on redirect hops.
-        .referer(false)
-        // HTTP/1 header names are written in Title-Case (`x-api-key` is sent as
-        // `X-Api-Key`); names are case-insensitive. HTTP/2 always sends lowercase.
-        .http1_title_case_headers();
-    if let Some(spec) = &opts.proxy {
-        builder = spec.apply(builder).map_err(HttpError::Send)?;
-    }
-    let client = builder
-        .build()
-        .map_err(|e| HttpError::Send(err_chain(&e)))?;
+const MAX_REDIRECTS: usize = 10;
 
-    let method = reqwest::Method::from_bytes(req.method.as_bytes())
-        .map_err(|_| HttpError::Method(req.method.clone()))?;
-    let headers = header_map(&req.headers)?;
+#[derive(Debug)]
+struct TooManyRedirects;
+
+impl fmt::Display for TooManyRedirects {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("too many redirects")
+    }
+}
+
+impl std::error::Error for TooManyRedirects {}
+
+struct RedirectGuard {
+    method: reqwest::Method,
+    hops: AtomicUsize,
+    crossed: AtomicBool,
+    get: AtomicBool,
+    body_dropped: AtomicBool,
+}
+
+impl RedirectGuard {
+    fn new(method: reqwest::Method) -> Self {
+        Self {
+            method,
+            hops: AtomicUsize::new(0),
+            crossed: AtomicBool::new(false),
+            get: AtomicBool::new(false),
+            body_dropped: AtomicBool::new(false),
+        }
+    }
+
+    fn note(&self, status: reqwest::StatusCode) {
+        use reqwest::StatusCode;
+        match status {
+            StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND
+                if self.method() == reqwest::Method::POST =>
+            {
+                self.get.store(true, Ordering::SeqCst);
+                self.body_dropped.store(true, Ordering::SeqCst);
+            }
+            StatusCode::SEE_OTHER => {
+                self.body_dropped.store(true, Ordering::SeqCst);
+                if self.method() != reqwest::Method::HEAD {
+                    self.get.store(true, Ordering::SeqCst);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn method(&self) -> reqwest::Method {
+        if self.get.load(Ordering::SeqCst) {
+            reqwest::Method::GET
+        } else {
+            self.method.clone()
+        }
+    }
+
+    fn body_dropped(&self) -> bool {
+        self.body_dropped.load(Ordering::SeqCst)
+    }
+}
+
+fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+fn redirect_policy(
+    req: &ResolvedHttp,
+    method: &reqwest::Method,
+) -> (reqwest::redirect::Policy, Option<Arc<RedirectGuard>>) {
+    if !req.follow_redirects {
+        return (reqwest::redirect::Policy::none(), None);
+    }
+    if !req.header_origins.contains(&HeaderOrigin::Auth) {
+        return (reqwest::redirect::Policy::limited(MAX_REDIRECTS), None);
+    }
+    let guard = Arc::new(RedirectGuard::new(method.clone()));
+    let g = guard.clone();
+    let policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if g.hops.fetch_add(1, Ordering::SeqCst) >= MAX_REDIRECTS {
+            return attempt.error(TooManyRedirects);
+        }
+        g.note(attempt.status());
+        match attempt.previous().last() {
+            Some(prev) if !same_origin(attempt.url(), prev) => {
+                g.crossed.store(true, Ordering::SeqCst);
+                attempt.stop()
+            }
+            _ => attempt.follow(),
+        }
+    });
+    (policy, Some(guard))
+}
+
+fn redirect_target(resp: &reqwest::Response) -> Option<reqwest::Url> {
+    let location = resp.headers().get(reqwest::header::LOCATION)?;
+    resp.url().join(location.to_str().ok()?).ok()
+}
+
+fn hop_headers(req: &ResolvedHttp, body_dropped: bool) -> Result<HeaderMap, HttpError> {
+    const PAYLOAD: [&str; 4] = [
+        "content-type",
+        "content-length",
+        "content-encoding",
+        "transfer-encoding",
+    ];
+    let kept: Vec<(String, String)> = req
+        .headers
+        .iter()
+        .enumerate()
+        .filter(|(i, (name, _))| {
+            let lower = name.to_ascii_lowercase();
+            let auth = req.header_origins.get(*i) == Some(&HeaderOrigin::Auth);
+            let sensitive = matches!(
+                lower.as_str(),
+                "authorization" | "cookie" | "cookie2" | "proxy-authorization" | "www-authenticate"
+            );
+            !auth && !sensitive && !(body_dropped && PAYLOAD.contains(&lower.as_str()))
+        })
+        .map(|(_, h)| h.clone())
+        .collect();
+    header_map(&kept)
+}
+
+fn send_error(e: reqwest::Error, timeout: Duration) -> HttpError {
+    if e.is_timeout() {
+        HttpError::Timeout(timeout.as_millis())
+    } else {
+        HttpError::Send(err_chain(&e))
+    }
+}
+
+/// Sends one hop of a redirect chain with the time the whole chain has left,
+/// so following redirects does not restart the request's timeout.
+async fn execute_hop(
+    client: &reqwest::Client,
+    mut request: reqwest::Request,
+    deadline: Option<Instant>,
+    timeout: Duration,
+) -> Result<reqwest::Response, HttpError> {
+    let remaining = deadline.map_or(timeout, |d| d.saturating_duration_since(Instant::now()));
+    if remaining.is_zero() {
+        return Err(HttpError::Timeout(timeout.as_millis()));
+    }
+    *request.timeout_mut() = Some(remaining);
+    client
+        .execute(request)
+        .await
+        .map_err(|e| send_error(e, timeout))
+}
+
+async fn follow_cross_origin(
+    client: &reqwest::Client,
+    req: &ResolvedHttp,
+    guard: &RedirectGuard,
+    deadline: Option<Instant>,
+    timeout: Duration,
+    mut resp: reqwest::Response,
+) -> Result<reqwest::Response, HttpError> {
+    while guard.crossed.swap(false, Ordering::SeqCst) {
+        let Some(target) = redirect_target(&resp) else {
+            break;
+        };
+        let dropped = guard.body_dropped();
+        let body = if dropped {
+            &ResolvedBody::None
+        } else {
+            &req.body
+        };
+        let headers = hop_headers(req, dropped)?;
+        let request = build_request(client, guard.method(), target, headers, body).await?;
+        resp = execute_hop(client, request, deadline, timeout).await?;
+    }
+    Ok(resp)
+}
+
+async fn build_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: reqwest::Url,
+    headers: HeaderMap,
+    body: &ResolvedBody,
+) -> Result<reqwest::Request, HttpError> {
     // POST, PUT and PATCH define a meaning for content, so even without a body
     // they carry `Content-Length: 0` (RFC 9110, 8.6) unless the request frames
     // itself.
     let wants_length = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
-    let framed = req.headers.iter().any(|(n, _)| {
-        n.eq_ignore_ascii_case("content-length") || n.eq_ignore_ascii_case("transfer-encoding")
-    });
+    let framed = headers.contains_key(reqwest::header::CONTENT_LENGTH)
+        || headers.contains_key(reqwest::header::TRANSFER_ENCODING);
     let mut rb = client.request(method, url).headers(headers);
     // A defined but empty body is framed explicitly with Content-Length: 0.
     let empty_len = |rb: reqwest::RequestBuilder| {
@@ -737,7 +867,7 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
             rb.header(reqwest::header::CONTENT_LENGTH, "0")
         }
     };
-    rb = match &req.body {
+    rb = match body {
         ResolvedBody::None if wants_length => empty_len(rb),
         ResolvedBody::None => rb,
         ResolvedBody::Bytes(b) if b.is_empty() => empty_len(rb),
@@ -784,16 +914,73 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
             rb.multipart(form)
         }
     };
+    rb.build().map_err(|e| HttpError::Send(err_chain(&e)))
+}
 
-    let request = rb.build().map_err(|e| HttpError::Send(err_chain(&e)))?;
-    let start = Instant::now();
-    let mut resp = client.execute(request).await.map_err(|e| {
-        if e.is_timeout() {
-            HttpError::Timeout(timeout.as_millis())
-        } else {
-            HttpError::Send(err_chain(&e))
-        }
+/// Sends a resolved request and reads the whole response.
+pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse, HttpError> {
+    let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
+        url: req.url.clone(),
+        msg: e.to_string(),
     })?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(HttpError::Url {
+            url: req.url.clone(),
+            msg: "scheme must be http or https".into(),
+        });
+    }
+    let method = reqwest::Method::from_bytes(req.method.as_bytes())
+        .map_err(|_| HttpError::Method(req.method.clone()))?;
+    let (redirect, guard) = redirect_policy(req, &method);
+    let headers = header_map(&req.headers)?;
+    let marks: Shared = Arc::new(Mutex::new(Marks::default()));
+    // PEM files are only read for TLS: a plain `http://` request must not fail
+    // because `[http.tls]` points at a missing file, and a folder run must not
+    // re-read them once per request.
+    let plain = TlsMaterial::default();
+    let material = if url.scheme() == "https" {
+        &opts.tls
+    } else {
+        &plain
+    };
+    let mut tls =
+        tls_config(req.verify_tls, &[b"h2", b"http/1.1"], material).map_err(HttpError::Tls)?;
+    tls.resumption = Resumption::store(Arc::new(TimedSessions {
+        inner: ClientSessionMemoryCache::new(8),
+        marks: marks.clone(),
+    }));
+    let timeout = req
+        .timeout_ms
+        .map(Duration::from_millis)
+        .unwrap_or(opts.default_timeout);
+    let mut builder = reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
+        .dns_resolver(Arc::new(TimedResolver(marks.clone())))
+        .connector_layer(TimingLayer(marks.clone()))
+        .redirect(redirect)
+        .timeout(timeout)
+        // No implicit Referer on redirect hops.
+        .referer(false)
+        // HTTP/1 header names are written in Title-Case (`x-api-key` is sent as
+        // `X-Api-Key`); names are case-insensitive. HTTP/2 always sends lowercase.
+        .http1_title_case_headers();
+    if let Some(spec) = &opts.proxy {
+        builder = spec.apply(builder).map_err(HttpError::Send)?;
+    }
+    let client = builder
+        .build()
+        .map_err(|e| HttpError::Send(err_chain(&e)))?;
+
+    let request = build_request(&client, method, url, headers, &req.body).await?;
+    let start = Instant::now();
+    let deadline = start.checked_add(timeout);
+    let mut resp = client
+        .execute(request)
+        .await
+        .map_err(|e| send_error(e, timeout))?;
+    if let Some(guard) = &guard {
+        resp = follow_cross_origin(&client, req, guard, deadline, timeout, resp).await?;
+    }
     let headers_at = Instant::now();
     let status = resp.status();
     let version = format!("{:?}", resp.version());
@@ -1411,5 +1598,275 @@ mod tests {
         };
         let e = tls_config(true, &[], &m).unwrap_err();
         assert!(e.contains("bad.key"), "{e}");
+    }
+
+    async fn read_request(s: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut buf = vec![0u8; 65536];
+        let mut got = Vec::new();
+        loop {
+            let head = got.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
+            let text = String::from_utf8_lossy(&got).to_ascii_lowercase();
+            let len = text
+                .split("\r\n")
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if head.is_some_and(|h| got.len() >= h + len) {
+                break;
+            }
+            let n = s.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&buf[..n]);
+        }
+        got
+    }
+
+    async fn chain(responses: Vec<String>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        delayed_chain(responses.into_iter().map(|r| (Duration::ZERO, r)).collect()).await
+    }
+
+    /// Each response is written after its own pause.
+    async fn delayed_chain(
+        responses: Vec<(Duration, String)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let h = tokio::spawn(async move {
+            let mut all = Vec::new();
+            for (delay, response) in responses {
+                let Ok(Ok((mut s, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), l.accept()).await
+                else {
+                    break;
+                };
+                let got = read_request(&mut s).await;
+                tokio::time::sleep(delay).await;
+                let _ = s.write_all(response.as_bytes()).await;
+                s.shutdown().await.ok();
+                all.push(String::from_utf8_lossy(&got).into_owned());
+            }
+            all
+        });
+        (format!("http://localhost:{}", addr.port()), h)
+    }
+
+    async fn replier(response: String) -> (String, tokio::task::JoinHandle<String>) {
+        let (url, h) = chain(vec![response]).await;
+        let h = tokio::spawn(async move { h.await.unwrap().remove(0) });
+        (url, h)
+    }
+
+    fn with_api_key(r: &mut ResolvedHttp) {
+        r.headers = vec![
+            ("X-Api-Key".into(), "k".into()),
+            ("X-Trace".into(), "t".into()),
+        ];
+        r.header_origins = vec![HeaderOrigin::Auth, HeaderOrigin::User];
+    }
+
+    const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+    #[tokio::test]
+    async fn redirect_to_another_origin_drops_auth_headers() {
+        let (b, hb) = replier(OK.into()).await;
+        let b_ip = b.replacen("localhost", "127.0.0.1", 1);
+        let (a, ha) = replier(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {b_ip}/next\r\nContent-Length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut r = req(a);
+        with_api_key(&mut r);
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.url, format!("{b_ip}/next"));
+        let first = ha.await.unwrap();
+        assert!(first.contains("X-Api-Key: k"), "{first}");
+        let second = hb.await.unwrap();
+        assert!(second.starts_with("GET /next HTTP/1.1"), "{second}");
+        assert!(second.contains("X-Trace: t"), "{second}");
+        assert!(
+            !second.to_ascii_lowercase().contains("x-api-key"),
+            "{second}"
+        );
+
+        let (u, hc) = chain(vec![
+            "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n".into(),
+            OK.into(),
+        ])
+        .await;
+        let mut r = req(u.clone());
+        with_api_key(&mut r);
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.url, format!("{u}/next"));
+        let caps = hc.await.unwrap();
+        assert!(caps[0].contains("X-Api-Key: k"), "{}", caps[0]);
+        assert!(
+            caps[1].starts_with("GET /next HTTP/1.1") && caps[1].contains("X-Api-Key: k"),
+            "{}",
+            caps[1]
+        );
+
+        let (b, hb) = replier(OK.into()).await;
+        let (a, _) = replier(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {b}/next\r\nContent-Length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut r = req(a);
+        r.follow_redirects = false;
+        with_api_key(&mut r);
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 302);
+        assert!(resp.header("location").is_some());
+        drop(hb);
+    }
+
+    #[tokio::test]
+    async fn redirect_to_another_origin_keeps_the_method_rules() {
+        let (b, hb) = replier(OK.into()).await;
+        let b_ip = b.replacen("localhost", "127.0.0.1", 1);
+        let (a, _) = replier(format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {b_ip}/next\r\nContent-Length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut r = req(a);
+        r.method = "POST".into();
+        with_api_key(&mut r);
+        r.body = ResolvedBody::Bytes(b"hello".to_vec());
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        let second = hb.await.unwrap();
+        assert!(second.starts_with("POST /next HTTP/1.1"), "{second}");
+        assert!(second.ends_with("hello"), "{second}");
+        assert!(second.contains("Content-Length: 5"), "{second}");
+        assert!(
+            !second.to_ascii_lowercase().contains("x-api-key"),
+            "{second}"
+        );
+
+        let (b, hb) = replier(OK.into()).await;
+        let b_ip = b.replacen("localhost", "127.0.0.1", 1);
+        let (a, _) = replier(format!(
+            "HTTP/1.1 303 See Other\r\nLocation: {b_ip}/next\r\nContent-Length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut r = req(a);
+        r.method = "POST".into();
+        r.headers = vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("X-Api-Key".into(), "k".into()),
+        ];
+        r.header_origins = vec![HeaderOrigin::Body, HeaderOrigin::Auth];
+        r.body = ResolvedBody::Bytes(b"{}".to_vec());
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        let second = hb.await.unwrap();
+        assert!(second.starts_with("GET /next HTTP/1.1"), "{second}");
+        let lower = second.to_ascii_lowercase();
+        for absent in ["content-type", "content-length", "x-api-key"] {
+            assert!(!lower.contains(absent), "{absent} in {second}");
+        }
+        assert!(second.ends_with("\r\n\r\n"), "{second}");
+    }
+
+    #[tokio::test]
+    async fn redirect_does_not_resend_a_multipart_body() {
+        let (b, hb) = replier(OK.into()).await;
+        let b_ip = b.replacen("localhost", "127.0.0.1", 1);
+        let (a, _) = replier(format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {b_ip}/next\r\nContent-Length: 0\r\n\r\n"
+        ))
+        .await;
+        let mut r = req(a);
+        r.method = "POST".into();
+        with_api_key(&mut r);
+        r.body = ResolvedBody::Multipart(vec![sendito_core::resolve::ResolvedPart {
+            name: "t".into(),
+            data: PartData::Text("v".into()),
+            content_type: None,
+        }]);
+        let resp = tokio::time::timeout(Duration::from_secs(5), send(&r, &SendOptions::default()))
+            .await
+            .expect("send did not return")
+            .unwrap();
+        assert_eq!(resp.status, 307);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), hb)
+                .await
+                .is_err(),
+            "the other origin received a request"
+        );
+
+        let (u, _) = replier(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n"
+                .into(),
+        )
+        .await;
+        r.url = u;
+        let resp = tokio::time::timeout(Duration::from_secs(5), send(&r, &SendOptions::default()))
+            .await
+            .expect("send did not return")
+            .unwrap();
+        assert_eq!(resp.status, 307);
+    }
+
+    #[tokio::test]
+    async fn the_timeout_covers_the_whole_redirect_chain() {
+        let pause = Duration::from_millis(150);
+        let hop = |to: &str| {
+            (
+                pause,
+                format!("HTTP/1.1 302 Found\r\nLocation: {to}/next\r\nContent-Length: 0\r\n\r\n"),
+            )
+        };
+        // Three other origins, each answering after 150 ms.
+        let (c, hc) = delayed_chain(vec![(pause, OK.into())]).await;
+        let (b, hb) = delayed_chain(vec![hop(&c)]).await;
+        let (a, _) = delayed_chain(vec![hop(&b)]).await;
+        let mut r = req(a);
+        with_api_key(&mut r);
+        r.timeout_ms = Some(400);
+        assert!(matches!(
+            send(&r, &SendOptions::default()).await,
+            Err(HttpError::Timeout(400))
+        ));
+        // Both hops were followed: the time ran out on the third origin.
+        for reached in [hb, hc] {
+            assert_eq!(reached.await.unwrap().len(), 1);
+        }
+
+        let (c, _) = delayed_chain(vec![(pause, OK.into())]).await;
+        let (b, _) = delayed_chain(vec![hop(&c)]).await;
+        let (a, _) = delayed_chain(vec![hop(&b)]).await;
+        let mut r = req(a);
+        with_api_key(&mut r);
+        r.timeout_ms = Some(2_000);
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.url, format!("{c}/next"));
+    }
+
+    #[tokio::test]
+    async fn a_hop_with_no_time_left_is_not_sent() {
+        let (url, seen) = replier(OK.into()).await;
+        let tls = tls_config(false, &[b"h2"], &TlsMaterial::default()).unwrap();
+        let client = reqwest::Client::builder()
+            .tls_backend_preconfigured(tls)
+            .build()
+            .unwrap();
+        let request = client.get(&url).build().unwrap();
+        let spent = Instant::now() - Duration::from_millis(1);
+        let err = execute_hop(&client, request, Some(spent), Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, HttpError::Timeout(1000)));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), seen)
+                .await
+                .is_err(),
+            "the server received the request"
+        );
     }
 }

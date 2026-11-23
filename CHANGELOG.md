@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased — hardening
+
+* **Redirects to another origin no longer carry authentication.** A followed
+  redirect that changes the scheme, host or port leaves `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Cookie2`, `WWW-Authenticate` and the headers
+  the Auth tab added behind; one that turns the request into a body-less `GET`
+  also drops the payload headers. Same-origin redirects resend everything, and
+  307/308 keep the method and body as before. Corpus case 48 (HTTP) checks the
+  bytes; `FORMAT.md`, `docs/FEATURES.md` and the correctness reviewer's rules
+  say so.
+* **Secret files are private.** `.sendito/secrets.toml` and a secret that reads
+  a file are written `0600` on Unix, and tightened to `0600` when a looser one
+  is read.
+* **Echo masking covers encoded copies.** A secret is masked in what a server
+  sends back when it appears as sent, JSON-escaped, or percent-encoded as a form
+  field or a query component (either hex case). `docs/DEBT.md` lists the
+  encodings still not recognised.
+* **The terminal is restored when the UI panics.** The panic hook leaves the
+  alternate screen, raw mode, bracketed paste, the window title and mouse
+  tracking before the message is printed.
+* **New crate `sendito-pipeline`.** `runner` (the send pipeline the TUI and
+  `sendito run` share) and the response document model move out of
+  `sendito-ui`; `sendito_ui::runner` stays as a re-export. Line coverage now
+  measures every crate but the UI and the testkit, by the whole test suite, so
+  the pipeline and the CLI count (`make cov`, CI, `docs/reports/coverage.md`).
+* **Toolchain and CI.** `rust-toolchain.toml` pins Rust 1.100.0 for CI, the
+  release build and local runs; GitHub Actions are pinned to commit SHAs; the
+  release workflow lints and tests before it builds; `cargo deny` warns on
+  duplicate dependency versions (16 today); `cookie` is 0.18.3
+  (RUSTSEC-2026-0594; Sendito does not fork or use private cookies). The theme
+  flow test no longer assumes a true-color terminal.
+* **Narrower commands and a documentation check.** `make check`, `make lint` and
+  `make test` take `P=<package>` to run on one crate, and `make test` takes
+  `F=<name>` to run the tests whose name contains it (it fails when none does).
+  `make docs` runs `tests/docs.rs`, which fails when a path, a `file::symbol`,
+  a `make` target or a link cited by `AGENTS.md`, `README.md`, `FORMAT.md` or
+  `docs/` no longer exists. `AGENTS.md` sends each kind of change to the files
+  to open and the section to read.
+
 ## Unreleased — WebSocket
 
 * **WebSocket requests** (`kind = "websocket"`): a session per request, like a

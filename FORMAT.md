@@ -180,8 +180,14 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
     the extension, else `application/octet-stream`).
   * file: the file's bytes.
 * **Paths** in bodies are relative to the collection root; `~/` is expanded.
-* **Redirects** (when followed) re-send the request to the `Location`; no `Referer`
-  is added.
+* **Redirects** (when followed, up to 10 hops) re-send the request to the
+  `Location`; no `Referer` is added. A 301 or 302 answer to a POST, and a 303
+  answer to anything but HEAD, turn the request into a GET without a body. A
+  redirect to another origin (other scheme, host or port) does not carry
+  authentication: `Authorization`, `Cookie` and the Auth tab's API-key header
+  stay behind, as with curl without `--location-trusted`. A multipart body
+  cannot be re-sent, so a 307 or 308 that would keep it is shown as received
+  instead of being followed.
 
 ### Cookie jar
 
@@ -415,7 +421,9 @@ Values from `local`, `keychain` and `file` are secrets, and so is any value buil
 from one (for example a header `Bearer {{token}}` or a pre-request variable that
 references a secret). Secrets are masked (`••••••`) in the UI, kept as
 `{{placeholders}}` in `history.jsonl` and in exported curl commands (unless you
-ask for `:curl!`), and scrubbed from error messages.
+ask for `:curl!`), and scrubbed from error messages. A secret a server echoes is
+masked as it was sent and when it comes back JSON-escaped or percent-encoded;
+secrets shorter than 3 characters are not masked in echoes.
 
 Environment names cannot start with `_`. The environment editor (`Ctrl+W V`) can
 set secret values; they are written to their source (secrets file or keychain),
@@ -432,6 +440,10 @@ token = "eyJhbGciOi..."
 [_collection]
 shared = "..."
 ```
+
+The file is written with owner-only permissions (0600 on Unix), as is a `file`
+secret that Sendito writes; a secrets file other users can read is tightened when
+it is read.
 
 ## Project and global config
 

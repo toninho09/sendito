@@ -3,6 +3,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use sendito_pipeline::human_size;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;

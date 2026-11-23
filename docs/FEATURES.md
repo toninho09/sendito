@@ -69,7 +69,8 @@ The wire rules are exact and spelled out in
   * `oauth`, naming an identity from `[oauth.<name>]` (authorization code +
     PKCE, tokens in the OS keychain, one refresh and retry on `401`).
 * **Per-request options**: `timeout_ms`, `follow_redirects` (default on, up to
-  10 hops, no `Referer` added), `verify_tls`, `cookies`.
+  10 hops, no `Referer` added; authentication stays behind on a redirect to
+  another origin), `verify_tls`, `cookies`.
 * **Added headers** are only framing (`Host`, `Content-Length` /
   `Transfer-Encoding`), auth, a `Content-Type` derived from the body type, and
   — because the HTTP library adds it — `Accept: */*` when you define no
@@ -329,7 +330,10 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 * **Derived values inherit secrecy**: `Bearer {{token}}` and any value built from
   a secret is a secret too.
 * **Masking**: the UI shows `••••••`; error messages, history and curl exports
-  are scrubbed; only `:curl!` / `--include-secrets` reveal values.
+  are scrubbed; only `:curl!` / `--include-secrets` reveal values. A secret the
+  server echoes is masked as it was sent and when it comes back JSON-escaped or
+  percent-encoded (form or query); other encodings, such as base64, are not
+  recognised, and secrets shorter than 3 characters are not masked in echoes.
 * The **environment editor** (`Ctrl+W V`) edits variables in a table, writes
   secret values to their source, and shows whether each one is set.
 * Environment names cannot start with `_`. `_collection` holds the
@@ -377,6 +381,9 @@ The **Scripts** tab has three declarative sections — no JavaScript
   request, the request as written with `{{variables}}` (no bodies), trimmed at
   `[history] max_entries` (default 10 000) plus 10 % slack.
 * **Cookie jar** (`.sendito/cookies.toml`, gitignored) and its lock file.
+* **Secrets file** (`.sendito/secrets.toml`, gitignored): written with
+  owner-only permissions (0600 on Unix), like a `file`-source secret that
+  Sendito writes; a secrets file other users can read is tightened when read.
 * `sendito init` writes the `.gitignore` entries for all the local files.
 
 Full schema and the directory diagram: [FORMAT.md](../FORMAT.md).

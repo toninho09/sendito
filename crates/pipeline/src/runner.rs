@@ -20,7 +20,7 @@ use sendito_store::env::{COLLECTION_ENV, Envs, Keychain, MemoryKeychain, OsKeych
 use sendito_store::history::{self, HistoryEntry};
 use tokio::sync::mpsc;
 
-use crate::viewer::Doc;
+use crate::doc::Doc;
 
 /// An opened collection with its settings.
 pub struct Project {

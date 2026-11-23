@@ -24,7 +24,7 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 47 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
+  A corpus of 48 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
   byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
@@ -95,7 +95,7 @@ sha256sum -c sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 sudo install sendito /usr/local/bin/
 ```
 
-Or build from source (a recent stable Rust; the code needs 1.89 or newer — edition-2024 let chains need 1.88 and the jq filter library sets the floor at 1.89 — and CI builds with the current stable):
+Or build from source (the repository pins Rust 1.100.0 in `rust-toolchain.toml`, which rustup installs on its own; the code needs 1.89 or newer — edition-2024 let chains need 1.88 and the jq filter library sets the floor at 1.89 — but nothing older than the pinned version is tested):
 
 ```sh
 cargo install --path .
@@ -184,8 +184,8 @@ Auth · Scripts · Options**, and the wire rules are spelled out in
   a file. A JSON body is validated as you type (`✓ JSON` / `✗ JSON: line, col`).
 * **Auth**: Basic, Bearer, API key (header or query) and OAuth 2 with PKCE. A `401`
   triggers one token refresh and retry; tokens live in the OS keychain.
-* **Options per request**: timeout, follow redirects (up to 10 hops, no `Referer`),
-  TLS verification and the cookie jar.
+* **Options per request**: timeout, follow redirects (up to 10 hops, no `Referer`;
+  authentication is not sent to another origin), TLS verification and the cookie jar.
 * **Responses**: pretty JSON with folding, raw and hex views, search, the
   response headers beside the request that was actually sent, and a timing
   waterfall (DNS / connect / TLS / TTFB / download).
@@ -330,8 +330,9 @@ Set secret values in the environment editor (`Ctrl+W V`), which writes them to
 the right place and shows whether each one is set. Secret values are never
 shown, never written to history and never included in curl exports unless you
 run `:curl!`. When a server echoes a secret back (in a body, a header or gRPC
-metadata), the app shows `••••••` in its place; `sendito run` writes the body
-to stdout unchanged.
+metadata), as sent, JSON-escaped or percent-encoded, the app shows `••••••` in
+its place (secrets under 3 characters are not masked); `sendito run` writes the
+body to stdout unchanged.
 
 | | |
 |---|---|
@@ -602,23 +603,25 @@ The `Makefile` wraps the recurring commands with quiet, token-efficient output
 
 | Target | Does |
 |---|---|
-| `make build` / `make check` | Build the workspace / type-check only |
+| `make build` / `make check` | Build the workspace / type-check only (`P=` for one crate) |
 | `make servers` | Echo servers for manual tests (HTTP, gRPC, WS, MCP) |
-| `make test` | Full test suite (unit, integration, corpus, UI) |
-| `make lint` / `make fmt` / `make deny` | Clippy `-D warnings` / rustfmt / cargo-deny |
+| `make test` | Full test suite (unit, integration, corpus, UI); `P=` and `F=` narrow it to one crate or test name |
+| `make lint` / `make fmt` / `make deny` | Clippy `-D warnings` (`P=` for one crate) / rustfmt / cargo-deny |
 | `make ci` | `fmt-check` + `lint` + `deny` + `test`, in order |
+| `make docs` | Check that the paths, symbols and `make` targets the documentation cites exist |
 | `make corpus` / `make corpus-update` | Run the wire corpus / rewrite its goldens |
 | `make keymap` | Regenerate `KEYMAP.md` |
 | `make snap` | Accept the insta UI snapshots |
 | `make media` / `make render` | Generate the frames / render screenshots and GIFs |
 | `make bundles` | Build the reviewer bundles |
-| `make cov` / `make bench` | Coverage of the non-UI crates / benchmarks |
+| `make cov` / `make bench` | Line coverage of every crate but the UI, by the whole test suite / benchmarks |
 
 Crates: `sendito-core` (model, variables, resolution, scripts), `sendito-http`,
-`sendito-grpc`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
+`sendito-grpc`, `sendito-ws`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
 `sendito-store` (files, request format, environments, secrets, config, history,
 cookies, session, themes), `sendito-import` (Postman, Insomnia, Bruno, curl,
-`.http`), `sendito-ui` (terminal UI and the send pipeline), `sendito-testkit`
+`.http`), `sendito-pipeline` (send pipeline and response document model),
+`sendito-ui` (terminal UI), `sendito-testkit`
 (test servers) and the `sendito` binary. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and the test
 layers, and [AGENTS.md](AGENTS.md) for the rules that keep them green.

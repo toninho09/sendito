@@ -10,7 +10,7 @@ pub mod icons;
 pub mod keymap;
 pub mod list;
 pub mod overlay;
-pub mod runner;
+pub use sendito_pipeline::runner;
 pub mod tab;
 pub mod theme;
 pub mod tree;
@@ -18,6 +18,7 @@ pub mod viewer;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -75,23 +76,65 @@ impl TermGuard {
     }
 }
 
+fn leave_terminal(out: &mut impl Write, mouse: bool) {
+    let _ = execute!(out, PopKeyboardEnhancementFlags);
+    if mouse {
+        let _ = execute!(out, DisableMouseCapture);
+    }
+    let _ = execute!(
+        out,
+        crossterm::cursor::SetCursorStyle::DefaultUserShape,
+        DisableBracketedPaste,
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    let _ = out.write_all(b"\x1b[23;0t");
+    let _ = out.flush();
+}
+
 impl Drop for TermGuard {
     fn drop(&mut self) {
-        let mut out = io::stdout();
-        let _ = execute!(out, PopKeyboardEnhancementFlags);
-        if self.mouse {
-            let _ = execute!(out, DisableMouseCapture);
-        }
-        let _ = execute!(
-            out,
-            crossterm::cursor::SetCursorStyle::DefaultUserShape,
-            DisableBracketedPaste,
-            LeaveAlternateScreen,
-            crossterm::cursor::Show
-        );
-        let _ = out.write_all(b"\x1b[23;0t");
-        let _ = out.flush();
+        leave_terminal(&mut io::stdout(), self.mouse);
         let _ = disable_raw_mode();
+    }
+}
+
+type PanicHook = Arc<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+/// Leaves the terminal when the thread that runs the UI panics, so the message
+/// is readable, and hands the panic on to the hook that was there before. A
+/// panic in a background task leaves the screen alone; dropping the guard
+/// restores the previous hook.
+struct PanicGuard {
+    previous: PanicHook,
+}
+
+impl PanicGuard {
+    fn enter(mouse: bool) -> Self {
+        Self::install(move || {
+            leave_terminal(&mut io::stdout(), mouse);
+            let _ = disable_raw_mode();
+        })
+    }
+
+    fn install(restore: impl Fn() + Send + Sync + 'static) -> Self {
+        let ui_thread = std::thread::current().id();
+        let previous: PanicHook = Arc::from(std::panic::take_hook());
+        let chained = Arc::clone(&previous);
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().id() == ui_thread {
+                restore();
+            }
+            chained(info);
+        }));
+        Self { previous }
+    }
+}
+
+impl Drop for PanicGuard {
+    fn drop(&mut self) {
+        let previous = Arc::clone(&self.previous);
+        std::panic::set_hook(Box::new(move |info| previous(info)));
     }
 }
 
@@ -117,6 +160,7 @@ pub fn run(
         None => None,
     };
     let guard = TermGuard::enter(mouse)?;
+    let hook = PanicGuard::enter(mouse);
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     // The alternate screen starts empty; ratatui's `clear()` would also query the
@@ -133,6 +177,7 @@ pub fn run(
     app.save_session();
     drop(terminal);
     drop(guard);
+    drop(hook);
     if let Some(l) = &mut log {
         let _ = l.flush();
     }
@@ -338,5 +383,77 @@ pub mod bench {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leave_terminal_restores_the_screen() {
+        let mut out = Vec::new();
+        leave_terminal(&mut out, false);
+        let text = String::from_utf8(out).unwrap();
+        for code in ["\x1b[?1049l", "\x1b[?2004l", "\x1b[23;0t"] {
+            assert!(text.contains(code), "{code:?} missing from {text:?}");
+        }
+        assert!(text.ends_with("\x1b[23;0t"), "{text:?}");
+        assert!(
+            !text.contains("\x1b[?100"),
+            "mouse was never captured: {text:?}"
+        );
+
+        let mut out = Vec::new();
+        leave_terminal(&mut out, true);
+        let text = String::from_utf8(out).unwrap();
+        for code in ["\x1b[?1006l", "\x1b[?1000l", "\x1b[?1049l"] {
+            assert!(text.contains(code), "{code:?} missing from {text:?}");
+        }
+    }
+
+    #[test]
+    fn panic_hook_leaves_the_terminal_for_the_ui_thread_only() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        fn probe() {
+            let _ = std::panic::catch_unwind(|| panic!("probe"));
+        }
+
+        let original = std::panic::take_hook();
+        let chained = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&chained);
+        std::panic::set_hook(Box::new(move |_| {
+            seen.store(true, Ordering::SeqCst);
+        }));
+
+        let restored = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&restored);
+        let guard = PanicGuard::install(move || flag.store(true, Ordering::SeqCst));
+
+        std::thread::spawn(probe).join().unwrap();
+        let other_thread = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+        probe();
+        let ui_thread = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+
+        drop(guard);
+        restored.store(false, Ordering::SeqCst);
+        chained.store(false, Ordering::SeqCst);
+        probe();
+        let after_drop = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+
+        std::panic::set_hook(original);
+        assert_eq!(other_thread, (false, true));
+        assert_eq!(ui_thread, (true, true));
+        assert_eq!(after_drop, (false, true));
     }
 }

@@ -11,6 +11,7 @@ use ratatui::layout::Rect;
 use sendito_core::complete::FieldNode;
 use sendito_core::model::*;
 use sendito_core::vars::{Scope, VarValue};
+use sendito_pipeline::human_size;
 use sendito_store::collection::{name_of, parent_rel};
 use sendito_store::env::COLLECTION_ENV;
 use sendito_store::history::HistoryEntry;
@@ -5515,16 +5516,6 @@ pub fn display_path(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-pub fn human_size(n: u64) -> String {
-    if n < 1024 {
-        format!("{n} B")
-    } else if n < 1024 * 1024 {
-        format!("{:.1} KB", n as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
-    }
-}
-
 fn ms(d: Option<Duration>) -> String {
     d.map(|d| format!("{:.1} ms", d.as_secs_f64() * 1000.0))
         .unwrap_or_else(|| "—".into())
@@ -6131,418 +6122,416 @@ impl App {
     fn overlay_key_inner(&mut self, ov: &mut Overlay, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match ov {
-            Overlay::Report(r) => match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    if let Some(m) = r.close_status.clone() {
-                        self.set_status(m, StatusKind::Ok);
-                    }
-                    false
+            Overlay::Report(r) => self.report_key(r, key),
+            Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
+            Overlay::Settings { sel } => self.settings_key(sel, key),
+            Overlay::Confirm(c) => self.confirm_key(c, key),
+            Overlay::Picker(p) => self.picker_key(p, key),
+            Overlay::Palette(p) => self.palette_key(p, key),
+            Overlay::Prompt(p) => self.prompt_key(p, key, ctrl),
+            Overlay::Import(i) => self.import_key(i, key, ctrl),
+            Overlay::Env(e) => self.env_key(e, key, ctrl),
+            Overlay::Mcp(m) => self.mcp_key(m, key, ctrl),
+        }
+    }
+
+    fn report_key(&mut self, r: &mut Report, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                if let Some(m) = r.close_status.clone() {
+                    self.set_status(m, StatusKind::Ok);
                 }
-                KeyCode::Char('y') => {
-                    self.clipboard.set(r.copy_text.clone(), false);
-                    self.osc52.push(r.copy_text.clone());
-                    r.copied = true;
-                    self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
-                    true
+                false
+            }
+            KeyCode::Char('y') => {
+                self.clipboard.set(r.copy_text.clone(), false);
+                self.osc52.push(r.copy_text.clone());
+                r.copied = true;
+                self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                r.viewer.move_cursor(-1);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                r.viewer.move_cursor(1);
+                true
+            }
+            KeyCode::PageUp => {
+                r.viewer.page(-1);
+                true
+            }
+            KeyCode::PageDown => {
+                r.viewer.page(1);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn help_key(&mut self, viewer: &mut Viewer, filter: &mut TextEditor, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => false,
+            KeyCode::Up => {
+                viewer.move_cursor(-1);
+                true
+            }
+            KeyCode::Down => {
+                viewer.move_cursor(1);
+                true
+            }
+            KeyCode::PageUp => {
+                viewer.page(-1);
+                true
+            }
+            KeyCode::PageDown => {
+                viewer.page(1);
+                true
+            }
+            KeyCode::F(1) => false,
+            _ => {
+                if filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
+                    let q = filter.text();
+                    viewer.search(&q);
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    r.viewer.move_cursor(-1);
-                    true
+                if key.code == KeyCode::Enter {
+                    viewer.next_match(1);
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    r.viewer.move_cursor(1);
-                    true
-                }
-                KeyCode::PageUp => {
-                    r.viewer.page(-1);
-                    true
-                }
-                KeyCode::PageDown => {
-                    r.viewer.page(1);
-                    true
-                }
-                _ => true,
-            },
-            Overlay::Help { viewer, filter } => match key.code {
+                true
+            }
+        }
+    }
+
+    fn settings_key(&mut self, sel: &mut usize, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                *sel = crate::list::step(*sel, -1, SETTINGS.len());
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                *sel = crate::list::step(*sel, 1, SETTINGS.len());
+                true
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.change_setting(SETTINGS[*sel].0, -1);
+                true
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+                self.change_setting(SETTINGS[*sel].0, 1);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn confirm_key(&mut self, c: &mut Confirm, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                // Cancelling is an answer too: it is the last button, and
+                // it restores whatever the dialog was guarding (an editor,
+                // a tab).
+                let action = c.action.clone();
+                let cancel = c.buttons.len().saturating_sub(1);
+                self.confirm(action, cancel);
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
+                c.sel = crate::list::step(c.sel, -1, c.buttons.len());
+                true
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+                c.sel = crate::list::step(c.sel, 1, c.buttons.len());
+                true
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let (action, sel) = (c.action.clone(), c.sel);
+                self.confirm(action, sel);
+                false
+            }
+            KeyCode::Char('y') if c.buttons.len() == 2 => {
+                let action = c.action.clone();
+                self.confirm(action, 0);
+                false
+            }
+            KeyCode::Char('s') if c.buttons.len() == 3 => {
+                let action = c.action.clone();
+                self.confirm(action, 0);
+                false
+            }
+            KeyCode::Char('d') if c.buttons.len() == 3 => {
+                let action = c.action.clone();
+                self.confirm(action, 1);
+                false
+            }
+            KeyCode::Char('n') if c.buttons.len() == 2 => {
+                let action = c.action.clone();
+                self.confirm(action, 1);
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn picker_key(&mut self, p: &mut Picker, key: KeyEvent) -> bool {
+        {
+            let vis = p.visible();
+            match key.code {
                 KeyCode::Esc => false,
                 KeyCode::Up => {
-                    viewer.move_cursor(-1);
+                    p.sel = crate::list::step(p.sel, -1, vis.len());
                     true
                 }
                 KeyCode::Down => {
-                    viewer.move_cursor(1);
+                    p.sel = crate::list::step(p.sel, 1, vis.len());
                     true
                 }
                 KeyCode::PageUp => {
-                    viewer.page(-1);
+                    p.sel = crate::list::page(p.sel, -1, 10, vis.len());
                     true
                 }
                 KeyCode::PageDown => {
-                    viewer.page(1);
+                    p.sel = crate::list::page(p.sel, 1, 10, vis.len());
                     true
                 }
-                KeyCode::F(1) => false,
+                KeyCode::Enter => {
+                    if let Some(i) = p.selected() {
+                        let action = p.action.clone();
+                        let item = p.items[i].clone();
+                        let detail = p.details.get(i).cloned();
+                        self.pick(action, i, &item, detail);
+                    }
+                    false
+                }
                 _ => {
-                    if filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
-                        let q = filter.text();
-                        viewer.search(&q);
-                    }
-                    if key.code == KeyCode::Enter {
-                        viewer.next_match(1);
+                    if p.filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
+                        p.sel = 0;
                     }
                     true
                 }
-            },
-            Overlay::Settings { sel } => match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => false,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    *sel = crate::list::step(*sel, -1, SETTINGS.len());
+            }
+        }
+    }
+
+    fn palette_key(&mut self, p: &mut Palette, key: KeyEvent) -> bool {
+        {
+            let vis = p.visible();
+            match key.code {
+                KeyCode::Esc => false,
+                KeyCode::Up => {
+                    p.sel = crate::list::step(p.sel, -1, vis.len());
+                    p.armed = true;
                     true
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    *sel = crate::list::step(*sel, 1, SETTINGS.len());
-                    true
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    self.change_setting(SETTINGS[*sel].0, -1);
-                    true
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-                    self.change_setting(SETTINGS[*sel].0, 1);
-                    true
-                }
-                _ => true,
-            },
-            Overlay::Confirm(c) => match key.code {
-                KeyCode::Esc => {
-                    // Cancelling is an answer too: it is the last button, and
-                    // it restores whatever the dialog was guarding (an editor,
-                    // a tab).
-                    let action = c.action.clone();
-                    let cancel = c.buttons.len().saturating_sub(1);
-                    self.confirm(action, cancel);
-                    false
-                }
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
-                    c.sel = crate::list::step(c.sel, -1, c.buttons.len());
-                    true
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
-                    c.sel = crate::list::step(c.sel, 1, c.buttons.len());
-                    true
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    let (action, sel) = (c.action.clone(), c.sel);
-                    self.confirm(action, sel);
-                    false
-                }
-                KeyCode::Char('y') if c.buttons.len() == 2 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 0);
-                    false
-                }
-                KeyCode::Char('s') if c.buttons.len() == 3 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 0);
-                    false
-                }
-                KeyCode::Char('d') if c.buttons.len() == 3 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 1);
-                    false
-                }
-                KeyCode::Char('n') if c.buttons.len() == 2 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 1);
-                    false
-                }
-                _ => true,
-            },
-            Overlay::Picker(p) => {
-                let vis = p.visible();
-                match key.code {
-                    KeyCode::Esc => false,
-                    KeyCode::Up => {
-                        p.sel = crate::list::step(p.sel, -1, vis.len());
-                        true
-                    }
-                    KeyCode::Down => {
+                KeyCode::Down | KeyCode::Tab => {
+                    // The first move highlights the first row.
+                    if p.armed {
                         p.sel = crate::list::step(p.sel, 1, vis.len());
-                        true
                     }
-                    KeyCode::PageUp => {
-                        p.sel = crate::list::page(p.sel, -1, 10, vis.len());
-                        true
+                    p.armed = true;
+                    true
+                }
+                KeyCode::Enter if !p.armed => true,
+                KeyCode::Enter => {
+                    let text = p.input.text();
+                    let t = text.trim();
+                    if t.starts_with(':')
+                        && let Some(i) = vis.get(p.sel)
+                        && let PaletteItem::Env(e) = &p.items[*i].0
+                    {
+                        let e = e.clone();
+                        self.set_env(e);
+                        return false;
                     }
-                    KeyCode::PageDown => {
-                        p.sel = crate::list::page(p.sel, 1, 10, vis.len());
-                        true
-                    }
-                    KeyCode::Enter => {
-                        if let Some(i) = p.selected() {
-                            let action = p.action.clone();
-                            let item = p.items[i].clone();
-                            let detail = p.details.get(i).cloned();
-                            self.pick(action, i, &item, detail);
-                        }
-                        false
-                    }
-                    _ => {
-                        if p.filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed
+                    if t.starts_with(':') {
+                        // A full command with arguments runs as typed; otherwise the selection.
+                        let typed_word = t
+                            .trim_start_matches(':')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("");
+                        let exact = COMMANDS.iter().any(|(c, _)| {
+                            c.trim_start_matches(':').split_whitespace().next() == Some(typed_word)
+                        });
+                        if exact || vis.is_empty() {
+                            self.run_command(t);
+                        } else if let Some(i) = vis.get(p.sel)
+                            && let PaletteItem::Command(c, _) = p.items[*i].0
                         {
-                            p.sel = 0;
+                            let word = c.split_whitespace().next().unwrap_or(c);
+                            if c.contains('<') || c.contains('[') {
+                                let mut input = TextEditor::single(&format!("{word} "));
+                                input.move_to_end();
+                                p.input = input;
+                                return true;
+                            }
+                            self.run_command(word);
                         }
-                        true
+                        return false;
                     }
+                    if let Some(i) = vis.get(p.sel) {
+                        let item = p.items[*i].0.clone();
+                        match item {
+                            PaletteItem::Action(a) => self.dispatch(a),
+                            PaletteItem::Open(rel) => {
+                                self.tree.select_rel(&rel);
+                                self.open_request(&rel);
+                            }
+                            PaletteItem::Env(e) => self.set_env(e),
+                            PaletteItem::Command(c, _) => self.run_command(c),
+                        }
+                    }
+                    false
+                }
+                _ => {
+                    let out = p.input.handle_key(&key, false, &mut self.clipboard);
+                    if out == Outcome::Changed {
+                        p.sel = 0;
+                        p.armed = !p.input.text().trim().is_empty();
+                    }
+                    // Backspace on an empty input closes the palette.
+                    !(out == Outcome::Handled
+                        && key.code == KeyCode::Backspace
+                        && p.input.text().is_empty())
                 }
             }
-            Overlay::Palette(p) => {
-                let vis = p.visible();
+        }
+    }
+
+    fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            let search = p.action == PromptAction::Search;
+            // The open option list of a choice row takes the keys first.
+            if let Some(hl) = p.open {
+                let n = p
+                    .choices
+                    .get(p.focus.wrapping_sub(1))
+                    .map_or(0, |c| c.1.len());
                 match key.code {
-                    KeyCode::Esc => false,
-                    KeyCode::Up => {
-                        p.sel = crate::list::step(p.sel, -1, vis.len());
-                        p.armed = true;
-                        true
+                    KeyCode::Up => p.open = Some((hl + n.max(1) - 1) % n.max(1)),
+                    KeyCode::Down | KeyCode::Tab => p.open = Some((hl + 1) % n.max(1)),
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(c) = p.choices.get_mut(p.focus - 1) {
+                            c.2 = hl.min(n.saturating_sub(1));
+                        }
+                        p.open = None;
+                        // Back to the name, so the next Enter confirms.
+                        p.focus = 0;
                     }
-                    KeyCode::Down | KeyCode::Tab => {
-                        // The first move highlights the first row.
-                        if p.armed {
-                            p.sel = crate::list::step(p.sel, 1, vis.len());
-                        }
-                        p.armed = true;
-                        true
-                    }
-                    KeyCode::Enter if !p.armed => true,
-                    KeyCode::Enter => {
-                        let text = p.input.text();
-                        let t = text.trim();
-                        if t.starts_with(':')
-                            && let Some(i) = vis.get(p.sel)
-                            && let PaletteItem::Env(e) = &p.items[*i].0
-                        {
-                            let e = e.clone();
-                            self.set_env(e);
-                            return false;
-                        }
-                        if t.starts_with(':') {
-                            // A full command with arguments runs as typed; otherwise the selection.
-                            let typed_word = t
-                                .trim_start_matches(':')
-                                .split_whitespace()
-                                .next()
-                                .unwrap_or("");
-                            let exact = COMMANDS.iter().any(|(c, _)| {
-                                c.trim_start_matches(':').split_whitespace().next()
-                                    == Some(typed_word)
-                            });
-                            if exact || vis.is_empty() {
-                                self.run_command(t);
-                            } else if let Some(i) = vis.get(p.sel)
-                                && let PaletteItem::Command(c, _) = p.items[*i].0
-                            {
-                                let word = c.split_whitespace().next().unwrap_or(c);
-                                if c.contains('<') || c.contains('[') {
-                                    let mut input = TextEditor::single(&format!("{word} "));
-                                    input.move_to_end();
-                                    p.input = input;
-                                    return true;
-                                }
-                                self.run_command(word);
-                            }
-                            return false;
-                        }
-                        if let Some(i) = vis.get(p.sel) {
-                            let item = p.items[*i].0.clone();
-                            match item {
-                                PaletteItem::Action(a) => self.dispatch(a),
-                                PaletteItem::Open(rel) => {
-                                    self.tree.select_rel(&rel);
-                                    self.open_request(&rel);
-                                }
-                                PaletteItem::Env(e) => self.set_env(e),
-                                PaletteItem::Command(c, _) => self.run_command(c),
-                            }
-                        }
-                        false
-                    }
-                    _ => {
-                        let out = p.input.handle_key(&key, false, &mut self.clipboard);
-                        if out == Outcome::Changed {
-                            p.sel = 0;
-                            p.armed = !p.input.text().trim().is_empty();
-                        }
-                        // Backspace on an empty input closes the palette.
-                        !(out == Outcome::Handled
-                            && key.code == KeyCode::Backspace
-                            && p.input.text().is_empty())
-                    }
+                    KeyCode::Esc => p.open = None,
+                    _ => {}
                 }
+                return true;
             }
-            Overlay::Prompt(p) => {
-                let search = p.action == PromptAction::Search;
-                // The open option list of a choice row takes the keys first.
-                if let Some(hl) = p.open {
-                    let n = p
-                        .choices
-                        .get(p.focus.wrapping_sub(1))
-                        .map_or(0, |c| c.1.len());
-                    match key.code {
-                        KeyCode::Up => p.open = Some((hl + n.max(1) - 1) % n.max(1)),
-                        KeyCode::Down | KeyCode::Tab => p.open = Some((hl + 1) % n.max(1)),
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            if let Some(c) = p.choices.get_mut(p.focus - 1) {
-                                c.2 = hl.min(n.saturating_sub(1));
-                            }
-                            p.open = None;
-                            // Back to the name, so the next Enter confirms.
-                            p.focus = 0;
-                        }
-                        KeyCode::Esc => p.open = None,
-                        _ => {}
+            // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
+            let confirm_any =
+                matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
+            if confirm_any && !search {
+                return match self.prompt_ok(p) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        p.error = Some(e);
+                        true
                     }
-                    return true;
+                };
+            }
+            match key.code {
+                // A "new environment" prompt was opened from the env
+                // editor, which is parked behind it: cancelling returns
+                // to the editor with its changes intact.
+                KeyCode::Esc => {
+                    if matches!(p.action, PromptAction::NewEnv)
+                        && let Some(ed) = self.parked_env.take()
+                    {
+                        self.overlay = Some(Overlay::Env(ed));
+                    }
+                    false
                 }
-                // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
-                let confirm_any =
-                    matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
-                if confirm_any && !search {
-                    return match self.prompt_ok(p) {
+                // Space opens a choice row's list; Enter always confirms.
+                KeyCode::Char(' ') if p.focus > 0 => {
+                    p.open = p.choices.get(p.focus - 1).map(|c| c.2);
+                    true
+                }
+                KeyCode::Tab | KeyCode::Down if !p.choices.is_empty() => {
+                    p.focus = (p.focus + 1) % (p.choices.len() + 1);
+                    true
+                }
+                KeyCode::BackTab | KeyCode::Up if !p.choices.is_empty() => {
+                    p.focus = (p.focus + p.choices.len()) % (p.choices.len() + 1);
+                    true
+                }
+                KeyCode::Left | KeyCode::Right if p.focus > 0 => {
+                    if let Some((_, opts, i)) = p.choices.get_mut(p.focus - 1) {
+                        let dir: isize = if key.code == KeyCode::Left { -1 } else { 1 };
+                        *i = crate::list::cycle(*i, dir, opts.len().max(1));
+                    }
+                    true
+                }
+                KeyCode::Enter => {
+                    if search {
+                        let q = p.input.text();
+                        let mut n = 0;
+                        self.with_viewer(|v| n = v.search(&q));
+                        self.focus = Focus::RespBody;
+                        if n == 0 && !q.is_empty() {
+                            self.set_status(format!("no match for \"{q}\""), StatusKind::Warn);
+                        } else if n > 0 {
+                            self.set_status(
+                                format!("{n} match(es) · n/N next/previous"),
+                                StatusKind::Info,
+                            );
+                        }
+                        return false;
+                    }
+                    match self.prompt_ok(p) {
                         Ok(()) => false,
                         Err(e) => {
                             p.error = Some(e);
                             true
                         }
-                    };
+                    }
                 }
-                match key.code {
-                    // A "new environment" prompt was opened from the env
-                    // editor, which is parked behind it: cancelling returns
-                    // to the editor with its changes intact.
-                    KeyCode::Esc => {
-                        if matches!(p.action, PromptAction::NewEnv)
-                            && let Some(ed) = self.parked_env.take()
-                        {
-                            self.overlay = Some(Overlay::Env(ed));
-                        }
-                        false
+                _ => {
+                    if p.focus == 0 {
+                        p.input.handle_key(&key, false, &mut self.clipboard);
+                        p.error = None;
+                        p.note = None;
                     }
-                    // Space opens a choice row's list; Enter always confirms.
-                    KeyCode::Char(' ') if p.focus > 0 => {
-                        p.open = p.choices.get(p.focus - 1).map(|c| c.2);
-                        true
-                    }
-                    KeyCode::Tab | KeyCode::Down if !p.choices.is_empty() => {
-                        p.focus = (p.focus + 1) % (p.choices.len() + 1);
-                        true
-                    }
-                    KeyCode::BackTab | KeyCode::Up if !p.choices.is_empty() => {
-                        p.focus = (p.focus + p.choices.len()) % (p.choices.len() + 1);
-                        true
-                    }
-                    KeyCode::Left | KeyCode::Right if p.focus > 0 => {
-                        if let Some((_, opts, i)) = p.choices.get_mut(p.focus - 1) {
-                            let dir: isize = if key.code == KeyCode::Left { -1 } else { 1 };
-                            *i = crate::list::cycle(*i, dir, opts.len().max(1));
-                        }
-                        true
-                    }
-                    KeyCode::Enter => {
-                        if search {
-                            let q = p.input.text();
-                            let mut n = 0;
-                            self.with_viewer(|v| n = v.search(&q));
-                            self.focus = Focus::RespBody;
-                            if n == 0 && !q.is_empty() {
-                                self.set_status(format!("no match for \"{q}\""), StatusKind::Warn);
-                            } else if n > 0 {
-                                self.set_status(
-                                    format!("{n} match(es) · n/N next/previous"),
-                                    StatusKind::Info,
-                                );
-                            }
-                            return false;
-                        }
-                        match self.prompt_ok(p) {
-                            Ok(()) => false,
-                            Err(e) => {
-                                p.error = Some(e);
-                                true
-                            }
-                        }
-                    }
-                    _ => {
-                        if p.focus == 0 {
-                            p.input.handle_key(&key, false, &mut self.clipboard);
-                            p.error = None;
-                            p.note = None;
-                        }
-                        true
-                    }
+                    true
                 }
             }
-            Overlay::Import(i) => {
-                let submit = matches!(key.code, KeyCode::F(5))
-                    || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
-                if key.code == KeyCode::Esc {
-                    return false;
-                }
-                if submit {
-                    let text = i.input.text();
-                    return match self.do_import(&text) {
-                        Ok(()) => false,
-                        Err(e) => {
-                            i.error = Some(e);
-                            true
-                        }
-                    };
-                }
-                i.input.handle_key(&key, false, &mut self.clipboard);
-                i.error = None;
-                true
+        }
+    }
+
+    fn import_key(&mut self, i: &mut Import, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            let submit = matches!(key.code, KeyCode::F(5))
+                || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
+            if key.code == KeyCode::Esc {
+                return false;
             }
-            Overlay::Env(e) => {
-                if key.code == KeyCode::Esc {
-                    if e.dirty {
-                        // Keep the editor open behind the confirm dialog.
-                        let ed = std::mem::replace(
-                            e,
-                            EnvEditor {
-                                envs: vec![],
-                                current: 0,
-                                table: EnvEditor::table(),
-                                dirty: false,
-                                error: None,
-                            },
-                        );
-                        self.parked_env = Some(ed);
-                        self.overlay = Some(Overlay::Confirm(Confirm {
-                            title: "Unsaved environment changes".into(),
-                            message: "Save the changes to this environment?".into(),
-                            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
-                            sel: 0,
-                            action: ConfirmAction::EnvClose,
-                        }));
-                        return false;
+            if submit {
+                let text = i.input.text();
+                return match self.do_import(&text) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        i.error = Some(e);
+                        true
                     }
-                    return false;
-                }
-                if ctrl && key.code == KeyCode::Char('s') {
-                    let mut ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
-                    self.save_env_editor(&mut ed);
-                    *e = ed;
-                    return true;
-                }
-                if ctrl && key.code == KeyCode::Char('n') {
+                };
+            }
+            i.input.handle_key(&key, false, &mut self.clipboard);
+            i.error = None;
+            true
+        }
+    }
+
+    fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            if key.code == KeyCode::Esc {
+                if e.dirty {
+                    // Keep the editor open behind the confirm dialog.
                     let ed = std::mem::replace(
                         e,
                         EnvEditor {
@@ -6554,79 +6543,99 @@ impl App {
                         },
                     );
                     self.parked_env = Some(ed);
-                    self.overlay = Some(Overlay::Prompt(Prompt::new(
-                        "New environment",
-                        "Name",
-                        TextEditor::single(""),
-                        vec![],
-                        PromptAction::NewEnv,
-                    )));
+                    self.overlay = Some(Overlay::Confirm(Confirm {
+                        title: "Unsaved environment changes".into(),
+                        message: "Save the changes to this environment?".into(),
+                        buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                        sel: 0,
+                        action: ConfirmAction::EnvClose,
+                    }));
                     return false;
                 }
-                if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
-                    if e.dirty {
-                        e.error = Some("save (Ctrl+S) or discard changes before switching".into());
-                        return true;
-                    }
-                    let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
-                    e.current = crate::list::cycle(e.current, d, e.envs.len());
-                    let mut ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
-                    self.load_env_into(&mut ed);
-                    *e = ed;
-                    return true;
-                }
-                if ctrl && key.code == KeyCode::Char('d') {
-                    if e.table.delete_row() {
-                        e.dirty = true;
-                    }
-                    return true;
-                }
-                if key.code == KeyCode::Enter {
-                    e.table.next_cell();
-                    return true;
-                }
-                match e.table.handle_key(&key, false, &mut self.clipboard) {
-                    TableOutcome::Changed => e.dirty = true,
-                    TableOutcome::Leave => return false,
-                    _ => {}
-                }
-                true
+                return false;
             }
-            Overlay::Mcp(m) => {
-                if key.code == KeyCode::Esc {
-                    if m.dirty {
-                        // Keep the editor open behind the confirm dialog.
-                        let ed = std::mem::replace(
-                            m,
-                            McpEditor {
-                                table: McpEditor::table(),
-                                dirty: false,
-                                error: None,
-                            },
-                        );
-                        self.parked_mcp = Some(ed);
-                        self.overlay = Some(Overlay::Confirm(Confirm {
-                            title: "Unsaved MCP server changes".into(),
-                            message: "Save the changes to the project config?".into(),
-                            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
-                            sel: 0,
-                            action: ConfirmAction::McpClose,
-                        }));
-                        return false;
-                    }
-                    return false;
+            if ctrl && key.code == KeyCode::Char('s') {
+                let mut ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.save_env_editor(&mut ed);
+                *e = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('n') {
+                let ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.parked_env = Some(ed);
+                self.overlay = Some(Overlay::Prompt(Prompt::new(
+                    "New environment",
+                    "Name",
+                    TextEditor::single(""),
+                    vec![],
+                    PromptAction::NewEnv,
+                )));
+                return false;
+            }
+            if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                if e.dirty {
+                    e.error = Some("save (Ctrl+S) or discard changes before switching".into());
+                    return true;
                 }
-                if ctrl && key.code == KeyCode::Char('s') {
-                    let mut ed = std::mem::replace(
+                let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
+                e.current = crate::list::cycle(e.current, d, e.envs.len());
+                let mut ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.load_env_into(&mut ed);
+                *e = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('d') {
+                if e.table.delete_row() {
+                    e.dirty = true;
+                }
+                return true;
+            }
+            if key.code == KeyCode::Enter {
+                e.table.next_cell();
+                return true;
+            }
+            match e.table.handle_key(&key, false, &mut self.clipboard) {
+                TableOutcome::Changed => e.dirty = true,
+                TableOutcome::Leave => return false,
+                _ => {}
+            }
+            true
+        }
+    }
+
+    fn mcp_key(&mut self, m: &mut McpEditor, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            if key.code == KeyCode::Esc {
+                if m.dirty {
+                    // Keep the editor open behind the confirm dialog.
+                    let ed = std::mem::replace(
                         m,
                         McpEditor {
                             table: McpEditor::table(),
@@ -6634,34 +6643,54 @@ impl App {
                             error: None,
                         },
                     );
-                    self.save_mcp_editor(&mut ed);
-                    *m = ed;
-                    return true;
+                    self.parked_mcp = Some(ed);
+                    self.overlay = Some(Overlay::Confirm(Confirm {
+                        title: "Unsaved MCP server changes".into(),
+                        message: "Save the changes to the project config?".into(),
+                        buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                        sel: 0,
+                        action: ConfirmAction::McpClose,
+                    }));
+                    return false;
                 }
-                if ctrl && key.code == KeyCode::Char('d') {
-                    if m.table.delete_row() {
-                        m.dirty = true;
-                    }
-                    return true;
-                }
-                if ctrl && key.code == KeyCode::Char('n') {
-                    // The trailing row is the one typed into to add a server.
-                    m.table.sel_row = m.table.rows.len();
-                    m.table.sel_col = 0;
-                    m.table.ensure_row();
-                    return true;
-                }
-                if key.code == KeyCode::Enter || key.code == KeyCode::Tab {
-                    m.table.next_cell();
-                    return true;
-                }
-                match m.table.handle_key(&key, false, &mut self.clipboard) {
-                    TableOutcome::Changed => m.dirty = true,
-                    TableOutcome::Leave => return false,
-                    _ => {}
-                }
-                true
+                return false;
             }
+            if ctrl && key.code == KeyCode::Char('s') {
+                let mut ed = std::mem::replace(
+                    m,
+                    McpEditor {
+                        table: McpEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.save_mcp_editor(&mut ed);
+                *m = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('d') {
+                if m.table.delete_row() {
+                    m.dirty = true;
+                }
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('n') {
+                // The trailing row is the one typed into to add a server.
+                m.table.sel_row = m.table.rows.len();
+                m.table.sel_col = 0;
+                m.table.ensure_row();
+                return true;
+            }
+            if key.code == KeyCode::Enter || key.code == KeyCode::Tab {
+                m.table.next_cell();
+                return true;
+            }
+            match m.table.handle_key(&key, false, &mut self.clipboard) {
+                TableOutcome::Changed => m.dirty = true,
+                TableOutcome::Leave => return false,
+                _ => {}
+            }
+            true
         }
     }
 
