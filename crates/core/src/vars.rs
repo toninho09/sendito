@@ -14,6 +14,15 @@ use crate::template::{self, Segment};
 
 pub const MAX_DEPTH: usize = 8;
 
+/// The longest text one render produces. Values that reference each other
+/// several times grow fast (8 levels of 10 references is 10^8 copies); a
+/// reference that would go past this limit stays unresolved.
+pub const MAX_RENDERED: usize = 1024 * 1024;
+
+/// Results of one top-level render, by (name, depth): a value referenced many
+/// times is resolved once.
+type Memo = HashMap<(String, usize), Option<Rendered>>;
+
 /// Placeholder shown instead of secret values.
 pub const MASK: &str = "••••••";
 
@@ -157,10 +166,20 @@ impl Scope {
 
     /// Fully resolves one variable.
     pub fn lookup(&self, name: &str) -> Option<Rendered> {
-        self.lookup_depth(name, 0)
+        self.lookup_depth(name, 0, &mut Memo::new())
     }
 
-    fn lookup_depth(&self, name: &str, depth: usize) -> Option<Rendered> {
+    fn lookup_depth(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        let key = (name.to_string(), depth);
+        if let Some(r) = memo.get(&key) {
+            return r.clone();
+        }
+        let r = self.lookup_uncached(name, depth, memo);
+        memo.insert(key, r.clone());
+        r
+    }
+
+    fn lookup_uncached(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
         if let Some(rest) = name.strip_prefix('$')
             && let Some(v) = self.dynamic_value(rest)
         {
@@ -174,7 +193,7 @@ impl Scope {
         if depth >= MAX_DEPTH {
             return None;
         }
-        let mut r = self.render_depth(&v.value, depth + 1);
+        let mut r = self.render_depth(&v.value, depth + 1, memo);
         r.secret |= v.secret;
         Some(r)
     }
@@ -192,10 +211,10 @@ impl Scope {
 
     /// Renders a template, replacing every resolvable placeholder.
     pub fn render(&self, s: &str) -> Rendered {
-        self.render_depth(s, 0)
+        self.render_depth(s, 0, &mut Memo::new())
     }
 
-    fn render_depth(&self, s: &str, depth: usize) -> Rendered {
+    fn render_depth(&self, s: &str, depth: usize, memo: &mut Memo) -> Rendered {
         if !s.contains("{{") {
             return Rendered {
                 text: s.to_string(),
@@ -206,15 +225,15 @@ impl Scope {
         for seg in template::parse(s) {
             match seg {
                 Segment::Text(t) => out.text.push_str(t),
-                Segment::Var { name, span } => match self.lookup_depth(name, depth) {
-                    Some(r) => {
+                Segment::Var { name, span } => match self.lookup_depth(name, depth, memo) {
+                    Some(r) if out.text.len() + r.text.len() <= MAX_RENDERED => {
                         out.text.push_str(&r.text);
                         out.secret |= r.secret;
                         for u in r.unresolved {
                             push_unique(&mut out.unresolved, u);
                         }
                     }
-                    None => {
+                    _ => {
                         out.text.push_str(&s[span]);
                         push_unique(&mut out.unresolved, name.to_string());
                     }
@@ -392,6 +411,28 @@ pub fn scrub(s: &str, secrets: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn values_that_reference_each_other_many_times_render_fast_and_bounded() {
+        // v0 = "x"; vN = ten references to vN-1: 10^7 copies of "x" in v7.
+        let mut vars = BTreeMap::new();
+        vars.insert("v0".to_string(), VarValue::plain("x"));
+        for n in 1..8 {
+            vars.insert(
+                format!("v{n}"),
+                VarValue::plain(format!("{{{{v{}}}}}", n - 1).repeat(10)),
+            );
+        }
+        let s = Scope::new().with_layer("env", vars);
+        let started = std::time::Instant::now();
+        let r = s.render("{{v5}}");
+        assert_eq!(r.text.len(), 100_000);
+        assert!(r.unresolved.is_empty());
+        let r = s.render("{{v7}}");
+        assert!(r.text.len() <= MAX_RENDERED + 64, "{}", r.text.len());
+        assert!(r.unresolved.iter().any(|u| u.starts_with('v')));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
 
     #[test]
     fn secret_values_and_scrub_bytes() {

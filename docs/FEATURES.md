@@ -146,8 +146,9 @@ The wire rules are exact and spelled out in
 * **Cookie jar** (opt-in): RFC 6265 with the public suffix list, stored in a
   private `0600` file with a cross-process lock and atomic replacement, isolated
   per environment. Secure cookies require HTTPS; public-suffix `Domain`
-  attributes are rejected. **Redirects are not followed while the jar is
-  enabled**, so a forwarded `Cookie` cannot escape its scope.
+  attributes are rejected. On a redirect, **each hop gets the jar's `Cookie`
+  for its own URL** (cookies the redirect response sets are stored first), so
+  a cookie does not leave its scope.
 
 **Watch**: `Ctrl+W m` or `:watch [seconds]` re-sends the active HTTP request on
 an interval (`[ui] watch_interval_s`, default 5, also in Settings). The status
@@ -265,7 +266,9 @@ from the request.
 * **Transports**:
   * **stdio** — a child process (`command`, `args`, `env` entries added to the
     inherited environment), one UTF-8 JSON object per line on stdin/stdout,
-    stderr shown in the log, killed when the request ends.
+    stderr shown in the log. When the request ends, its stdin is closed and
+    it is killed if it has not exited after 0.5 s. A stdout line that is not
+    JSON shows in the log as `stdout: …`.
   * **Streamable HTTP** — one POST per message (`Content-Type: application/json`,
     `Accept: application/json, text/event-stream`), configured extra headers,
     `Mcp-Session-Id` and `Mcp-Protocol-Version` sent after initialization, JSON
@@ -429,7 +432,8 @@ Full schema and the directory diagram: [FORMAT.md](../FORMAT.md).
 ## Import and export
 
 **Import** — `Ctrl+W i`, `:import [path]` or `sendito import <file|dir>`
-(`--into <folder>` to import into a subfolder):
+(`--into <folder>` to import into a subfolder; the CLI must run inside a
+collection):
 
 * **Postman Collection v2.1** — folders, requests (method, URL, query, headers,
   every body mode, basic / bearer / API-key auth with inheritance), collection
@@ -492,7 +496,10 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   one row without a border (WebSocket then shows a `WS` badge).
 * **Sidebar**: **Requests** (the tree, with `├ └` connectors, open-in-tab
   accent, filter with `/`, request and folder counts) or **History** (grouped
-  by day, status in colour). It can sit on the right and be resized.
+  by day, status in colour). It can sit on the right and be resized. While the
+  tree scrolls, the folders of the top row stay pinned above the list (at most
+  half its height, the last one underlined); a click on a pinned folder
+  selects it and scrolls the tree to it (`ui.sticky_folders`).
 * **Request tabs**: HTTP `Params · Headers · Body · Auth · Scripts · Options`;
   gRPC `Message · Metadata · Auth · Scripts · Options`; MCP
   `Tool · Args · Scripts · Options`, in the pane's top border. A tab shows its
@@ -637,11 +644,13 @@ path or text removes the key. Two rows open editors of their own.
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
 | Key bindings | `keymap.*` | Opens the keymap editor (`:keymap`) |
 | Sidebar position | `ui.sidebar` | `left` or `right` |
+| Pin folders while scrolling | `ui.sticky_folders` | Keep the folders of the top tree row pinned (default on) |
 | Mouse support | `ui.mouse` | Clicks, wheel, dragging tree items and borders |
 | Confirm quit with unsaved changes | `ui.confirm_quit` | Ask before quitting with unsaved tabs |
 | Record history | `history.enabled` | Keep sent requests in History |
 | History entries kept | `history.max_entries` | The oldest entries go first (1 or more) |
 | Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends (1 or more) |
+| Stream messages kept | `ui.stream_messages_kept` | Messages a gRPC or WebSocket stream keeps in the response; the oldest go first, the counts and sizes still cover all (1 or more, default 10000) |
 | HTTP request timeout | `http.timeout_ms` | When a request sets none (1 or more) |
 | gRPC deadline | `grpc.deadline_ms` | When a request sets none; 0 = none |
 | WebSocket handshake timeout | `websocket.timeout_ms` | When a request sets none; 0 = none |
@@ -745,8 +754,7 @@ knowing up front:
 * No JavaScript scripts; no HTTP/3 or gRPC-Web.
 * WebSocket: HTTP(S) CONNECT proxies only (no SOCKS, no `proxy = "env"`), no
   `permessage-deflate`, and `curl ws://…` is refused rather than imported.
-* gRPC ignores `[http] proxy`; OAuth endpoints ignore `[http.tls]` and the proxy.
-* Redirects are not followed while the cookie jar is enabled.
+* gRPC ignores `[http] proxy`.
 * `zstd` and stacked `Content-Encoding` are shown as received.
 * MCP: tools only (no resources or prompts), a session per list/call, no legacy
   HTTP+SSE and no server GET stream.

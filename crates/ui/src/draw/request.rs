@@ -47,6 +47,35 @@ pub(super) fn short_label(f: Field) -> &'static str {
     }
 }
 
+/// The size of the file at `path`, `None` when it is not a file. A result is
+/// kept for two seconds: the note is drawn on every frame, and a file on a
+/// slow mount must not hold up each one.
+fn file_size(path: &std::path::Path) -> Option<u64> {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    thread_local! {
+        static SEEN: std::cell::RefCell<HashMap<std::path::PathBuf, (Instant, Option<u64>)>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    SEEN.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if let Some((at, size)) = seen.get(path)
+            && at.elapsed() < Duration::from_secs(2)
+        {
+            return *size;
+        }
+        let size = std::fs::metadata(path)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len());
+        if seen.len() > 256 {
+            seen.clear();
+        }
+        seen.insert(path.to_path_buf(), (Instant::now(), size));
+        size
+    })
+}
+
 /// A note shown under a field: (text, is a warning). `editing`: a text cell
 /// of this field is selected, so a path may still be half typed.
 pub(super) fn field_note(
@@ -80,7 +109,7 @@ pub(super) fn field_note(
                             if p.enabled
                                 && !path.is_empty()
                                 && !path.contains("{{")
-                                && !sendito_store::env::expand(root, path).is_file() =>
+                                && file_size(&sendito_store::env::expand(root, path)).is_none() =>
                         {
                             Some(path.clone())
                         }
@@ -96,10 +125,8 @@ pub(super) fn field_note(
                         sendito_core::PartKind::File { path, .. }
                             if p.enabled && !path.is_empty() =>
                         {
-                            std::fs::metadata(sendito_store::env::expand(root, path))
-                                .ok()
-                                .filter(|m| m.is_file())
-                                .map(|m| (path.clone(), m.len()))
+                            file_size(&sendito_store::env::expand(root, path))
+                                .map(|len| (path.clone(), len))
                         }
                         _ => None,
                     })
@@ -629,9 +656,11 @@ fn editor_status(app: &mut App, theme: &Theme) -> (Spans, Option<(usize, usize)>
     };
     let mut out: Spans = Vec::new();
     let mut error = None;
-    if ed.highlight == crate::editor::Highlight::Json {
+    // A large body is not checked on every frame: its size is known
+    // without joining its lines.
+    if ed.highlight == crate::editor::Highlight::Json && ed.byte_len() <= 64 * 1024 {
         let text = ed.text();
-        if !text.trim().is_empty() && text.len() <= 64 * 1024 {
+        if !text.trim().is_empty() {
             // {{variables}} stand for values: check the JSON around them.
             let probe = sendito_core::template::spans(&text).into_iter().rev().fold(
                 text.clone(),
@@ -712,14 +741,14 @@ pub(super) fn draw_request(
             ],
             Kind::Ws => vec![
                 table_count(&e.headers),
-                usize::from(e.message.text().trim() != "[]" && !e.message.text().trim().is_empty()),
+                usize::from(!e.message.trimmed_is("[]") && !e.message.trimmed_is("")),
                 usize::from(e.auth_kind != sendito_core::AuthKind::None),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],
             Kind::Mcp => vec![
                 0,
-                usize::from(e.message.text().trim() != "{}" && !e.message.text().trim().is_empty()),
+                usize::from(!e.message.trimmed_is("{}") && !e.message.trimmed_is("")),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],

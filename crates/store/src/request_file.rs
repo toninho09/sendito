@@ -626,14 +626,21 @@ pub fn sniff_badge(text: &str) -> Option<String> {
         if l.starts_with('[') {
             break;
         }
-        let Some((k, v)) = l.split_once('=') else {
+        if !l.contains("kind") && !l.contains("method") {
+            continue;
+        }
+        // Each line is parsed as TOML, so quoted keys, either quote style and
+        // trailing comments read the same as in the full parser.
+        let Ok(table) = l.parse::<toml::Table>() else {
             continue;
         };
-        let v = v.trim().trim_matches('"').trim_matches('\'');
-        match k.trim() {
-            "kind" => kind = Some(v.to_string()),
-            "method" => method = Some(v.to_string()),
-            _ => {}
+        for (k, v) in table {
+            let Some(v) = v.as_str() else { continue };
+            match k.as_str() {
+                "kind" => kind = Some(v.to_string()),
+                "method" => method = Some(v.to_string()),
+                _ => {}
+            }
         }
     }
     match kind.as_deref() {
@@ -975,5 +982,11 @@ op = "exists"
         assert_eq!(sniff_badge("[package]\nname = \"x\""), None);
         assert_eq!(sniff_badge("kind = 'http'\n"), Some("GET".into()));
         assert_eq!(sniff_badge("x = 1"), None);
+        assert_eq!(sniff_badge("kind = \"http\" # main\n"), Some("GET".into()));
+        assert_eq!(
+            sniff_badge("\"kind\" = \"http\"\nmethod = 'post' # create\n"),
+            Some("POST".into())
+        );
+        assert_eq!(sniff_badge("kind = \"grpc\"   \n"), Some("GRPC".into()));
     }
 }

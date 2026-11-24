@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sendito_core::model::*;
 use sendito_core::resolve::{
@@ -107,6 +107,15 @@ impl Project {
             self.envs.keychain.clone(),
         ));
         problems
+    }
+
+    /// `[http] tls` and `[http] proxy` for OAuth requests.
+    pub fn oauth_network(&self) -> sendito_mcp::oauth::Network {
+        let o = self.send_options();
+        sendito_mcp::oauth::Network {
+            tls: o.tls,
+            proxy: o.proxy,
+        }
     }
 
     pub fn send_options(&self) -> SendOptions {
@@ -398,6 +407,7 @@ pub fn oauth_token_account(collection: &str, env: Option<&str>, identity: &str) 
 pub fn oauth_settings(
     identity: &sendito_store::config::OAuthIdentity,
     scope: &Scope,
+    network: sendito_mcp::oauth::Network,
 ) -> Result<sendito_mcp::oauth::OAuthSettings, String> {
     let render = |text: &str, field: &str, allow_secret: bool| {
         render_oauth_field(scope, text, field, allow_secret)
@@ -417,6 +427,7 @@ pub fn oauth_settings(
             .map(|s| render(s, "scope", false))
             .collect::<Result<_, _>>()?,
         registration_url: None,
+        network,
     })
 }
 
@@ -443,6 +454,7 @@ fn render_oauth_field(
 pub fn mcp_oauth_settings(
     auth: Option<&sendito_store::config::McpServerAuth>,
     scope: &Scope,
+    network: sendito_mcp::oauth::Network,
 ) -> Result<sendito_mcp::oauth::OAuthSettings, String> {
     let Some(sendito_store::config::McpServerAuth::Oauth {
         client_id,
@@ -453,7 +465,10 @@ pub fn mcp_oauth_settings(
         scopes,
     }) = auth
     else {
-        return Ok(Default::default());
+        return Ok(sendito_mcp::oauth::OAuthSettings {
+            network,
+            ..Default::default()
+        });
     };
     let opt = |v: &Option<String>, field: &str, allow_secret: bool| {
         v.as_deref()
@@ -470,6 +485,7 @@ pub fn mcp_oauth_settings(
             .iter()
             .map(|t| render_oauth_field(scope, t, "scope", false))
             .collect::<Result<_, _>>()?,
+        network,
     })
 }
 
@@ -513,7 +529,7 @@ pub async fn mcp_login(
             "server {server:?} uses a bearer token; set its auth to oauth first"
         ));
     }
-    let settings = mcp_oauth_settings(h.auth.as_ref(), &scope)?;
+    let settings = mcp_oauth_settings(h.auth.as_ref(), &scope, info.network())?;
     let url = render_oauth_field(&scope, &h.url, "server URL", false)?;
     // `Scope` is not `Sync`: let go of it before the first await.
     drop(scope);
@@ -567,9 +583,20 @@ fn history_entry(
     }
 }
 
-fn write_history(ctx: &RunCtx, entry: &HistoryEntry) {
+/// Appends to the history on this thread. Only for the early failure paths
+/// that run in closures; [`write_history`] is the normal path.
+fn append_history(ctx: &RunCtx, entry: &HistoryEntry) {
     if let Some((path, max)) = &ctx.history {
         let _ = history::append(path, entry, *max);
+    }
+}
+
+/// Appends to the history off the async workers: the append takes a file lock
+/// and may trim the file.
+async fn write_history(ctx: &RunCtx, entry: &HistoryEntry) {
+    if let Some((path, max)) = ctx.history.clone() {
+        let entry = entry.clone();
+        let _ = tokio::task::spawn_blocking(move || history::append(&path, &entry, max)).await;
     }
 }
 
@@ -664,7 +691,11 @@ fn http_oauth_provider(
         .identities
         .get(&rendered.text)
         .ok_or("OAuth identity is not defined in [oauth]")?;
-    let settings = oauth_settings(identity, scope)?;
+    let network = sendito_mcp::oauth::Network {
+        tls: ctx.send.tls.clone(),
+        proxy: ctx.send.proxy.clone(),
+    };
+    let settings = oauth_settings(identity, scope, network)?;
     Ok(sendito_mcp::oauth::RefreshingProvider::new_http(
         Arc::new(KeychainStore(info.keychain.clone())),
         oauth_token_account(&info.collection, ctx.env.as_deref(), &rendered.text),
@@ -707,12 +738,58 @@ async fn jar_store(root: &Path, env: &str, url: &str, sets: &[String]) -> Result
     }
 }
 
+/// The cookie jar on each redirect hop: stores what the hop's response sets
+/// and gives the next hop its own `Cookie` header. The values it reads are
+/// kept for masking.
+struct JarHops<'a> {
+    root: &'a Path,
+    env: &'a str,
+    secrets: Mutex<Vec<String>>,
+}
+
+impl sendito_http::RedirectCookies for JarHops<'_> {
+    fn hop<'a>(
+        &'a self,
+        from: &'a str,
+        set_cookies: Vec<String>,
+        to: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<String>, String>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let mut found = sendito_store::cookies::response_secrets(&set_cookies);
+            if !set_cookies.is_empty() {
+                jar_store(self.root, self.env, from, &set_cookies).await?;
+            }
+            let (header, secrets) = jar_request(self.root, self.env, to).await?;
+            found.extend(secrets);
+            if let Ok(mut s) = self.secrets.lock() {
+                s.extend(found);
+            }
+            Ok(header)
+        })
+    }
+}
+
 fn set_cookie_headers(headers: &[(String, String)]) -> Vec<String> {
     headers
         .iter()
         .filter(|(n, _)| n.eq_ignore_ascii_case("set-cookie"))
         .map(|(_, v)| v.clone())
         .collect()
+}
+
+/// Sends one HTTP request; with the cookie jar, each redirect hop goes
+/// through it.
+async fn send_http(
+    resolved: &sendito_core::resolve::ResolvedHttp,
+    ctx: &RunCtx,
+    jar: Option<&JarHops<'_>>,
+) -> Result<sendito_http::HttpResponse, sendito_http::HttpError> {
+    match jar {
+        Some(j) => sendito_http::send_with(resolved, &ctx.send, Some(j)).await,
+        None => sendito_http::send(resolved, &ctx.send).await,
+    }
 }
 
 /// Runs an HTTP request through the full pipeline.
@@ -741,16 +818,8 @@ pub async fn exec_http(
                     resolved.headers.push(("Cookie".into(), header));
                     resolved
                         .header_origins
-                        .push(sendito_core::resolve::HeaderOrigin::User);
+                        .push(sendito_core::resolve::HeaderOrigin::Jar);
                     jar_cookie = Some(resolved.headers.len() - 1);
-                }
-                // Reqwest would forward the initial Cookie header unchanged on
-                // same-host redirects, even when the cookie path no longer matches.
-                if resolved.follow_redirects {
-                    resolved.follow_redirects = false;
-                    resolved
-                        .notes
-                        .push("redirects are not followed when the cookie jar is enabled".into());
                 }
                 Ok(())
             }
@@ -787,20 +856,37 @@ pub async fn exec_http(
                 Ok(p) => match p.token(false).await {
                     Ok(token) => {
                         cookie_secrets.push(token.clone());
-                        resolved.headers.push(("Authorization".into(), format!("Bearer {token}")));
-                        resolved.header_origins.push(sendito_core::resolve::HeaderOrigin::Auth);
+                        resolved
+                            .headers
+                            .push(("Authorization".into(), format!("Bearer {token}")));
+                        resolved
+                            .header_origins
+                            .push(sendito_core::resolve::HeaderOrigin::Auth);
                         provider = Some(p);
                         Ok(())
                     }
-                    Err(_) => Err(sendito_http::HttpError::Send("OAuth token unavailable; run sendito auth login for this identity and environment".into())),
+                    Err(e) => Err(sendito_http::HttpError::Send(format!(
+                        "OAuth token unavailable ({e}); run sendito auth login for this identity and environment"
+                    ))),
                 },
                 Err(e) => Err(sendito_http::HttpError::Send(e)),
             }
         }
         _ => Ok(()),
     };
+    let jar_hops = JarHops {
+        root: &ctx.root,
+        env: jar_env,
+        secrets: Mutex::new(Vec::new()),
+    };
+    // One timeout covers the first send, a token refresh and the retry.
+    let budget = resolved
+        .timeout_ms
+        .map(Duration::from_millis)
+        .unwrap_or(ctx.send.default_timeout);
+    let started = Instant::now();
     let mut sent = match cookie_setup.and(auth_setup) {
-        Ok(()) => sendito_http::send(&resolved, &ctx.send).await,
+        Ok(()) => send_http(&resolved, ctx, cookies_on.then_some(&jar_hops)).await,
         Err(e) => Err(e),
     };
     if sent.as_ref().is_ok_and(|r| {
@@ -812,8 +898,17 @@ pub async fn exec_http(
     }) && let Some(provider) = provider
     {
         use sendito_mcp::TokenProvider;
-        match provider.token(true).await {
-            Ok(token) => {
+        let left = budget.saturating_sub(started.elapsed());
+        let refreshed = tokio::time::timeout(left, provider.token(true)).await;
+        let left = budget.saturating_sub(started.elapsed());
+        match refreshed {
+            Ok(Err(e)) => {
+                sent = Err(sendito_http::HttpError::Send(format!(
+                    "OAuth refresh failed ({e}); sign in again"
+                )));
+            }
+            Ok(Ok(token)) if !left.is_zero() => {
+                resolved.timeout_ms = Some((left.as_millis() as u64).max(1));
                 cookie_secrets.push(token.clone());
                 if let Some((_, value)) = resolved
                     .headers
@@ -845,7 +940,7 @@ pub async fn exec_http(
                                     resolved.headers.push(("Cookie".into(), h));
                                     resolved
                                         .header_origins
-                                        .push(sendito_core::resolve::HeaderOrigin::User);
+                                        .push(sendito_core::resolve::HeaderOrigin::Jar);
                                 }
                                 (None, None) => {}
                             }
@@ -853,15 +948,14 @@ pub async fn exec_http(
                         Err(e) => resolved.notes.push(format!("cookie jar: {e}")),
                     }
                 }
-                sent = sendito_http::send(&resolved, &ctx.send).await;
+                sent = send_http(&resolved, ctx, cookies_on.then_some(&jar_hops)).await;
             }
-            Err(_) => {
-                sent = Err(sendito_http::HttpError::Send(
-                    "OAuth refresh failed; sign in again".into(),
-                ))
-            }
+            _ => sent = Err(sendito_http::HttpError::Timeout(budget.as_millis())),
         }
     };
+    if let Ok(mut hop_secrets) = jar_hops.secrets.lock() {
+        cookie_secrets.append(&mut hop_secrets);
+    }
     if cookies_on && let Ok(resp) = &sent {
         let sets = set_cookie_headers(&resp.headers);
         cookie_secrets.extend(sendito_store::cookies::response_secrets(&sets));
@@ -930,7 +1024,7 @@ pub async fn exec_http(
                 size,
                 None,
             );
-            write_history(ctx, &entry);
+            write_history(ctx, &entry).await;
             (Ok(resp), doc)
         }
         Err(e) => {
@@ -946,7 +1040,7 @@ pub async fn exec_http(
                 0,
                 Some(msg.clone()),
             );
-            write_history(ctx, &entry);
+            write_history(ctx, &entry).await;
             (Err(msg), Doc::default())
         }
     };
@@ -1066,24 +1160,45 @@ pub enum GrpcUpdate {
     },
 }
 
-fn last_message(events: &[Event]) -> (Vec<u8>, Vec<(String, String)>, i32) {
-    let mut body = Vec::new();
-    let mut headers = Vec::new();
-    let mut code = -1;
-    for e in events {
+/// What scripts and history need from a gRPC call, kept as events arrive so
+/// a long stream is not held in memory: the last message, the metadata, the
+/// status, the total time and the received bytes.
+struct GrpcSummary {
+    body: Vec<u8>,
+    headers: Vec<(String, String)>,
+    code: i32,
+    total_ms: u64,
+    size: u64,
+}
+
+impl GrpcSummary {
+    fn new() -> Self {
+        Self {
+            body: Vec::new(),
+            headers: Vec::new(),
+            code: -1,
+            total_ms: 0,
+            size: 0,
+        }
+    }
+
+    fn add(&mut self, e: &Event) {
         match e {
-            Event::Received { full, .. } => body = full.as_bytes().to_vec(),
-            Event::Headers { metadata, .. } => headers = metadata.clone(),
+            Event::Received { full, size, .. } => {
+                self.body = full.as_bytes().to_vec();
+                self.size += *size as u64;
+            }
+            Event::Headers { metadata, .. } => self.headers = metadata.clone(),
             Event::Finished {
-                code: c, metadata, ..
+                code, metadata, at, ..
             } => {
-                code = *c;
-                headers.extend(metadata.iter().cloned());
+                self.code = *code;
+                self.headers.extend(metadata.iter().cloned());
+                self.total_ms = at.as_millis() as u64;
             }
             _ => {}
         }
     }
-    (body, headers, code)
 }
 
 /// Runs a gRPC call. Updates go to `updates`; `control` drives streaming input.
@@ -1126,7 +1241,7 @@ pub async fn exec_grpc(
             0,
             Some(msg.clone()),
         );
-        write_history(ctx, &entry);
+        append_history(ctx, &entry);
         let _ = updates.send(GrpcUpdate::Error(msg));
         let _ = updates.send(GrpcUpdate::Done {
             scripts: results,
@@ -1202,14 +1317,14 @@ pub async fn exec_grpc(
     });
     let secrets = scope.secret_values();
     let mut call = sendito_grpc::start_call(channel, &method, metadata, deadline, msgs);
-    let mut events: Vec<Event> = Vec::new();
+    let mut summary = GrpcSummary::new();
     let mut control_open = true;
     loop {
         tokio::select! {
             ev = call.events.recv() => {
                 let Some(ev) = ev else { break };
                 let done = matches!(ev, Event::Finished { .. });
-                events.push(ev.clone());
+                summary.add(&ev);
                 let ev = if ctx.mask_echoed_secrets { scrub_event(ev, &secrets) } else { ev };
                 let _ = updates.send(GrpcUpdate::Event(ev));
                 if done { break; }
@@ -1239,7 +1354,13 @@ pub async fn exec_grpc(
             }
         }
     }
-    let (body, headers, code) = last_message(&events);
+    let GrpcSummary {
+        body,
+        headers,
+        code,
+        total_ms: total,
+        size,
+    } = summary;
     // A call that ends with no status is a failure, not OK: report UNKNOWN (2).
     let code = if code < 0 { 2 } else { code };
     let view = ResponseView {
@@ -1250,28 +1371,13 @@ pub async fn exec_grpc(
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
     scrub_asserts(&mut results.asserts, &scope.secret_values());
-    let total = events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            Event::Finished { at, .. } => Some(at.as_millis() as u64),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let size: u64 = events
-        .iter()
-        .map(|e| match e {
-            Event::Received { size, .. } => *size as u64,
-            _ => 0,
-        })
-        .sum();
     let err = if code > 0 {
         Some(sendito_grpc::code_name(code).to_string())
     } else {
         None
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
-    write_history(ctx, &entry);
+    write_history(ctx, &entry).await;
     let _ = updates.send(GrpcUpdate::Done {
         scripts: results,
         scope_errors,
@@ -1428,7 +1534,7 @@ pub async fn exec_ws(
             0,
             Some(msg.clone()),
         );
-        write_history(ctx, &entry);
+        append_history(ctx, &entry);
         let _ = updates.send(WsUpdate::Error(msg));
         let _ = updates.send(WsUpdate::Done {
             scripts: results,
@@ -1505,7 +1611,7 @@ pub async fn exec_ws(
     let mut shown = resolved.clone();
     shown.url = sendito_core::vars::scrub(&shown.url, &secrets);
     let _ = updates.send(WsUpdate::Started { resolved: shown });
-    let mut events: Vec<sendito_ws::Event> = Vec::new();
+    let mut summary = WsSummary::new();
     let mut control_open = true;
     if let Some(e) = initial_error {
         let _ = updates.send(WsUpdate::Error(e.clone()));
@@ -1528,7 +1634,7 @@ pub async fn exec_ws(
                     }
                 }
                 let done = matches!(ev, sendito_ws::Event::Finished { .. });
-                events.push(ev.clone());
+                summary.add(&ev);
                 let ev = if ctx.mask_echoed_secrets { scrub_ws_event(ev, &secrets) } else { ev };
                 let _ = updates.send(WsUpdate::Event(ev));
                 if done { break; }
@@ -1569,7 +1675,14 @@ pub async fn exec_ws(
     }
     // Scripts see the handshake headers, the close code as status and the
     // last text frame as body.
-    let (code, reason, headers, body) = ws_summary(&events);
+    let WsSummary {
+        code,
+        reason,
+        headers,
+        body,
+        total_ms,
+        size,
+    } = summary;
     let view = ResponseView {
         status: code,
         headers: &headers,
@@ -1581,21 +1694,7 @@ pub async fn exec_ws(
         &mut results.asserts,
         &[&secrets[..], &cookie_secrets[..]].concat(),
     );
-    let total = events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            sendito_ws::Event::Finished { at, .. } => Some(at.as_millis() as u64),
-            _ => None,
-        })
-        .unwrap_or_else(|| started.elapsed().as_millis() as u64);
-    let size: u64 = events
-        .iter()
-        .map(|e| match e {
-            sendito_ws::Event::Received { size, .. } => *size as u64,
-            _ => 0,
-        })
-        .sum();
+    let total = total_ms.unwrap_or_else(|| started.elapsed().as_millis() as u64);
     let err = if code == WS_CLEAN_CLOSE {
         None
     } else if reason.is_empty() {
@@ -1609,39 +1708,61 @@ pub async fn exec_ws(
         ))
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
-    write_history(ctx, &entry);
+    write_history(ctx, &entry).await;
     let _ = updates.send(WsUpdate::Done {
         scripts: results,
         scope_errors,
     });
 }
 
-/// Close code, reason, handshake headers and last text frame payload.
-fn ws_summary(events: &[sendito_ws::Event]) -> (u16, String, Vec<(String, String)>, Vec<u8>) {
-    let mut code = 1006;
-    let mut reason = String::new();
-    let mut headers: Vec<(String, String)> = Vec::new();
-    let mut body: Vec<u8> = Vec::new();
-    for e in events {
+/// What scripts and history need from a WebSocket session, kept as events
+/// arrive: the close code and reason, the handshake headers, the last text
+/// frame, the total time and the received bytes.
+struct WsSummary {
+    code: u16,
+    reason: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    total_ms: Option<u64>,
+    size: u64,
+}
+
+impl WsSummary {
+    fn new() -> Self {
+        Self {
+            code: 1006,
+            reason: String::new(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            total_ms: None,
+            size: 0,
+        }
+    }
+
+    fn add(&mut self, e: &sendito_ws::Event) {
         match e {
-            sendito_ws::Event::Handshake { headers: h, .. } => {
-                headers = h.clone();
-            }
-            sendito_ws::Event::Received { kind, preview, .. } => {
+            sendito_ws::Event::Handshake { headers, .. } => self.headers = headers.clone(),
+            sendito_ws::Event::Received {
+                kind,
+                preview,
+                size,
+                ..
+            } => {
                 if *kind == sendito_ws::FrameKind::Text {
-                    body = preview.as_bytes().to_vec();
+                    self.body = preview.as_bytes().to_vec();
                 }
+                self.size += *size as u64;
             }
             sendito_ws::Event::Finished {
-                code: c, reason: r, ..
+                code, reason, at, ..
             } => {
-                code = *c;
-                reason = r.clone();
+                self.code = *code;
+                self.reason = reason.clone();
+                self.total_ms = Some(at.as_millis() as u64);
             }
             _ => {}
         }
     }
-    (code, reason, headers, body)
 }
 
 // ----- MCP -----------------------------------------------------------
@@ -1671,6 +1792,13 @@ impl McpRunInfo {
             collection: p.name.clone(),
             proxy: p.send_options().proxy,
             tls: p.tls.clone(),
+        }
+    }
+
+    fn network(&self) -> sendito_mcp::oauth::Network {
+        sendito_mcp::oauth::Network {
+            tls: self.tls.clone(),
+            proxy: self.proxy.clone(),
         }
     }
 }
@@ -1750,7 +1878,7 @@ pub fn mcp_transport(
                         Arc::new(KeychainStore(info.keychain.clone())),
                         mcp_token_account(&info.collection, server),
                         r(&h.url),
-                        mcp_oauth_settings(h.auth.as_ref(), scope)?,
+                        mcp_oauth_settings(h.auth.as_ref(), scope, info.network())?,
                     );
                     Some(Arc::new(p) as Arc<dyn sendito_mcp::TokenProvider>)
                 }
@@ -1845,7 +1973,7 @@ pub async fn exec_mcp(
             0,
             Some(msg.clone()),
         );
-        write_history(ctx, &entry);
+        append_history(ctx, &entry);
         let _ = updates.send(McpUpdate::Done {
             error: Some(msg),
             is_error: false,
@@ -1901,7 +2029,7 @@ pub async fn exec_mcp(
                 size,
                 None,
             );
-            write_history(ctx, &entry);
+            write_history(ctx, &entry).await;
             let body = if ctx.mask_echoed_secrets {
                 sendito_core::vars::scrub_bytes(&body, &secrets).unwrap_or(body)
             } else {
@@ -2012,7 +2140,8 @@ mod tests {
         assert_eq!(r.updates().len(), 2);
         assert_eq!(r.failed_asserts(), 1);
         assert_eq!(schema_key("u", &SchemaSource::Reflection), "reflect:u");
-        let (b, h, c) = last_message(&[
+        let mut summary = GrpcSummary::new();
+        for e in [
             Event::Headers {
                 metadata: vec![("a".into(), "1".into())],
                 at: Duration::ZERO,
@@ -2021,7 +2150,7 @@ mod tests {
                 json: "{}".into(),
                 full: "{}".into(),
                 compact: "{}".into(),
-                size: 0,
+                size: 2,
                 at: Duration::ZERO,
                 wall: std::time::SystemTime::now(),
             },
@@ -2029,11 +2158,15 @@ mod tests {
                 code: 0,
                 message: String::new(),
                 metadata: vec![],
-                at: Duration::ZERO,
+                at: Duration::from_millis(7),
             },
-        ]);
-        assert_eq!(b, b"{}");
-        assert_eq!(h.len(), 1);
-        assert_eq!(c, 0);
+        ] {
+            summary.add(&e);
+        }
+        assert_eq!(summary.body, b"{}");
+        assert_eq!(summary.headers.len(), 1);
+        assert_eq!(summary.code, 0);
+        assert_eq!(summary.size, 2);
+        assert_eq!(summary.total_ms, 7);
     }
 }

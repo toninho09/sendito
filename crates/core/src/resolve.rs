@@ -82,6 +82,9 @@ pub enum HeaderOrigin {
     User,
     Body,
     Auth,
+    /// The `Cookie` header from the collection cookie jar: each redirect hop
+    /// gets the jar's header for its own URL.
+    Jar,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

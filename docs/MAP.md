@@ -75,18 +75,18 @@ here.
 | Header and body assembly, multipart boundary, file bodies | `crates/core/src/resolve.rs::resolve_http` | `ResolvedBody`, `ResolvedPart`, `PartData` |
 | MIME guess for multipart file parts | `crates/http/src/lib.rs::guess_mime` | Used by resolve and by the request pane |
 | Response decoding (gzip, deflate, br) and display size vs wire size | `crates/http/src/lib.rs::Decoded` | `wire_body_len`, `headers_size` |
-| Timing breakdown (DNS, connect, TLS, TTFB, download) | `crates/http/src/lib.rs::Timing` | Rendered by `crates/ui/src/app.rs::timing_text` |
+| Timing breakdown (DNS, connect, TLS, TTFB, download) | `crates/http/src/lib.rs::Timing` | Rendered by `crates/ui/src/app/text.rs::timing_text` |
 | Proxy (`[http] proxy`, URL or `"env"`) | `crates/http/src/lib.rs::ProxySpec` | `apply` builds the reqwest client |
 | TLS material, custom CA, mutual TLS | `crates/http/src/lib.rs::tls_config`, `TlsMaterial` | `pair_error` implements the "cert without key warns" rule |
-| Redirect handling | `crates/http/src/lib.rs::redirect_policy`, `follow_cross_origin` | Auth headers stay behind on another origin (FORMAT.md) |
+| Redirect handling | `crates/http/src/lib.rs::follow_redirects`, `hop_headers`, `RedirectCookies` | Auth headers stay behind on another origin; the jar sets each hop's Cookie (FORMAT.md) |
 | Cookie jar wiring during a send | `crates/pipeline/src/runner.rs` (`cookie_setup`) | Storage in `crates/store/src/cookies.rs` |
 | jq response filter (display only) | `crates/ui/src/filter.rs::apply` | `crates/ui/src/tab.rs::apply_jq`; jaq with `halt`/`stderr` removed |
-| Response query bar (jq and search) | `crates/ui/src/tab.rs::QueryBar` | `crates/ui/src/app.rs::query_key`, `crates/ui/src/draw/response.rs::draw_query_bar`; key completion `crates/ui/src/complete.rs::jq_keys` |
-| Stream message list (gRPC, WebSocket) | `crates/ui/src/tab.rs::stream_messages` | `crates/ui/src/tab.rs::set_message`, `crates/ui/src/draw/response.rs::draw_stream_split`; `[` / `]` in `crates/ui/src/app.rs::step_message` |
-| JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app.rs::filter_here` |
-| Watch (repeat the active request) | `crates/ui/src/app.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
+| Response query bar (jq and search) | `crates/ui/src/tab.rs::QueryBar` | `crates/ui/src/app/query.rs::query_key`, `crates/ui/src/draw/response.rs::draw_query_bar`; key completion `crates/ui/src/complete.rs::jq_keys` |
+| Stream message list (gRPC, WebSocket) | `crates/ui/src/tab.rs::stream_messages` | `crates/ui/src/tab.rs::set_message`, `crates/ui/src/draw/response.rs::draw_stream_split`; `[` / `]` in `crates/ui/src/app/import_export.rs::step_message` |
+| JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app/import_export.rs::filter_here` |
+| Watch (repeat the active request) | `crates/ui/src/app/mod.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
 
-Tests: `tests/corpus.rs` (48 HTTP cases under
+Tests: `tests/corpus.rs` (49 HTTP cases under
 `tests/corpus/collection/http/`), `tests/integration.rs`, `tests/tls.rs`,
 `tests/proxy.rs`.
 
@@ -97,9 +97,9 @@ Tests: `tests/corpus.rs` (48 HTTP cases under
 | Basic / bearer / API key resolution | `crates/core/src/resolve.rs::resolve_http` | Auth is part of the resolved request |
 | HTTP OAuth identity (`[oauth.<name>]`) | `crates/pipeline/src/runner.rs::http_oauth_provider` | `oauth_settings`, `oauth_token_account` |
 | OAuth login/logout for HTTP, CLI | `src/main.rs` (`auth` command) | `crates/mcp/src/oauth.rs::login_http` |
-| OAuth login/logout in the UI | `crates/ui/src/app.rs::http_oauth_command` | `OAuthRunInfo` in `crates/pipeline/src/runner.rs` |
+| OAuth login/logout in the UI | `crates/ui/src/app/commands.rs::http_oauth_command` | `OAuthRunInfo` in `crates/pipeline/src/runner.rs` |
 | MCP OAuth 2.1 (discovery, PKCE, registration, refresh) | `crates/mcp/src/oauth.rs::login` | `pkce`, `RefreshingProvider`, `well_known`, `validate_oauth_url` |
-| MCP sign-in in the app (`:auth login <server>`, "Sign in now?" after `McpError::NeedsLogin`) | `crates/ui/src/app.rs` (`offer_mcp_login`, `mcp_oauth_command`, `after_mcp_login`) | `crates/pipeline/src/runner.rs::mcp_login`, `crates/store/src/config.rs::set_mcp_server_auth` |
+| MCP sign-in in the app (`:auth login <server>`, "Sign in now?" after `McpError::NeedsLogin`) | `crates/ui/src/app/mcp.rs` (`offer_mcp_login`, `mcp_oauth_command`, `after_mcp_login`) | `crates/pipeline/src/runner.rs::mcp_login`, `crates/store/src/config.rs::set_mcp_server_auth` |
 | Token storage keys | `crates/pipeline/src/runner.rs::oauth_token_account`, `mcp_token_account` | Keychain access in `crates/store/src/env.rs` |
 
 Tests: `crates/mcp/tests/oauth.rs`, corpus case `http/47-oauth-http.toml`,
@@ -116,7 +116,7 @@ Tests: `crates/mcp/tests/oauth.rs`, corpus case `http/47-oauth-http.toml`,
 | Metadata (`-bin` base64, lower-cased keys) | `crates/grpc/src/lib.rs::metadata_map` | `metadata_pairs` for the response side |
 | Deadline to `grpc-timeout`, TLS and ALPN | `crates/grpc/src/lib.rs::ConnSettings` | Built by `crates/pipeline/src/runner.rs::conn_settings` |
 | Status-code naming | `crates/grpc/src/lib.rs::code_name` | All 17 codes |
-| Streaming session in the UI | `crates/pipeline/src/runner.rs::{GrpcControl, GrpcUpdate}` | `crates/ui/src/app.rs` handles the events |
+| Streaming session in the UI | `crates/pipeline/src/runner.rs::{GrpcControl, GrpcUpdate}` | `crates/ui/src/app/ingest.rs` handles the events |
 
 Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 `tests/corpus/collection/grpc/`.
@@ -143,7 +143,7 @@ Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 | Streamable HTTP transport (JSON and SSE bodies) | `crates/mcp/src/http.rs` | Session-id and protocol-version headers |
 | JSON-RPC messages, protocol constants | `crates/mcp/src/protocol.rs` | `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS` |
 | Tool discovery and argument template | `crates/mcp/src/lib.rs::Tool` | `:mcptools`, F2 in the UI |
-| Server table editor (`Ctrl+W S`) | `crates/ui/src/app.rs::open_mcp_editor` | `crates/ui/src/overlay.rs::McpEditor`, save via `save_mcp_editor` |
+| Server table editor (`Ctrl+W S`) | `crates/ui/src/app/mcp.rs::open_mcp_editor` | `crates/ui/src/overlay.rs::McpEditor`, save via `save_mcp_editor` |
 | Server details (`Ctrl+O` in the server table: env, headers, `verify_tls`, OAuth fields) | `crates/ui/src/config_editor.rs::open_mcp_server_editor` | `crates/ui/src/config_editor.rs::CfgEditor`, save via `save_cfg_editor` |
 
 Tests: `crates/mcp/tests/client.rs`, `tests/mcp_cli.rs`, corpus cases under
@@ -163,6 +163,7 @@ Every file here is documented in
 | History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear` |
 | Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, layout, environment |
 | Cookie jar (RFC 6265, PSL, `0600`, cross-process lock) | `crates/store/src/cookies.rs` | `request`, `store_response`, `describe`, `delete`, `clear` |
+| Durable writes and cross-process locks | `crates/store/src/fsio.rs` | `write_atomic`, `write_private`, `with_lock`, `with_dir_lock` |
 | User themes on disk (`themes/*.toml`, `extends`) | `crates/store/src/themes.rs` | Contrast and `extends` problems are reported, not fatal |
 
 Tests: corpus cookie cases, `tests/integration.rs` (secret hygiene),
@@ -179,19 +180,37 @@ Tests: corpus cookie cases, `tests/integration.rs` (secret hygiene),
 | curl import | `crates/import/src/curl.rs::import` | Combined-flag splitting, documented flag set |
 | curl export | `crates/import/src/curl.rs::export` | Secret placeholders unless `include_secrets` |
 | `.http` export | `crates/import/src/http_file.rs::export` | Boundary escalation, `< path` file bodies |
-| Import/report dialogs in the UI | `crates/ui/src/overlay.rs::{Import, Report}` | `crates/ui/src/app.rs` opens them |
+| Import/report dialogs in the UI | `crates/ui/src/overlay.rs::{Import, Report}` | `crates/ui/src/app/import_export.rs` opens them |
 
 Tests: `tests/integration.rs` (32-request Postman fixture, curl → request →
 curl → request over 20 fixtures), fixtures in `tests/fixtures/`.
 
 ## Terminal UI
 
-The app is one large state machine; start at `crates/ui/src/app.rs`, then follow
+The app is one large state machine; start at `crates/ui/src/app/mod.rs`, then follow
 the module for the surface you are changing.
 
 | What | File |
 |---|---|
-| App state, input handling, focus, status, mouse hits, command execution | `crates/ui/src/app.rs` |
+| App state, focus, status, session, tick | `crates/ui/src/app/mod.rs` |
+| Terminal events and key routing | `crates/ui/src/app/keys.rs` |
+| Keymap actions: focus, tabs, close, save | `crates/ui/src/app/actions.rs` |
+| Completion wiring | `crates/ui/src/app/completion.rs` |
+| Send, cancel, run context | `crates/ui/src/app/send.rs` |
+| Runner results (HTTP, gRPC, WebSocket, MCP) and `AppMsg` | `crates/ui/src/app/ingest.rs` |
+| MCP sign-in, discovery, server editor | `crates/ui/src/app/mcp.rs` |
+| gRPC schema and method picker | `crates/ui/src/app/schema.rs` |
+| Environment picker and editor | `crates/ui/src/app/env.rs` |
+| History panel | `crates/ui/src/app/history.rs` |
+| Tree operations (new, rename, duplicate, delete, move) | `crates/ui/src/app/tree_ops.rs` |
+| Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
+| Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
+| Import, export, body actions | `crates/ui/src/app/import_export.rs` |
+| Settings and themes | `crates/ui/src/app/settings.rs` |
+| Hint row | `crates/ui/src/app/hints.rs` |
+| Report, timing, header and help text | `crates/ui/src/app/text.rs` |
+| Overlay keys, dialog accept actions | `crates/ui/src/app/overlay_keys.rs`, `crates/ui/src/app/dialogs.rs` |
+| Mouse hits, wheel, drag, clicks | `crates/ui/src/app/mouse.rs` |
 | Session bootstrap, `RunOptions`, scripted input for benches | `crates/ui/src/lib.rs` |
 | Open tab: editors per field, model ↔ widgets, response state, gRPC/MCP/WS session state | `crates/ui/src/tab.rs` |
 | Text editor: multi-line, selection, undo, clipboard, `{{var}}` and JSON highlighting, vim subset | `crates/ui/src/editor.rs` |
@@ -231,9 +250,9 @@ Every clickable region is registered in `app.hits` while drawing.
 | Change | Files |
 |---|---|
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
-| A new `:command` | `crates/ui/src/overlay.rs::COMMANDS` → dispatch in `crates/ui/src/app.rs` → `KEYMAP.md` via `make keymap` |
-| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay.rs::SettingId` (`key`, `typed`, `heading`) and `SETTINGS` → `crates/ui/src/app.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
-| A new dialog | `crates/ui/src/overlay.rs::Overlay` → `crates/ui/src/draw/overlay.rs` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app.rs` → snapshots |
+| A new `:command` | `crates/ui/src/overlay.rs::COMMANDS` → dispatch in `crates/ui/src/app/commands.rs::run_command` → `KEYMAP.md` via `make keymap` |
+| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay.rs::SettingId` (`key`, `typed`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
+| A new dialog | `crates/ui/src/overlay.rs::Overlay` → `crates/ui/src/draw/overlay.rs` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app/mouse.rs` → snapshots |
 
 ## Headless CLI
 
@@ -260,7 +279,7 @@ binary in a child process), `tests/corpus.rs`.
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in every crate | `make test`; `P=<package>` and `F=<name>` narrow it |
-| Wire corpus (exact bytes; 48 HTTP, 15 gRPC, 12 WS, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
+| Wire corpus (exact bytes; 49 HTTP, 15 gRPC, 12 WS, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
 | Corpus golden rewrite | same, `UPDATE_CORPUS=1` | `make corpus-update` |
 | Import, format stability, secret hygiene | `tests/integration.rs`, `tests/fixtures/` | `make test` |
 | TLS and mutual TLS | `tests/tls.rs` | `make test` |
@@ -292,7 +311,7 @@ type:
 | A WebSocket behaviour | `crates/ws/src/lib.rs` → `crates/pipeline/src/runner.rs` → `tests/integration.rs` + corpus |
 | An MCP behaviour | `crates/mcp/src/` → `crates/pipeline/src/runner.rs` → `crates/mcp/tests/` + corpus |
 | A secret or masking rule | `crates/core/src/vars.rs` (`scrub_bytes`, taint) → every caller's scrub list → `tests/integration.rs` |
-| A UI surface | `crates/ui/src/app.rs` + the matching `draw/` module → snapshots → `make media && make render` → [reports/ux-critic.md](reports/ux-critic.md) decisions |
+| A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → `make media && make render` → [reports/ux-critic.md](reports/ux-critic.md) decisions |
 | A key, command or setting | see [Adding a key, command or setting](#adding-a-key-command-or-setting) |
 
 ## Keeping this map current

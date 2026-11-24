@@ -1078,16 +1078,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3179,10 +3169,8 @@ dependencies = [
  "fastrand",
  "percent-encoding",
  "regex",
- "serde",
  "serde_json",
  "serde_json_path",
- "thiserror 2.0.21",
  "time",
 ]
 
@@ -3216,15 +3204,17 @@ dependencies = [
  "brotli",
  "bytes",
  "flate2",
+ "http-body",
  "mime_guess",
  "reqwest",
  "rustls",
- "rustls-pki-types",
  "rustls-platform-verifier",
  "sendito-core",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tower",
  "tower-service",
 ]
@@ -3283,7 +3273,6 @@ name = "sendito-store"
 version = "0.2.0"
 dependencies = [
  "cookie_store",
- "fs2",
  "keyring",
  "psl",
  "sendito-core",
@@ -3348,7 +3337,6 @@ dependencies = [
  "tokio",
  "toml",
  "unicode-width 0.2.3",
- "url",
 ]
 
 [[package]]
@@ -3359,7 +3347,6 @@ dependencies = [
  "futures-util",
  "http",
  "rustls",
- "rustls-pki-types",
  "sendito-http",
  "sendito-testkit",
  "serde_json",

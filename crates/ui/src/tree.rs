@@ -260,13 +260,60 @@ impl TreeState {
         }
     }
 
-    pub fn ensure_visible(&mut self, height: usize) {
+    /// Scrolls the selection into view. With `sticky`, the pinned folder rows
+    /// take their lines from the list.
+    pub fn ensure_visible(&mut self, height: usize, sticky: bool) {
         if height == 0 {
             return;
         }
         self.scroll = crate::list::keep_visible(self.selected, self.scroll, height);
-        let max_scroll = self.rows.len().saturating_sub(height);
-        self.scroll = self.scroll.min(max_scroll);
+        while sticky && self.selected >= self.scroll + height - self.sticky(height).len() {
+            self.scroll += 1;
+        }
+        self.scroll = self.scroll.min(self.max_scroll(height, sticky));
+    }
+
+    /// The largest scroll that still fills a list `height` rows tall.
+    pub fn max_scroll(&self, height: usize, sticky: bool) -> usize {
+        let len = self.rows.len();
+        let mut s = len.saturating_sub(height);
+        while sticky && s < len && s + height - self.pins_at(s, height).len() < len {
+            s += 1;
+        }
+        s
+    }
+
+    /// The folder rows that contain row `idx`, from the root down.
+    fn ancestors(&self, idx: usize) -> Vec<usize> {
+        let Some(mut depth) = self.rows.get(idx).map(|r| r.depth) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for i in (0..idx).rev() {
+            if depth == 0 {
+                break;
+            }
+            let r = &self.rows[i];
+            if r.is_folder() && r.depth < depth {
+                out.push(i);
+                depth = r.depth;
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    /// The folder rows pinned above the list in a list `height` rows tall:
+    /// the folders of the top row, at most half the height. The list starts
+    /// below them, so they hide no row.
+    pub fn sticky(&self, height: usize) -> Vec<usize> {
+        self.pins_at(self.scroll, height)
+    }
+
+    fn pins_at(&self, scroll: usize, height: usize) -> Vec<usize> {
+        let mut pins = self.ancestors(scroll);
+        pins.truncate(height / 2);
+        pins
     }
 
     /// All folder paths (for the move picker), "" for the root.
@@ -351,12 +398,39 @@ mod tests {
         assert_eq!(t.target_folder(), "");
         t.toggle("empty");
         assert!(t.expanded.contains("empty"));
-        t.ensure_visible(2);
+        t.ensure_visible(2, false);
         assert!(t.scroll > 0);
         assert_eq!(t.all_folders().len(), 4);
         t.set_root(tree());
         assert_eq!(t.selected_rel().as_deref(), Some("ping.toml"));
         assert!(!t.expanded_list().is_empty());
+    }
+
+    #[test]
+    fn sticky_pins_the_folders_of_the_top_row() {
+        let mut t = TreeState::new(tree(), Vec::<String>::new());
+        // Users, Admin, ban, list, empty, ping
+        assert!(t.select_rel("Users/Admin/ban.toml"));
+        assert!(t.sticky(6).is_empty());
+        t.scroll = 2;
+        assert_eq!(t.sticky(6), vec![0, 1]);
+        assert_eq!(t.sticky(2), vec![0], "at most half the height");
+        t.scroll = 3;
+        assert_eq!(t.sticky(6), vec![0]);
+        t.scroll = 4;
+        assert!(t.sticky(6).is_empty());
+        // The pins take lines, so the last row needs one more scroll step.
+        assert_eq!(t.max_scroll(4, false), 2);
+        assert_eq!(t.max_scroll(4, true), 3);
+        t.scroll = 0;
+        t.move_sel(100);
+        t.ensure_visible(4, true);
+        assert_eq!(t.scroll, 3);
+        // Moving up past the pins shows the row at the top, not under them.
+        t.selected = 2;
+        t.ensure_visible(4, true);
+        assert_eq!(t.scroll, 2);
+        assert!(!t.sticky(4).contains(&2));
     }
 
     #[test]

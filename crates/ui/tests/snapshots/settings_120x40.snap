@@ -16,23 +16,23 @@ expression: screen
 │                        │    Key bindings                                    ‹ 0 changes ›   │                        │
 │                        │  Layout                                                            │                        │
 │                        │    Sidebar position                                     ‹ left ›   │                        │
+│                        │    Pin folders while scrolling                            ‹ On ›   │                        │
 │                        │  Behavior                                                          │                        │
 │                        │    Mouse support                                          ‹ On ›   │                        │
 │                        │    Confirm quit with unsaved changes                      ‹ On ›   │                        │
 │                        │    Record history                                         ‹ On ›   │                        │
-│                        │    History entries kept                                ‹ 10000 ›   │                        │
-│                        │    Watch interval                                        ‹ 5 s ›   │ ds)                    │
-│                        │  Timeouts                                                          │ nd                     │
-│                        │    HTTP request timeout                             ‹ 30000 ms ›   │                        │
-│                        │    gRPC deadline                                        ‹ none ›   │ the mouse)             │
-│                        │    WebSocket handshake timeout                          ‹ none ›   │ ide                    │
+│                        │    History entries kept                                ‹ 10000 ›   │ ds)                    │
+│                        │    Watch interval                                        ‹ 5 s ›   │ nd                     │
+│                        │    Stream messages kept                                ‹ 10000 ›   │                        │
+│                        │  Timeouts                                                          │ the mouse)             │
+│                        │    HTTP request timeout                             ‹ 30000 ms ›   │ ide                    │
+│                        │    gRPC deadline                                        ‹ none ›   │                        │
+│                        │    WebSocket handshake timeout                          ‹ none ›   │                        │
 │                        │    MCP call timeout                                 ‹ 30000 ms ›   │                        │
 │                        │  HTTP                                                              │                        │
 │                        │    Largest response body                              ‹ 100 MB ›   │                        │
 │                        │    Cookie jar                                            ‹ Off ›   │                        │
 │                        │    Proxy                                             ‹ not set ›   │                        │
-│                        │    OAuth identities                             ‹ 0 identities ›   │                        │
-│                        │  TLS                                                               │                        │
 │                        │ ────────────────────────────────────────────────────────────────── │                        │
 │                        │  Colors: auto follows the terminal; ansi uses your terminal        │                        │
 │                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │

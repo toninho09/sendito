@@ -4,6 +4,7 @@
 //! * `/status/<code>` — reply with that status
 //! * `/redirect/<n>` — redirect chain ending at `/echo`
 //! * `/redirect-other-host` — 302 to `/echo` on `localhost` (another origin)
+//! * `/login-redirect` — 302 to `/echo` that sets a cookie
 //! * `/delay/<ms>` — wait before replying
 //! * `/bytes/<n>` — reply with `n` bytes
 //! * `/json/<n>` — reply with a JSON document of about `n` bytes
@@ -363,6 +364,15 @@ fn respond(c: &Captured, port: u16) -> Reply {
         ["redirect-other-host"] => (
             302,
             vec![("Location".into(), format!("http://localhost:{port}/echo"))],
+            Vec::new(),
+            None,
+        ),
+        ["login-redirect"] => (
+            302,
+            vec![
+                ("Location".into(), "/echo".into()),
+                ("Set-Cookie".into(), "login=corpus-2; Path=/".into()),
+            ],
             Vec::new(),
             None,
         ),

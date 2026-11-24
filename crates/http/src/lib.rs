@@ -8,7 +8,6 @@ use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -583,7 +582,7 @@ pub fn tls_config(
 /// A verifier that trusts only the certificates in `ca` (they replace the
 /// platform roots). This is the `[http.tls] ca` behaviour.
 fn root_verifier(ca: &std::path::Path) -> Result<Arc<dyn ServerCertVerifier>, String> {
-    let pem = std::fs::read(ca).map_err(|e| format!("{}: {e}", ca.display()))?;
+    let pem = read_pem(ca)?;
     let mut roots = rustls::RootCertStore::empty();
     let mut n = 0;
     for cert in CertificateDer::pem_slice_iter(&pem) {
@@ -604,7 +603,7 @@ fn root_verifier(ca: &std::path::Path) -> Result<Arc<dyn ServerCertVerifier>, St
 }
 
 fn read_cert_chain(path: &std::path::Path) -> Result<Vec<CertificateDer<'static>>, String> {
-    let pem = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pem = read_pem(path)?;
     let chain: Vec<_> = CertificateDer::pem_slice_iter(&pem)
         .collect::<Result<_, _>>()
         .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -614,8 +613,31 @@ fn read_cert_chain(path: &std::path::Path) -> Result<Vec<CertificateDer<'static>
     Ok(chain)
 }
 
+/// A PEM file's bytes. Each send builds its TLS configuration, so the bytes
+/// are kept and read again only when the file's size or time changes.
+fn read_pem(path: &std::path::Path) -> Result<Arc<[u8]>, String> {
+    type Key = (std::path::PathBuf, Option<std::time::SystemTime>, u64);
+    type Cache = std::collections::HashMap<std::path::PathBuf, (Key, Arc<[u8]>)>;
+    static PEMS: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let err = |e: std::io::Error| format!("{}: {e}", path.display());
+    let meta = std::fs::metadata(path).map_err(err)?;
+    let key: Key = (path.to_path_buf(), meta.modified().ok(), meta.len());
+    let pems = PEMS.get_or_init(Default::default);
+    if let Ok(map) = pems.lock()
+        && let Some((k, bytes)) = map.get(path)
+        && *k == key
+    {
+        return Ok(bytes.clone());
+    }
+    let bytes: Arc<[u8]> = std::fs::read(path).map_err(err)?.into();
+    if let Ok(mut map) = pems.lock() {
+        map.insert(path.to_path_buf(), (key, bytes.clone()));
+    }
+    Ok(bytes)
+}
+
 fn read_key(path: &std::path::Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>, String> {
-    let pem = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pem = read_pem(path)?;
     rustls::pki_types::PrivateKeyDer::from_pem_slice(&pem)
         .map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -641,11 +663,46 @@ pub fn guess_mime(filename: &str) -> String {
         .to_string()
 }
 
-async fn read_file(path: &std::path::Path) -> Result<Vec<u8>, HttpError> {
-    tokio::fs::read(path).await.map_err(|e| HttpError::File {
+/// A file as a body that is read while it is sent, and its size. The file is
+/// opened again for each send, so a redirect hop sends it again.
+async fn file_body(path: &std::path::Path) -> Result<(reqwest::Body, u64), HttpError> {
+    let err = |e: std::io::Error| HttpError::File {
         path: path.display().to_string(),
         msg: e.to_string(),
-    })
+    };
+    let file = tokio::fs::File::open(path).await.map_err(err)?;
+    let len = file.metadata().await.map_err(err)?.len();
+    let body = FileBody {
+        stream: tokio_util::io::ReaderStream::new(file),
+        len,
+    };
+    Ok((reqwest::Body::wrap(body), len))
+}
+
+/// A file read in chunks while it is sent. Its exact size goes to the HTTP
+/// layer, which frames it with `Content-Length` as it frames bytes.
+struct FileBody {
+    stream: tokio_util::io::ReaderStream<tokio::fs::File>,
+    len: u64,
+}
+
+impl http_body::Body for FileBody {
+    type Data = bytes::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use tokio_stream::Stream;
+        Pin::new(&mut self.get_mut().stream)
+            .poll_next(cx)
+            .map(|chunk| chunk.map(|r| r.map(http_body::Frame::data)))
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.len)
+    }
 }
 
 /// Builds the header map, preserving order and duplicates.
@@ -667,66 +724,39 @@ pub fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, HttpError> 
 
 const MAX_REDIRECTS: usize = 10;
 
-#[derive(Debug)]
-struct TooManyRedirects;
-
-impl fmt::Display for TooManyRedirects {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("too many redirects")
+/// The method and body of the next redirect hop (RFC 9110, 15.4): a 303
+/// turns the request into a GET (a HEAD stays a HEAD), and so do 301 and 302
+/// for a POST, as browsers do; the body is dropped then. 307 and 308 keep the
+/// method and the body.
+fn next_hop_method(
+    status: reqwest::StatusCode,
+    method: &reqwest::Method,
+) -> Option<(reqwest::Method, bool)> {
+    use reqwest::{Method, StatusCode};
+    match status {
+        StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND if *method == Method::POST => {
+            Some((Method::GET, true))
+        }
+        StatusCode::SEE_OTHER if *method == Method::HEAD => Some((Method::HEAD, true)),
+        StatusCode::SEE_OTHER => Some((Method::GET, true)),
+        StatusCode::MOVED_PERMANENTLY
+        | StatusCode::FOUND
+        | StatusCode::TEMPORARY_REDIRECT
+        | StatusCode::PERMANENT_REDIRECT => Some((method.clone(), false)),
+        _ => None,
     }
 }
 
-impl std::error::Error for TooManyRedirects {}
-
-struct RedirectGuard {
-    method: reqwest::Method,
-    hops: AtomicUsize,
-    crossed: AtomicBool,
-    get: AtomicBool,
-    body_dropped: AtomicBool,
-}
-
-impl RedirectGuard {
-    fn new(method: reqwest::Method) -> Self {
-        Self {
-            method,
-            hops: AtomicUsize::new(0),
-            crossed: AtomicBool::new(false),
-            get: AtomicBool::new(false),
-            body_dropped: AtomicBool::new(false),
-        }
-    }
-
-    fn note(&self, status: reqwest::StatusCode) {
-        use reqwest::StatusCode;
-        match status {
-            StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND
-                if self.method() == reqwest::Method::POST =>
-            {
-                self.get.store(true, Ordering::SeqCst);
-                self.body_dropped.store(true, Ordering::SeqCst);
-            }
-            StatusCode::SEE_OTHER => {
-                self.body_dropped.store(true, Ordering::SeqCst);
-                if self.method() != reqwest::Method::HEAD {
-                    self.get.store(true, Ordering::SeqCst);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn method(&self) -> reqwest::Method {
-        if self.get.load(Ordering::SeqCst) {
-            reqwest::Method::GET
-        } else {
-            self.method.clone()
-        }
-    }
-
-    fn body_dropped(&self) -> bool {
-        self.body_dropped.load(Ordering::SeqCst)
-    }
+/// The collection cookie jar, seen from the redirect loop: it stores the
+/// cookies a redirect response sets and gives the `Cookie` header for the
+/// next hop's URL.
+pub trait RedirectCookies: Send + Sync {
+    fn hop<'a>(
+        &'a self,
+        from: &'a str,
+        set_cookies: Vec<String>,
+        to: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>> + Send + 'a>>;
 }
 
 fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
@@ -735,61 +765,49 @@ fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
         && a.port_or_known_default() == b.port_or_known_default()
 }
 
-fn redirect_policy(
-    req: &ResolvedHttp,
-    method: &reqwest::Method,
-) -> (reqwest::redirect::Policy, Option<Arc<RedirectGuard>>) {
-    if !req.follow_redirects {
-        return (reqwest::redirect::Policy::none(), None);
-    }
-    if !req.header_origins.contains(&HeaderOrigin::Auth) {
-        return (reqwest::redirect::Policy::limited(MAX_REDIRECTS), None);
-    }
-    let guard = Arc::new(RedirectGuard::new(method.clone()));
-    let g = guard.clone();
-    let policy = reqwest::redirect::Policy::custom(move |attempt| {
-        if g.hops.fetch_add(1, Ordering::SeqCst) >= MAX_REDIRECTS {
-            return attempt.error(TooManyRedirects);
-        }
-        g.note(attempt.status());
-        match attempt.previous().last() {
-            Some(prev) if !same_origin(attempt.url(), prev) => {
-                g.crossed.store(true, Ordering::SeqCst);
-                attempt.stop()
-            }
-            _ => attempt.follow(),
-        }
-    });
-    (policy, Some(guard))
-}
-
 fn redirect_target(resp: &reqwest::Response) -> Option<reqwest::Url> {
     let location = resp.headers().get(reqwest::header::LOCATION)?;
     resp.url().join(location.to_str().ok()?).ok()
 }
 
-fn hop_headers(req: &ResolvedHttp, body_dropped: bool) -> Result<HeaderMap, HttpError> {
+/// The headers of a redirect hop. After the chain has left the request's
+/// origin, credentials stay behind: auth headers and `Authorization`,
+/// `Cookie` and the like. Without a body, the headers that describe it go too.
+/// The jar's `Cookie` is replaced by `jar` (the jar's header for this hop).
+fn hop_headers(
+    req: &ResolvedHttp,
+    left_origin: bool,
+    body_dropped: bool,
+    jar: Option<Option<String>>,
+) -> Result<HeaderMap, HttpError> {
     const PAYLOAD: [&str; 4] = [
         "content-type",
         "content-length",
         "content-encoding",
         "transfer-encoding",
     ];
-    let kept: Vec<(String, String)> = req
+    let mut kept: Vec<(String, String)> = req
         .headers
         .iter()
         .enumerate()
         .filter(|(i, (name, _))| {
             let lower = name.to_ascii_lowercase();
-            let auth = req.header_origins.get(*i) == Some(&HeaderOrigin::Auth);
+            let origin = req.header_origins.get(*i);
+            let auth = origin == Some(&HeaderOrigin::Auth);
+            let from_jar = origin == Some(&HeaderOrigin::Jar);
             let sensitive = matches!(
                 lower.as_str(),
                 "authorization" | "cookie" | "cookie2" | "proxy-authorization" | "www-authenticate"
             );
-            !auth && !sensitive && !(body_dropped && PAYLOAD.contains(&lower.as_str()))
+            !(jar.is_some() && from_jar)
+                && !(left_origin && (auth || sensitive))
+                && !(body_dropped && PAYLOAD.contains(&lower.as_str()))
         })
         .map(|(_, h)| h.clone())
         .collect();
+    if let Some(Some(cookie)) = jar {
+        kept.push(("Cookie".into(), cookie));
+    }
     header_map(&kept)
 }
 
@@ -820,26 +838,62 @@ async fn execute_hop(
         .map_err(|e| send_error(e, timeout))
 }
 
-async fn follow_cross_origin(
+/// Follows the redirects of `resp`, at most [`MAX_REDIRECTS`], each hop
+/// within the time the chain has left. A 307 or 308 resends the body (a file
+/// is read again); a multipart body is not resent, so its redirect response
+/// is returned.
+async fn follow_redirects(
     client: &reqwest::Client,
     req: &ResolvedHttp,
-    guard: &RedirectGuard,
+    mut resp: reqwest::Response,
     deadline: Option<Instant>,
     timeout: Duration,
-    mut resp: reqwest::Response,
+    cookies: Option<&dyn RedirectCookies>,
 ) -> Result<reqwest::Response, HttpError> {
-    while guard.crossed.swap(false, Ordering::SeqCst) {
-        let Some(target) = redirect_target(&resp) else {
-            break;
+    let mut method = reqwest::Method::from_bytes(req.method.as_bytes())
+        .map_err(|_| HttpError::Method(req.method.clone()))?;
+    let (mut dropped, mut left_origin) = (false, false);
+    for hop in 0.. {
+        let Some((next, drop_body)) = next_hop_method(resp.status(), &method) else {
+            return Ok(resp);
         };
-        let dropped = guard.body_dropped();
+        let Some(target) = redirect_target(&resp) else {
+            return Ok(resp);
+        };
+        dropped |= drop_body;
+        if !dropped && matches!(req.body, ResolvedBody::Multipart(_)) {
+            return Ok(resp);
+        }
+        if hop >= MAX_REDIRECTS {
+            return Err(HttpError::Send(format!(
+                "too many redirects (more than {MAX_REDIRECTS})"
+            )));
+        }
+        left_origin |= !same_origin(&target, resp.url());
+        let jar = match cookies {
+            Some(c) => {
+                let sets: Vec<String> = resp
+                    .headers()
+                    .get_all(reqwest::header::SET_COOKIE)
+                    .iter()
+                    .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                    .collect();
+                Some(
+                    c.hop(resp.url().as_str(), sets, target.as_str())
+                        .await
+                        .map_err(HttpError::Send)?,
+                )
+            }
+            None => None,
+        };
+        method = next;
+        let headers = hop_headers(req, left_origin, dropped, jar)?;
         let body = if dropped {
             &ResolvedBody::None
         } else {
             &req.body
         };
-        let headers = hop_headers(req, dropped)?;
-        let request = build_request(client, guard.method(), target, headers, body).await?;
+        let request = build_request(client, method.clone(), target, headers, body).await?;
         resp = execute_hop(client, request, deadline, timeout).await?;
     }
     Ok(resp)
@@ -873,11 +927,11 @@ async fn build_request(
         ResolvedBody::Bytes(b) if b.is_empty() => empty_len(rb),
         ResolvedBody::Bytes(b) => rb.body(b.clone()),
         ResolvedBody::File(p) => {
-            let data = read_file(p).await?;
-            if data.is_empty() {
+            let (body, len) = file_body(p).await?;
+            if len == 0 {
                 empty_len(rb)
             } else {
-                rb.body(data)
+                rb.body(body)
             }
         }
         ResolvedBody::Multipart(parts) => {
@@ -895,12 +949,12 @@ async fn build_request(
                         }
                     }
                     PartData::File { path, filename } => {
-                        let bytes = read_file(path).await?;
+                        let (body, len) = file_body(path).await?;
                         let ct = p
                             .content_type
                             .clone()
                             .unwrap_or_else(|| guess_mime(filename));
-                        reqwest::multipart::Part::bytes(bytes)
+                        reqwest::multipart::Part::stream_with_length(body, len)
                             .file_name(filename.clone())
                             .mime_str(&ct)
                             .map_err(|e| HttpError::Header {
@@ -919,6 +973,15 @@ async fn build_request(
 
 /// Sends a resolved request and reads the whole response.
 pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse, HttpError> {
+    send_with(req, opts, None).await
+}
+
+/// [`send`], with the cookie jar called on each redirect hop.
+pub async fn send_with(
+    req: &ResolvedHttp,
+    opts: &SendOptions,
+    cookies: Option<&dyn RedirectCookies>,
+) -> Result<HttpResponse, HttpError> {
     let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
         url: req.url.clone(),
         msg: e.to_string(),
@@ -931,7 +994,6 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
     }
     let method = reqwest::Method::from_bytes(req.method.as_bytes())
         .map_err(|_| HttpError::Method(req.method.clone()))?;
-    let (redirect, guard) = redirect_policy(req, &method);
     let headers = header_map(&req.headers)?;
     let marks: Shared = Arc::new(Mutex::new(Marks::default()));
     // PEM files are only read for TLS: a plain `http://` request must not fail
@@ -957,7 +1019,8 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         .tls_backend_preconfigured(tls)
         .dns_resolver(Arc::new(TimedResolver(marks.clone())))
         .connector_layer(TimingLayer(marks.clone()))
-        .redirect(redirect)
+        // Redirects are followed by `follow_redirects`.
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
         // No implicit Referer on redirect hops.
         .referer(false)
@@ -978,8 +1041,8 @@ pub async fn send(req: &ResolvedHttp, opts: &SendOptions) -> Result<HttpResponse
         .execute(request)
         .await
         .map_err(|e| send_error(e, timeout))?;
-    if let Some(guard) = &guard {
-        resp = follow_cross_origin(&client, req, guard, deadline, timeout, resp).await?;
+    if req.follow_redirects {
+        resp = follow_redirects(&client, req, resp, deadline, timeout, cookies).await?;
     }
     let headers_at = Instant::now();
     let status = resp.status();
@@ -1810,6 +1873,30 @@ mod tests {
             .expect("send did not return")
             .unwrap();
         assert_eq!(resp.status, 307);
+    }
+
+    #[tokio::test]
+    async fn a_307_sends_a_file_body_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("body.bin");
+        std::fs::write(&file, b"file-bytes").unwrap();
+        let (u, hc) = chain(vec![
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n"
+                .into(),
+            OK.into(),
+        ])
+        .await;
+        let mut r = req(u);
+        r.method = "PUT".into();
+        r.body = ResolvedBody::File(file);
+        let resp = send(&r, &SendOptions::default()).await.unwrap();
+        assert_eq!(resp.status, 200);
+        let caps = hc.await.unwrap();
+        for cap in &caps {
+            assert!(cap.contains("Content-Length: 10"), "{cap}");
+            assert!(cap.ends_with("file-bytes"), "{cap}");
+        }
+        assert!(caps[1].starts_with("PUT /next HTTP/1.1"), "{}", caps[1]);
     }
 
     #[tokio::test]

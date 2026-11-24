@@ -24,7 +24,7 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 48 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
+  A corpus of 49 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
   byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
@@ -50,7 +50,7 @@ plain TOML files you can version in git.
 * **Environments** with secrets from four sources: the env file, a gitignored
   secrets file, the OS keychain, or a file. Secrets are masked everywhere.
   An opt-in cookie jar keeps cookies per environment; `:cookies` manages them.
-  Redirects are not followed while the jar is enabled.
+  Each redirect hop gets the jar's cookies for its own URL.
   → [Variables and secrets](docs/FEATURES.md#variables-and-secrets)
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
   header, status) after, and assert on them.
@@ -390,8 +390,8 @@ Cookies are isolated by environment, parsed with RFC 6265 and the public suffix
 list, and stored in a private file with a cross-process lock. `:cookies` lists
 them masked, `:cookies delete <n>` removes one, `:cookies clear` empties the
 environment's jar, and `sendito run --no-cookies` disables it for a run.
-**Redirects are not followed while the jar is enabled**, so a forwarded `Cookie`
-cannot escape its path or origin scope.
+On a redirect, each hop gets the jar's `Cookie` header for its own URL, so a
+cookie does not leave its path or origin scope.
 
 More: [HTTP features](docs/FEATURES.md#http) · [FORMAT.md](FORMAT.md#cookie-jar).
 

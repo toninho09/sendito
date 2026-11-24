@@ -226,6 +226,9 @@ Bruno collection directory.
 |---|---|
 | `--into <folder>` | Folder (relative to the collection root) to import into. Default: the root |
 
+The command must run inside a collection (`sendito init` makes one); outside
+one it exits with code 3 and writes nothing.
+
 A report of imported, changed and skipped items is printed. The same import is
 available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 [FEATURES.md](FEATURES.md#import-and-export) and the gaps in
@@ -277,6 +280,6 @@ documented in [FORMAT.md](../FORMAT.md):
 * `[grpc]` — `deadline_ms`;
 * `[mcp]`, `[mcp.servers.<name>]`, `[mcp.servers.<name>.auth]`;
 * `[history]` — `enabled`, `max_entries`;
-* `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `mouse`, `confirm_quit`,
-  `watch_interval_s`;
+* `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `sticky_folders`, `mouse`,
+  `confirm_quit`, `watch_interval_s`;
 * `[keymap.all]`, `[keymap.conventional]`, `[keymap.vim]`.

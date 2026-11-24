@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   ││                                                                                        │
 │▸ Users/                    ││                                                                                        │
 │  GRPC  e╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮         │
-│  GET   h│ ▍  type to search actions, settings, commands and requests                               1/153   ┃         │
+│  GET   h│ ▍  type to search actions, settings, commands and requests                               1/155   ┃         │
 │         │                                                                                                  ┃         │
 │         │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃         │
 │         │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  │         │
@@ -31,7 +31,7 @@ expression: screen
 │         │  Jump to tab 1 of the focused pane                                                        Alt+1  │         │
 │         │  Jump to tab 2 of the focused pane                                                        Alt+2  │         │
 │         │  Jump to tab 3 of the focused pane                                                        Alt+3  │         │
-│         ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 131 more ─╯         │
+│         ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 133 more ─╯         │
 │                                                                                                                      │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

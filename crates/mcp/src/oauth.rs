@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{Value, json};
-use sha2::Digest;
 
 use crate::{McpError, TokenProvider};
 
@@ -26,6 +25,16 @@ pub struct OAuthSettings {
     pub token_url: Option<String>,
     pub registration_url: Option<String>,
     pub scopes: Vec<String>,
+    /// How the OAuth requests reach the authorization server.
+    pub network: Network,
+}
+
+/// `[http] tls` and `[http] proxy`, so discovery, registration and token
+/// requests go out the same way as the API requests they authorize.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Network {
+    pub tls: sendito_http::TlsMaterial,
+    pub proxy: Option<sendito_http::ProxySpec>,
 }
 
 /// The authorization server endpoints a login needs.
@@ -99,10 +108,14 @@ pub trait TokenStore: Send + Sync {
     fn delete(&self, account: &str) -> Result<(), String>;
 }
 
-fn client() -> Result<reqwest::Client, McpError> {
-    let tls = sendito_http::tls_config(true, &[b"h2", b"http/1.1"], &Default::default())
+fn client(net: &Network) -> Result<reqwest::Client, McpError> {
+    let tls = sendito_http::tls_config(true, &[b"h2", b"http/1.1"], &net.tls)
         .map_err(McpError::Transport)?;
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder();
+    if let Some(proxy) = &net.proxy {
+        builder = proxy.apply(builder).map_err(McpError::Transport)?;
+    }
+    builder
         .tls_backend_preconfigured(tls)
         // Never forward authorization codes, refresh tokens or client secrets
         // to an endpoint selected by an HTTP redirect.
@@ -162,7 +175,7 @@ pub async fn discover_endpoints(
             registration: s.registration_url.clone(),
         });
     }
-    let c = client()?;
+    let c = client(&s.network)?;
     // Step 1: the resource points at its metadata.
     let resp = c
         .post(resource_url)
@@ -257,9 +270,12 @@ pub fn well_known(issuer: &str) -> String {
 
 /// Dynamic client registration (RFC 7591). The loopback redirect is
 /// registered without a port: RFC 8252 §7.3 lets the port vary per login.
-pub async fn register(registration_url: &str) -> Result<(String, Option<String>), McpError> {
+pub async fn register(
+    registration_url: &str,
+    net: &Network,
+) -> Result<(String, Option<String>), McpError> {
     validate_oauth_url(registration_url)?;
-    let v: Value = client()?
+    let v: Value = client(net)?
         .post(registration_url)
         .json(&json!({
             "client_name": "sendito",
@@ -292,8 +308,8 @@ pub struct Pkce {
 
 pub fn pkce() -> Result<Pkce, McpError> {
     let verifier = random_urlsafe(48)?;
-    let digest = sha2::Sha256::digest(verifier.as_bytes());
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    let digest = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest.as_ref());
     Ok(Pkce {
         verifier,
         challenge,
@@ -479,6 +495,7 @@ pub async fn exchange(
     granted: Granted,
     client_id: &str,
     client_secret: Option<&str>,
+    net: &Network,
 ) -> Result<Tokens, McpError> {
     let mut form: Vec<(String, String)> = vec![
         ("grant_type".into(), "authorization_code".into()),
@@ -495,7 +512,7 @@ pub async fn exchange(
     if let Some(secret) = client_secret {
         form.push(("client_secret".into(), secret.to_string()));
     }
-    token_request(endpoints, &form, client_id).await
+    token_request(endpoints, &form, client_id, net).await
 }
 
 /// Refreshes an access token; servers may rotate the refresh token.
@@ -505,6 +522,7 @@ pub async fn refresh_tokens(
     client_id: &str,
     client_secret: Option<&str>,
     refresh_token: &str,
+    net: &Network,
 ) -> Result<Tokens, McpError> {
     refresh_with_resource(
         endpoints,
@@ -512,6 +530,7 @@ pub async fn refresh_tokens(
         client_id,
         client_secret,
         refresh_token,
+        net,
     )
     .await
 }
@@ -522,6 +541,7 @@ async fn refresh_with_resource(
     client_id: &str,
     client_secret: Option<&str>,
     refresh_token: &str,
+    net: &Network,
 ) -> Result<Tokens, McpError> {
     let mut form: Vec<(String, String)> = vec![
         ("grant_type".into(), "refresh_token".into()),
@@ -534,7 +554,7 @@ async fn refresh_with_resource(
     if let Some(secret) = client_secret {
         form.push(("client_secret".into(), secret.to_string()));
     }
-    let mut t = token_request(endpoints, &form, client_id).await?;
+    let mut t = token_request(endpoints, &form, client_id, net).await?;
     if t.refresh.is_none() {
         t.refresh = Some(refresh_token.to_string());
     }
@@ -545,9 +565,10 @@ async fn token_request(
     endpoints: &Endpoints,
     form: &[(String, String)],
     client_id: &str,
+    net: &Network,
 ) -> Result<Tokens, McpError> {
     validate_oauth_url(&endpoints.token)?;
-    let resp = client()?
+    let resp = client(net)?
         .post(&endpoints.token)
         .header(
             reqwest::header::CONTENT_TYPE,
@@ -618,7 +639,7 @@ pub async fn login(
                     "no client_id configured and the server offers no registration".into(),
                 ));
             };
-            let (id, secret) = register(&url).await?;
+            let (id, secret) = register(&url, &settings.network).await?;
             (id, secret.or_else(|| settings.client_secret.clone()))
         }
     };
@@ -632,7 +653,14 @@ pub async fn login(
         note,
     )
     .await?;
-    let mut tokens = exchange(&endpoints, granted, &client_id, client_secret.as_deref()).await?;
+    let mut tokens = exchange(
+        &endpoints,
+        granted,
+        &client_id,
+        client_secret.as_deref(),
+        &settings.network,
+    )
+    .await?;
     tokens.client_secret = client_secret;
     tokens.bound_to = Some(resource_url.to_string());
     note(format!(
@@ -674,6 +702,7 @@ pub async fn login_http(
         granted,
         client_id,
         settings.client_secret.as_deref(),
+        &settings.network,
     )
     .await?;
     tokens.client_secret = settings.client_secret.clone();
@@ -753,6 +782,48 @@ impl RefreshingProvider {
     }
 }
 
+impl RefreshingProvider {
+    /// The stored tokens, checked against the binding this provider expects.
+    async fn load(&self, want: Option<&String>) -> Result<Tokens, McpError> {
+        let store = self.store.clone();
+        let account = self.account.clone();
+        let stored = tokio::task::spawn_blocking(move || store.get(&account))
+            .await
+            .map_err(|_| McpError::Transport("keychain task failed".into()))?
+            .map_err(McpError::Transport)?
+            .and_then(|s| Tokens::from_json(&s));
+        let Some(tokens) = stored else {
+            return Err(McpError::NeedsLogin(if self.resource_url.is_some() {
+                "not signed in (run `sendito mcp login`)".into()
+            } else {
+                "not signed in (run `sendito auth login`)".into()
+            }));
+        };
+        if let (Some(have), Some(want)) = (&tokens.bound_to, want)
+            && have != want
+        {
+            return Err(McpError::NeedsLogin(format!(
+                "the saved sign-in is for {have}, not {want}; sign in again"
+            )));
+        }
+        Ok(tokens)
+    }
+}
+
+/// One lock per token-store account, for the whole process: two requests that
+/// need a refresh at the same time must not both spend the same refresh token
+/// (a server that rotates refresh tokens rejects the second one).
+fn refresh_lock(account: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<
+        Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    > = std::sync::OnceLock::new();
+    let locks = LOCKS.get_or_init(Default::default);
+    match locks.lock() {
+        Ok(mut map) => map.entry(account.to_string()).or_default().clone(),
+        Err(_) => Arc::default(),
+    }
+}
+
 impl TokenProvider for RefreshingProvider {
     fn token<'a>(
         &'a self,
@@ -760,34 +831,22 @@ impl TokenProvider for RefreshingProvider {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, McpError>> + Send + 'a>>
     {
         Box::pin(async move {
-            let store = self.store.clone();
-            let account = self.account.clone();
-            let stored = tokio::task::spawn_blocking(move || store.get(&account))
-                .await
-                .map_err(|_| McpError::Transport("keychain task failed".into()))?
-                .map_err(McpError::Transport)?
-                .and_then(|s| Tokens::from_json(&s));
-            let Some(mut tokens) = stored else {
-                return Err(McpError::NeedsLogin(if self.resource_url.is_some() {
-                    "not signed in (run `sendito mcp login`)".into()
-                } else {
-                    "not signed in (run `sendito auth login`)".into()
-                }));
-            };
             // What stored tokens must be bound to (`Tokens::bound_to`): the
             // rendered server URL for MCP, the token endpoint for HTTP.
             let want = self
                 .resource_url
                 .clone()
                 .or_else(|| self.settings.token_url.clone());
-            if let (Some(have), Some(want)) = (&tokens.bound_to, &want)
-                && have != want
-            {
-                return Err(McpError::NeedsLogin(format!(
-                    "the saved sign-in is for {have}, not {want}; sign in again"
-                )));
+            let seen = self.load(want.as_ref()).await?;
+            if !force_refresh && !seen.expired(unix_now()) {
+                return Ok(seen.access);
             }
-            if !force_refresh && !tokens.expired(unix_now()) {
+            let lock = refresh_lock(&self.account);
+            let _guard = lock.lock().await;
+            // Another request refreshed while this one waited: the token is
+            // seconds old, so it is used even when it expires soon.
+            let mut tokens = self.load(want.as_ref()).await?;
+            if tokens.access != seen.access {
                 return Ok(tokens.access);
             }
             let Some(refresh) = tokens.refresh.clone() else {
@@ -806,6 +865,7 @@ impl TokenProvider for RefreshingProvider {
                 &tokens.client_id,
                 client_secret.as_deref(),
                 &refresh,
+                &self.settings.network,
             )
             .await?;
             tokens.client_secret = client_secret;
@@ -915,6 +975,7 @@ mod tests {
     fn pkce_challenge_is_the_hashed_verifier() -> Result<(), McpError> {
         let pk = pkce()?;
         assert_eq!(pk.verifier.len(), 64);
+        use sha2::Digest;
         let digest = sha2::Sha256::digest(pk.verifier.as_bytes());
         let expect = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
         assert_eq!(pk.challenge, expect);

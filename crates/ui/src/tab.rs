@@ -1,6 +1,8 @@
 //! An open request tab: editor widgets for every field, conversion to and
 //! from the request model, and response state.
 
+use std::collections::VecDeque;
+
 use sendito_core::model::*;
 use sendito_grpc::ServiceInfo;
 
@@ -1259,12 +1261,73 @@ pub struct StreamMsg<'a> {
     pub json: bool,
 }
 
+fn grpc_message(e: &sendito_grpc::Event) -> bool {
+    matches!(e, sendito_grpc::Event::Received { .. })
+}
+
+fn ws_message(e: &sendito_ws::Event) -> bool {
+    matches!(e, sendito_ws::Event::Received { kind, .. } if kind.has_payload())
+}
+
+/// Whether an event is kept for the message list or the headers and status
+/// views. `Sent` events and control frames are shown in the event log only:
+/// keeping them here would grow the list for the whole session.
+fn grpc_stored(e: &sendito_grpc::Event) -> bool {
+    matches!(
+        e,
+        sendito_grpc::Event::Received { .. }
+            | sendito_grpc::Event::Headers { .. }
+            | sendito_grpc::Event::Finished { .. }
+    )
+}
+
+fn ws_stored(e: &sendito_ws::Event) -> bool {
+    match e {
+        sendito_ws::Event::Received { kind, .. } => kind.has_payload(),
+        sendito_ws::Event::Handshake { .. } | sendito_ws::Event::Finished { .. } => true,
+        _ => false,
+    }
+}
+
 impl StreamMsg<'_> {
     pub fn doc(&self) -> Doc {
         Doc::from_bytes(
             self.text.as_bytes().to_vec(),
             self.json.then_some("application/json"),
         )
+    }
+}
+
+/// Counts kept as stream events arrive, so each event costs the same however
+/// long the stream is.
+#[derive(Debug, Clone, Default)]
+pub struct StreamStats {
+    /// Messages received (gRPC messages, WebSocket text and binary frames),
+    /// the dropped ones included.
+    pub received: usize,
+    pub sent: usize,
+    /// Bytes received in messages.
+    pub bytes: u64,
+    /// When the first message arrived.
+    pub first_at: Option<std::time::Duration>,
+    /// When the headers (gRPC) or the handshake answer (WebSocket) arrived.
+    pub opened_at: Option<std::time::Duration>,
+    /// When the call or the session finished.
+    pub closed_at: Option<std::time::Duration>,
+    /// The oldest messages no longer kept, because of `[ui] stream_messages_kept`.
+    pub dropped: usize,
+}
+
+impl StreamStats {
+    /// Messages still in the list.
+    pub fn kept(&self) -> usize {
+        self.received - self.dropped
+    }
+
+    fn received(&mut self, size: usize, at: std::time::Duration) {
+        self.received += 1;
+        self.bytes += size as u64;
+        self.first_at.get_or_insert(at);
     }
 }
 
@@ -1275,9 +1338,10 @@ pub struct Response {
     pub headers: Viewer,
     pub timing: Viewer,
     pub messages: Viewer,
-    pub grpc_events: Vec<sendito_grpc::Event>,
+    pub grpc_events: VecDeque<sendito_grpc::Event>,
     pub grpc_kind: Option<sendito_grpc::CallKind>,
-    pub ws_events: Vec<sendito_ws::Event>,
+    pub ws_events: VecDeque<sendito_ws::Event>,
+    pub stream: StreamStats,
     /// Short outcome of the assertions, shown on the Results tab: "2/3 ✗", "3/3 ✓".
     pub results_badge: Option<String>,
     /// The jq expression filtering the body for display, if any.
@@ -1300,9 +1364,10 @@ impl Response {
             headers: wrapped(Doc::text("")),
             timing: wrapped(Doc::text("")),
             messages: wrapped(Doc::text("")),
-            grpc_events: Vec::new(),
+            grpc_events: VecDeque::new(),
             grpc_kind: None,
-            ws_events: Vec::new(),
+            ws_events: VecDeque::new(),
+            stream: StreamStats::default(),
             results_badge: None,
             jq: None,
             jq_src: None,
@@ -1369,8 +1434,91 @@ impl Response {
         Ok(true)
     }
 
-    /// The messages a stream received, in order.
-    pub fn stream_messages(&self) -> Vec<StreamMsg<'_>> {
+    /// Adds a gRPC event. At most `keep` messages stay; the oldest go first.
+    pub fn push_grpc(&mut self, ev: sendito_grpc::Event, keep: usize) {
+        let message = match &ev {
+            sendito_grpc::Event::Received { size, at, .. } => {
+                self.stream.received(*size, *at);
+                true
+            }
+            sendito_grpc::Event::Sent { .. } => {
+                self.stream.sent += 1;
+                false
+            }
+            sendito_grpc::Event::Headers { at, .. } => {
+                self.stream.opened_at = Some(*at);
+                false
+            }
+            sendito_grpc::Event::Finished { at, .. } => {
+                self.stream.closed_at = Some(*at);
+                false
+            }
+            _ => false,
+        };
+        if !grpc_stored(&ev) {
+            return;
+        }
+        self.grpc_events.push_back(ev);
+        if message {
+            while self.stream.kept() > keep.max(1) {
+                let Some(i) = self.grpc_events.iter().position(grpc_message) else {
+                    break;
+                };
+                self.grpc_events.remove(i);
+                self.dropped_one();
+            }
+            self.message_arrived();
+        }
+    }
+
+    /// Adds a WebSocket event. At most `keep` messages stay; the oldest go first.
+    pub fn push_ws(&mut self, ev: sendito_ws::Event, keep: usize) {
+        let message = match &ev {
+            sendito_ws::Event::Received { kind, size, at, .. } if kind.has_payload() => {
+                self.stream.received(*size, *at);
+                true
+            }
+            sendito_ws::Event::Sent { kind, .. } if kind.has_payload() => {
+                self.stream.sent += 1;
+                false
+            }
+            sendito_ws::Event::Handshake { at, .. } => {
+                self.stream.opened_at = Some(*at);
+                false
+            }
+            sendito_ws::Event::Finished { at, .. } => {
+                self.stream.closed_at = Some(*at);
+                false
+            }
+            _ => false,
+        };
+        if !ws_stored(&ev) {
+            return;
+        }
+        self.ws_events.push_back(ev);
+        if message {
+            while self.stream.kept() > keep.max(1) {
+                let Some(i) = self.ws_events.iter().position(ws_message) else {
+                    break;
+                };
+                self.ws_events.remove(i);
+                self.dropped_one();
+            }
+            self.message_arrived();
+        }
+    }
+
+    /// The oldest message left the list: a paused selection keeps pointing
+    /// at the same message.
+    fn dropped_one(&mut self) {
+        self.stream.dropped += 1;
+        if let Some(sel) = self.stream_sel.as_mut() {
+            *sel = sel.saturating_sub(1);
+        }
+    }
+
+    /// The messages a stream kept, in order, without collecting them.
+    pub fn messages(&self) -> impl DoubleEndedIterator<Item = StreamMsg<'_>> {
         let grpc = self.grpc_events.iter().filter_map(|e| match e {
             sendito_grpc::Event::Received {
                 json,
@@ -1389,12 +1537,12 @@ impl Response {
         });
         let ws = self.ws_events.iter().filter_map(|e| match e {
             sendito_ws::Event::Received {
-                kind: sendito_ws::FrameKind::Text | sendito_ws::FrameKind::Binary,
+                kind,
                 preview,
                 size,
                 at,
                 ..
-            } => Some(StreamMsg {
+            } if kind.has_payload() => Some(StreamMsg {
                 at: *at,
                 size: *size,
                 text: preview,
@@ -1403,7 +1551,12 @@ impl Response {
             }),
             _ => None,
         });
-        grpc.chain(ws).collect()
+        grpc.chain(ws)
+    }
+
+    /// The messages a stream kept, in order.
+    pub fn stream_messages(&self) -> Vec<StreamMsg<'_>> {
+        self.messages().collect()
     }
 
     /// A new stream message arrived: the body shows it in live mode.
@@ -1416,12 +1569,19 @@ impl Response {
     /// Shows stream message `i` (the last one for a larger index); the last
     /// message turns live mode on.
     pub fn set_message(&mut self, i: usize) {
-        let msgs = self.stream_messages();
-        let Some(last) = msgs.len().checked_sub(1) else {
+        let Some(last) = self.stream.kept().checked_sub(1) else {
             return;
         };
         let i = i.min(last);
-        let doc = msgs[i].doc();
+        // The last message is found from the end: live mode stays cheap.
+        let msg = if i == last {
+            self.messages().next_back()
+        } else {
+            self.messages().nth(i)
+        };
+        let Some(doc) = msg.map(|m| m.doc()) else {
+            return;
+        };
         self.stream_sel = (i < last).then_some(i);
         self.show_message(doc);
     }
@@ -1429,7 +1589,7 @@ impl Response {
     /// Moves to the previous (`-1`) or next (`1`) stream message. Returns
     /// false when there is none.
     pub fn select_message(&mut self, step: isize) -> bool {
-        let n = self.stream_messages().len();
+        let n = self.stream.kept();
         let cur = self.stream_sel.unwrap_or(n.saturating_sub(1)) as isize;
         let next = cur + step;
         if n < 2 || next < 0 || next >= n as isize {
@@ -1625,7 +1785,11 @@ pub struct Tab {
     pub id: u64,
     pub path: Option<String>,
     pub name: String,
-    pub saved: Option<Request>,
+    /// The request as last saved; `None` for a tab that was never saved.
+    saved: Option<Request>,
+    /// `saved` differs from `model`: kept up to date by `refresh_model` and
+    /// `set_saved`, so drawing does not compare whole requests every frame.
+    is_dirty: bool,
     pub ed: Editors,
     pub req_tab: usize,
     pub resp_tab: usize,
@@ -1668,11 +1832,13 @@ impl Tab {
         saved: Option<Request>,
     ) -> Self {
         let ed = Editors::from_request(req);
+        let is_dirty = saved.as_ref() != Some(req);
         Self {
             id,
             path,
             name,
             saved,
+            is_dirty,
             ed,
             req_tab: 0,
             resp_tab: 0,
@@ -1706,13 +1872,20 @@ impl Tab {
 
     pub fn refresh_model(&mut self) {
         self.model = self.ed.to_request();
+        self.is_dirty = self.saved.as_ref() != Some(&self.model);
+    }
+
+    pub fn saved(&self) -> Option<&Request> {
+        self.saved.as_ref()
+    }
+
+    pub fn set_saved(&mut self, saved: Option<Request>) {
+        self.saved = saved;
+        self.is_dirty = self.saved.as_ref() != Some(&self.model);
     }
 
     pub fn dirty(&self) -> bool {
-        match &self.saved {
-            Some(s) => *s != self.model,
-            None => true,
-        }
+        self.is_dirty
     }
 
     /// The name shown for the tab (on the tab, in the header and in dialogs):
@@ -1754,17 +1927,18 @@ mod tests {
     fn stream_messages_follow_live_and_keep_the_filter() {
         let mut r = Response::new();
         for text in ["one", "two", "three"] {
-            r.grpc_events
-                .push(grpc_msg(&format!("{{\"text\":\"{text}\"}}")));
-            r.message_arrived();
+            r.push_grpc(grpc_msg(&format!("{{\"text\":\"{text}\"}}")), 100);
         }
-        r.ws_events.push(sendito_ws::Event::Received {
-            kind: sendito_ws::FrameKind::Ping,
-            preview: String::new(),
-            size: 0,
-            at: std::time::Duration::ZERO,
-            wall: std::time::SystemTime::UNIX_EPOCH,
-        });
+        r.push_ws(
+            sendito_ws::Event::Received {
+                kind: sendito_ws::FrameKind::Ping,
+                preview: String::new(),
+                size: 0,
+                at: std::time::Duration::ZERO,
+                wall: std::time::SystemTime::UNIX_EPOCH,
+            },
+            100,
+        );
         assert_eq!(r.stream_messages().len(), 3);
         assert!(r.body.doc.raw.text.contains("three"));
         assert_eq!(r.body.mode, ViewMode::Pretty);
@@ -1777,8 +1951,7 @@ mod tests {
         assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
         assert!(r.query.is_some());
         // A new message does not move a paused view.
-        r.grpc_events.push(grpc_msg("{\"text\":\"four\"}"));
-        r.message_arrived();
+        r.push_grpc(grpc_msg("{\"text\":\"four\"}"), 100);
         assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
         // Going to the last message turns live mode on again.
         assert!(r.select_message(1));
@@ -1787,11 +1960,67 @@ mod tests {
         assert!(!r.select_message(1));
         assert_eq!(r.body.doc.raw.text.trim(), "\"four\"");
         // A message the filter fails on shows unfiltered, the error on the bar.
-        r.grpc_events.push(grpc_msg("[1]"));
-        r.message_arrived();
+        r.push_grpc(grpc_msg("[1]"), 100);
         assert_eq!(r.body.doc.raw.text, "[1]");
         assert!(r.query.as_ref().is_some_and(|q| q.error.is_some()));
         assert_eq!(r.jq.as_deref(), Some(".text"));
+    }
+
+    #[test]
+    fn stream_keeps_the_newest_messages_and_counts_all() {
+        let mut r = Response::new();
+        for i in 0..5 {
+            r.push_grpc(grpc_msg(&format!("{{\"n\":{i}}}")), 3);
+        }
+        assert_eq!(r.stream.received, 5);
+        assert_eq!(r.stream.dropped, 2);
+        assert_eq!(r.stream.kept(), 3);
+        let kept: Vec<String> = r
+            .stream_messages()
+            .iter()
+            .map(|m| m.text.to_string())
+            .collect();
+        assert_eq!(kept, ["{\"n\":2}", "{\"n\":3}", "{\"n\":4}"]);
+        // A paused selection stays on its message when an old one is dropped.
+        assert!(r.select_message(-1));
+        assert_eq!(r.stream_sel, Some(1));
+        r.push_grpc(grpc_msg("{\"n\":5}"), 3);
+        assert_eq!(r.stream_sel, Some(0));
+        assert!(r.body.doc.raw.text.contains('3'));
+    }
+
+    #[test]
+    fn control_events_do_not_grow_the_stream_list() {
+        let mut r = Response::new();
+        let sent = || sendito_grpc::Event::Sent {
+            json: "{}".into(),
+            at: std::time::Duration::ZERO,
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        };
+        let ping = || sendito_ws::Event::Received {
+            kind: sendito_ws::FrameKind::Ping,
+            preview: String::new(),
+            size: 0,
+            at: std::time::Duration::ZERO,
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        };
+        // `Sent` events and ping frames are not messages: the list stays empty.
+        for _ in 0..1000 {
+            r.push_grpc(sent(), 100);
+            r.push_ws(ping(), 100);
+        }
+        assert!(r.grpc_events.is_empty());
+        assert!(r.ws_events.is_empty());
+        assert_eq!(r.stream.received, 0);
+        // Headers and the close event are kept: the headers view needs them.
+        r.push_grpc(
+            sendito_grpc::Event::Headers {
+                metadata: vec![("a".into(), "1".into())],
+                at: std::time::Duration::ZERO,
+            },
+            100,
+        );
+        assert_eq!(r.grpc_events.len(), 1);
     }
 
     #[test]

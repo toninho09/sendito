@@ -441,6 +441,50 @@ fn flow_tree_wheel_scrolls_freely() {
     assert!(h.screen().contains(&name), "{name} not visible");
 }
 
+/// While the tree scrolls, the folder of the top row stays pinned above the
+/// list; a click on it selects the folder and scrolls the tree to it.
+#[test]
+fn flow_tree_pins_folders_while_scrolling() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    for i in 0..60 {
+        common::write(
+            h.dir.path(),
+            &format!("Big/route {i:02}.toml"),
+            "kind = \"http\"\nmethod = \"GET\"\nurl = \"http://x\"\n",
+        );
+    }
+    h.app.rescan();
+    h.app.tree.select_rel("Big/route 00.toml");
+    h.draw();
+    let tr = h.app.areas.tree;
+    let top = |h: &mut Harness| -> String {
+        h.screen()
+            .lines()
+            .nth(tr.y as usize)
+            .unwrap_or_default()
+            .to_string()
+    };
+    for _ in 0..10 {
+        h.scroll(tr.x + 4, tr.y + 4, true);
+    }
+    assert!(
+        top(&mut h).contains("Big/"),
+        "folder not pinned\n{}",
+        h.screen()
+    );
+    h.click(tr.x + 6, tr.y);
+    assert_eq!(h.app.tree.selected_rel().as_deref(), Some("Big"));
+    h.draw();
+    assert_eq!(h.app.tree.rows[h.app.tree.scroll].rel, "Big");
+    // Off: the top line is a request row.
+    h.app.project.config.ui.sticky_folders = false;
+    for _ in 0..10 {
+        h.scroll(tr.x + 4, tr.y + 4, true);
+    }
+    assert!(!top(&mut h).contains("Big/"), "{}", h.screen());
+}
+
 /// The history sidebar behaves the same way: free wheel browsing, selection
 /// kept visible while navigating with the keyboard.
 #[test]

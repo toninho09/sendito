@@ -56,6 +56,76 @@
   the picker of the active request. `:rescan` reads the collection from disk
   again. `:newenv` creates an environment.
 
+### Streams and large responses
+
+* **`[ui] stream_messages_kept`** (default 10000, also in Settings): a gRPC or
+  WebSocket stream keeps this many messages in the response; the oldest go
+  first. The list says "N older dropped" and numbers every message; the
+  counts, sizes and timing still cover all of them. The runner no longer
+  keeps every event of a session in memory.
+* Each stream message costs the same however long the stream is (the size,
+  the timing and the live message were recomputed from every event).
+* The response viewer draws long and wrapped lines, search matches and the
+  JSON path of the cursor without going through the whole document on each
+  frame. A growing log wraps only its new lines.
+* Undo keeps at most 32 MB of copies per text, in addition to 200 steps.
+* `{{variables}}` that reference each other many times render once per name;
+  one render stops at 1 MB.
+* Extract and assert rules parse the response body once per run.
+
+### Redirects
+
+* **Redirects are followed with the cookie jar enabled.** Each hop gets the
+  jar's `Cookie` header for its own URL, and the cookies a redirect response
+  sets are stored before the next hop (they were not followed, and a note said
+  so).
+* **File bodies are sent while they are read** (a request body `< file` and
+  multipart file parts), not loaded into memory first. A 307 or 308 redirect
+  sends the file again. The bytes on the wire are the same.
+
+### Sidebar
+
+* **Pinned folders.** While the tree scrolls, the folders of the top row stay
+  pinned above the list, at most half its height. A click on a pinned folder
+  selects it and scrolls the tree to it. The "Pin folders while scrolling"
+  setting (`ui.sticky_folders`, on by default) turns it off.
+
+### Fixes
+
+* **A request with a comment after `kind` no longer disappears** from the tree
+  and from `sendito run` (`kind = "http" # main`, or a quoted key).
+* **Filtering the tree by some non-Latin names no longer crashes** the app.
+* **The 401 retry with OAuth stays inside the request timeout**: the first
+  send, the token refresh and the retry share it. The error says why the token
+  or the refresh failed.
+* **OAuth token, discovery and registration requests use `[http] tls` and
+  `[http] proxy`**, like the API requests.
+* **Two requests that refresh the same OAuth token at once** spend the refresh
+  token once; the second uses the new token.
+* **An MCP stdio server that prints a line that is not JSON-RPC** to stdout no
+  longer breaks the call; the line shows as a log (`stdout: …`). Lines are
+  limited to 100 MB (stdout) and split at 64 KB (stderr logs). When a call
+  ends, the server's stdin is closed and it gets 0.5 s to exit before it is
+  killed.
+* **MCP Streamable HTTP**: a keep-alive before the reply in one chunk no longer
+  reads as a closed stream; bodies are limited to 100 MB; an SSE body is
+  searched once per byte.
+* **`sendito import` outside a collection exits with code 3** and writes
+  nothing (it made a collection of the current directory).
+* Folder paths with `.` or `..` parts are refused (create, move, import).
+* The import report dialog is as tall as its wrapped text.
+* A search that stops at 100000 matches says so (`match 1/100000+`), and case
+  folding is the same on every line.
+* **Saves are durable**: request, environment, config, secrets, session and
+  cookie files are written to a unique temporary file, flushed, and renamed;
+  the directory is synced. History appends are locked across processes and
+  written in one piece, so a trim does not drop another process's entry.
+  Secret and config edits are locked across processes too, and `secrets.toml`
+  keeps values it does not write.
+* **A session file that does not parse is kept** as `session.toml.corrupt`
+  (with a warning) instead of being overwritten.
+* A config file with a literal OAuth `client_secret` is written owner-only.
+
 ## 0.2.0 — 2026-11-24
 
 ### Response query bar and body type chips

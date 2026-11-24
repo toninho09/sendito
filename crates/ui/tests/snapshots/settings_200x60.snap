@@ -8,7 +8,6 @@ expression: screen
 │▸ Users/                    ││                                                                                                                                                                        │
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
 │                            ││                                  ╭─ Settings ─────────────────────────────────────────────────────────╮                                                                │
 │                            ││                                  │                                                                    │                                                                │
 │                            ││                                  │  Saving                                                            │                                                                │
@@ -22,24 +21,26 @@ expression: screen
 │                            ││                                  │    Key bindings                                    ‹ 0 changes ›   │                                                                │
 │                            ││                                  │  Layout                                                            │                                                                │
 │                            ││                                  │    Sidebar position                                     ‹ left ›   │                                                                │
+│                            ││                                  │    Pin folders while scrolling                            ‹ On ›   │                                                                │
 │                            ││                                  │  Behavior                                                          │                                                                │
 │                            ││                                  │    Mouse support                                          ‹ On ›   │                                                                │
 │                            ││                                  │    Confirm quit with unsaved changes                      ‹ On ›   │                                                                │
 │                            ││                                  │    Record history                                         ‹ On ›   │                                                                │
 │                            ││                                  │    History entries kept                                ‹ 10000 ›   │                                                                │
 │                            ││                                  │    Watch interval                                        ‹ 5 s ›   │                                                                │
-│                            ││                                  │  Timeouts                                                          │                                                                │
-│                            ││                            Start │    HTTP request timeout                             ‹ 30000 ms ›   │ t                                                              │
-│                            ││                             Ctrl+│    gRPC deadline                                        ‹ none ›   │ sts you send appear here.                                      │
-│                            ││                             n / N│    WebSocket handshake timeout                          ‹ none ›   │                                                                │
-│                            ││                             Enter│    MCP call timeout                                 ‹ 30000 ms ›   │ all history                                                    │
+│                            ││                                  │    Stream messages kept                                ‹ 10000 ›   │                                                                │
+│                            ││                            Start │  Timeouts                                                          │ t                                                              │
+│                            ││                             Ctrl+│    HTTP request timeout                             ‹ 30000 ms ›   │ sts you send appear here.                                      │
+│                            ││                             n / N│    gRPC deadline                                        ‹ none ›   │                                                                │
+│                            ││                             Enter│    WebSocket handshake timeout                          ‹ none ›   │ all history                                                    │
+│                            ││                             Ctrl+│    MCP call timeout                                 ‹ 30000 ms ›   │                                                                │
 │                            ││                             Ctrl+│  HTTP                                                              │                                                                │
-│                            ││                             Ctrl+│    Largest response body                              ‹ 100 MB ›   │                                                                │
-│                            ││                             F4   │    Cookie jar                                            ‹ Off ›   │                                                                │
-│                            ││                             m    │    Proxy                                             ‹ not set ›   │                                                                │
-│                            ││                             Ctrl+│    OAuth identities                             ‹ 0 identities ›   │                                                                │
-│                            ││                             F1   │  TLS                                                               │                                                                │
-│                            ││                             Ctrl+│    CA certificates (PEM)                             ‹ not set ›   │                                                                │
+│                            ││                             F4   │    Largest response body                              ‹ 100 MB ›   │                                                                │
+│                            ││                             m    │    Cookie jar                                            ‹ Off ›   │                                                                │
+│                            ││                             Ctrl+│    Proxy                                             ‹ not set ›   │                                                                │
+│                            ││                             F1   │    OAuth identities                             ‹ 0 identities ›   │                                                                │
+│                            ││                             Ctrl+│  TLS                                                               │                                                                │
+│                            ││                                  │    CA certificates (PEM)                             ‹ not set ›   │                                                                │
 │                            ││                                  │    Client certificate (PEM)                          ‹ not set ›   │                                                                │
 │                            ││                                  │    Client key (PEM)                                  ‹ not set ›   │                                                                │
 │                            ││                                  │  Collection                                                        │                                                                │
@@ -53,7 +54,6 @@ expression: screen
 │                            ││                                  │  Changes apply at once and are saved to                            │                                                                │
 │                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
 │                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

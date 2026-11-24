@@ -42,11 +42,22 @@ pub struct ExtractResult {
 
 /// Evaluates a JSONPath against a body and returns the matched nodes.
 pub fn json_query(body: &[u8], expr: &str) -> Result<Vec<Value>, String> {
-    let path = JsonPath::parse(expr.trim()).map_err(|e| format!("invalid JSONPath: {e}"))?;
-    let v: Value =
-        serde_json::from_slice(body).map_err(|e| format!("response body is not JSON: {e}"))?;
-    Ok(path.query(&v).all().into_iter().cloned().collect())
+    query_parsed(&parse_body(body), expr)
 }
+
+/// The body as JSON, or why it is not.
+fn parse_body(body: &[u8]) -> Result<Value, String> {
+    serde_json::from_slice(body).map_err(|e| format!("response body is not JSON: {e}"))
+}
+
+fn query_parsed(body: &Result<Value, String>, expr: &str) -> Result<Vec<Value>, String> {
+    let path = JsonPath::parse(expr.trim()).map_err(|e| format!("invalid JSONPath: {e}"))?;
+    let v = body.as_ref().map_err(Clone::clone)?;
+    Ok(path.query(v).all().into_iter().cloned().collect())
+}
+
+/// The response body parsed once for all the rules of a run.
+type Parsed = std::cell::OnceCell<Result<Value, String>>;
 
 /// String form of a JSON value: strings unquoted, everything else as compact JSON.
 pub fn value_text(v: &Value) -> String {
@@ -56,7 +67,12 @@ pub fn value_text(v: &Value) -> String {
     }
 }
 
-fn read(source: Source, expr: &str, resp: &ResponseView<'_>) -> Result<Option<String>, String> {
+fn read(
+    source: Source,
+    expr: &str,
+    resp: &ResponseView<'_>,
+    parsed: &Parsed,
+) -> Result<Option<String>, String> {
     match source {
         Source::Status => Ok(Some(resp.status.to_string())),
         Source::Header => Ok(resp
@@ -65,7 +81,7 @@ fn read(source: Source, expr: &str, resp: &ResponseView<'_>) -> Result<Option<St
             .find(|(n, _)| n.eq_ignore_ascii_case(expr.trim()))
             .map(|(_, v)| v.clone())),
         Source::Body => {
-            let nodes = json_query(resp.body, expr)?;
+            let nodes = query_parsed(parsed.get_or_init(|| parse_body(resp.body)), expr)?;
             Ok(match nodes.len() {
                 0 => None,
                 1 => Some(value_text(&nodes[0])),
@@ -82,8 +98,9 @@ pub fn run_extract(
     scope: &mut Scope,
 ) -> Vec<ExtractResult> {
     let mut out = Vec::new();
+    let parsed = Parsed::new();
     for r in rules.iter().filter(|r| !r.var.trim().is_empty()) {
-        let value = match read(r.source, &r.expr, resp) {
+        let value = match read(r.source, &r.expr, resp, &parsed) {
             Ok(Some(v)) => Ok(VarValue {
                 value: v,
                 secret: r.secret,
@@ -173,12 +190,13 @@ pub fn run_asserts(
     resp: &ResponseView<'_>,
     scope: &Scope,
 ) -> Vec<AssertResult> {
+    let parsed = Parsed::new();
     asserts
         .iter()
         .map(|a| {
             let label = describe(a);
             let expected = scope.render(&a.value).text;
-            match read(a.source, &a.expr, resp) {
+            match read(a.source, &a.expr, resp, &parsed) {
                 Err(e) => AssertResult {
                     label,
                     pass: false,

@@ -234,6 +234,41 @@ done
 
 #[cfg(unix)]
 #[tokio::test]
+async fn stdio_shows_a_non_json_stdout_line_as_a_log() -> Result<(), Box<dyn std::error::Error>> {
+    let script = r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      echo 'listening on :3000'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}' ;;
+    *'"method":"tools/call"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"content":[]}}'; exit ;;
+  esac
+done
+"#;
+    let transport = Transport::Stdio {
+        command: "sh".into(),
+        args: vec!["-c".into(), script.into()],
+        env: Vec::new(),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let result = sendito_mcp::call_tool(&transport, "add", "{}", &opts(5), tx).await?;
+    assert!(!result.is_error);
+    let logs: Vec<String> = drain(&mut rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Log { line, .. } => Some(line),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        logs.iter().any(|l| l == "stdout: listening on :3000"),
+        "{logs:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn stdio_forwards_stderr_and_env_then_times_out() -> Result<(), Box<dyn std::error::Error>> {
     let t = Transport::Stdio {
         command: "sh".into(),

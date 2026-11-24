@@ -18,7 +18,8 @@ keyring.workspace = true
 cookie_store.workspace = true
 psl.workspace = true
 url.workspace = true
-fs2.workspace = true
+
+[dev-dependencies]
 tempfile.workspace = true
 
 [lints]

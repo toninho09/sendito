@@ -598,23 +598,25 @@ fn cookie_jar_stores_and_replays() {
             .filter(|(n, _)| n == "set-cookie")
             .all(|(_, v)| !v.contains("corpus-1") && !v.contains("dark"))
     );
-    // Do not forward cookies across a redirect even on the same host.
+    // A redirect is followed: each hop gets the jar's Cookie for its own URL,
+    // and a cookie set by the redirect response goes to the next hop.
+    http.take();
     let mut redirected = echo.clone();
-    redirected.url = "{{base}}/redirect/1".into();
+    redirected.url = "{{base}}/login-redirect".into();
     let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx("redirect"),
         &redirected,
         scope.clone(),
         vec![],
     ));
-    assert_eq!(o.response.unwrap().status, 302);
-    assert!(
-        o.resolved
-            .notes
-            .iter()
-            .any(|n| n.contains("redirects are not followed"))
-    );
-    http.take();
+    assert_eq!(o.response.unwrap().status, 200);
+    let hops = http.take();
+    assert_eq!(hops.len(), 2);
+    let first = hops[0].header("cookie").unwrap_or_default();
+    assert!(!first.contains("login="), "{first}");
+    let second = hops[1].header("cookie").unwrap_or_default();
+    assert!(second.contains("login=corpus-2"), "{second}");
+    assert!(second.contains("session=corpus-1"), "{second}");
     // 3. Without `cookies = true` nothing is sent or stored.
     let mut plain = echo.clone();
     plain.options.cookies = Some(false);
@@ -838,6 +840,22 @@ fn cli_runs_grpc_and_mcp_in_a_folder() {
         assert!(stderr.contains("PASS  Rpc/tool.toml"), "{stderr}");
         assert!(stderr.contains("2 passed, 0 failed, 0 error(s)"), "{stderr}");
     });
+}
+
+#[test]
+fn cli_import_outside_a_collection_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+        .current_dir(dir.path())
+        .arg("import")
+        .arg(root().join("tests/fixtures/insomnia.json"))
+        .env("SENDITO_KEYCHAIN", "memory")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no collection here"), "{stderr}");
+    assert!(!dir.path().join(".sendito").exists());
 }
 
 #[test]

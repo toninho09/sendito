@@ -3,12 +3,13 @@
 //! Paths handed out by this module are relative to the collection root and use
 //! `/` separators, so they are stable across platforms and safe to store.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use sendito_core::Request;
 
+pub(crate) use crate::fsio::make_private;
+pub use crate::fsio::{write_atomic, write_private};
 use crate::request_file;
 use crate::{Result, StoreError};
 
@@ -123,6 +124,23 @@ pub fn validate_name(name: &str) -> Result<()> {
     if bad {
         return Err(StoreError::Invalid(format!(
             "invalid name {name:?}: names cannot be empty, start with '.', or contain '/', '\\' or control characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Checks a relative folder path (`""` is the root): every part must stay
+/// inside the collection, so `..`, `.` and `\` are refused.
+pub fn validate_rel(rel: &str) -> Result<()> {
+    let bad = rel.split('/').filter(|p| !p.is_empty()).any(|p| {
+        p == "."
+            || p == ".."
+            || p.chars()
+                .any(|c| matches!(c, '\\' | '\0') || c.is_control())
+    });
+    if bad {
+        return Err(StoreError::Invalid(format!(
+            "invalid folder {rel:?}: a folder path cannot contain '.', '..' or '\\' parts"
         )));
     }
     Ok(())
@@ -273,6 +291,7 @@ impl Collection {
 
     pub fn create_folder(&self, parent: &str, name: &str) -> Result<String> {
         validate_name(name)?;
+        validate_rel(parent)?;
         let rel = join_rel(parent, name);
         let p = self.abs(&rel);
         if p.exists() {
@@ -284,6 +303,7 @@ impl Collection {
 
     pub fn create_request(&self, parent: &str, name: &str, req: &Request) -> Result<String> {
         validate_name(name)?;
+        validate_rel(parent)?;
         let rel = join_rel(parent, &format!("{name}.{EXT}"));
         let p = self.abs(&rel);
         if p.exists() {
@@ -323,6 +343,7 @@ impl Collection {
 
     /// Moves a node into another folder ("" is the root).
     pub fn move_to(&self, rel: &str, new_parent: &str) -> Result<String> {
+        validate_rel(new_parent)?;
         let base = rel.rsplit('/').next().unwrap_or(rel);
         if !Self::is_request_rel(rel)
             && (new_parent == rel || new_parent.starts_with(&format!("{rel}/")))
@@ -437,64 +458,6 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Writes through a temporary file and renames it into place.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_temp(path, bytes, false)
-}
-
-pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_temp(path, bytes, true)
-}
-
-fn write_temp(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
-    }
-    let tmp = path.with_extension(format!(
-        "{}.tmp{}",
-        path.extension()
-            .map(|e| e.to_string_lossy())
-            .unwrap_or_default(),
-        std::process::id()
-    ));
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    if private {
-        owner_only(&mut options);
-    }
-    let written = options.open(&tmp).and_then(|mut f| f.write_all(bytes));
-    if let Err(e) = written {
-        let _ = fs::remove_file(&tmp);
-        return Err(StoreError::io(&tmp, e));
-    }
-    fs::rename(&tmp, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        StoreError::io(path, e)
-    })
-}
-
-#[cfg(unix)]
-fn owner_only(options: &mut OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt;
-    options.mode(0o600);
-}
-
-#[cfg(not(unix))]
-fn owner_only(_: &mut OpenOptions) {}
-
-pub(crate) fn make_private(_path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(_path)
-            && meta.permissions().mode() & 0o077 != 0
-        {
-            let mode = meta.permissions().mode() & !0o077;
-            let _ = fs::set_permissions(_path, fs::Permissions::from_mode(mode));
-        }
-    }
-}
-
 /// Reads badges for many files, spreading the work over a few threads.
 fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String, Option<String>> {
     let threads = std::thread::available_parallelism()
@@ -510,7 +473,7 @@ fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String,
                 s.spawn(move || {
                     part.iter()
                         .map(|(rel, p)| {
-                            let badge = fs::read_to_string(p)
+                            let badge = read_head(p)
                                 .ok()
                                 .and_then(|t| request_file::sniff_badge(&t));
                             (rel.clone(), badge)
@@ -526,6 +489,22 @@ fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String,
         }
     });
     out
+}
+
+/// The top-level keys of a TOML file: the lines before the first table header.
+/// A badge sits there, so the rest of a large request file is not read.
+fn read_head(p: &Path) -> std::io::Result<String> {
+    use std::io::BufRead;
+    let mut head = String::new();
+    for line in std::io::BufReader::new(fs::File::open(p)?).lines() {
+        let line = line?;
+        if line.trim_start().starts_with('[') {
+            break;
+        }
+        head.push_str(&line);
+        head.push('\n');
+    }
+    Ok(head)
 }
 
 fn fill_badges(f: &mut Folder, badges: &std::collections::HashMap<String, Option<String>>) {
@@ -777,6 +756,12 @@ mod tests {
         assert!(validate_name("ok name").is_ok());
         for bad in ["", " x", ".hidden", "a/b", "a\\b", "x\u{1}", ".."] {
             assert!(validate_name(bad).is_err(), "{bad}");
+        }
+        for ok in ["", "a", "a/b c", "a/.config-like name/b"] {
+            assert!(validate_rel(ok).is_ok(), "{ok}");
+        }
+        for bad in ["..", "a/../..", "./a", "a\\b"] {
+            assert!(validate_rel(bad).is_err(), "{bad}");
         }
         assert_eq!(join_rel("", "a"), "a");
         assert_eq!(join_rel("a", "b"), "a/b");

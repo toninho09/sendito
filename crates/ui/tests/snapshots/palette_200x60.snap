@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/153   ┃                                                 │
+│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/155   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -47,7 +47,7 @@ expression: screen
 │                            ││                   │  Copy the request as curl (secrets stay {{placeholders}})                              Ctrl+W u  │                                                 │
 │                            ││                   │  Pretty-print the JSON body / message                                                  Ctrl+W f  │                                                 │
 │                            ││                   │  Maximize or restore the focused pane                                                  Ctrl+W z  │                                                 │
-│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 117 more ─╯                                                 │
+│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 119 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

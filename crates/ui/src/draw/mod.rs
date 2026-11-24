@@ -136,11 +136,8 @@ fn draw_main(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
         draw_welcome(app, buf, area, theme);
         return;
     }
-    let req_focus = matches!(app.focus, Focus::Bar(_) | Focus::ReqTabs | Focus::ReqBody);
-    let resp_focus = matches!(
-        app.focus,
-        Focus::RespTabs | Focus::RespBody | Focus::RespQuery
-    );
+    let req_focus = app.focus.in_request();
+    let resp_focus = app.focus.in_response();
     // The URL card governs both panes, so it sits above them (hidden only
     // while the response is zoomed). A low screen gets one row, no border.
     let strip_h = if (app.zoom && resp_focus) || area.height <= 8 {

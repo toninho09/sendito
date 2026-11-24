@@ -37,7 +37,7 @@ lists everything a change type touches, and its "Test and tooling map" the tests
 | A request field or a wire rule | `crates/core/src/model.rs`, `crates/core/src/resolve.rs`, `crates/store/src/request_file.rs` | The `FORMAT.md` section of that request kind; `docs/DEBT.md` when the HTTP library gets in the way |
 | HTTP, gRPC, WebSocket or MCP behaviour | `crates/http/src/lib.rs`, `crates/grpc/src/lib.rs`, `crates/ws/src/lib.rs` or `crates/mcp/src/lib.rs`; the wiring in `crates/pipeline/src/runner.rs` | "What goes on the wire" in `FORMAT.md` |
 | A CLI command | `src/main.rs` | `docs/CLI.md` |
-| A UI surface | `crates/ui/src/app.rs` and its module under `crates/ui/src/draw/` | The "Terminal UI" tables in `docs/MAP.md`; `docs/reports/ux-critic.md` before changing dialog keys, hint rows or status wording |
+| A UI surface | `crates/ui/src/app/` and its module under `crates/ui/src/draw/` | The "Terminal UI" tables in `docs/MAP.md`; `docs/reports/ux-critic.md` before changing dialog keys, hint rows or status wording |
 | A key or a `:command` | `crates/ui/src/keymap.rs`, the only source (`KEYMAP.md` is generated from it) | "Adding a key, command or setting" in `docs/MAP.md` |
 | A setting | `crates/store/src/config.rs` | The same table, then `docs/FEATURES.md` |
 | Anything else saved on disk | `crates/store/src/` | "Environment files" and "Project and global config" in `FORMAT.md` |

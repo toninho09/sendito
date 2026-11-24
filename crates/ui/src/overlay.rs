@@ -432,9 +432,11 @@ pub enum SettingId {
     Sidebar,
     Mouse,
     ConfirmQuit,
+    StickyFolders,
     History,
     HistoryMax,
     WatchInterval,
+    StreamKept,
     Hints,
     HttpTimeout,
     GrpcDeadline,
@@ -465,9 +467,11 @@ impl SettingId {
             Sidebar => ("ui", "sidebar"),
             Mouse => ("ui", "mouse"),
             ConfirmQuit => ("ui", "confirm_quit"),
+            StickyFolders => ("ui", "sticky_folders"),
             History => ("history", "enabled"),
             HistoryMax => ("history", "max_entries"),
             WatchInterval => ("ui", "watch_interval_s"),
+            StreamKept => ("ui", "stream_messages_kept"),
             Hints => ("ui", "hints"),
             HttpTimeout => ("http", "timeout_ms"),
             GrpcDeadline => ("grpc", "deadline_ms"),
@@ -492,6 +496,7 @@ impl SettingId {
             self,
             HistoryMax
                 | WatchInterval
+                | StreamKept
                 | HttpTimeout
                 | GrpcDeadline
                 | WsTimeout
@@ -516,7 +521,7 @@ impl SettingId {
         use SettingId::*;
         match self {
             GrpcDeadline | WsTimeout => Some(0),
-            HistoryMax | WatchInterval | HttpTimeout | McpTimeout | MaxBody => Some(1),
+            HistoryMax | WatchInterval | StreamKept | HttpTimeout | McpTimeout | MaxBody => Some(1),
             _ => None,
         }
     }
@@ -547,11 +552,13 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::Vim, "Vim mode"),
     (SettingId::KeyBindings, "Key bindings"),
     (SettingId::Sidebar, "Sidebar position"),
+    (SettingId::StickyFolders, "Pin folders while scrolling"),
     (SettingId::Mouse, "Mouse support"),
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),
     (SettingId::History, "Record history"),
     (SettingId::HistoryMax, "History entries kept"),
     (SettingId::WatchInterval, "Watch interval"),
+    (SettingId::StreamKept, "Stream messages kept"),
     (SettingId::HttpTimeout, "HTTP request timeout"),
     (SettingId::GrpcDeadline, "gRPC deadline"),
     (SettingId::WsTimeout, "WebSocket handshake timeout"),

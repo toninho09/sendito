@@ -62,7 +62,44 @@ enum Pending {
     /// A complete `application/json` body, parsed on the first `recv`.
     Json(Vec<u8>),
     /// An `text/event-stream` body, read event by event.
-    Sse(ByteStream, Vec<u8>),
+    Sse(ByteStream, SseBuf),
+}
+
+/// The largest response body (JSON, or one SSE event) read from a server.
+const MAX_BODY: usize = 100 * 1024 * 1024;
+/// How much of an error body is read for its message.
+const MAX_ERROR_BODY: usize = 4096;
+
+fn too_large() -> McpError {
+    McpError::Transport(format!(
+        "the server sent more than {} MiB",
+        MAX_BODY / (1024 * 1024)
+    ))
+}
+
+/// Reads a body of at most `max` bytes. With `cut`, a longer body is cut at
+/// `max`; without, it is an error.
+async fn read_body(
+    mut resp: reqwest::Response,
+    max: usize,
+    cut: bool,
+) -> Result<Vec<u8>, McpError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| McpError::Transport(e.to_string()))?
+    {
+        if body.len() + chunk.len() > max {
+            if !cut {
+                return Err(too_large());
+            }
+            body.extend_from_slice(&chunk[..max - body.len()]);
+            break;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 struct HttpConn {
@@ -129,8 +166,10 @@ impl HttpConn {
             ));
         }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            let preview: String = body.chars().take(200).collect();
+            let body = read_body(resp, MAX_ERROR_BODY, true)
+                .await
+                .unwrap_or_default();
+            let preview: String = String::from_utf8_lossy(&body).chars().take(200).collect();
             return Err(McpError::Transport(format!("HTTP {status}: {preview}")));
         }
         if let Some(sid) = resp
@@ -147,16 +186,13 @@ impl HttpConn {
             .unwrap_or_default()
             .to_ascii_lowercase();
         if ctype.contains("text/event-stream") {
-            self.pending = Pending::Sse(Box::pin(resp.bytes_stream()), Vec::new());
+            self.pending = Pending::Sse(Box::pin(resp.bytes_stream()), SseBuf::default());
         } else {
-            let body = resp
-                .bytes()
-                .await
-                .map_err(|e| McpError::Transport(e.to_string()))?;
+            let body = read_body(resp, MAX_BODY, false).await?;
             self.pending = if body.is_empty() {
                 Pending::None
             } else {
-                Pending::Json(body.to_vec())
+                Pending::Json(body)
             };
         }
         Ok(())
@@ -217,17 +253,19 @@ impl Wire for HttpConn {
                         .map_err(|e| McpError::Json(e.to_string()));
                 }
                 Pending::Sse(stream, buf) => loop {
-                    if let Some(data) = take_sse_event(buf) {
-                        if let Some(msg) = parse_sse_data(&data) {
-                            break msg;
+                    match buf.next_event() {
+                        Some(Some(data)) => {
+                            if let Some(msg) = parse_sse_data(&data) {
+                                break msg;
+                            }
                         }
-                        // A comment or a keep-alive: read on.
-                    } else {
-                        match stream.next().await {
-                            Some(Ok(chunk)) => buf.extend_from_slice(&chunk),
+                        // A comment or a keep-alive: the buffer may hold more.
+                        Some(None) => {}
+                        None => match stream.next().await {
+                            Some(Ok(chunk)) => buf.push(&chunk)?,
                             Some(Err(e)) => return Err(McpError::Transport(e.to_string())),
                             None => return Err(McpError::Closed),
-                        }
+                        },
                     }
                 },
             };
@@ -236,40 +274,62 @@ impl Wire for HttpConn {
     }
 }
 
-/// Takes the first complete event (a blank line — `\n\n` or `\r\n\r\n` —
-/// ends one) and joins its `data:` lines with `\n`, as the SSE format defines.
-/// Other fields (`event:`, `id:`, comments) are ignored.
-fn take_sse_event(buf: &mut Vec<u8>) -> Option<String> {
-    // `\n\n` never matches inside `\r\n\r\n`, so the earliest end wins.
-    let (end, sep) = {
-        let nl = buf
-            .windows(2)
-            .position(|w| w == b"\n\n")
-            .map(|i| (i + 2, 2));
-        let crlf = buf
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map(|i| (i + 4, 4));
-        match (nl, crlf) {
-            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
+/// The unread part of an SSE body. `scanned` is how far the search for an
+/// event end got, so each chunk is searched once.
+#[derive(Default)]
+struct SseBuf {
+    buf: Vec<u8>,
+    scanned: usize,
+}
+
+impl SseBuf {
+    fn push(&mut self, chunk: &[u8]) -> Result<(), McpError> {
+        if self.buf.len() + chunk.len() > MAX_BODY {
+            return Err(too_large());
         }
-    }?;
-    let block: Vec<u8> = buf.drain(..end).collect();
-    let text = String::from_utf8_lossy(&block[..end - sep]);
-    let mut data: Vec<&str> = Vec::new();
-    for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if let Some(d) = line.strip_prefix("data:") {
-            data.push(d.strip_prefix(' ').unwrap_or(d));
-        }
+        self.buf.extend_from_slice(chunk);
+        Ok(())
     }
-    if data.is_empty() {
-        None
-    } else {
-        Some(data.join("\n"))
+
+    /// Takes the first complete event (a blank line — `\n\n` or `\r\n\r\n` —
+    /// ends one) and joins its `data:` lines with `\n`, as the SSE format
+    /// defines. Other fields (`event:`, `id:`, comments) are ignored.
+    /// `None`: no complete event yet. `Some(None)`: an event with no data.
+    fn next_event(&mut self) -> Option<Option<String>> {
+        // A separator can start in the 3 bytes before the unscanned part.
+        let from = self.scanned.saturating_sub(3);
+        let Some((end, sep)) = event_end(&self.buf[from..]).map(|(e, s)| (e + from, s)) else {
+            self.scanned = self.buf.len();
+            return None;
+        };
+        let block: Vec<u8> = self.buf.drain(..end).collect();
+        self.scanned = 0;
+        let text = String::from_utf8_lossy(&block[..end - sep]);
+        let mut data: Vec<&str> = Vec::new();
+        for line in text.split('\n') {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if let Some(d) = line.strip_prefix("data:") {
+                data.push(d.strip_prefix(' ').unwrap_or(d));
+            }
+        }
+        Some((!data.is_empty()).then(|| data.join("\n")))
+    }
+}
+
+/// Where the first event in `buf` ends, and the length of its separator.
+fn event_end(buf: &[u8]) -> Option<(usize, usize)> {
+    // `\n\n` never matches inside `\r\n\r\n`, so the earliest end wins.
+    let nl = buf
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|i| (i + 2, 2));
+    let crlf = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| (i + 4, 4));
+    match (nl, crlf) {
+        (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+        (a, b) => a.or(b),
     }
 }
 
@@ -281,18 +341,46 @@ fn parse_sse_data(data: &str) -> Option<Value> {
 mod tests {
     use super::*;
 
+    fn sse(bytes: &[u8]) -> SseBuf {
+        let mut b = SseBuf::default();
+        b.push(bytes).unwrap();
+        b
+    }
+
     #[test]
     fn sse_events_join_data_lines() {
-        let mut buf = b": ping\n\n".to_vec();
-        assert_eq!(take_sse_event(&mut buf), None);
-        buf.extend_from_slice(b"event: message\ndata: {\"id\":1}\ndata: \n\n");
-        assert_eq!(take_sse_event(&mut buf), Some("{\"id\":1}\n".into()));
-        assert!(buf.is_empty());
+        let mut buf = sse(b": ping\n\n");
+        assert_eq!(buf.next_event(), Some(None));
+        assert_eq!(buf.next_event(), None);
+        buf.push(b"event: message\ndata: {\"id\":1}\ndata: \n\n")
+            .unwrap();
+        assert_eq!(buf.next_event(), Some(Some("{\"id\":1}\n".into())));
+        assert!(buf.buf.is_empty());
     }
 
     #[test]
     fn sse_handles_crlf_and_prefix_space() {
-        let mut buf = b"data:{\"a\":true}\r\n\r\n".to_vec();
-        assert_eq!(take_sse_event(&mut buf), Some("{\"a\":true}".into()));
+        let mut buf = sse(b"data:{\"a\":true}\r\n\r\n");
+        assert_eq!(buf.next_event(), Some(Some("{\"a\":true}".into())));
+    }
+
+    #[test]
+    fn sse_finds_a_separator_split_across_chunks() {
+        let mut buf = sse(b"data: 1\r\n");
+        assert_eq!(buf.next_event(), None);
+        buf.push(b"\r").unwrap();
+        assert_eq!(buf.next_event(), None);
+        buf.push(b"\ndata: 2\n").unwrap();
+        assert_eq!(buf.next_event(), Some(Some("1".into())));
+        assert_eq!(buf.next_event(), None);
+        buf.push(b"\n").unwrap();
+        assert_eq!(buf.next_event(), Some(Some("2".into())));
+    }
+
+    #[test]
+    fn a_keep_alive_before_the_reply_in_one_chunk_is_not_a_closed_stream() {
+        let mut buf = sse(b": keep-alive\n\ndata: {}\n\n");
+        assert_eq!(buf.next_event(), Some(None));
+        assert_eq!(buf.next_event(), Some(Some("{}".into())));
     }
 }

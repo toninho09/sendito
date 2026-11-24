@@ -135,7 +135,7 @@ impl Harness {
             Arc::new(MemoryKeychain::default()),
             Some(cfg.join("config.toml")),
         );
-        let session =
+        let (session, _) =
             sendito_store::session::load(&sendito_store::session::session_path(dir.path()));
         let mut app = App::new(project, session, rt.handle().clone());
         app.home = Some(dir.path().to_path_buf());

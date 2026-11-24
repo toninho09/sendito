@@ -58,12 +58,28 @@ pub fn session_path(root: &Path) -> PathBuf {
     root.join(META_DIR).join("session.toml")
 }
 
-/// Loads the session; a missing or unreadable file yields the default.
-pub fn load(path: &Path) -> Session {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|t| toml::from_str(&t).ok())
-        .unwrap_or_default()
+/// Loads the session; a missing file yields the default. A file that does not
+/// parse also yields the default, but it is first moved to
+/// `session.toml.corrupt` (its drafts are not overwritten by the next save),
+/// and the returned warning says so.
+pub fn load(path: &Path) -> (Session, Option<String>) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return (Session::default(), None);
+    };
+    match toml::from_str(&text) {
+        Ok(s) => (s, None),
+        Err(_) => {
+            let aside = path.with_extension("toml.corrupt");
+            let warning = match fs::rename(path, &aside) {
+                Ok(()) => format!(
+                    "the session file could not be read; it was kept as {}",
+                    aside.display()
+                ),
+                Err(_) => "the session file could not be read; open tabs were not restored".into(),
+            };
+            (Session::default(), Some(warning))
+        }
+    }
 }
 
 pub fn save(path: &Path, s: &Session) -> Result<()> {
@@ -83,7 +99,7 @@ mod tests {
     fn roundtrip() {
         let d = tempfile::tempdir().unwrap();
         let p = session_path(d.path());
-        assert_eq!(load(&p), Session::default());
+        assert_eq!(load(&p), (Session::default(), None));
         let mut s = Session {
             active_env: Some("dev".into()),
             tabs: vec![SessionTab {
@@ -97,8 +113,15 @@ mod tests {
         s.layout.sidebar_width = 40;
         save(&p, &s).unwrap();
         save(&p, &s).unwrap();
-        assert_eq!(load(&p), s);
+        assert_eq!(load(&p).0, s);
         fs::write(&p, "garbage [").unwrap();
-        assert_eq!(load(&p), Session::default());
+        let (loaded, warning) = load(&p);
+        assert_eq!(loaded, Session::default());
+        assert!(warning.is_some_and(|w| w.contains("session.toml.corrupt")));
+        assert_eq!(
+            fs::read_to_string(p.with_extension("toml.corrupt")).unwrap(),
+            "garbage ["
+        );
+        assert!(!p.exists());
     }
 }

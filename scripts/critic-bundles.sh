@@ -82,8 +82,10 @@ Title-Case ("x-api-key" is sent as "X-Api-Key"; names are case-insensitive), the
 order between headers of different names may differ from the file (headers with the
 same name stay in file order), and "Accept: */*" is added when the request defines
 no enabled Accept header (added by the HTTP library). When [options] cookies = true,
-matching cookies from the per-environment jar are sent in a Cookie header. Redirects
-are not followed with the jar enabled. Cases 45 and 46 cover cookie storage and replay.
+matching cookies from the per-environment jar are sent in a Cookie header; on a redirect,
+each hop gets the jar's Cookie header for its own URL (cookies the redirect response sets
+are stored first). Cases 45 and 46 cover cookie storage and replay; case 49 follows a
+redirect that sets a cookie, which the next hop sends.
 Case 47 uses a keychain-sourced OAuth bearer token. Case 48 follows a redirect to another
 origin (other scheme, host or port): the API-key header, like Authorization and Cookie,
 is not sent to the new origin. Also: metadata keys ending in "-bin" take a

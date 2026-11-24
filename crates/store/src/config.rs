@@ -60,12 +60,17 @@ pub struct UiConfig {
     pub mouse: bool,
     /// Ask before quitting with unsaved changes.
     pub confirm_quit: bool,
+    /// Keep the folders of the top tree row pinned while the tree scrolls.
+    pub sticky_folders: bool,
     /// Default watch interval, in seconds (`:watch` re-sends the active
     /// request on this interval until stopped).
     pub watch_interval_s: u64,
     /// Key hints in the footer: `full` (as many as fit), `short` (the three
     /// most used) or `off` (only the menu and help keys).
     pub hints: String,
+    /// Messages a gRPC or WebSocket stream keeps in the response; the oldest
+    /// go first. The counts and sizes still cover every message.
+    pub stream_messages_kept: usize,
 }
 
 impl Default for UiConfig {
@@ -77,8 +82,10 @@ impl Default for UiConfig {
             sidebar: "left".into(),
             mouse: true,
             confirm_quit: true,
+            sticky_folders: true,
             watch_interval_s: 5,
             hints: "short".into(),
+            stream_messages_kept: 10_000,
         }
     }
 }
@@ -359,6 +366,38 @@ fn read_doc(path: &Path) -> Result<toml_edit::DocumentMut> {
         .map_err(|e| StoreError::Invalid(format!("{}: {e}", path.display())))
 }
 
+/// Reads `path`, lets `f` change it and writes it back, keeping comments.
+/// Other Sendito processes that edit a file in the same directory wait, so
+/// two edits do not overwrite each other.
+fn edit_doc(path: &Path, f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    crate::fsio::with_dir_lock(dir, || {
+        let mut doc = read_doc(path)?;
+        f(&mut doc)?;
+        let text = doc.to_string();
+        // A literal OAuth client secret: the file is readable by its owner
+        // only. A `{{variable}}` reference is not a secret.
+        let literal_secret = doc_has_literal_secret(doc.as_item());
+        if literal_secret {
+            crate::fsio::write_private(path, text.as_bytes())
+        } else {
+            write_atomic(path, text.as_bytes())
+        }
+    })
+}
+
+fn doc_has_literal_secret(item: &toml_edit::Item) -> bool {
+    let Some(t) = item.as_table_like() else {
+        return false;
+    };
+    t.iter().any(|(k, v)| {
+        (k == "client_secret"
+            && v.as_str()
+                .is_some_and(|s| !s.trim_start().starts_with("{{")))
+            || doc_has_literal_secret(v)
+    })
+}
+
 /// The table at the dotted path `keys` in `doc`, with each missing table
 /// created (without its own header line while it holds only sub-tables).
 fn doc_table<'a>(
@@ -389,23 +428,24 @@ pub fn set_table<T: Serialize>(path: &Path, keys: &[&str], value: &T) -> Result<
     let name = keys.join(".");
     let value = toml::Value::try_from(value)
         .map_err(|e| StoreError::Invalid(format!("cannot write [{name}]: {e}")))?;
-    let mut doc = read_doc(path)?;
-    let sec = doc_table(&mut doc, parent)?;
-    if value.as_table().is_some_and(toml::Table::is_empty) {
-        sec.remove(last);
-    } else {
-        let mut wrap = toml::Table::new();
-        wrap.insert((*last).to_string(), value);
-        let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let mut src: toml_edit::DocumentMut = text
-            .parse()
-            .map_err(|e| StoreError::Invalid(format!("cannot write [{name}]: {e}")))?;
-        let item = src
-            .remove(last)
-            .ok_or_else(|| StoreError::Invalid(format!("cannot write [{name}]")))?;
-        sec.insert(last, item);
-    }
-    write_atomic(path, doc.to_string().as_bytes())
+    edit_doc(path, |doc| {
+        let sec = doc_table(doc, parent)?;
+        if value.as_table().is_some_and(toml::Table::is_empty) {
+            sec.remove(last);
+        } else {
+            let mut wrap = toml::Table::new();
+            wrap.insert((*last).to_string(), value);
+            let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
+            let mut src: toml_edit::DocumentMut = text
+                .parse()
+                .map_err(|e| StoreError::Invalid(format!("cannot write [{name}]: {e}")))?;
+            let item = src
+                .remove(last)
+                .ok_or_else(|| StoreError::Invalid(format!("cannot write [{name}]")))?;
+            sec.insert(last, item);
+        }
+        Ok(())
+    })
 }
 
 /// Replaces `[mcp.servers]` in a config file, keeping the rest of the file
@@ -417,7 +457,15 @@ pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Re
 /// Sets `[mcp.servers.<server>.auth]` in a config file, keeping the rest of
 /// the file (comments too). The server must already be in that file.
 pub fn set_mcp_server_auth(path: &Path, server: &str, auth: &McpServerAuth) -> Result<()> {
-    let mut doc = read_doc(path)?;
+    edit_doc(path, |doc| set_auth_in(doc, path, server, auth))
+}
+
+fn set_auth_in(
+    doc: &mut toml_edit::DocumentMut,
+    path: &Path,
+    server: &str,
+    auth: &McpServerAuth,
+) -> Result<()> {
     let entry = doc
         .get_mut("mcp")
         .and_then(|m| m.get_mut("servers"))
@@ -441,19 +489,27 @@ pub fn set_mcp_server_auth(path: &Path, server: &str, auth: &McpServerAuth) -> R
         .remove("auth")
         .ok_or_else(|| StoreError::Invalid(format!("cannot write the auth of {server}")))?;
     entry.insert("auth", item);
-    write_atomic(path, doc.to_string().as_bytes())
+    Ok(())
 }
 
 /// Sets `section.key = value` in a config file, keeping other content
 /// (comments too). `section` is a dotted path (`http.tls`); `None` removes
 /// the key.
 pub fn set_value(path: &Path, section: &str, key: &str, value: Option<toml::Value>) -> Result<()> {
-    let mut doc = read_doc(path)?;
+    edit_doc(path, |doc| set_value_in(doc, section, key, value))
+}
+
+fn set_value_in(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    key: &str,
+    value: Option<toml::Value>,
+) -> Result<()> {
     let keys: Vec<&str> = section.split('.').collect();
-    let sec = doc_table(&mut doc, &keys)?;
+    let sec = doc_table(doc, &keys)?;
     let Some(value) = value else {
         sec.remove(key);
-        return write_atomic(path, doc.to_string().as_bytes());
+        return Ok(());
     };
     let v: toml_edit::Value = value
         .to_string()
@@ -470,7 +526,7 @@ pub fn set_value(path: &Path, section: &str, key: &str, value: Option<toml::Valu
             sec.insert(key, toml_edit::Item::Value(v));
         }
     }
-    write_atomic(path, doc.to_string().as_bytes())
+    Ok(())
 }
 
 /// Whether a config file sets `section.key` (`section` is a dotted path).
@@ -710,6 +766,19 @@ scopes = ["read"]
         assert!(set_value(&p, "ui", "x", Some(toml::Value::Boolean(true))).is_err());
         assert!(global_path().is_some());
         assert!(project_path(Path::new("/x")).ends_with(".sendito/config.toml"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_literal_client_secret_makes_the_config_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o077;
+        set_value(&p, "oauth.api", "client_secret", Some("{{secret}}".into())).unwrap();
+        assert_ne!(mode(&p), 0, "a variable reference is not a secret");
+        set_value(&p, "oauth.api", "client_secret", Some("s3cr3t".into())).unwrap();
+        assert_eq!(mode(&p), 0);
     }
 
     #[test]

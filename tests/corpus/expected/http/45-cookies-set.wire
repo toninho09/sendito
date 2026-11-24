@@ -3,4 +3,3 @@ Accept: */*
 Host: 127.0.0.1:<port>
 
 ### client saw: 200 OK
-### note: redirects are not followed when the cookie jar is enabled

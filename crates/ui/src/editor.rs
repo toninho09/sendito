@@ -80,6 +80,11 @@ pub enum Highlight {
     Url,
 }
 
+/// Undo steps a text keeps.
+const UNDO_MAX_STEPS: usize = 200;
+/// Bytes the undo steps of a text may hold together.
+const UNDO_MAX_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct TextEditor {
     lines: Vec<String>,
@@ -180,6 +185,18 @@ impl TextEditor {
         self
     }
 
+    /// The length of [`TextEditor::text`] in bytes, without joining the lines.
+    pub fn byte_len(&self) -> usize {
+        self.lines.iter().map(String::len).sum::<usize>() + self.lines.len().saturating_sub(1)
+    }
+
+    /// The text without its leading and trailing whitespace is `s`. Joins
+    /// the lines only when the text holds no more than `s` outside whitespace.
+    pub fn trimmed_is(&self, s: &str) -> bool {
+        let content: usize = self.lines.iter().map(|l| l.trim().len()).sum();
+        content <= s.len() && self.text().trim() == s
+    }
+
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }
@@ -251,9 +268,22 @@ impl TextEditor {
             lines: self.lines.clone(),
             cursor: self.cursor,
         });
-        if self.undo.len() > 200 {
-            self.undo.remove(0);
-        }
+        // Each step copies the whole text: cap the steps and the bytes they
+        // hold (the newest step always stays).
+        let size = |s: &Snapshot| s.lines.iter().map(String::len).sum::<usize>();
+        let mut total: usize = self.undo.iter().map(size).sum();
+        let drop = self
+            .undo
+            .iter()
+            .take_while(|s| {
+                let over = total > UNDO_MAX_BYTES;
+                total -= size(s);
+                over
+            })
+            .count()
+            .max(self.undo.len().saturating_sub(UNDO_MAX_STEPS))
+            .min(self.undo.len() - 1);
+        self.undo.drain(..drop);
         self.redo.clear();
         self.typing = false;
     }
@@ -1794,6 +1824,22 @@ fn cell_width(ch: char) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_steps_of_a_large_text_stay_under_the_byte_cap() {
+        let big = "x".repeat(UNDO_MAX_BYTES / 4);
+        let mut e = TextEditor::multi(&big);
+        for _ in 0..10 {
+            e.snapshot();
+        }
+        assert!(e.undo.len() <= 4, "{}", e.undo.len());
+        assert!(e.undo());
+        let mut small = TextEditor::multi("a");
+        for _ in 0..(UNDO_MAX_STEPS + 20) {
+            small.snapshot();
+        }
+        assert_eq!(small.undo.len(), UNDO_MAX_STEPS);
+    }
 
     fn k(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

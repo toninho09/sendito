@@ -1347,9 +1347,24 @@ fn http_export(request: &Path, env: Option<String>, include_secrets: bool) -> Ex
     ExitCode::SUCCESS
 }
 
-fn import(file: &Path, into: &str) -> ExitCode {
+/// The collection that holds the working directory. Without one, prints the
+/// error and returns the exit code: commands that write must not make a
+/// collection of whatever directory they run in.
+fn collection_root() -> Result<PathBuf, ExitCode> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = sendito_store::init::find_root(&cwd).unwrap_or(cwd);
+    sendito_store::init::find_root(&cwd).ok_or_else(|| {
+        eprintln!(
+            "sendito: no collection here (no .sendito directory found upwards); run sendito init first"
+        );
+        ExitCode::from(3)
+    })
+}
+
+fn import(file: &Path, into: &str) -> ExitCode {
+    let root = match collection_root() {
+        Ok(root) => root,
+        Err(code) => return code,
+    };
     let project = Project::open(&root, runner::default_keychain());
     let (format, result) = match sendito_import::import_path(file) {
         Ok(r) => r,
@@ -1392,10 +1407,9 @@ fn import(file: &Path, into: &str) -> ExitCode {
 
 /// `sendito auth login|logout <name>`: OAuth for HTTP requests.
 async fn http_auth(cmd: AuthCmd) -> ExitCode {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(root) = sendito_store::init::find_root(&cwd) else {
-        eprintln!("sendito: no collection here (no .sendito directory found upwards)");
-        return ExitCode::from(3);
+    let root = match collection_root() {
+        Ok(root) => root,
+        Err(code) => return code,
     };
     let project = Project::open(&root, runner::default_keychain());
     let (name, env, login) = match cmd {
@@ -1431,7 +1445,7 @@ async fn http_auth(cmd: AuthCmd) -> ExitCode {
         eprintln!("sendito: cannot resolve environment secrets");
         return ExitCode::from(2);
     }
-    let settings = match runner::oauth_settings(identity, &scope) {
+    let settings = match runner::oauth_settings(identity, &scope, project.oauth_network()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("sendito: {e}");
@@ -1467,10 +1481,9 @@ async fn http_auth(cmd: AuthCmd) -> ExitCode {
 }
 
 async fn mcp(cmd: McpCmd) -> ExitCode {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(root) = sendito_store::init::find_root(&cwd) else {
-        eprintln!("sendito: no collection here (no .sendito directory found upwards)");
-        return ExitCode::from(3);
+    let root = match collection_root() {
+        Ok(root) => root,
+        Err(code) => return code,
     };
     let project = Project::open(&root, runner::default_keychain());
     for w in &project.warnings {

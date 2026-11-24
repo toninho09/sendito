@@ -573,6 +573,10 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
             Some(SettingId::Mouse) => {
                 "Clicks, wheel scrolling, dragging tree items and borders.".to_string()
             }
+            Some(SettingId::StickyFolders) => {
+                "Keep the folders of the top tree row at the top while the tree scrolls."
+                    .to_string()
+            }
             Some(SettingId::ConfirmQuit) => {
                 "Ask before quitting while tabs have unsaved changes.".to_string()
             }
@@ -1264,8 +1268,17 @@ fn draw_import(
 
 fn draw_report(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, rep: &mut Report) {
     let w = frame.area.width.min(100).saturating_sub(8).max(10) as usize;
+    // Rows as the wrapped viewer draws them (it breaks long words too).
     let lines: usize = (0..rep.viewer.doc.line_count(ViewMode::Raw))
-        .map(|i| wrap_text(&rep.viewer.doc.line_ref(ViewMode::Raw, i), w).len())
+        .map(|i| {
+            let mut rows = 1;
+            sendito_pipeline::doc::wrap_breaks(
+                &rep.viewer.doc.line_ref(ViewMode::Raw, i),
+                w,
+                |_| rows += 1,
+            );
+            rows
+        })
         .sum();
     let lines = lines.min(u16::MAX as usize) as u16;
     let (r, inner) = shell(

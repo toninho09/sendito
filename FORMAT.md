@@ -207,10 +207,12 @@ until deleted. `:cookies` lists cookies without values; `:cookies delete <number
 deletes one, and `:cookies clear` deletes the active environment's jar.
 
 Cookie parsing and matching follow RFC 6265 using the public suffix list; secure
-cookies require HTTPS and public-suffix Domain attributes are rejected. To prevent
-cookies from being sent to the wrong path or origin, **redirects are not followed
-when the jar is enabled**; the response and a note are shown instead. Set-Cookie
-values and their echoes are masked in the UI.
+cookies require HTTPS and public-suffix Domain attributes are rejected. When a
+request follows redirects, **each hop gets the jar's `Cookie` header for its own
+URL**: the cookies a redirect response sets are stored first, and a cookie whose
+path or domain does not match the next URL is not sent there. A `Cookie` header
+the request defines is not sent to another origin. Set-Cookie values and their
+echoes are masked in the UI.
 
 ## gRPC request
 
@@ -466,9 +468,11 @@ theme = "auto"           # auto | dusk | daylight | ember | linen | contrast | a
                          # or a theme file of yours (docs/THEMES.md)
 icons = "unicode"        # unicode | nerd (Nerd Font icons)
 sidebar = "left"         # left | right
+sticky_folders = true    # pin the folders of the top tree row while scrolling
 mouse = true
 confirm_quit = true
 watch_interval_s = 5     # :watch re-sends the active request this often
+stream_messages_kept = 10000  # messages a gRPC/WebSocket stream keeps; oldest go first
 hints = "short"          # footer key hints: full | short | off
 
 [http]

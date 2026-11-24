@@ -111,14 +111,13 @@ allows `accept` as a transport header.
   sessions do.
 * `[http.tls]` is read when a connection is TLS: a plain `http://` request
   ignores the PEM paths entirely, so a missing file only fails (with its name)
-  on an `https://` request or gRPC channel. The same material is loaded once
-  per request; a folder run re-reads it for every TLS request.
-* OAuth endpoints (HTTP `[oauth]` identities and MCP server OAuth) do not use
-  `[http.tls]` or `[http] proxy` yet: authorize/token requests always verify
-  with the platform roots, send no client certificate and ignore the
-  configured proxy.
-* HTTP requests with the cookie jar enabled do not follow redirects, so an
-  automatically forwarded Cookie header cannot escape its path or origin scope.
+  on an `https://` request or gRPC channel. The PEM bytes are kept and read
+  again only when a file's size or time changes; the TLS configuration is
+  still built for each request.
+* Each HTTP send uses a new client, so connections are not reused (a folder
+  run or a watch does a TCP and TLS handshake per request). This keeps the
+  DNS / connect / TLS timing of every send; reuse would need the timing marks
+  per request instead of per client.
 * Response bodies with a `Content-Encoding` other than `gzip`, `deflate` and
   `br` (e.g. `zstd`, stacked codings) are shown as received; `gzip`, `deflate`
   and `br` are decompressed automatically. A truncated body is never decompressed.
@@ -153,4 +152,4 @@ allows `accept` as a transport header.
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  48 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  49 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.

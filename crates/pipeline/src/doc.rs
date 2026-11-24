@@ -101,7 +101,15 @@ pub struct Doc {
     fold_end: Vec<u32>,
     pub is_json: bool,
     pub valid_utf8: bool,
+    /// Per pretty line: (the line that opens its container, its array index
+    /// or a marker), built on the first [`Doc::json_path`] call.
+    tree: std::sync::OnceLock<Vec<(u32, u32)>>,
 }
+
+/// `Doc::tree` index of a line that is an object member or a top-level value.
+const NO_INDEX: u32 = u32::MAX;
+/// `Doc::tree` index of a line that closes its container.
+const CLOSING: u32 = u32::MAX - 1;
 
 pub const NO_FOLD: u32 = u32::MAX;
 
@@ -134,6 +142,7 @@ impl Doc {
             fold_end,
             is_json,
             valid_utf8: valid,
+            tree: Default::default(),
         }
     }
 
@@ -163,6 +172,7 @@ impl Doc {
             fold_end,
             is_json: true,
             valid_utf8: true,
+            tree: Default::default(),
         }
     }
 
@@ -239,46 +249,68 @@ impl Doc {
         if line >= pretty.len() {
             return None;
         }
-        // One entry per open container: (is an array, next index, its segment).
-        let mut stack: Vec<(bool, usize, String)> = Vec::new();
-        let path = |stack: &[(bool, usize, String)], last: Option<&str>| {
-            let mut p: String = stack.iter().map(|f| f.2.as_str()).collect();
-            p.push_str(last.unwrap_or(""));
-            if p.starts_with('.') {
-                p
-            } else {
-                format!(".{p}")
-            }
-        };
-        for i in 0..=line {
-            let t = pretty.line(i).trim_start();
-            if t.starts_with('}') || t.starts_with(']') {
-                if i == line {
-                    return Some(path(&stack, None));
-                }
-                stack.pop();
-                continue;
-            }
-            let (key, value) = split_key(t);
-            let seg = match stack.last_mut() {
-                Some((true, next, _)) => {
-                    *next += 1;
-                    format!("[{}]", *next - 1)
-                }
-                Some(_) => key.map(key_segment).unwrap_or_default(),
-                None => String::new(),
-            };
-            if i == line {
-                return Some(path(&stack, Some(&seg)));
-            }
-            match value.trim_end_matches(',') {
-                "{" => stack.push((false, 0, seg)),
-                "[" => stack.push((true, 0, seg)),
-                _ => {}
-            }
+        let tree = self.tree.get_or_init(|| json_tree(pretty));
+        let mut i = line;
+        // A closing line belongs to its container.
+        if tree[i].1 == CLOSING {
+            i = tree[i].0 as usize;
         }
-        None
+        // Walk up to the top level, then join the segments top-down.
+        let mut segs: Vec<String> = Vec::new();
+        loop {
+            let (parent, index) = tree[i];
+            if parent == NO_FOLD {
+                break;
+            }
+            segs.push(if index == NO_INDEX {
+                split_key(pretty.line(i).trim_start())
+                    .0
+                    .map(key_segment)
+                    .unwrap_or_default()
+            } else {
+                format!("[{index}]")
+            });
+            i = parent as usize;
+        }
+        let p: String = segs.iter().rev().map(String::as_str).collect();
+        Some(if p.starts_with('.') {
+            p
+        } else {
+            format!(".{p}")
+        })
     }
+}
+
+/// For each pretty line, the line that opens its container (`NO_FOLD` at the
+/// top level) and its index in an array (`NO_INDEX` for an object member,
+/// `CLOSING` for a closing line). One pass, so a path costs its depth.
+fn json_tree(pretty: &Lines) -> Vec<(u32, u32)> {
+    let mut tree = Vec::with_capacity(pretty.len());
+    // One entry per open container: (its line, is an array, next index).
+    let mut stack: Vec<(u32, bool, u32)> = Vec::new();
+    for i in 0..pretty.len() {
+        let t = pretty.line(i).trim_start();
+        let parent = stack.last().map(|f| f.0).unwrap_or(NO_FOLD);
+        if t.starts_with('}') || t.starts_with(']') {
+            tree.push((parent, CLOSING));
+            stack.pop();
+            continue;
+        }
+        let index = match stack.last_mut() {
+            Some((_, true, next)) => {
+                *next += 1;
+                *next - 1
+            }
+            _ => NO_INDEX,
+        };
+        tree.push((parent, index));
+        match split_key(t).1.trim_end_matches(',') {
+            "{" => stack.push((i as u32, false, 0)),
+            "[" => stack.push((i as u32, true, 0)),
+            _ => {}
+        }
+    }
+    tree
 }
 
 /// Splits a pretty JSON line into its object key (the quoted source text) and
@@ -428,6 +460,19 @@ pub struct Search {
     /// (line, start char, char length)
     pub matches: Vec<(u32, u32, u32)>,
     pub current: usize,
+    /// The search stopped at [`Search::MAX_MATCHES`]; more matches exist.
+    pub capped: bool,
+}
+
+impl Search {
+    /// Where a search stops collecting matches.
+    pub const MAX_MATCHES: usize = 100_000;
+
+    /// "match 3/12", or "match 3/100000+" when the search was capped.
+    pub fn position_label(&self) -> String {
+        let more = if self.capped { "+" } else { "" };
+        format!("match {}/{}{more}", self.current + 1, self.matches.len())
+    }
 }
 
 /// Columns that continuation rows of a wrapped line are indented by: the

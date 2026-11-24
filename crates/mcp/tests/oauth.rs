@@ -120,6 +120,47 @@ async fn login_flow_and_call() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[tokio::test]
+async fn concurrent_refreshes_spend_the_refresh_token_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let captured = Arc::new(Mutex::new(None::<String>));
+    let browser = spawn_browser(captured.clone());
+    let opener = move |url: &str| -> bool {
+        if let Ok(mut g) = captured.lock() {
+            *g = Some(url.to_string());
+        }
+        true
+    };
+    let tokens = login(
+        &srv.mcp_url(),
+        &OAuthSettings::default(),
+        Duration::from_secs(10),
+        &opener,
+        &|_| {},
+    )
+    .await?;
+    let _ = browser.await;
+    // Two providers (two tabs) share one store and one account. The server
+    // rotates refresh tokens, so a second refresh with the old one fails.
+    let store = Arc::new(MemStore::default());
+    store.set("acct-concurrent", &tokens.to_json())?;
+    let provider = || {
+        RefreshingProvider::new(
+            store.clone(),
+            "acct-concurrent".into(),
+            srv.mcp_url(),
+            OAuthSettings::default(),
+        )
+    };
+    let (a, b) = (provider(), provider());
+    use sendito_mcp::TokenProvider;
+    let (ta, tb) = tokio::join!(a.token(true), b.token(true));
+    assert_eq!(ta?, tb?);
+    assert_eq!(srv.refreshes(), 1);
+    Ok(())
+}
+
 struct RetryToken {
     valid: String,
     refreshes: AtomicUsize,

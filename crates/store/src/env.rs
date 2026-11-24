@@ -446,7 +446,8 @@ impl Envs {
     /// Stores a secret value in the variable's own source (local file or keychain).
     pub fn store_secret(&self, env: &str, var: &EnvVar, value: &str) -> Result<()> {
         match &var.source {
-            VarSource::Local { key } => {
+            // Locked: two processes that save a secret at once both keep it.
+            VarSource::Local { key } => crate::fsio::with_dir_lock(&self.meta(), || {
                 let mut t = self.load_local().map_err(StoreError::Invalid)?;
                 let section = t
                     .entry(env.to_string())
@@ -461,7 +462,7 @@ impl Envs {
                     toml::Value::String(value.into()),
                 );
                 write_private(&self.secrets_path(), secrets_to_toml(&t).as_bytes())
-            }
+            }),
             VarSource::Keychain { key } => self
                 .keychain
                 .set(&self.keychain_account(env, &var.name, key), value)
@@ -484,16 +485,18 @@ fn secrets_to_toml(t: &toml::Table) -> String {
         if let toml::Value::Table(vals) = vals {
             w.table(&crate::tomlfmt::bare_or_quoted_key(section));
             for (k, v) in vals {
-                if let Some(s) = v.as_str() {
-                    w.str(k, s);
+                match v.as_str() {
+                    Some(s) => w.str(k, s),
+                    // Values this program does not write survive a save.
+                    None => w.raw_line(&format!("{} = {v}", crate::tomlfmt::bare_or_quoted_key(k))),
                 }
             }
-        } else if let Some(s) = vals.as_str() {
-            w.raw_line(&format!(
-                "{} = {}",
-                crate::tomlfmt::bare_or_quoted_key(section),
-                quote_basic(s)
-            ));
+        } else {
+            let key = crate::tomlfmt::bare_or_quoted_key(section);
+            match vals.as_str() {
+                Some(s) => w.raw_line(&format!("{key} = {}", quote_basic(s))),
+                None => w.raw_line(&format!("{key} = {vals}")),
+            }
         }
     }
     w.finish()
@@ -640,6 +643,13 @@ mod tests {
         assert_eq!(e.keychain_account("dev", "kc", &None), "acme/dev/kc");
         e.store_secret("dev", env.get("f").unwrap(), "new").unwrap();
         assert_eq!(e.resolve(&loaded).vars["f"], VarValue::secret("new"));
+    }
+
+    #[test]
+    fn secrets_toml_keeps_values_it_does_not_write() {
+        let t: toml::Table = "[dev]\ntoken = \"a\"\nport = 8080\n".parse().unwrap();
+        let back: toml::Table = secrets_to_toml(&t).parse().unwrap();
+        assert_eq!(back, t);
     }
 
     #[cfg(unix)]

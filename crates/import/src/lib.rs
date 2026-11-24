@@ -241,6 +241,7 @@ pub fn write(
     envs: Option<&Envs>,
     parent: &str,
 ) -> Result<WriteReport, sendito_store::StoreError> {
+    sendito_store::collection::validate_rel(parent)?;
     let mut rep = WriteReport::default();
     let mut taken: Vec<String> = std::fs::read_dir(coll.abs(parent))
         .into_iter()
