@@ -59,6 +59,6 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Enter  open / fold   n  new request   Del/x  delete   /  filter   r  rename   N  new folder   m / drag  move   d  duplicate   Ctrl+P  commands   F1  all keys
- demo
+ demo                                                                                                                              ⏎ open / fold · n new request · Del/x delete · ^W menu · F1 all keys

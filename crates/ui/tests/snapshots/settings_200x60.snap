@@ -25,21 +25,22 @@ expression: screen
 │                            ││                                  │  Appearance                                                        │                                                                │
 │                            ││                                  │    Theme                              ███████  ‹ auto › (1 of 7)   │                                                                │
 │                            ││                                  │    Icons                                             ‹ unicode ›   │                                                                │
+│                            ││                                  │    Key hints                                           ‹ short ›   │                                                                │
 │                            ││                                  │  Editing                                                           │                                                                │
 │                            ││                                  │    Vim mode                                              ‹ Off ›   │                                                                │
 │                            ││                                  │  Layout                                                            │                                                                │
-│                            ││                                  │    Sidebar position                                     ‹ left ›   │                                                                │
-│                            ││                            Start │  Behavior                                                          │ t                                                              │
-│                            ││                             Ctrl+│    Mouse support                                          ‹ On ›   │ sts you send appear here.                                      │
-│                            ││                             n / N│    Confirm quit with unsaved changes                      ‹ On ›   │                                                                │
-│                            ││                             Enter│    Record history                                         ‹ On ›   │ all history                                                    │
+│                            ││                            Start │    Sidebar position                                     ‹ left ›   │ t                                                              │
+│                            ││                             Ctrl+│  Behavior                                                          │ sts you send appear here.                                      │
+│                            ││                             n / N│    Mouse support                                          ‹ On ›   │                                                                │
+│                            ││                             Enter│    Confirm quit with unsaved changes                      ‹ On ›   │ all history                                                    │
+│                            ││                             Ctrl+│    Record history                                         ‹ On ›   │                                                                │
 │                            ││                             Ctrl+│    Watch interval                                        ‹ 5 s ›   │                                                                │
-│                            ││                             Ctrl+│ ────────────────────────────────────────────────────────────────── │                                                                │
-│                            ││                             F4   │  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
-│                            ││                             m    │  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
-│                            ││                             Ctrl+│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
-│                            ││                             F1   │                                                                    │                                                                │
-│                            ││                             Ctrl+│  Changes apply at once and are saved to                            │                                                                │
+│                            ││                             F4   │ ────────────────────────────────────────────────────────────────── │                                                                │
+│                            ││                             m    │  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
+│                            ││                             Ctrl+│  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
+│                            ││                             F1   │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
+│                            ││                             Ctrl+│                                                                    │                                                                │
+│                            ││                                  │  Changes apply at once and are saved to                            │                                                                │
 │                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
 │                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
 │                            ││                                                                                                                                                                        │
@@ -60,5 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  ↑↓  move   ←→ Space  change   Esc  close
- demo
+ demo                                                                                                                                                             ↑↓ move · ←→ Space change · Esc close

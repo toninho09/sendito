@@ -18,6 +18,7 @@ mod response;
 mod sidebar;
 mod table;
 mod welcome;
+mod whichkey;
 
 use chrome::*;
 use complete::*;
@@ -28,6 +29,10 @@ use request::*;
 use response::*;
 use sidebar::*;
 use welcome::*;
+use whichkey::*;
+
+/// Rows under the panes: the footer.
+const FOOTER_ROWS: u16 = 1;
 
 pub use kit::short_method;
 
@@ -51,9 +56,13 @@ pub fn draw(app: &mut App, f: &mut Frame) {
         return;
     }
     let top = Rect::new(area.x, area.y, area.width, 1);
-    let body = Rect::new(area.x, area.y + 1, area.width, area.height - 3);
-    let hint = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
-    let status = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+    let body = Rect::new(
+        area.x,
+        area.y + 1,
+        area.width,
+        area.height - 1 - FOOTER_ROWS,
+    );
+    let footer = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
 
     draw_tabbar(app, buf, top, &theme);
 
@@ -106,8 +115,10 @@ pub fn draw(app: &mut App, f: &mut Frame) {
     if app.overlay.is_none() {
         draw_complete(app, buf, area, &theme);
     }
-    draw_hints(app, buf, hint, &theme);
-    let cursor = draw_status(app, buf, status, &theme);
+    if app.overlay.is_none() {
+        draw_whichkey(app, buf, body, &theme);
+    }
+    let cursor = draw_footer(app, buf, footer, &theme);
     let mut cursor = cursor.or(app.cursor.take());
     if app.overlay.is_some() {
         cursor = draw_overlay(app, buf, area, &theme);

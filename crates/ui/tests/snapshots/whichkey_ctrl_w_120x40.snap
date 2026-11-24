@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
+╭ Requests  History ─────────╮  GET    ▾  ▍{{base_url}}/users                                          × Cancel   Send
+│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────── Users › list users ─╮
+│▾ Users/                    ││     Name                            Value                                              │
+│├ POST  create user         ││ [✓] page                           │1                                               │× │
+│├ DEL   delete user         ││  +  add name                       │                                                   │
+│└ GET   list users          ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────── 200 OK  14 ms 219 B ─╮
+│                            ││  1 ▾ {                                                                                 ┃
+│                            ││  2 ▾   "items": [                                                                      ┃
+│                            ││  3 ▾     {                                                                             ┃
+│                            ││  4         "id": 1,                                                                    ┃
+│                            ││  5         "name": "Ana",                                                              ┃
+│                            ││  6         "email": "ana@example.com",                                                 ┃
+│         ╭─ ^W ──────────────────────────────────────────────────────────────────────────────────────────────────────╮┃
+│         │                                                                                                           │
+│         │  Request           Tabs                   Focus & layout              Open                   App          │
+│         │  e  send           t  new HTTP            h j k l  focus              v  environment         q  quit      │
+│         │  x  cancel         g  new gRPC            w W  next / previous pane   V  edit environments   ?  all keys  │
+│         │  d  end stream     y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
+│         │  m  watch          c  close               b  sidebar                  r  history                          │
+│         │  s  save           n p  next / previous   z  zoom                     i  import                           │
+│         │  u  copy as curl                          > <  sidebar width                                              │
+│         │  f  format body                           + -  split height                                               │
+│         │                                                                                                           │
+╰─── 6 req╰────────────────────────────────────────────────────────────────────────────────────────────── Esc cancel ─╯
+ demo                                                                                                     ^W … next key

@@ -9,11 +9,11 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
 │                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
 │                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
 │                            ││                                                                                        │
-│                            ││                            HTTP and gRPC, from the terminal                            │
 │     ╭─ MCP servers ────────────────────────────────────────────────────────────────────────────────────────────╮     │
 │     │                                                                                                          │     │
 │     │ Each row is a [mcp.servers] entry: a name, the kind (Space changes it) and the URL or command. Typing in │     │
@@ -29,6 +29,7 @@ expression: screen
 │     │  Save (Ctrl+S)    Add row (Ctrl+N)    Close (Esc)                                                        │     │
 │     ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                                      │
+│                            ││        Recent                                                                          │
 │                            ││        Requests you send appear here.                                                  │
 │                            ││                                                                                        │
 │                            ││         F7  all history                                                                │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  Ctrl+S  save   Ctrl+N  add row   Ctrl+D  delete row   Space  kind   Enter  next cell   Esc  close
- demo
+ demo                                       ^S save · ^N add row · ^D delete row · Space kind · ⏎ next cell · Esc close

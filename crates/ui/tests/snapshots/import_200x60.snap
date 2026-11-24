@@ -22,6 +22,7 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                    ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                                                                    │
 │                            ││                   ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │  Paste a curl command, or enter a Postman/Insomnia JSON file or Bruno directory.                 │                                                 │
@@ -29,8 +30,8 @@ expression: screen
 │                            ││                   │  Enter = new line; F5 / Ctrl+S imports.                                                          │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │  ▍  curl https://…   or   path/to/collection.json or Bruno directory                             │                                                 │
-│                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │ pear here.                                      │
+│                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
@@ -60,5 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  F5 / Ctrl+S  import   Esc  cancel
- demo
+ demo                                                                                                                                                                       F5 / ^S import · Esc cancel

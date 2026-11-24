@@ -33,12 +33,12 @@ expression: screen
 │                            ││  8           "admin",                                                                  ┃
 │                            ││  9           "dev"                                                                     ┃
 │                            ││ 10         ],                                                                          ┃
-│                            ││ 11         "active": true                                                              │
-│                            ││ 12       },                                                                            │
+│                            ││ 11         "active": true                                                              ┃
+│                            ││ 12       },                                                                            ┃
 │                            ││ 13 ▾     {                                                                             │
 │                            ││ 14         "id": 2,                                                                    │
 │                            ││ 15         "name": "Bia",                                                              │
 │                            ││ 16         "email": "bia@example.com",                                                 │
+│                            ││ 17         "roles": [],                                                                │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────────────────────────────── Ln 1/24 · ↓ more ─╯
-  Alt+1-4  tabs   y  copy   p/r/x  view   /  search   j  jq   s  save body   Ctrl+P  commands   F1  all keys
- demo
+ demo                                                        Alt+1-4 tabs · y copy · p/r/x view · ^W menu · F1 all keys

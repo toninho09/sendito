@@ -44,6 +44,7 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 │                            ││                                                                  Press  Ctrl+Enter  or  F5  to send.                                                                   │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                       The response appears here.                                                                       │
@@ -60,5 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Ctrl+Enter/F5  send   Ctrl+S  save   Ctrl+P  commands   F1  all keys
- demo
+ demo                                                                                                                                        ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys

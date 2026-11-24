@@ -9,12 +9,13 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
-│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                            ││                                                                                        │
 │                        ╭─ Settings ─────────────────────────────────────────────────────────╮                        │
 │                        │                                                                    │                        │
 │                        │  Appearance                                                        │                        │
 │                        │    Theme                              ███████  ‹ auto › (1 of 7)   │                        │
 │                        │    Icons                                             ‹ unicode ›   │                        │
+│                        │    Key hints                                           ‹ short ›   │                        │
 │                        │  Editing                                                           │                        │
 │                        │    Vim mode                                              ‹ Off ›   │                        │
 │                        │  Layout                                                            │                        │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  ↑↓  move   ←→ Space  change   Esc  close
- demo
+ demo                                                                             ↑↓ move · ←→ Space change · Esc close

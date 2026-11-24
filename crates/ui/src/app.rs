@@ -101,6 +101,8 @@ pub enum Hit {
     Overlay(OverlayHit),
     /// A row of the completion popup.
     CompleteItem(usize),
+    /// A key of the Ctrl+W menu, or (`None`) the rest of its box.
+    Menu(Option<crate::keymap::Action>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5150,6 +5152,7 @@ impl App {
                 }
             }
             SettingId::WatchInterval => format!("{} s", self.project.config.ui.watch_interval_s),
+            SettingId::Hints => ui.hints.clone(),
         }
     }
 
@@ -5293,6 +5296,16 @@ impl App {
                 let next = STEPS[crate::list::cycle(i as usize, dir, STEPS.len())];
                 self.project.config.ui.watch_interval_s = next;
                 ("ui", "watch_interval_s", toml::Value::Integer(next as i64))
+            }
+            SettingId::Hints => {
+                const LEVELS: [&str; 3] = ["full", "short", "off"];
+                let i = LEVELS
+                    .iter()
+                    .position(|l| *l == self.project.config.ui.hints)
+                    .unwrap_or(1);
+                let next = LEVELS[crate::list::cycle(i, dir, LEVELS.len())];
+                self.project.config.ui.hints = next.into();
+                ("ui", "hints", toml::Value::String(next.into()))
             }
         };
         if let Some(p) = self.project.global_config.clone()
@@ -5476,11 +5489,7 @@ impl App {
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            v.push((
-                format!("{p} …"),
-                "h/j/k/l focus · n/p tab · e send · x cancel · s save · c close · q quit · ? help"
-                    .into(),
-            ));
+            v.push((format!("{p} …"), "next key".into()));
             return v;
         }
         let running = self.tab().is_some_and(|t| t.running.is_some());
@@ -5645,6 +5654,8 @@ impl App {
             }
         }
         v.push((k(self, Action::Palette), "commands".into()));
+        // The footer always keeps the last two: the Ctrl+W menu and F1.
+        v.push((crate::keymap::MENU_PREFIX.into(), "menu".into()));
         v.push((k(self, Action::Help), "all keys".into()));
         v
     }
@@ -7376,6 +7387,9 @@ impl App {
                         double,
                         m.modifiers.contains(KeyModifiers::SHIFT),
                     );
+                } else {
+                    // A click on nothing still closes the Ctrl+W menu.
+                    self.pending.clear();
                 }
             }
             MouseEventKind::Down(MouseButton::Middle) => {
@@ -7559,6 +7573,17 @@ impl App {
                 self.overlay_click(oh, rect, x, y, double);
             }
             return;
+        }
+        // A click on the Ctrl+W menu runs that entry; a click elsewhere
+        // closes the menu and acts as usual.
+        if !self.pending.is_empty() {
+            self.pending.clear();
+            if let Hit::Menu(a) = hit {
+                if let Some(a) = a {
+                    self.dispatch(a);
+                }
+                return;
+            }
         }
         if let Hit::CompleteItem(i) = hit {
             if let Some(c) = &mut self.complete {
@@ -7792,7 +7817,7 @@ impl App {
             Hit::SplitBorder => self.drag = Some(Drag::Split),
             Hit::Overlay(_) => {}
             // Handled at the top of `click`, before the panes.
-            Hit::CompleteItem(_) => {}
+            Hit::CompleteItem(_) | Hit::Menu(_) => {}
         }
     }
 

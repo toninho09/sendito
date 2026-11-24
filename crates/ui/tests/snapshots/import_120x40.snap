@@ -9,6 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
 │                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
 │                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  F5 / Ctrl+S  import   Esc  cancel
- demo
+ demo                                                                                       F5 / ^S import · Esc cancel

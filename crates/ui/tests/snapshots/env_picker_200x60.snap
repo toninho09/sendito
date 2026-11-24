@@ -59,6 +59,6 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  type  filter   ↑↓  move   Enter  choose   Esc  close
- demo
+ demo                                                                                                                                                      type filter · ↑↓ move · ⏎ choose · Esc close

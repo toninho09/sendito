@@ -478,8 +478,18 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   `Body · Metadata · Timing · Log`; MCP `Body · Request · Timing · Log`.
 * **Start screen** (no tab open): a pixel wordmark, a collection summary, the
   getting-started keys and the most recent requests (click one to open).
-* **Hint row** (context key caps) and **status line** (vim mode, unsaved count,
-  undefined variables, watch state, running/stream state, messages).
+* **Footer**: one row. On the left, status segments (vim mode, collection,
+  unsaved count, undefined variables, watch state, running/stream state). On
+  the right, the key hints for what is focused, with short key names (`^S`,
+  `⏎`), always ending with `^W menu · F1 all keys`. A note or confirmation
+  takes the place of the hints for 10 s; a warning or an error stays, with
+  `^W menu · F1` beside it. `[ui] hints` sets how many hints show: `full` (all
+  that fit), `short` (the three most used, the default) or `off`. Dialogs
+  always show all their keys.
+* **Ctrl+W menu**: after `Ctrl+W`, a box at the bottom right lists every key
+  that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
+  comes from the keymap, so your overrides show. Press a key or click an
+  entry to run it; `Esc` or a click elsewhere closes it.
 * **Overlays** over a dimmed backdrop: command palette, help (searchable, two
   columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
@@ -555,6 +565,7 @@ global config.
 |---|---|---|
 | Theme | `ui.theme` | Colors; `auto` follows the terminal background |
 | Icons | `ui.icons` | `unicode` (any font) or `nerd` (needs a Nerd Font) |
+| Key hints | `ui.hints` | Footer hints: `full`, `short` (default) or `off` |
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
 | Sidebar position | `ui.sidebar` | `left` or `right` |
 | Mouse support | `ui.mouse` | Clicks, wheel, dragging tree items and borders |

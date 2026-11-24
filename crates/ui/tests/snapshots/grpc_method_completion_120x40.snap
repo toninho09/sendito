@@ -29,6 +29,7 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
 │                            ││                                                                                        │
 │                            ││                               The response appears here.                               │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  type  filter   ↑↓  move   Enter/Tab  insert   Esc  close   Ctrl+P  commands   F1  all keys
- demo  ● 1 unsaved
+ demo   ● 1 unsaved                                    type filter · ↑↓ move · ⏎/Tab insert · ^P commands · F1 all keys

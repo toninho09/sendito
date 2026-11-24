@@ -59,6 +59,6 @@ expression: screen
 │                            ││             │                                                                                                              │                                           │
 │                            ││             │  Save (Ctrl+S)    New env (Ctrl+N)    Close (Esc)                                                            │                                           │
 │                            ││             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                           │
-╰─── 6 requests · 2 folders ─╯╰──────────────                                                                                                                ──────────────────────────────────────────╯
-  Ctrl+S  save   Ctrl+D  delete row   Space  source   Ctrl+PgUp/Dn  env   Ctrl+N  new env   Esc  close
- demo
+│                            ││                                                                                                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                                                                                    ^S save · ^D delete row · Space source · ^PgUp/Dn env · ^N new env · Esc close

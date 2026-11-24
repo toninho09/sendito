@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — footer and Ctrl+W menu
+
+* **One footer row.** The hint row and the status line are now one row: status
+  segments on the left, key hints on the right. The panes get the row back.
+  Key names are short (`^S`, `⏎`, `⇧Tab`), and the hints end with
+  `^W menu · F1 all keys`. A note replaces the hints for a few seconds.
+* **Ctrl+W menu.** After `Ctrl+W`, a box lists every key that can follow, by
+  group, built from the keymap (your overrides show). A click on an entry runs
+  it. The old fixed line ("h/j/k/l focus · n/p tab …") is gone; it was
+  incomplete and also showed for vim prefixes such as `g`.
+* **`[ui] hints`** (`full`, `short`, `off`; also in Settings) sets how many
+  hints the footer shows. The default is `short`.
+
 ## Unreleased — review fixes
 
 * **The MCP server editor and `:mcpadd` write only the project's servers.**

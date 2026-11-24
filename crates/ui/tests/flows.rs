@@ -890,8 +890,8 @@ fn flow_vim_mode_editing() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
     h.key("ctrl+w ,");
-    // Vim mode is the third setting (after Theme and Icons).
-    h.key("down down enter esc");
+    // Vim mode is the fourth setting (after Theme, Icons and Key hints).
+    h.key("down down down enter esc");
     assert!(h.app.vim);
     open(&mut h, "delete user");
     let sc = h.screen();
@@ -2330,4 +2330,22 @@ fn flow_dirty_import_outside_click_asks_before_discarding() {
     h.click(1, 38);
     h.key("left enter");
     assert!(h.app.overlay.is_none());
+}
+
+#[test]
+fn ctrl_w_menu_click_runs_the_entry() {
+    let mut h = Harness::new(120, 40);
+    let tabs = h.app.tabs.len();
+    h.key("ctrl+w");
+    let (x, y) = h.find("new gRPC").must();
+    h.click(x, y);
+    assert!(h.app.pending.is_empty());
+    assert_eq!(h.app.tabs.len(), tabs + 1);
+    assert!(h.screen().contains("GRPC"));
+    // A click outside the menu only closes it.
+    h.key("ctrl+w");
+    assert!(h.find("new gRPC").is_some());
+    h.click(1, 1);
+    assert!(h.app.pending.is_empty());
+    assert!(h.find("new gRPC").is_none());
 }

@@ -469,6 +469,7 @@ sidebar = "left"         # left | right
 mouse = true
 confirm_quit = true
 watch_interval_s = 5     # :watch re-sends the active request this often
+hints = "short"          # footer key hints: full | short | off
 
 [http]
 timeout_ms = 30000

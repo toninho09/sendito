@@ -80,6 +80,8 @@ review of the screenshots, without new critic rounds. What changed:
 | Status "env │ last request: … │ ms │ B" (decisions 8 and 10) | Segments without "│"; the environment only in the top bar; the last request only while the Response pane is hidden; messages in a chip with an icon |
 | Start screen = a list of keys | Wordmark, collection summary, Start and Recent |
 | `[x]` | `[✓]` |
+| Hint row and status line on two rows | One footer row: status segments on the left, key hints on the right with short key names (`^S`, `⏎`); a note replaces the hints for 10 s; `[ui] hints` = `full` / `short` / `off` (decision 6 holds: "F1 all keys" always shows) |
+| `Ctrl+W` pending: a fixed hint line | A which-key box at the bottom right, built from the keymap, grouped; a click runs the entry |
 | Help in one column | Two columns on screens 180 columns wide or more |
 | Kept | Decisions 1–5, 6, 7 and 9 |
 

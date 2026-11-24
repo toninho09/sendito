@@ -1,5 +1,5 @@
 //! The inline completion popup: a small list anchored under the cursor. It is
-//! not a dialog: nothing is dimmed and the hint and status rows stay live.
+//! not a dialog: nothing is dimmed and the footer stays live.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -21,8 +21,8 @@ pub(super) fn draw_complete(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         .caret
         .or(app.last_cursor)
         .unwrap_or((area.x, area.y));
-    // Room above the hint and status rows.
-    let bottom = area.y + area.height.saturating_sub(2);
+    // Room above the footer.
+    let bottom = area.y + area.height.saturating_sub(super::FOOTER_ROWS);
     let rows = c.items.len().min(Completion::ROWS);
     let footer = u16::from(c.loading.is_some() && !c.items.is_empty());
     let h = (rows as u16).max(1) + footer + 2;

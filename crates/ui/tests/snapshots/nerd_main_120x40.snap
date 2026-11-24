@@ -39,6 +39,6 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ──────────────────────────────────────────────────────────── Ln 1/3 ─╯
-  Ctrl+Enter/F5  send   Ctrl+S  save   Ctrl+P  commands   F1  all keys
- demo                                                                                              2 assertions passed
+demo                                                                                             2 assertions passed

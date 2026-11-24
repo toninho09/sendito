@@ -59,6 +59,6 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰─ Raw  Hex ─ jq: .items[] | .name ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Ln 1/2 ─╯
-  Alt+1-4  tabs   y  copy   p/r/x  view   /  search   j  jq   s  save body   Enter  fold   w  wrap   Ctrl+P  commands   F1  all keys
  demo                                                                                                                                                                               ✓ jq filter applied

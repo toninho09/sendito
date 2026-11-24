@@ -16,29 +16,29 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                          ╭─ Filter response (jq) ─────────────────────────────────────────╮                          │
 │                          │                                                                │                          │
 │                          │  jq        ▍  .data.items[] | select(.ok)                      │                          │
 │                          │                                                                │                          │
-│                          │  Enter applies · an empty expression clears the filter         │                          │
-│                          │                                                                │ ─────────────────────────╯
+│                          │  Enter applies · an empty expression clears the filter         │ ─────────────────────────╯
 │                          │                                                                │ ─── 200 OK  14 ms 219 B ─╮
+│                          │                                                                │                          ┃
 │                          │   Apply (Enter)    Cancel (Esc)                                │                          ┃
 │                          ╰────────────────────────────────────────────────────────────────╯                          ┃
 │                                                                                                                      ┃
-│                            ││  4         "id": 1,                                                                    ┃
 │                            ││  5         "name": "Ana",                                                              ┃
 │                            ││  6         "email": "ana@example.com",                                                 ┃
 │                            ││  7 ▾       "roles": [                                                                  ┃
 │                            ││  8           "admin",                                                                  ┃
 │                            ││  9           "dev"                                                                     ┃
 │                            ││ 10         ],                                                                          ┃
-│                            ││ 11         "active": true                                                              │
-│                            ││ 12       },                                                                            │
+│                            ││ 11         "active": true                                                              ┃
+│                            ││ 12       },                                                                            ┃
 │                            ││ 13 ▾     {                                                                             │
 │                            ││ 14         "id": 2,                                                                    │
 │                            ││ 15         "name": "Bia",                                                              │
 │                            ││ 16         "email": "bia@example.com",                                                 │
+│                            ││ 17         "roles": [],                                                                │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────────────────────────────── Ln 1/24 · ↓ more ─╯
-  Enter  apply   Tab  next field   Esc  cancel
- demo
+ demo                                                                             ⏎ apply · Tab next field · Esc cancel

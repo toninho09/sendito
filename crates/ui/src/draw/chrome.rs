@@ -1,5 +1,5 @@
-//! The top bar (brand, request tabs, environment), the hint row and the
-//! status line.
+//! The top bar (brand, request tabs, environment) and the footer (status
+//! segments, messages and key hints).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -197,54 +197,66 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         .push((Rect::new(hx, area.y, help_w, 1), Hit::HelpButton));
 }
 
-pub(super) fn draw_hints(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
-    fill(buf, area, theme.base());
-    let hints = app.hints();
-    let mut x = area.x + 1;
-    let maxx = area.x + area.width;
-    let need = |k: &str, l: &str| (k.width() + l.width() + 5) as u16;
-    let mut skipped = false;
-    for (i, (k, label)) in hints.iter().enumerate() {
-        // Always keep the last two hints (palette, help) visible, plus room
-        // for the "…" that says some hints did not fit.
-        let reserve: u16 = if i + 2 < hints.len() {
-            hints[hints.len() - 2..]
-                .iter()
-                .map(|(k, l)| need(k, l))
-                .sum::<u16>()
-                + 3
-        } else {
-            0
-        };
-        if x + need(k, label) + reserve > maxx && i + 2 < hints.len() {
-            skipped = true;
-            continue;
-        }
-        // More keys exist than fit: "F1 all keys" (always last) covers them;
-        // in a dialog without it, an ellipsis says so.
-        if skipped && i + 2 == hints.len() && hints[i + 1].1 != "all keys" {
-            x = put(buf, x, area.y, "…  ", 3, theme.dim());
-        }
-        x = keycap(buf, x, area.y, k, maxx, theme);
-        x = put(buf, x, area.y, " ", 1, theme.base());
-        x = put(buf, x, area.y, label, maxx.saturating_sub(x), theme.dim());
-        x = put(buf, x, area.y, "  ", 2, theme.base());
+/// The hints the footer shows for the `[ui] hints` level, before they are
+/// cut to the width. The main view ends with "menu" and "all keys", which
+/// always stay; dialogs keep all their keys whatever the level.
+fn hints_for_level(mut hints: Vec<(String, String)>, level: &str) -> Vec<(String, String)> {
+    let main_view = hints.last().is_some_and(|(_, l)| l == "all keys");
+    if !main_view || hints.len() < 2 {
+        return hints;
     }
+    let tail = hints.split_off(hints.len() - 2);
+    let keep = match level {
+        "off" => 0,
+        "full" => hints.len(),
+        _ => 3,
+    };
+    hints.truncate(keep);
+    hints.extend(tail);
+    hints
 }
 
-pub(super) fn draw_status(
+/// Width of one hint ("⏎ send") and of the separator between two.
+fn hint_w(k: &str, l: &str) -> u16 {
+    (k.width() + 1 + l.width()) as u16
+}
+const HINT_SEP: &str = " · ";
+
+/// The hints that fit in `room` columns: the last two always stay, the
+/// others are dropped from the end.
+fn fit_hints(hints: Vec<(String, String)>, room: u16) -> Vec<(String, String)> {
+    let total = |h: &[(String, String)]| -> u16 {
+        h.iter().map(|(k, l)| hint_w(k, l)).sum::<u16>()
+            + (h.len().saturating_sub(1) * HINT_SEP.width()) as u16
+    };
+    let mut hints = hints;
+    while hints.len() > 2 && total(&hints) > room {
+        hints.remove(hints.len() - 3);
+    }
+    hints
+}
+
+/// The footer: status segments on the left, the message and the key hints
+/// on the right.
+pub(super) fn draw_footer(
     app: &mut App,
     buf: &mut Buffer,
     area: Rect,
     theme: &Theme,
 ) -> Option<(u16, u16)> {
-    fill(buf, area, theme.bar());
+    let bar = theme.bar();
+    fill(buf, area, bar);
     let icons = app.icons;
     let maxx = area.x + area.width;
-    let bar = theme.bar();
-    let mut x = area.x;
-    let gap = |buf: &mut Buffer, x: u16| put(buf, x, area.y, "  ", 2, bar);
-    // Vim mode, as a chip.
+    // Confirmations and notes expire; warnings and errors stay until replaced.
+    if let Some((_, StatusKind::Info | StatusKind::Ok, at)) = &app.status
+        && at.elapsed() > std::time::Duration::from_secs(10)
+    {
+        app.status = None;
+    }
+    let message = app.status.clone();
+    // The status segments: (text, style). The vim mode has its own color.
+    let mut segs: Vec<(String, Style)> = Vec::new();
     if app.vim {
         let mode = vim_mode_label(app);
         let color = match mode {
@@ -252,32 +264,20 @@ pub(super) fn draw_status(
             "VISUAL" | "V-LINE" => theme.patch,
             _ => theme.accent,
         };
-        x = chip(buf, x, area.y, mode, theme.chip(color), maxx, &icons, theme);
-        x = gap(buf, x);
-    } else {
-        x = put(buf, x, area.y, " ", 1, bar);
+        segs.push((mode.to_string(), theme.chip(color)));
     }
+    let seg_bg = theme.raised();
     // The collection, as an anchor for the fields after it.
-    x = put(
-        buf,
-        x,
-        area.y,
-        &truncate(&app.project.name, 24),
-        maxx.saturating_sub(x),
-        theme.bold(bar.patch(theme.dim())),
-    );
-    x = gap(buf, x);
+    segs.push((
+        truncate(&app.project.name, 24),
+        seg_bg.patch(theme.bold(theme.dim())),
+    ));
     let dirty = app.tabs.iter().filter(|t| t.dirty()).count();
     if dirty > 0 {
-        x = put(
-            buf,
-            x,
-            area.y,
-            &format!("{} {dirty} unsaved", icons.dirty),
-            maxx.saturating_sub(x),
-            bar.patch(theme.fg(theme.warn)),
-        );
-        x = gap(buf, x);
+        segs.push((
+            format!("{} {dirty} unsaved", icons.dirty),
+            seg_bg.patch(theme.fg(theme.warn)),
+        ));
     }
     // Variables the current request uses but nothing defines.
     if let Some(t) = app.tab() {
@@ -287,53 +287,31 @@ pub(super) fn draw_status(
                 [one] => format!("{{{{{one}}}}} undefined"),
                 many => format!("{} undefined variables", many.len()),
             };
-            x = put(
-                buf,
-                x,
-                area.y,
-                &text,
-                maxx.saturating_sub(x),
-                bar.patch(theme.fg(theme.err)),
-            );
-            x = gap(buf, x);
+            segs.push((text, seg_bg.patch(theme.fg(theme.err))));
         }
     }
     // While a request runs, say so; a watched tab also shows its interval.
     if let Some(t) = app.tab()
         && let Some(w) = &t.watch
     {
-        x = put(
-            buf,
-            x,
-            area.y,
-            &format!("\u{21bb} {} s", w.interval.as_secs()),
-            maxx.saturating_sub(x),
-            theme.bold(bar.patch(theme.fg(theme.accent))),
-        );
-        x = gap(buf, x);
+        segs.push((
+            format!("\u{21bb} {} s", w.interval.as_secs()),
+            seg_bg.patch(theme.bold(theme.fg(theme.accent))),
+        ));
     }
     if let Some(t) = app.tab()
-        && t.running.is_some()
+        && let Some(r) = &t.running
     {
-        let streaming = t.running.as_ref().is_some_and(|r| r.streaming_input);
-        let text = if streaming {
+        let text = if r.streaming_input {
             "stream open".to_string()
         } else {
             format!(
                 "{} sending… ({} cancels)",
                 spinner(app.anim_frame),
-                app.keymap.hint(Action::Cancel, app.vim)
+                crate::keymap::short_keys(&app.keymap.hint(Action::Cancel, app.vim))
             )
         };
-        x = put(
-            buf,
-            x,
-            area.y,
-            &text,
-            maxx.saturating_sub(x),
-            bar.patch(theme.fg(theme.accent)),
-        );
-        x = gap(buf, x);
+        segs.push((text, seg_bg.patch(theme.fg(theme.accent))));
     }
     // The last request's result, when the response pane is hidden.
     let response_hidden = app.areas.response.height == 0;
@@ -350,48 +328,89 @@ pub(super) fn draw_status(
                 s.error.as_deref() == Some("cancelled"),
                 t.running.is_some(),
             );
-            x = put(buf, x, area.y, "last request ", 13, bar.patch(theme.dim()));
-            x = put(
-                buf,
-                x,
-                area.y,
-                &truncate(&s.status, 28),
-                maxx.saturating_sub(x),
-                theme.bold(bar.patch(theme.fg(color))),
-            );
-            let mut extra = String::new();
+            let mut text = format!("last request {}", truncate(&s.status, 28));
             if let Some(ms) = s.time_ms {
-                extra.push_str(&format!(" · {}", crate::tab::fmt_ms(ms)));
+                text.push_str(&format!(" · {}", crate::tab::fmt_ms(ms)));
             }
             if let Some(sz) = s.size {
-                extra.push_str(&format!(" · {}", human_size(sz)));
+                text.push_str(&format!(" · {}", human_size(sz)));
             }
-            x = put(buf, x, area.y, &extra, maxx.saturating_sub(x), bar);
-            x = gap(buf, x);
+            segs.push((text, seg_bg.patch(theme.bold(theme.fg(color)))));
         }
     }
-    // Confirmations and notes expire; warnings and errors stay until replaced.
-    if let Some((_, StatusKind::Info | StatusKind::Ok, at)) = &app.status
-        && at.elapsed() > std::time::Duration::from_secs(10)
-    {
-        app.status = None;
+    // A chip is its text, a cell on each side and a gap after it.
+    let segs_w: u16 = segs.iter().map(|(t, _)| t.width() as u16 + 3).sum();
+    // The hints get the room the segments leave.
+    let mut hints: Vec<(String, String)> =
+        hints_for_level(app.hints(), &app.project.config.ui.hints)
+            .into_iter()
+            .map(|(k, l)| (crate::keymap::short_keys(&k), l))
+            .collect();
+    if let Some((_, kind, _)) = &message {
+        // A note takes the place of the hints in the main view; a warning or
+        // an error keeps the last two beside it. Dialogs and the completion
+        // popup keep theirs.
+        let quiet = matches!(kind, StatusKind::Info | StatusKind::Ok)
+            && app.overlay.is_none()
+            && app.complete.is_none();
+        if quiet {
+            hints.clear();
+        } else if app.overlay.is_none() && app.complete.is_none() {
+            hints = hints.split_off(hints.len().saturating_sub(2));
+        }
     }
-    // The message, right-aligned, with an icon for its kind.
-    if let Some((msg, kind, _)) = app.status.clone() {
+    let hints = fit_hints(hints, area.width.saturating_sub(segs_w + 3));
+    let hints_w = hints.iter().map(|(k, l)| hint_w(k, l)).sum::<u16>()
+        + (hints.len().saturating_sub(1) * HINT_SEP.width()) as u16;
+    let hints_x = maxx.saturating_sub(hints_w + 1);
+    let mut hx = hints_x;
+    for (i, (k, l)) in hints.iter().enumerate() {
+        if i > 0 {
+            hx = put(
+                buf,
+                hx,
+                area.y,
+                HINT_SEP,
+                maxx.saturating_sub(hx),
+                bar.patch(theme.dim()),
+            );
+        }
+        hx = put(buf, hx, area.y, k, maxx.saturating_sub(hx), theme.bold(bar));
+        hx = put(buf, hx, area.y, " ", 1, bar);
+        hx = put(
+            buf,
+            hx,
+            area.y,
+            l,
+            maxx.saturating_sub(hx),
+            bar.patch(theme.dim()),
+        );
+    }
+    let segx = hints_x.saturating_sub(2);
+    let mut x = area.x;
+    for (text, st) in &segs {
+        if x >= segx {
+            break;
+        }
+        x = chip(buf, x, area.y, text, *st, segx, &icons, theme);
+        x = put(buf, x, area.y, " ", 1, bar);
+    }
+    // The message, right-aligned before the hints, with an icon for its kind.
+    if let Some((msg, kind, _)) = message {
         let (color, icon) = match kind {
             StatusKind::Info => (theme.info, icons.info),
             StatusKind::Ok => (theme.ok, icons.ok),
             StatusKind::Warn => (theme.warn, icons.warn),
             StatusKind::Error => (theme.err, icons.fail),
         };
-        let room = maxx.saturating_sub(x + 4) as usize;
-        let text = truncate(&msg, room.saturating_sub(3));
-        let w = text.width() as u16 + 4;
-        let mx = maxx.saturating_sub(w).max(x);
-        let mut cx = put(buf, mx, area.y, " ", 1, bar);
-        cx = put(
+        let end = if hints.is_empty() { maxx } else { segx };
+        let room = end.saturating_sub(x + 3) as usize;
+        let text = truncate(&msg, room);
+        let w = text.width() as u16 + 3;
+        let mx = end.saturating_sub(w).max(x);
+        let mut cx = put(
             buf,
-            cx,
+            mx,
             area.y,
             icon,
             1,
@@ -403,7 +422,7 @@ pub(super) fn draw_status(
             cx,
             area.y,
             &text,
-            maxx.saturating_sub(cx),
+            end.saturating_sub(cx),
             bar.patch(theme.fg(color)),
         );
     }

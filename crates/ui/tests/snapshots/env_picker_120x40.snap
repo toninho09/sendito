@@ -9,24 +9,25 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
 │                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
 │                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
 │                            ││                                                                                        │
 │                            ││                            HTTP and gRPC, from the terminal                            │
 │                            ││                      demo  ·  6 requests · 2 folders  ·  ● local                       │
-│                            ││                                                                                        │
-│                            ││        St╭─ Environment ──────────────────────╮                                        │
-│                            ││         C│ ▍  type to filter                  │                                        │
-│                            ││         n│                                    │  sidebar                               │
-│                            ││         E│  ● (no environment)                │                                        │
-│                            ││         C│▌ ● local                           │ equests, :commands)                    │
-│                            ││         C│  ● staging                         │  or a curl command                     │
-│                            ││         F│  ● Manage environments…            │                                        │
+│                            ││          ╭─ Environment ──────────────────────╮                                        │
+│                            ││        St│ ▍  type to filter                  │                                        │
+│                            ││         C│                                    │                                        │
+│                            ││         n│  ● (no environment)                │  sidebar                               │
+│                            ││         E│▌ ● local                           │                                        │
+│                            ││         C│  ● staging                         │ equests, :commands)                    │
+│                            ││         C│  ● Manage environments…            │  or a curl command                     │
+│                            ││         F│                                    │                                        │
 │                            ││         m│                                    │ or drag it with the mouse)             │
-│                            ││         C│                                    │ icons, sidebar side                    │
-│                            ││         F╰────────────────────────────────────╯                                        │
-│                            ││         Ct                                                                             │
+│                            ││         C╰────────────────────────────────────╯ icons, sidebar side                    │
+│                            ││         F1                                                                             │
+│                            ││         Ctrl+W q     Quit                                                              │
 │                            ││                                                                                        │
 │                            ││        Recent                                                                          │
 │                            ││        Requests you send appear here.                                                  │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  type  filter   ↑↓  move   Enter  choose   Esc  close
- demo
+ demo                                                                      type filter · ↑↓ move · ⏎ choose · Esc close

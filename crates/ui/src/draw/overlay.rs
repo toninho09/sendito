@@ -122,7 +122,7 @@ impl EditorHits for McpHits {
 }
 
 /// The screen a dialog is drawn on: the whole overlay `area`, the `body` the
-/// dialog and its shadow stay in (the area without its hint row), the theme
+/// dialog and its shadow stay in (the area without the footer), the theme
 /// and the style of a line of dialog text.
 #[derive(Clone, Copy)]
 struct Frame<'a> {
@@ -143,9 +143,14 @@ pub(super) fn draw_overlay(
     let names = app.names.clone();
     let is_def = move |n: &str| names.is_defined(n);
     app.hits.push((area, Hit::Overlay(OverlayHit::Outside)));
-    // Dialogs leave the hint and status rows as they are: they describe the
-    // dialog. The rest of the screen fades behind it.
-    let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
+    // Dialogs leave the footer as it is: its hints describe the dialog. The
+    // rest of the screen fades behind it.
+    let body = Rect::new(
+        area.x,
+        area.y,
+        area.width,
+        area.height.saturating_sub(super::FOOTER_ROWS),
+    );
     backdrop(buf, body, theme);
     let frame = Frame {
         area,
@@ -564,6 +569,10 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
             Some(SettingId::WatchInterval) => {
                 "The :watch command re-sends the active request on this interval.".to_string()
             }
+            Some(SettingId::Hints) => {
+                "Keys in the footer: full shows all that fit, short the most used, off only Ctrl+W and F1."
+                    .to_string()
+            }
             None => String::new(),
         };
         let values = match id {
@@ -571,6 +580,7 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
             Some(SettingId::Icons) => crate::icons::ICON_SETS.join(" / "),
             Some(SettingId::Sidebar) => "left / right".into(),
             Some(SettingId::WatchInterval) => "5 / 10 / 30 / 60 s".into(),
+            Some(SettingId::Hints) => "full / short / off".into(),
             Some(_) => "On / Off".into(),
             None => String::new(),
         };

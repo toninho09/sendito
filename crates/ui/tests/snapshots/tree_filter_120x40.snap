@@ -9,6 +9,7 @@ expression: screen
 │├ POST  create user         ││                                                                                        │
 │├ DEL   delete user         ││                                                                                        │
 │└ GET   list users          ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
 │                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
 │                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  type  filter   Enter/↓  to results   Esc  clear   Ctrl+P  commands   F1  all keys
- demo
+ demo                                                  type filter · ⏎/↓ to results · Esc clear · ^W menu · F1 all keys

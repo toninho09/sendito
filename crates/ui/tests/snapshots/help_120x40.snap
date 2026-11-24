@@ -38,7 +38,7 @@ expression: screen
 │    │   Alt+6                        Jump to tab 6 of the focused pane                                           │    │
 │    │   Ctrl+P                       Open the command palette                                                    │    │
 │    │   F1, Ctrl+W ?                 Show all keys and actions                                                   │    │
+│    │   Ctrl+W ,                     Open settings                                                               │    │
 │    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 ╰─── 6                                                                                                              ───╯
-  type  search   ↑↓ PgUp PgDn  scroll   Esc  close
- demo
+ demo                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

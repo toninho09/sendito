@@ -59,6 +59,6 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Ctrl+S  save   Ctrl+N  add row   Ctrl+D  delete row   Space  kind   Enter  next cell   Esc  close
- demo
+ demo                                                                                                                       ^S save · ^N add row · ^D delete row · Space kind · ⏎ next cell · Esc close

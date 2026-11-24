@@ -207,7 +207,8 @@ Every clickable region is registered in `app.hits` while drawing.
 | Surface | File |
 |---|---|
 | Frame composition, layout | `crates/ui/src/draw/mod.rs` |
-| Top bar, tabs, hint row, status line | `crates/ui/src/draw/chrome.rs` |
+| Top bar, tabs, the footer (status segments, message, key hints) | `crates/ui/src/draw/chrome.rs` |
+| The Ctrl+W menu (which-key box built from the keymap) | `crates/ui/src/draw/whichkey.rs` |
 | Primitives and components: panes, chips, key caps, buttons, rules, list rows, spinner | `crates/ui/src/draw/kit.rs` |
 | Dialog chrome: the shell, popups, the input row, the button footer, the status line | `crates/ui/src/draw/dialog.rs` |
 | The editable table every form is made of | `crates/ui/src/draw/table.rs` |

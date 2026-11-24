@@ -63,6 +63,9 @@ pub struct UiConfig {
     /// Default watch interval, in seconds (`:watch` re-sends the active
     /// request on this interval until stopped).
     pub watch_interval_s: u64,
+    /// Key hints in the footer: `full` (as many as fit), `short` (the three
+    /// most used) or `off` (only the menu and help keys).
+    pub hints: String,
 }
 
 impl Default for UiConfig {
@@ -75,6 +78,7 @@ impl Default for UiConfig {
             mouse: true,
             confirm_quit: true,
             watch_interval_s: 5,
+            hints: "short".into(),
         }
     }
 }

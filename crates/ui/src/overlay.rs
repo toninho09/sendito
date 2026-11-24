@@ -361,11 +361,13 @@ pub enum SettingId {
     ConfirmQuit,
     History,
     WatchInterval,
+    Hints,
 }
 
 pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::Theme, "Theme"),
     (SettingId::Icons, "Icons"),
+    (SettingId::Hints, "Key hints"),
     (SettingId::Vim, "Vim mode"),
     (SettingId::Sidebar, "Sidebar position"),
     (SettingId::Mouse, "Mouse support"),

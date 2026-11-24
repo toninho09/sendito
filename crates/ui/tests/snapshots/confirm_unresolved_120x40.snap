@@ -29,6 +29,7 @@ expression: screen
 │                                                                                                                      │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││                                                                                        │
 │                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
 │                            ││                                                                                        │
 │                            ││                               The response appears here.                               │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  y  send anyway   Enter  cancel   ←→  choose   Esc  cancel
- demo  {{order_id}} undefined
+ demo   {{order_id}} undefined                                        y send anyway · ⏎ cancel · ←→ choose · Esc cancel

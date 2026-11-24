@@ -456,6 +456,7 @@ The Settings dialog (`Ctrl+W ,`) changes, at once:
 |---|---|
 | Theme | colors; `auto` follows the terminal background |
 | Icons | `unicode` (works with any font) or `nerd` (needs a [Nerd Font](https://www.nerdfonts.com)) |
+| Key hints | keys in the footer: `full`, `short` (the most used) or `off` (`ui.hints`) |
 | Vim mode | vim keys in editors and lists (normal / insert modes) |
 | Sidebar position | Requests / History sidebar on the left or right |
 | Mouse support | clicks, wheel scrolling, dragging tree items and pane borders |
@@ -501,10 +502,13 @@ The Settings dialog (`Ctrl+W ,`) changes, at once:
   `$.count == 0` works).
 * Long content has a scrollbar in the pane border. Dialogs open over a dimmed
   screen.
-* **Hint row**: the most useful keys for what is focused, as key caps.
-  **Status line**: vim mode, unsaved count, undefined variables and messages. The
+* **Footer**: one row. Status segments on the left (vim mode, unsaved count,
+  undefined variables); the most useful keys for what is focused on the right
+  (`[ui] hints`: `full`, `short` or `off`), and messages between them. The
   environment is only shown in the top bar; the last request's status, time and
   size appear here only while the Response pane is hidden.
+* **Ctrl+W menu**: press `Ctrl+W` and wait: a box lists every key that can
+  follow, by group. Press the key or click the entry.
 
 With no request open, the start screen shows what the collection holds, the keys
 to get going and the most recent requests (click one to open it).

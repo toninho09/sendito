@@ -59,6 +59,6 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Ln 1/8 · wrap ─╯
-  Alt+1-4  tabs   y  copy   /  search   w  wrap   Ctrl+P  commands   F1  all keys
- demo
+ demo                                                                                                                                          Alt+1-4 tabs · y copy · / search · ^W menu · F1 all keys

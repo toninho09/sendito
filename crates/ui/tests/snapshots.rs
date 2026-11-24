@@ -439,3 +439,24 @@ fn completion_popup() {
         snap("grpc_method_completion", h);
     });
 }
+
+#[test]
+fn footer_and_ctrl_w_menu() {
+    use sendito_ui::app::StatusKind;
+    each(|h| {
+        open(h, "list users");
+        fake_response(h, BODY, 200);
+        h.key("ctrl+w");
+        snap("whichkey_ctrl_w", h);
+        h.key("esc");
+        h.app.set_status("saved users/list.http", StatusKind::Ok);
+        snap("footer_message_ok", h);
+        h.app.set_status("connection refused", StatusKind::Error);
+        snap("footer_message_error", h);
+        h.app.status = None;
+        h.app.project.config.ui.hints = "full".into();
+        snap("footer_hints_full", h);
+        h.app.project.config.ui.hints = "off".into();
+        snap("footer_hints_off", h);
+    });
+}

@@ -44,6 +44,7 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
 │                            ││                                                                  Press  Ctrl+Enter  or  F5  to send.                                                                   │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                       The response appears here.                                                                       │
@@ -60,5 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰──────────────── 2 entries ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Enter  open   Ctrl+Enter/F5  resend entry   s  save to tree   F7  back to tree   Ctrl+P  commands   F1  all keys
- NORMAL   demo
+ NORMAL   demo                                                                                                                     ⏎ open · ^⏎/F5 resend entry · s save to tree · ^W menu · F1 all keys

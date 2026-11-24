@@ -9,8 +9,9 @@ expression: screen
 │├ POST  create user         ││                                                                                        │
 │├ DEL   delete user         ││                                                                                        │
 │└ GET   list users          ││                                                                                        │
-│  GRPC  echo unary          ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
-│  GET   health              ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
 │                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
 │                            ││                                                                                        │
 │                            ││                            HTTP and gRPC, from the terminal                            │
@@ -40,5 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
-  Enter  open / fold   n  new request   Del/x  delete   /  filter   r  rename   Ctrl+P  commands   F1  all keys
- demo
+ demo                                              ⏎ open / fold · n new request · Del/x delete · ^W menu · F1 all keys
