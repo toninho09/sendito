@@ -3,13 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   DEL delete user ● ×    +                                                                                                                                            ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  DELETE ▾  ▍{{base_url}}/users/42                                                                                                                       × Cancel   Send
-│▸ Orders/                   │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────────────────────────────────────────────────────────────────────────────────────── Users › delete user ─╮
-│▾ Users/                    ││ Auth type      Basic ▾  Enter or Space to change · values may use {{variables}}                                                                                        │
-│├ POST  create user         ││ Username                                                                                                                                                               │
-│├ DEL   delete user         ││ Password                                                                                                                                                               │
-│└ GET   list users          ││                                                                                                                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                                                                                                          ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││ Auth type      Basic ▾  Enter or Space to change · values may use {{variables}}                                                                                        │
+│└ GET   list users          ││ Username                                                                                                                                                               │
+│  GRPC  echo unary          ││ Password                                                                                                                                                               │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,9 +31,9 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                            ││                                                                                                                                                                        │
+│                            │╰─ Users › delete user ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

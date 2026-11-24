@@ -3,13 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    +                                                                                                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────── Users › list users ─╮
-│▾ Users/                    ││     Name                                                            Value                                                                                              │
-│├ POST  create user         ││ [✓] page                                                           │1                                                                                               │× │
-│├ DEL   delete user         ││  +  add name                                                       │                                                                                                   │
-│└ GET   list users          ││                                                                                                                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾   {{base_url}}/users  → http://127.0.0.1:9/users                                                                                                 ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││     Name                                                            Value                                                                                              │
+│└ GET   list users          ││ [✓] page                                                           │1                                                                                               │× │
+│  GRPC  echo unary          ││  +  add name                                                       │                                                                                                   │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,11 +31,12 @@ expression: screen
 │                            ││                                    │                                                                │                                                                  │
 │                            ││                                    │  jq        ▍  .data.items[] | select(.ok)                      │                                                                  │
 │                            ││                                    │                                                                │                                                                  │
-│                            │╰────────────────────────────────────│  Enter applies · an empty expression clears the filter         │ ─────────────────────────────────────────────────────────────────╯
+│                            ││                                    │  Enter applies · an empty expression clears the filter         │                                                                  │
+│                            │╰─ Users › list users ───────────────│                                                                │ ─────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results 2/2│                                                                │ ─────────────────────────────────────────── 200 OK  14 ms 219 B ─╮
-│                            ││  1 ▾ {                             │                                                                │                                                                  │
-│                            ││  2 ▾   "items": [                  │   Apply (Enter)    Cancel (Esc)                                │                                                                  │
-│                            ││  3 ▾     {                         ╰────────────────────────────────────────────────────────────────╯                                                                  │
+│                            ││  1 ▾ {                             │   Apply (Enter)    Cancel (Esc)                                │                                                                  │
+│                            ││  2 ▾   "items": [                  ╰────────────────────────────────────────────────────────────────╯                                                                  │
+│                            ││  3 ▾     {                                                                                                                                                             │
 │                            ││  4         "id": 1,                                                                                                                                                    │
 │                            ││  5         "name": "Ana",                                                                                                                                              │
 │                            ││  6         "email": "ana@example.com",                                                                                                                                 │
@@ -57,7 +58,6 @@ expression: screen
 │                            ││ 22     "count": 2,                                                                                                                                                     │
 │                            ││ 23     "next": "/users?page=2"                                                                                                                                         │
 │                            ││ 24   }                                                                                                                                                                 │
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Ln 1/24 ─╯

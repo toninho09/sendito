@@ -3,14 +3,14 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   DEL delete user ● ×    +                                                                                                                                            ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  DELETE ▾  ▍{{base_url}}/users/42                                                                                                                       × Cancel   Send
-│▸ Orders/                   │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────────────────────────────────────────────────────────────────────────────────────── Users › delete user ─╮
-│▾ Users/                    ││ Auth type      API key ▾  Enter or Space to change · values may use {{variables}}                                                                                      │
-│├ POST  create user         ││ Key name       X-API-Key                                                                                                                                               │
-│├ DEL   delete user         ││ Key value                                                                                                                                                              │
-│└ GET   list users          ││ Send in        Header ▾  header or query parameter                                                                                                                     │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                                                                                                          ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││ Auth type      API key ▾  Enter or Space to change · values may use {{variables}}                                                                                      │
+│└ GET   list users          ││ Key name       X-API-Key                                                                                                                                               │
+│  GRPC  echo unary          ││ Key value                                                                                                                                                              │
+│  GET   health              ││ Send in        Header ▾  header or query parameter                                                                                                                     │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,9 +31,9 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            ││                                                                                                                                                                        │
+│                            │╰─ Users › delete user ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

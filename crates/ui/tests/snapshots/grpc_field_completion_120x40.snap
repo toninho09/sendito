@@ -3,11 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GRPC echo unary ● ×    +                                                            ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  {{grpc}}                                       Echo/Unary           ▾  × Cancel   Send
-│▸ Orders/                   │╭─ Message  Metadata  Auth  Scripts  Options ─────────────────────────────── echo unary ─╮
-│▸ Users/                    ││   1 {                                                                                  │
-│  GRPC  echo unary          ││   2   "                                                                                │
-│  GET   health              ││   3 }  ╭────────────────────────────────╮                                              │
+╭ Requests  History ─────────╮╭ GRPC ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  {{grpc}}  → 127.0.0.1:9                                  Echo/Unary    ▾  ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Message  Metadata  Auth  Scripts  Options ────────────────────────────────────────────╮
+│  GET   health              ││   1 {                                                                                  │
+│                            ││   2   "                                                                                │
+│                            ││   3 }  ╭────────────────────────────────╮                                              │
 │                            ││        │i32      int32                  │                                              │
 │                            ││        │inner    sendito.test.v1.Inner  │                                              │
 │                            ││        │tags     repeated string        │                                              │
@@ -20,10 +22,8 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰────────────────────────────────────────────────── ✗ JSON: line 2, col 3 · Ln 2, Col 4 ─╯
+│                            │╰─ echo unary ───────────────────────────────────── ✗ JSON: line 2, col 3 · Ln 2, Col 4 ─╯
 │                            │╭─ Body  Metadata  Timing  Log ──────────────────────────────────────────────────────────╮
-│                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

@@ -3,13 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾  ▍{{base_url}}/users                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────── Users › list users ─╮
-│▾ Users/                    ││     Name                            Value                                              │
-│├ POST  create user         ││ [✓] page                           │1                                               │× │
-│├ DEL   delete user         ││  +  add name                       │                                                   │
-│└ GET   list users          ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────╮
+│├ DEL   delete user         ││     Name                            Value                                              │
+│└ GET   list users          ││ [✓] page                           │1                                               │× │
+│  GRPC  echo unary          ││  +  add name                       │                                                   │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -21,7 +21,8 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│                            ││                                                                                        │
+│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────── 200 OK  14 ms 219 B ─╮
 │                            ││  1 ▾ {                                                                                 ┃
 │                            ││  2 ▾   "items": [                                                                      ┃
@@ -33,12 +34,11 @@ expression: screen
 │                            ││  8           "admin",                                                                  ┃
 │                            ││  9           "dev"                                                                     ┃
 │                            ││ 10         ],                                                                          ┃
-│                            ││ 11         "active": true                                                              ┃
-│                            ││ 12       },                                                                            ┃
+│                            ││ 11         "active": true                                                              │
+│                            ││ 12       },                                                                            │
 │                            ││ 13 ▾     {                                                                             │
 │                            ││ 14         "id": 2,                                                                    │
 │                            ││ 15         "name": "Bia",                                                              │
 │                            ││ 16         "email": "bia@example.com",                                                 │
-│                            ││ 17         "roles": [],                                                                │
 ╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────────────────────────────── Ln 1/24 · ↓ more ─╯
  demo                                                                      ✗ connection refused   ^W menu · F1 all keys

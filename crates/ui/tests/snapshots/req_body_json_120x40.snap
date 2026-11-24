@@ -3,14 +3,16 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    POST create user ×    +                                         ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  POST   ▾   {{base_url}}/users                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────── Users › create user ─╮
-│▾ Users/                    ││ Body type      JSON ▾  Enter or Space to change                                        │
-│├ POST  create user         ││   1 {                                                                                  │
-│├ DEL   delete user         ││   2   "name": "Ana",                                                                   │
-│└ GET   list users          ││   3   "email": "ana@example.com"                                                       │
-│  GRPC  echo unary          ││   4 }                                                                                  │
-│  GET   health              ││   5                                                                                    │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  POST   ▾   {{base_url}}/users  → http://127.0.0.1:9/users                 ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────╮
+│├ DEL   delete user         ││ Body type      JSON ▾  Enter or Space to change                                        │
+│└ GET   list users          ││   1 {                                                                                  │
+│  GRPC  echo unary          ││   2   "name": "Ana",                                                                   │
+│  GET   health              ││   3   "email": "ana@example.com"                                                       │
+│                            ││   4 }                                                                                  │
+│                            ││   5                                                                                    │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -20,10 +22,8 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰─────────────────────────────────────────────────────────────────────────────── ✓ JSON ─╯
+│                            │╰─ Users › create user ───────────────────────────────────────────────────────── ✓ JSON ─╯
 │                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
-│                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

@@ -3,12 +3,12 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────── Users › list users ─╮
-│▾ Users/                    ││ Auth type      Bearer token ▾  Enter or Space to change · values may use {{variables}} │
-│├ POST  create user         ││ Token          {{token}}                                                               │
-│├ DEL   delete user         ││                                                                                        │
-│└ GET   list users          ││                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾   {{base_url}}/users  → http://127.0.0.1:9/users                 ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────╮
+│├ DEL   delete user         ││ Auth type      Bearer token ▾  Enter or Space to change · values may use {{variables}} │
+│└ GET   list users          ││ Token          {{token}}                                                               │
 │  GRPC  echo unary          ││                                                                                        │
 │  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
@@ -21,9 +21,9 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
+│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

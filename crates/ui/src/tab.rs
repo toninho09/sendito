@@ -574,6 +574,7 @@ impl Editors {
             }
             Request::Ws(w) => {
                 e.kind = Kind::Ws;
+                e.url.placeholder = "ws://host:port/path  (wss:// for TLS)".into();
                 e.url.set_text(&w.url);
                 e.headers = kv_table("Header", "Value", &w.headers);
                 e.ws_subprotocols.set_text(&list_text(&w.subprotocols));

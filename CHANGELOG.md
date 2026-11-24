@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — URL card
+
+* **The URL strip is a card.** A border in the colour of the request kind
+  (the HTTP method, or gRPC, WebSocket, MCP) holds the endpoint; its title
+  names the protocol (`HTTP`, `GRPC`, `WS`, `MCP`), shows `●` while the request is unsaved and `↻ 5 s` while a
+  watch runs. A screen with fewer than 16 rows for the panes keeps one row.
+* **One button for Send and Cancel.** It shows `▶ Send ^⏎` while nothing
+  runs and `■ Cancel ⠋ 1.2s` during a call (a click or Enter cancels). An open
+  stream keeps `▶ Send message` and adds a small `■` that stops it. The
+  always-visible, dim Cancel button is gone.
+* **Variable preview.** Without focus, the endpoint shows what its
+  `{{variables}}` become (`→ http://localhost:8080/users`), dim, or
+  `→ undefined: name` in red. Secrets and `$dynamic` values stay as written.
+* The gRPC method and MCP tool chips are as wide as their text (`▾` next to
+  it). The file path moved to the bottom border of the Request pane, so the
+  top border holds only the sub-tabs. A WebSocket request's empty URL shows
+  `ws://host:port/path`.
+
 ## Unreleased — footer and Ctrl+W menu
 
 * **One footer row.** The hint row and the status line are now one row: status

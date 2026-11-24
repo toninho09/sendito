@@ -2349,3 +2349,74 @@ fn ctrl_w_menu_click_runs_the_entry() {
     assert!(h.app.pending.is_empty());
     assert!(h.find("new gRPC").is_none());
 }
+
+/// The URL card's one button: Send while idle, Cancel while a call runs. A
+/// click or Enter on it cancels the running call.
+#[test]
+fn flow_send_button_turns_into_cancel() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "health");
+    h.app.tabs[h.app.active]
+        .ed
+        .url
+        .set_text("{{base_url}}/delay/5000");
+    assert!(h.screen().contains("Send"));
+    h.key("f5");
+    assert!(h.app.is_busy());
+    let (x, y) = h.find("Cancel").must();
+    assert!(!h.screen().contains("Send "));
+    h.click(x, y);
+    h.pump();
+    assert!(!h.app.is_busy());
+    assert!(h.screen().contains("Send"));
+
+    // Enter on the focused button cancels the same way.
+    h.key("f5");
+    assert!(h.app.is_busy());
+    h.app.focus = sendito_ui::app::Focus::Bar(2);
+    h.key("enter");
+    h.pump();
+    assert!(!h.app.is_busy());
+}
+
+/// Without focus, the endpoint shows what its variables resolve to; a secret
+/// stays a placeholder and an unknown name is reported.
+#[test]
+fn flow_endpoint_preview() {
+    let s = servers();
+    let mut h = harness(&s, 160, 40);
+    open(&mut h, "health");
+    h.app.focus = sendito_ui::app::Focus::ReqTabs;
+    let url = h.app.tabs[h.app.active].ed.url.text();
+    let shown = url.replace("{{base_url}}", &s.http.url());
+    let sc = h.screen();
+    assert!(sc.contains(&format!("→ {shown}")), "{sc}");
+
+    h.app.tabs[h.app.active]
+        .ed
+        .url
+        .set_text("{{base_url}}/{{token}}");
+    let sc = h.screen();
+    assert!(sc.contains("/{{token}}") && !sc.contains("s3cr3t"), "{sc}");
+
+    h.app.tabs[h.app.active].ed.url.set_text("{{nope}}/x");
+    assert!(h.screen().contains("→ undefined: nope"));
+
+    // With focus in the input, the preview goes away.
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    assert!(!h.screen().contains("→ undefined"));
+}
+
+/// A low screen keeps the URL strip on one row, without the card's border.
+#[test]
+fn flow_url_card_on_low_screen() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "health");
+    assert!(h.screen().contains("╭ HTTP "));
+    let mut h = harness(&s, 120, 16);
+    open(&mut h, "health");
+    let sc = h.screen();
+    assert!(!sc.contains("╭ HTTP ") && sc.contains("Send"), "{sc}");
+}

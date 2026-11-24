@@ -132,6 +132,18 @@ pub(super) fn frame_with(
     focused: bool,
     fill_st: Style,
 ) -> Rect {
+    frame_styled(buf, area, theme, focused, fill_st, theme.border(focused))
+}
+
+/// A pane with a given border style (the URL card colours it by kind).
+pub(super) fn frame_styled(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    focused: bool,
+    fill_st: Style,
+    border_st: Style,
+) -> Rect {
     let set = if focused && theme.heavy_focus {
         border::THICK
     } else {
@@ -140,7 +152,7 @@ pub(super) fn frame_with(
     let blk = Block::default()
         .borders(Borders::ALL)
         .border_set(set)
-        .border_style(theme.border(focused))
+        .border_style(border_st)
         .style(fill_st);
     let inner = blk.inner(area);
     blk.render(area, buf);

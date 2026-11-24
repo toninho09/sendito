@@ -3,11 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GRPC echo unary ×    +                                                              ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  {{grpc}}                                       Echo/Unary           ▾  × Cancel   Send
-│▸ Orders/                   │╭─ Message  Metadata  Auth  Scripts  Options ─────────────────────────────── echo unary ─╮
-│▸ Users/                    ││ Schema         Server reflection ▾  reflection asks the server; proto files are compi… │
-│  GRPC  echo unary          ││ Use TLS        [ ] Off  or prefix the target with https://                             │
-│  GET   health              ││ Verify TLS     [✓] On  turn off for self-signed certificates                           │
+╭ Requests  History ─────────╮╭ GRPC ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  {{grpc}}  → 127.0.0.1:9                                  Echo/Unary    ▾  ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Message  Metadata  Auth  Scripts  Options ────────────────────────────────────────────╮
+│  GET   health              ││ Schema         Server reflection ▾  reflection asks the server; proto files are compi… │
+│                            ││ Use TLS        [ ] Off  or prefix the target with https://                             │
+│                            ││ Verify TLS     [✓] On  turn off for self-signed certificates                           │
 │                            ││ Deadline ms    none                                                                    │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -20,10 +22,8 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╰─ echo unary ───────────────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Metadata  Timing  Log ──────────────────────────────────────────────────────────╮
-│                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

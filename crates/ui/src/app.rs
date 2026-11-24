@@ -1054,7 +1054,7 @@ impl App {
             return;
         }
         match (part, key.code) {
-            (2, KeyCode::Enter | KeyCode::Char(' ')) => self.dispatch(Action::Send),
+            (2, KeyCode::Enter | KeyCode::Char(' ')) => self.press_send_button(),
             (0, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Down) if kind == Kind::Http => {
                 self.open_method_picker(None)
             }
@@ -2217,6 +2217,20 @@ impl App {
 
     pub fn send(&mut self, confirmed: bool) {
         self.send_opts(confirmed, false);
+    }
+
+    /// The action button of the URL card: Cancel while a call runs that takes
+    /// no more input, otherwise Send (an open stream sends one more message).
+    fn press_send_button(&mut self) {
+        let cancels = self
+            .tab()
+            .and_then(|t| t.running.as_ref())
+            .is_some_and(|r| !r.streaming_input);
+        self.dispatch(if cancels {
+            Action::Cancel
+        } else {
+            Action::Send
+        });
     }
 
     /// Sends the active tab's request. `from_watch` marks an automatic repeat:
@@ -7646,14 +7660,14 @@ impl App {
             }
             Hit::RecentRow(i) => self.open_history(i, false),
             Hit::Bar(p) => {
-                // The Cancel button (3) is mouse-only: it stays out of the
-                // keyboard focus cycle (ctrl+w x cancels).
+                // The stop button (3) of an open stream is mouse-only: it stays
+                // out of the keyboard focus cycle (ctrl+w x cancels).
                 if p != 3 {
                     self.focus = Focus::Bar(p);
                 }
                 let kind = self.tab().map(|t| t.ed.kind);
                 match (kind, p) {
-                    (Some(_), 2) => self.dispatch(Action::Send),
+                    (Some(_), 2) => self.press_send_button(),
                     (Some(_), 3) => {
                         // Disabled does nothing: cancel() would also stop
                         // background jobs that do not belong to this tab.

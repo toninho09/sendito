@@ -390,7 +390,8 @@ fn recordings() {
     let mut h = harness(&s, w, ht, "dusk");
     open(&mut h, "echo unary");
     r.shot(&mut h, "A gRPC request: target, method and message", 1500);
-    h.key("tab enter");
+    // Opening a gRPC request focuses the method chip; Enter lists the schema.
+    h.key("enter");
     let _ = h.wait_for("Choose a gRPC method", 5);
     r.shot(
         &mut h,

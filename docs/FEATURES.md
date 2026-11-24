@@ -447,22 +447,33 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   while running, `+` new), the environment chip and `F1 all keys`. The
   environment chip is coloured by name: `prod`/`live` red,
   `staging`/`qa`/`test`/`uat` yellow, `local`/`dev` green.
-* **URL strip**: above both panes, the same parts for every kind — a chip
-  (HTTP method, gRPC method, MCP tool; WebSocket shows a static `WS` badge) and
+* **URL card**: above both panes, a bordered card in the colour of the request
+  kind (the HTTP method, or gRPC/WebSocket/MCP). The title names the protocol
+  (`HTTP`, `GRPC`, `WS`, `MCP`), with
+  `●` while unsaved and `↻ 5 s` on the right while a watch runs. Inside, the
+  same parts for every kind — a chip (HTTP method, gRPC method, MCP tool) and
   one endpoint input (URL, gRPC target or MCP server) with `{{variables}}`
-  highlighted, then **Cancel** (dim while nothing runs) and **Send**. HTTP and
-  WebSocket draw `[chip][input]`; gRPC draws `[target][method ▾]` and MCP
+  highlighted, then one action button. HTTP draws `[chip][input]`; WebSocket
+  only the input; gRPC draws `[target][method ▾]` and MCP
   `[server][address][tool ▾]`, where the address is the configured server's URL
-  or command (dim). The MCP server input takes a name from `[mcp.servers]` or a
-  direct `http(s)://` URL.
+  or command (dim). The gRPC and MCP chips are as wide as their text. The MCP
+  server input takes a name from `[mcp.servers]` or a direct `http(s)://` URL.
+  The button shows **▶ Send** with its key while nothing runs and
+  **■ Cancel** with a spinner and the elapsed time during a call (a click or
+  Enter cancels); an open stream keeps **▶ Send message** and adds a small
+  **■** that stops it. Without focus, the endpoint shows what its variables
+  become (`→ value`, dim) or `→ undefined: name` (red); secrets and `$dynamic`
+  values stay as written. When the panes have fewer than 16 rows, the card is
+  one row without a border (WebSocket then shows a `WS` badge).
 * **Sidebar**: **Requests** (the tree, with `├ └` connectors, open-in-tab
   accent, filter with `/`, request and folder counts) or **History** (grouped
   by day, status in colour). It can sit on the right and be resized.
 * **Request tabs**: HTTP `Params · Headers · Body · Auth · Scripts · Options`;
   gRPC `Message · Metadata · Auth · Scripts · Options`; MCP
-  `Tool · Args · Scripts · Options`. The request's folder path is on the right;
-  a tab shows its row count or `•` when set; editors have line numbers and JSON
-  shows `✓ JSON` / `✗ JSON: line, col` plus `Ln, Col`.
+  `Tool · Args · Scripts · Options`, in the pane's top border. A tab shows its
+  row count or `•` when set. The bottom border shows the request's folder path
+  on the left and, for editors (with line numbers), `✓ JSON` /
+  `✗ JSON: line, col` plus `Ln, Col` on the right.
 * **Completion** (`Ctrl+Space`, or automatically while typing at a key position):
   a small list under the cursor suggests the object keys of the gRPC message
   (from the schema) and of the MCP tool arguments (from the tool's `inputSchema`),

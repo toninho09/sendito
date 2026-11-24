@@ -3,14 +3,14 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    POST create user ×    +                                                                                                                         ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  POST   ▾   {{base_url}}/users                                                                                                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────────────────────────────────────────────────────────────── Users › create user ─╮
-│▾ Users/                    ││ Section        After response: assertions (1) ▾  Enter to switch                                                                                                       │
-│├ POST  create user         ││ From        JSONPath / header                                                     Op           Expected                                                                │
-│├ DEL   delete user         ││ ‹status›   │                                                                     │‹==›        │200                                                                  │× │
-│└ GET   list users          ││ add from   │                                                                     │            │                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  POST   ▾   {{base_url}}/users  → http://127.0.0.1:9/users                                                                                                 ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││ Section        After response: assertions (1) ▾  Enter to switch                                                                                                       │
+│└ GET   list users          ││ From        JSONPath / header                                                     Op           Expected                                                                │
+│  GRPC  echo unary          ││ ‹status›   │                                                                     │‹==›        │200                                                                  │× │
+│  GET   health              ││ add from   │                                                                     │            │                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,9 +31,9 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            ││                                                                                                                                                                        │
+│                            │╰─ Users › create user ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

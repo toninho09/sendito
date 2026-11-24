@@ -76,6 +76,7 @@ review of the screenshots, without new critic rounds. What changed:
 | Focused pane with a `THICK` border | `ROUNDED` border in the accent color; `THICK` only in mono and `contrast` (`Theme.heavy_focus`) |
 | Pane tabs on their own row, separated by "│" | Tabs in the pane's top border |
 | URL inside the Request pane | Its own strip above both panes |
+| URL strip without a border; Cancel always shown (dim); the file path in the Request pane's top border | A card coloured by kind, its title the protocol with `●` unsaved and the watch interval; one button (Send, Cancel while a call runs, a small stop button on an open stream); a dim preview of the resolved endpoint; the file path in the bottom border |
 | A dialog clears the screen (iteration 1 finding) | Dimmed backdrop and a shadow; mono still clears |
 | Status "env │ last request: … │ ms │ B" (decisions 8 and 10) | Segments without "│"; the environment only in the top bar; the last request only while the Response pane is hidden; messages in a chip with an icon |
 | Start screen = a list of keys | Wordmark, collection summary, Start and Recent |

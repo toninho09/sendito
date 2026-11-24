@@ -3,13 +3,13 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET list users ×    +                                                                                                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾   {{base_url}}/users                                                                                                                          × Cancel   Send
-│▸ Orders/                   │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────── Users › list users ─╮
-│▾ Users/                    ││     Name                                                            Value                                                                                              │
-│├ POST  create user         ││ [✓] page                                                           │1                                                                                               │× │
-│├ DEL   delete user         ││  +  add name                                                       │                                                                                                   │
-│└ GET   list users          ││                                                                                                                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾   {{base_url}}/users  → http://127.0.0.1:9/users                                                                                                 ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││     Name                                                            Value                                                                                              │
+│└ GET   list users          ││ [✓] page                                                           │1                                                                                               │× │
+│  GRPC  echo unary          ││  +  add name                                                       │                                                                                                   │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,7 +31,8 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-│                            │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            ││                                                                                                                                                                        │
+│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────────────────────────────────────────────────────────────────────────────────────── 200 OK  14 ms 219 B ─╮
 │                            ││ HTTP/1.1 200 OK                                                                                                                                                        │
 │                            ││ content-type: application/json                                                                                                                                         │
@@ -41,7 +42,6 @@ expression: screen
 │                            ││ GET http://127.0.0.1:9/users?page=1                                                                                                                                    │
 │                            ││ Accept: application/json                                                                                                                                               │
 │                            ││ Authorization: Bearer ••••••                                                                                                                                           │
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

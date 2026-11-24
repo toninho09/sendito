@@ -3,12 +3,12 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   GET get order ×    +                                                                                                                                                ● local ▾   F1  all keys
-╭ Requests  History ─────────╮  GET    ▾  ▍{{base_url}}/orders/{{order_id}}                                                                                                            × Cancel   Send
-│▾ Orders/                   │╭─ Params  Headers  Body  Auth  Scripts  Options ─────────────────────────────────────────────────────────────────────────────────────────────────── Orders › get order ─╮
-│└ GET   get order           ││     Name                                                            Value                                                                                              │
-│▸ Users/                    ││  +  add name                                                       │                                                                                                   │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▾ Orders/                   ││  GET    ▾  ▍{{base_url}}/orders/{{order_id}}                                                                                                               ▶ Send  ^⏎  │
+│└ GET   get order           │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│▸ Users/                    │╭─ Params  Headers  Body  Auth  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  GRPC  echo unary          ││     Name                                                            Value                                                                                              │
+│  GET   health              ││  +  add name                                                       │                                                                                                   │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -31,9 +31,9 @@ expression: screen
 │                            ││                                     │  {{order_id}} not defined in the collection variables or     │                                                                   │
 │                            ││                                     │  "local". Send anyway sends them as typed, braces            │                                                                   │
 │                            ││                                     │  included. To define them, cancel and open the               │                                                                   │
-│                            │╰─────────────────────────────────────│  environment (Ctrl+W V).                                     │ ──────────────────────────────────────────────────────────────────╯
+│                            ││                                     │  environment (Ctrl+W V).                                     │                                                                   │
+│                            │╰─ Orders › get order ────────────────│                                                              │ ──────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results ────│                                                              │ ──────────────────────────────────────────────────────────────────╮
-│                            ││                                     │                                                              │                                                                   │
 │                            ││                                     │   Send anyway (y)    Cancel (Esc)                            │                                                                   │
 │                            ││                                     ╰──────────────────────────────────────────────────────────────╯                                                                   │
 │                            ││                                                                                                                                                                        │
