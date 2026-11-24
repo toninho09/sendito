@@ -195,6 +195,45 @@ fn request_body_kinds_and_auth() {
     });
 }
 
+/// Three messages of a server stream, as the runner reports them.
+fn fake_stream(h: &mut Harness) {
+    let id = h.app.tabs[h.app.active].id;
+    for (i, text) in ["one", "two", "three"].iter().enumerate() {
+        let json = format!("{{\"text\":\"{text}\",\"n\":{i}}}");
+        h.app.on_msg(AppMsg::Grpc {
+            tab: id,
+            update: sendito_ui::runner::GrpcUpdate::Event(sendito_grpc::Event::Received {
+                full: json.clone(),
+                compact: json.clone(),
+                size: json.len(),
+                json,
+                at: Duration::from_millis(100 * (i as u64 + 1)),
+                wall: std::time::SystemTime::UNIX_EPOCH,
+            }),
+        });
+    }
+}
+
+#[test]
+fn response_stream() {
+    each(|h| {
+        open(h, "echo unary");
+        fake_stream(h);
+        h.key("ctrl+w j");
+        snap("resp_stream_list", h);
+        h.key("[");
+        snap("resp_stream_paused", h);
+    });
+    // A pane too narrow for the list shows the position in its border.
+    let mut h = Harness::new(96, 30);
+    h.app.set_env(Some("local".into()));
+    h.app.status = None;
+    open(&mut h, "echo unary");
+    fake_stream(&mut h);
+    h.key("ctrl+w j [");
+    snap("resp_stream_narrow", &mut h);
+}
+
 #[test]
 fn grpc_request() {
     each(|h| {
@@ -263,10 +302,14 @@ fn response_jq_filter() {
         fake_response(h, BODY, 200);
         h.key("ctrl+w j");
         h.key("j");
-        snap("resp_jq_prompt", h);
+        snap("resp_query_bar", h);
         h.type_text(".items[] | .name");
         h.key("enter");
         snap("resp_jq_filter", h);
+        h.key("j");
+        h.type_text(" |");
+        snap("resp_query_error", h);
+        h.key("esc");
         h.key("j");
         h.key("ctrl+a backspace enter");
         snap("resp_jq_cleared", h);

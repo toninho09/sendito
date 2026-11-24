@@ -238,6 +238,26 @@ impl BodyKind {
         }
     }
 
+    /// The Content-Type this kind adds when no header sets one. Raw and File
+    /// take theirs from their own field; multipart (with its boundary) always
+    /// replaces a header.
+    pub fn content_type(self) -> Option<&'static str> {
+        match self {
+            BodyKind::Json => Some("application/json"),
+            BodyKind::Form => Some("application/x-www-form-urlencoded"),
+            BodyKind::Multipart => Some("multipart/form-data"),
+            _ => None,
+        }
+    }
+
+    /// A short name for the body type chips.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            BodyKind::Form => "Form",
+            k => k.label(),
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BodyKind::None => "None",

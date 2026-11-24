@@ -525,54 +525,122 @@ fn flow_response_jq_filter() {
     let dbg = h.screen();
     assert!(dbg.contains("\"method\""), "{dbg}");
     h.key("ctrl+w j");
-    // j opens the filter prompt; the expression narrows the body.
+    // j opens the query bar; the body follows the expression as it is typed.
     h.key("j");
-    assert!(h.screen().contains("Filter response (jq)"));
+    assert!(h.screen().contains("jq ▸"));
     h.type_text(".session");
-    h.key("enter");
     {
         let sc = h.screen();
-        assert!(sc.contains("jq: .session"), "{sc}");
         assert!(sc.contains("server-session-1"), "{sc}");
+        assert!(sc.contains("1 result"), "{sc}");
         assert!(!sc.contains("\"method\""), "{sc}");
     }
+    // Enter keeps the filter and the bar.
+    h.key("enter");
+    assert!(h.screen().contains("jq ▸ .session"));
     // :jq re-filters the original body, not the filtered output.
     h.app.run_command("jq .method");
     {
         let sc = h.screen();
-        assert!(sc.contains("jq: .method"), "{sc}");
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
         assert!(sc.contains("\"POST\""), "{sc}");
         assert!(!sc.contains("server-session-1"), "{sc}");
     }
-    // A bad expression keeps the prompt open with the error.
+    // A bad expression shows its error; the body keeps the last valid
+    // result (here `.a`) and Enter does not leave the bar.
     h.key("j");
     h.key("ctrl+a");
     h.type_text(".a[");
     h.key("enter");
     {
         let sc = h.screen();
-        assert!(sc.contains("Filter response (jq)"), "{sc}");
-        assert!(!sc.contains("jq: .a["), "{sc}");
+        assert!(sc.contains("✗"), "{sc}");
+        assert!(sc.contains("null"), "{sc}");
     }
+    // Esc goes back to the filter that applies.
     h.key("esc");
-    // An empty expression clears the filter and restores the body.
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
+        assert!(!sc.contains("✗"), "{sc}");
+    }
+    // An empty expression clears the filter and closes the bar.
     h.key("j");
     h.key("ctrl+a");
     h.key("backspace");
+    assert!(h.screen().contains("\"method\""));
     h.key("enter");
     {
         let sc = h.screen();
-        assert!(!sc.contains("jq:"), "{sc}");
+        assert!(!sc.contains("jq ▸"), "{sc}");
         assert!(sc.contains("\"method\""), "{sc}");
     }
+    // Up walks the expressions used before.
+    h.key("j");
+    h.key("up");
+    assert!(h.screen().contains("jq ▸ .method"));
+    h.key("up");
+    assert!(h.screen().contains("jq ▸ .session"));
+    h.key("esc");
     // A new response replaces the body and drops the filter.
     h.app.run_command("jq .target");
-    assert!(h.screen().contains("jq: .target"));
+    assert!(h.screen().contains("jq ▸ .target"));
     h.key("f5");
     h.wait_idle(10);
     let sc = h.screen();
-    assert!(!sc.contains("jq:"), "{sc}");
+    assert!(!sc.contains("jq ▸"), "{sc}");
     assert!(sc.contains("\"method\""), "{sc}");
+}
+
+#[test]
+fn flow_response_jq_complete_and_path() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    h.key("ctrl+w j");
+    // Tab completes a key of the body; one match goes in at once.
+    h.key("j");
+    h.type_text(".sess");
+    h.key("tab");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .session"), "{sc}");
+        assert!(sc.contains("server-session-1"), "{sc}");
+    }
+    // More matches open the list, with the type of each value.
+    h.key("ctrl+a");
+    h.type_text(".");
+    h.key("tab");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("method") && sc.contains("string"), "{sc}");
+    }
+    h.key("esc esc");
+    assert!(!h.screen().contains("jq ▸"));
+    // The path of the line at the cursor shows in the bottom border; f
+    // filters the body to it and Y copies it.
+    h.key("down");
+    let path = {
+        let sc = h.screen();
+        let row = sc
+            .lines()
+            .find(|l| l.contains("Ln 2/"))
+            .unwrap_or_default()
+            .to_string();
+        let start = row.find(" .").map(|i| i + 1).unwrap_or(0);
+        row[start..]
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(path.starts_with('.') && path.len() > 1, "{path}");
+    h.key("Y");
+    assert!(h.screen().contains(&format!("copied {path}")));
+    h.key("f");
+    assert!(h.screen().contains(&format!("jq ▸ {path}")));
 }
 
 #[test]
@@ -693,6 +761,31 @@ fn flow_bidi_stream() {
     h.key("ctrl+w j alt+4");
     let sc = h.wait_for("OK (0)", 5);
     assert!(sc.contains("received"), "{sc}");
+    // The body lists every message and shows the last one.
+    h.key("alt+1");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("2 messages · live"), "{sc}");
+        assert!(sc.contains("\"two\""), "{sc}");
+    }
+    // [ shows the previous message and pauses live mode; ] goes back.
+    h.key("[");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("2 messages · 1/2"), "{sc}");
+        assert!(sc.contains("\"text\": \"one\""), "{sc}");
+    }
+    // A jq filter applies to the message shown and stays on the others.
+    h.key("j");
+    h.type_text(".text");
+    h.key("enter");
+    assert!(h.screen().contains("jq ▸ .text"));
+    h.key("]");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("2 messages · live"), "{sc}");
+        assert!(sc.contains("jq ▸ .text"), "{sc}");
+    }
     let caps = s.grpc.take();
     let bidi = caps.iter().find(|c| c.method == "Bidi").expect("bidi call");
     assert_eq!(

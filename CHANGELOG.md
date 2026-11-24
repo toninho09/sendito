@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — response query bar and body type chips
+
+* **Query bar instead of the jq and search dialogs.** `j` (vim `J`) and `/`
+  open a bar on the first row of the response view. The body follows the text
+  as you type; the bar shows `2 results`, `match 3/12` or the jq error, and
+  the body keeps the last valid result. Enter keeps the text, Esc goes back to
+  it, an empty text closes the bar. A body larger than 1 MB is filtered on
+  Enter. The `jq: <expr>` label in the bottom border shows only while the bar
+  is closed.
+* **jq key completion and history.** In the jq bar, Tab completes an object
+  key after `.` from the keys in the body; Up/Down walk the expressions used
+  in the tab.
+* **Pretty view for jq output.** A filter with several outputs shows each
+  value formatted, with folding (before: raw text, one value per line).
+* **JSON path at the cursor.** The bottom border of the pretty body shows the
+  path of the current line (`.items[0].email`). `f` filters the body to that
+  value, `Y` copies the path.
+* **Stream message list.** gRPC streams and WebSocket sessions with two or
+  more received messages show a list next to the body; `[`/`]` or a click
+  change the message, and the last one follows new messages (live). Before,
+  the body showed only the last message, and each new message removed the jq
+  filter.
+* **Body type chips.** The HTTP Body tab shows all body types as chips with the
+  `Content-Type` the body adds on the right. A click on the `✗ JSON` error in
+  the editor's border moves the cursor to it.
+
 ## Unreleased — URL card
 
 * **The URL strip is a card.** A border in the colour of the request kind

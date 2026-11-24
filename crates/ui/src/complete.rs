@@ -15,6 +15,8 @@ pub enum CompleteKind {
     GrpcMethod,
     McpServer,
     McpTool,
+    /// Object keys in the response query bar's jq expression.
+    JqKey,
 }
 
 /// One step into the input tree: an object key, or an element of a repeated or
@@ -547,8 +549,118 @@ fn value_example(v: &Value) -> String {
     }
 }
 
+// ----- jq keys -------------------------------------------------------------
+
+/// Where an object key can be completed in a jq expression with the cursor
+/// at char `col`: the expression whose output holds the keys (`""` for the
+/// input), the key typed so far, and the char column where that key starts.
+/// `None` when the cursor is not after a path step's `.`.
+pub fn jq_context(text: &str, col: usize) -> Option<(String, String, usize)> {
+    let before: Vec<char> = text.chars().take(col).collect();
+    let mut start = before.len();
+    while start > 0 && (before[start - 1].is_ascii_alphanumeric() || before[start - 1] == '_') {
+        start -= 1;
+    }
+    if start == 0 || before[start - 1] != '.' {
+        return None;
+    }
+    let prefix: String = before[start..].iter().collect();
+    let base: String = before[..start - 1].iter().collect();
+    let base = base.trim_end();
+    // After a pipe, the step reads the output of what comes before it.
+    let base = base.strip_suffix('|').map_or(base, str::trim_end);
+    // Inside a call or after an operator the step has another input.
+    let ok = base
+        .chars()
+        .last()
+        .is_none_or(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ']' | ')' | '"' | '?'));
+    ok.then(|| (base.to_string(), prefix, start))
+}
+
+/// The keys of the objects that `base` gives over the body, with the type
+/// of their first value.
+pub fn jq_keys(base: &str, src: &[u8]) -> Vec<Candidate> {
+    let expr = if base.trim().is_empty() { "." } else { base };
+    let Ok(outs) = crate::filter::apply(expr, src) else {
+        return Vec::new();
+    };
+    let mut keys: std::collections::BTreeMap<String, &'static str> = Default::default();
+    for o in outs.iter().take(200) {
+        if let Ok(Value::Object(m)) = serde_json::from_slice::<Value>(o) {
+            for (k, v) in m {
+                let kind = match v {
+                    Value::Object(_) => "object",
+                    Value::Array(_) => "array",
+                    Value::String(_) => "string",
+                    Value::Number(_) => "number",
+                    Value::Bool(_) => "boolean",
+                    Value::Null => "null",
+                };
+                keys.entry(k).or_insert(kind);
+            }
+        }
+    }
+    keys.into_iter()
+        .map(|(name, detail)| Candidate {
+            name,
+            detail: detail.to_string(),
+            example: String::new(),
+            cursor_back: 0,
+        })
+        .collect()
+}
+
+/// The text a key takes after `.` in a jq path: the name, or the name in
+/// quotes when it is not a plain identifier.
+pub fn jq_key_text(name: &str) -> String {
+    let plain = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if plain {
+        name.to_string()
+    } else {
+        serde_json::to_string(name).unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn jq_context_finds_the_step_input() {
+        use super::jq_context;
+        let at = |t: &str| jq_context(t, t.chars().count());
+        assert_eq!(at("."), Some((String::new(), String::new(), 1)));
+        assert_eq!(at(".items[].na"), Some((".items[]".into(), "na".into(), 9)));
+        assert_eq!(
+            at(".items[] | .na"),
+            Some((".items[]".into(), "na".into(), 12))
+        );
+        assert_eq!(at("map(.na"), None);
+        assert_eq!(at("na"), None);
+    }
+
+    #[test]
+    fn jq_keys_lists_object_keys() {
+        use super::{jq_key_text, jq_keys};
+        let body = br#"{"items":[{"id":1,"a b":true},{"id":2,"name":"x"}]}"#;
+        let names: Vec<String> = jq_keys(".items[]", body)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, ["a b", "id", "name"]);
+        assert_eq!(jq_keys("", body)[0].detail, "array");
+        assert!(jq_keys(".items[", body).is_empty());
+        // A quoted key is a valid path step.
+        let step = format!(".items[0].{}", jq_key_text("a b"));
+        assert_eq!(
+            crate::filter::apply(&step, body),
+            Ok(vec![b"true".to_vec()])
+        );
+        assert_eq!(jq_key_text("id"), "id");
+    }
+
     use super::*;
 
     fn ctx(text: &str) -> Option<JsonContext> {

@@ -35,6 +35,8 @@ pub struct Viewer {
     /// Line numbers in a gutter.
     pub numbers: bool,
     pub syntax: Syntax,
+    /// The cursor line and its JSON path, from the last `json_path` call.
+    path_cache: Option<(usize, Option<String>)>,
 }
 
 impl Viewer {
@@ -59,7 +61,24 @@ impl Viewer {
             height: 0,
             numbers: false,
             syntax: Syntax::Plain,
+            path_cache: None,
         }
+    }
+
+    /// The jq path of the JSON value at the cursor (pretty view only).
+    pub fn json_path(&mut self) -> Option<String> {
+        if self.mode != ViewMode::Pretty {
+            return None;
+        }
+        let line = self.cursor_line();
+        if let Some((l, p)) = &self.path_cache
+            && *l == line
+        {
+            return p.clone();
+        }
+        let p = self.doc.json_path(line);
+        self.path_cache = Some((line, p.clone()));
+        p
     }
 
     pub fn empty() -> Self {

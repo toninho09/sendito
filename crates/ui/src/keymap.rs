@@ -114,6 +114,10 @@ actions! {
     ViewHex => "view_hex", "Body view: hex dump";
     Search => "search", "Search in the response";
     Filter => "filter", "Filter the response body with a jq expression";
+    FilterHere => "filter_here", "Filter the body to the JSON value at the cursor";
+    CopyPath => "copy_path", "Copy the jq path of the JSON value at the cursor";
+    PrevMessage => "prev_message", "Show the previous message of a stream";
+    NextMessage => "next_message", "Show the next message of a stream (the last one follows new ones)";
     SearchNext => "search_next", "Next search match";
     SearchPrev => "search_prev", "Previous search match";
     FoldToggle => "fold_toggle", "Fold or unfold the JSON block at the cursor";
@@ -401,6 +405,10 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Search, Response, Both, &["/", "ctrl+f"]),
         (Filter, Response, Conventional, &["j"]),
         (Filter, Response, Vim, &["J"]),
+        (FilterHere, Response, Both, &["f"]),
+        (CopyPath, Response, Both, &["Y"]),
+        (PrevMessage, Response, Both, &["["]),
+        (NextMessage, Response, Both, &["]"]),
         (SearchNext, Response, Both, &["n", "f3"]),
         (SearchPrev, Response, Both, &["N", "shift+f3"]),
         (FoldToggle, Response, Conventional, &["enter", "space"]),

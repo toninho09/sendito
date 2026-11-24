@@ -44,8 +44,6 @@ pub enum PromptAction {
     /// The entry itself, not its row: the list can reload under the prompt.
     SaveHistory(Box<sendito_store::history::HistoryEntry>),
     CustomMethod,
-    Search,
-    Filter,
     /// A new server for the MCP editor: (name, URL or command).
     McpServer {
         name: String,

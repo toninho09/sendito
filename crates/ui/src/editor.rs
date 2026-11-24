@@ -233,6 +233,13 @@ impl TextEditor {
         }
     }
 
+    /// Moves the cursor to `pos` (kept inside the text) and drops the selection.
+    pub fn move_to(&mut self, pos: Pos) {
+        self.cursor = pos;
+        self.anchor = None;
+        self.clamp();
+    }
+
     pub fn move_to_end(&mut self) {
         self.cursor.row = self.lines.len() - 1;
         self.cursor.col = char_len(&self.lines[self.cursor.row]);

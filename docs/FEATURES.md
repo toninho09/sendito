@@ -117,19 +117,30 @@ The wire rules are exact and spelled out in
   truncated stream is shown as received. Sendito never sends `Accept-Encoding`,
   so it only decodes what the server chose to send.
 * **Body views**: pretty JSON with folding, raw text and hex, each with line
-  numbers, search and a scrollbar.
+  numbers, search and a scrollbar. In the pretty view the bottom border shows
+  the jq path of the line at the cursor (`.items[0].email`): `f` filters the
+  body to that value and `Y` copies the path.
+* **Query bar**: `/` (search) and `j` (vim `J`, jq filter) open a bar on the
+  first row of the response view; there is no dialog. The view follows the
+  text as you type. On the right the bar shows `2 results`, `match 3/12`,
+  `no match` or the jq error in red; with an error the body keeps the last
+  valid result. Enter keeps the text and goes back to the view (the bar stays
+  while a filter applies); Esc goes back to the text the last Enter kept; an
+  empty text closes the bar. In the jq bar, Tab completes an object key after
+  `.` from the keys the body really has (one match goes in at once, more open
+  a list with the type of each value), and Up/Down walk the expressions used
+  in the tab (the last 50, kept in memory only). A body larger than 1 MB is
+  filtered when Enter is pressed, not at each key.
 * **Timing**: DNS, TCP connect, TLS handshake, TTFB and download, with the
   remote address, the protocol and the final URL, drawn as a waterfall.
-* **jq filter**: `j` (vim `J`) or `:jq [expr]` filters the JSON body with a jq
+* **jq filter**: the jq bar or `:jq [expr]` filters the JSON body with a jq
   expression (the `jaq` library): paths, pipes, `select`, `map`, slicing,
   arithmetic, regex. The filter is display-only — assertions, extracts and
   history always see the full body; an empty expression restores it and a new
-  response clears it. The body border shows `jq: <expr>` while active (dropped
-  or truncated when the border is crowded), several outputs print one JSON
-  value per line as raw text (no pretty view), and the filter needs a JSON
-  body. Works on any JSON body (HTTP, gRPC messages, MCP results). `halt`,
-  `halt_error` and `stderr` are not available (they would exit the process or
-  write to the terminal).
+  response clears it. Several outputs show one value after the other, with
+  the pretty view and folding. The filter needs a JSON body. Works on any JSON
+  body (HTTP, gRPC messages, MCP results). `halt`, `halt_error` and `stderr`
+  are not available (they would exit the process or write to the terminal).
 * **Headers tab**: the response headers and the request that was actually sent,
   with secrets masked.
 * **Cookie jar** (opt-in): RFC 6265 with the public suffix list, stored in a
@@ -473,7 +484,13 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   `Tool · Args · Scripts · Options`, in the pane's top border. A tab shows its
   row count or `•` when set. The bottom border shows the request's folder path
   on the left and, for editors (with line numbers), `✓ JSON` /
-  `✗ JSON: line, col` plus `Ln, Col` on the right.
+  `✗ JSON: line, col` plus `Ln, Col` on the right. A click on the JSON error
+  puts the cursor at that line and column.
+* **Body type**: the HTTP Body tab shows every type as a chip
+  (`None · JSON · Raw · Form · Multipart · File`); a click or `←`/`→` changes
+  it, Enter opens the list. On the right, the row shows the `Content-Type` the
+  body adds (`→ application/json (auto)`), or the value of a `Content-Type`
+  row in Headers (`(Headers)`). Raw and File have their own Content-Type field.
 * **Completion** (`Ctrl+Space`, or automatically while typing at a key position):
   a small list under the cursor suggests the object keys of the gRPC message
   (from the schema) and of the MCP tool arguments (from the tool's `inputSchema`),
@@ -487,6 +504,16 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   request.
 * **Response tabs**: HTTP `Body · Headers · Timing · Results`; gRPC
   `Body · Metadata · Timing · Log`; MCP `Body · Request · Timing · Log`.
+* **Stream messages**: when a gRPC call or a WebSocket session receives two or
+  more messages (text and binary frames), the Body tab shows a list on the
+  left (`#3 +1.204s 48 B {"id":3,…}`) and the selected message on the right,
+  with the pretty view, folding, search and the jq filter. `[` and `]` (or a
+  click) change the message. While the last message is selected the body
+  follows new messages (`12 messages · live`); an earlier one pauses that
+  (`12 messages · 3/12`). The jq filter runs on each message shown and stays
+  when new ones arrive; a message it fails on shows unfiltered, with the error
+  on the bar. A pane narrower than 70 columns hides the list and shows
+  `◀ 3/12 ▶` in the bottom border.
 * **Start screen** (no tab open): a pixel wordmark, a collection summary, the
   getting-started keys and the most recent requests (click one to open).
 * **Footer**: one row. On the left, status segments (vim mode, collection,

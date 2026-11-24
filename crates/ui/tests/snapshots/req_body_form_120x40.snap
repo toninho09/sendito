@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                          ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
 │├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts  Options ───────────────────────────────────────╮
-│├ DEL   delete user         ││ Body type      Form URL-encoded ▾  Enter or Space to change                            │
+│├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File     → x-www-form-urlencoded │
 │└ GET   list users          ││     Field                           Value                                              │
 │  GRPC  echo unary          ││ [✓] username                       │ana                                             │× │
 │  GET   health              ││ [ ] debug                          │1                                               │× │

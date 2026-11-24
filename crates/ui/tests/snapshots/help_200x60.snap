@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/226 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/230 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
 │  G│ All keys, including any you changed in the config.                                           │   N                            New folder in the selected folder                              ┃   │
 │  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   r, F2                        Rename the selected item                                       ┃   │
@@ -26,7 +26,7 @@ expression: screen
 │   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+C                       Copy selection (whole field if nothing selected)               ┃   │
 │   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+X                       Cut selection                                                  ┃   │
 │   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+V                       Paste                                                          ┃   │
-│   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │                                                                                               ┃   │
+│   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │                                                                                               │   │
 │   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │ ── Params / headers / form tables ──                                                          │   │
 │   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Enter                        Edit the next cell (name → value → next row)                   │   │
 │   │   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+T                       Enable or disable the row                                      │   │
@@ -46,19 +46,19 @@ expression: screen
 │   │   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   x                            Body view: hex dump                                            │   │
 │   │   Ctrl+W i                     Import a collection or a curl command                         │   /, Ctrl+F                    Search in the response                                         │   │
 │   │   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   j                            Filter the response body with a jq expression                  │   │
-│   │   Ctrl+W f                     Pretty-print the JSON body / message                          │   n, F3                        Next search match                                              │   │
-│   │   Ctrl+W z                     Maximize or restore the focused pane                          │   N, Shift+F3                  Previous search match                                          │   │
-│   │   Ctrl+W >                     Widen the sidebar                                             │   Enter, Space                 Fold or unfold the JSON block at the cursor                    │   │
-│   │   Ctrl+W <                     Narrow the sidebar                                            │   -                            Fold all JSON blocks                                           │   │
-│   │   Ctrl+W +                     Give the request editor more height                           │   +, =                         Unfold all JSON blocks                                         │   │
-│   │   Ctrl+W -                     Give the response more height                                 │   w                            Wrap long lines on/off                                         │   │
-│   │   Ctrl+Space                   Show completion suggestions at the cursor                     │   y, Ctrl+C                    Copy the response body to the clipboard                        │   │
-│   │                                                                                              │   s                            Save the response body to a file                               │   │
-│   │ ── Sidebar tree ──                                                                           │                                                                                               │   │
-│   │   Enter                        Open the selected request / toggle the folder                 │ ── Fixed keys · Text editing ──                                                               │   │
-│   │   Right                        Expand folder                                                 │   Arrows, Home, End, PageUp, PageDown                     Move the cursor                     │   │
-│   │   Left                         Collapse folder or go to parent                               │   Shift+Arrows, Shift+Home/End                            Extend the selection                │   │
-│   │   n                            New request in the selected folder                            │   Ctrl+Left / Ctrl+Right                                  Move by word                        │   │
+│   │   Ctrl+W f                     Pretty-print the JSON body / message                          │   f                            Filter the body to the JSON value at the cursor                │   │
+│   │   Ctrl+W z                     Maximize or restore the focused pane                          │   Y                            Copy the jq path of the JSON value at the cursor               │   │
+│   │   Ctrl+W >                     Widen the sidebar                                             │   [                            Show the previous message of a stream                          │   │
+│   │   Ctrl+W <                     Narrow the sidebar                                            │   ]                            Show the next message of a stream (the last one follows new    │   │
+│   │   Ctrl+W +                     Give the request editor more height                           │                                ones)                                                          │   │
+│   │   Ctrl+W -                     Give the response more height                                 │   n, F3                        Next search match                                              │   │
+│   │   Ctrl+Space                   Show completion suggestions at the cursor                     │   N, Shift+F3                  Previous search match                                          │   │
+│   │                                                                                              │   Enter, Space                 Fold or unfold the JSON block at the cursor                    │   │
+│   │ ── Sidebar tree ──                                                                           │   -                            Fold all JSON blocks                                           │   │
+│   │   Enter                        Open the selected request / toggle the folder                 │   +, =                         Unfold all JSON blocks                                         │   │
+│   │   Right                        Expand folder                                                 │   w                            Wrap long lines on/off                                         │   │
+│   │   Left                         Collapse folder or go to parent                               │   y, Ctrl+C                    Copy the response body to the clipboard                        │   │
+│   │   n                            New request in the selected folder                            │   s                            Save the response body to a file                               │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 ╰───                                                                                                                                                                                                 ──╯
  demo                                                                                                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

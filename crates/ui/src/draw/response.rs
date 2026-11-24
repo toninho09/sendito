@@ -8,14 +8,17 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
 use crate::keymap::Action;
-use crate::tab::Kind;
+use crate::tab::{Kind, QueryMode};
 use crate::theme::Theme;
 use crate::viewer::ViewMode;
 
 use super::kit::*;
 
 pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
-    let focused = matches!(app.focus, Focus::RespTabs | Focus::RespBody);
+    let focused = matches!(
+        app.focus,
+        Focus::RespTabs | Focus::RespBody | Focus::RespQuery
+    );
     let frame_no = app.anim_frame;
     let tab = &app.tabs[app.active];
     let running = tab
@@ -169,8 +172,19 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         for (r, m) in rects.into_iter().zip(modes) {
             app.hits.push((r, Hit::ViewMode(m)));
         }
-        // A jq filter applied to the body, in the bottom border after the modes.
-        if let Some(expr) = tab.response.as_ref().and_then(|r| r.jq.as_deref()) {
+        // A jq filter applied to the body, in the bottom border after the
+        // modes, while the query bar does not show it.
+        let bar_jq = tab
+            .response
+            .as_ref()
+            .and_then(|r| r.query.as_ref())
+            .is_some_and(|q| q.mode == QueryMode::Jq);
+        if let Some(expr) = tab
+            .response
+            .as_ref()
+            .and_then(|r| r.jq.as_deref())
+            .filter(|_| !bar_jq)
+        {
             let t = format!(" jq: {} ", truncate(expr, 24));
             let tw = t.width() as u16;
             let x = modes_end + 1;
@@ -185,6 +199,8 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         inner.width.saturating_sub(2),
         inner.height,
     );
+    let view = draw_query_bar(app, buf, view, theme);
+    let (view, stream_pos) = draw_stream_split(app, buf, view, theme);
     let mut resp_hit = view;
     app.areas.resp_body = view;
     let k = app.send_hint();
@@ -305,7 +321,11 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                 // Where the view is, in the bottom border.
                 let more = v.scroll + (vr.height as usize) < v.row_count();
                 let st = format!(
-                    " {}{}{} ",
+                    " {}{}{}{} ",
+                    stream_pos
+                        .as_deref()
+                        .map(|p| format!("{p} · "))
+                        .unwrap_or_default(),
                     v.status().replacen("line", "Ln", 1),
                     if v.wrap && resp_tab != 2 {
                         " · wrap"
@@ -319,8 +339,193 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
                 if px > modes_end + 1 {
                     put(buf, px, bottom, &st, sw, theme.dim().bg(theme.surface));
                 }
+                // The JSON path at the cursor, left of the position; a long
+                // path keeps its end.
+                let room = px.saturating_sub(modes_end + 3) as usize;
+                if let Some(path) = (resp_tab == 0 && room > 8)
+                    .then(|| v.json_path())
+                    .flatten()
+                    .filter(|p| p != ".")
+                {
+                    let t = format!(" {} ", truncate_left(&path, room - 2));
+                    let tw = t.width() as u16;
+                    put(
+                        buf,
+                        px - tw,
+                        bottom,
+                        &t,
+                        tw,
+                        theme.fg(theme.accent).bg(theme.surface),
+                    );
+                }
             }
         }
     }
     app.hits.push((resp_hit, Hit::RespView));
+}
+
+/// The query bar (jq filter or search) on the first row of the view, with a
+/// rule below it. Returns the rest of the view.
+fn draw_query_bar(app: &mut App, buf: &mut Buffer, view: Rect, theme: &Theme) -> Rect {
+    if !app.query_shown() || view.height < 4 {
+        return view;
+    }
+    let focused = app.focus == Focus::RespQuery;
+    let names = app.names.clone();
+    let tab = &mut app.tabs[app.active];
+    let Some(r) = tab.response.as_mut() else {
+        return view;
+    };
+    let live = r.live_jq();
+    let (jq, outputs) = (r.jq.clone(), r.jq_outputs);
+    let search = r.viewer_mut(tab.resp_tab).search.clone();
+    let Some(q) = r.query.as_mut() else {
+        return view;
+    };
+    let text = q.input.text();
+    // What the typed text gives, on the right of the bar.
+    let state: Option<(String, ratatui::style::Style)> = match q.mode {
+        _ if text.trim().is_empty() => None,
+        QueryMode::Jq => match &q.error {
+            Some(e) => Some((format!("✗ {e}"), theme.fg(theme.err))),
+            None if jq.as_deref() != Some(text.trim()) && !live => {
+                Some(("Enter applies".into(), theme.dim()))
+            }
+            None => Some((
+                format!("{outputs} result{}", if outputs == 1 { "" } else { "s" }),
+                theme.fg(theme.ok),
+            )),
+        },
+        QueryMode::Find => search.map(|s| {
+            if s.matches.is_empty() {
+                ("no match".into(), theme.fg(theme.warn))
+            } else {
+                (
+                    format!("match {}/{}", s.current + 1, s.matches.len()),
+                    theme.fg(theme.ok),
+                )
+            }
+        }),
+    };
+    let fr = Rect::new(view.x, view.y, view.width, 1);
+    let ir = input_box(buf, fr, focused, theme);
+    let label = match q.mode {
+        QueryMode::Jq => "jq ▸ ",
+        QueryMode::Find => "find ▸ ",
+    };
+    let lw = label.width() as u16;
+    let x = put(
+        buf,
+        ir.x,
+        ir.y,
+        label,
+        lw,
+        theme.field().patch(theme.accent()),
+    );
+    let max_x = ir.x + ir.width;
+    // The state takes at most half of the bar; a long error is cut.
+    let mut end = max_x;
+    if let Some((t, st)) = state {
+        let t = format!(" {} ", truncate(&t, (ir.width / 2) as usize));
+        let tw = t.width() as u16;
+        end = max_x.saturating_sub(tw);
+        put(buf, end, ir.y, &t, tw, theme.field().patch(st));
+    }
+    let er = Rect::new(x, ir.y, end.saturating_sub(x + 1), 1);
+    let cursor = q
+        .input
+        .render(er, buf, theme, focused, &|n| names.is_defined(n));
+    if focused && let Some(c) = cursor {
+        app.cursor = Some(c);
+        // The completion popup opens under the caret.
+        app.areas.caret = Some(c);
+    }
+    put(
+        buf,
+        view.x,
+        view.y + 1,
+        &"─".repeat(view.width as usize),
+        view.width,
+        theme.dim(),
+    );
+    app.hits.push((fr, Hit::RespQuery));
+    Rect::new(view.x, view.y + 2, view.width, view.height - 2)
+}
+
+/// A stream with several messages, on the body tab: the message list on the
+/// left and the shown message on the right. Returns the rest of the view and,
+/// when the pane is too narrow for the list, the position for the border
+/// (`◀ 3/12 ▶`, `12/12 live`).
+fn draw_stream_split(
+    app: &mut App,
+    buf: &mut Buffer,
+    view: Rect,
+    theme: &Theme,
+) -> (Rect, Option<String>) {
+    let tab = &app.tabs[app.active];
+    let Some(r) = tab.response.as_ref().filter(|_| tab.resp_tab == 0) else {
+        return (view, None);
+    };
+    let msgs = r.stream_messages();
+    let n = msgs.len();
+    if n < 2 {
+        return (view, None);
+    }
+    let cur = r.stream_sel.unwrap_or(n - 1);
+    let live = r.stream_sel.is_none();
+    if view.width < 70 || view.height < 3 {
+        let pos = if live {
+            format!("{n}/{n} live")
+        } else {
+            format!("◀ {}/{n} ▶", cur + 1)
+        };
+        return (view, Some(pos));
+    }
+    let lw = (view.width * 2 / 5).min(38);
+    let head = if live {
+        format!("{n} messages · live")
+    } else {
+        format!("{n} messages · {}/{n}", cur + 1)
+    };
+    put(
+        buf,
+        view.x,
+        view.y,
+        &truncate(&head, lw as usize),
+        lw,
+        theme.dim(),
+    );
+    // The selected row stays in sight; live mode shows the newest rows.
+    let rows = (view.height - 1) as usize;
+    let top = (cur + 1).saturating_sub(rows);
+    let num_w = n.to_string().len();
+    let mut hits = Vec::new();
+    for (k, m) in msgs.iter().enumerate().skip(top).take(rows) {
+        let y = view.y + 1 + (k - top) as u16;
+        let line = format!(
+            "#{:<num_w$} +{:.3}s {:>6} {}",
+            k + 1,
+            m.at.as_secs_f64(),
+            human_size(m.size as u64),
+            m.preview.replace(['\n', '\r'], " ")
+        );
+        let row = Rect::new(view.x, y, lw, 1);
+        let st = if k == cur {
+            theme.selected()
+        } else {
+            theme.fg(theme.fg)
+        };
+        fill(buf, row, st);
+        put(buf, view.x, y, &truncate(&line, lw as usize), lw, st);
+        hits.push((row, Hit::StreamMsg(k)));
+    }
+    for y in view.y..view.y + view.height {
+        put(buf, view.x + lw, y, "│", 1, theme.dim());
+    }
+    app.hits.extend(hits);
+    let x = view.x + lw + 2;
+    (
+        Rect::new(x, view.y, view.width.saturating_sub(lw + 2), view.height),
+        None,
+    )
 }

@@ -119,6 +119,10 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `view_hex` | `x` | `x` | Body view: hex dump |
 | `search` | `/`, `Ctrl+F` | `/`, `Ctrl+F` | Search in the response |
 | `filter` | `j` | `J` | Filter the response body with a jq expression |
+| `filter_here` | `f` | `f` | Filter the body to the JSON value at the cursor |
+| `copy_path` | `Y` | `Y` | Copy the jq path of the JSON value at the cursor |
+| `prev_message` | `[` | `[` | Show the previous message of a stream |
+| `next_message` | `]` | `]` | Show the next message of a stream (the last one follows new ones) |
 | `search_next` | `n`, `F3` | `n`, `F3` | Next search match |
 | `search_prev` | `N`, `Shift+F3` | `N`, `Shift+F3` | Previous search match |
 | `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the JSON block at the cursor |

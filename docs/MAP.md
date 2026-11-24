@@ -81,6 +81,9 @@ here.
 | Redirect handling | `crates/http/src/lib.rs::redirect_policy`, `follow_cross_origin` | Auth headers stay behind on another origin (FORMAT.md) |
 | Cookie jar wiring during a send | `crates/pipeline/src/runner.rs` (`cookie_setup`) | Storage in `crates/store/src/cookies.rs` |
 | jq response filter (display only) | `crates/ui/src/filter.rs::apply` | `crates/ui/src/tab.rs::apply_jq`; jaq with `halt`/`stderr` removed |
+| Response query bar (jq and search) | `crates/ui/src/tab.rs::QueryBar` | `crates/ui/src/app.rs::query_key`, `crates/ui/src/draw/response.rs::draw_query_bar`; key completion `crates/ui/src/complete.rs::jq_keys` |
+| Stream message list (gRPC, WebSocket) | `crates/ui/src/tab.rs::stream_messages` | `crates/ui/src/tab.rs::set_message`, `crates/ui/src/draw/response.rs::draw_stream_split`; `[` / `]` in `crates/ui/src/app.rs::step_message` |
+| JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app.rs::filter_here` |
 | Watch (repeat the active request) | `crates/ui/src/app.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
 
 Tests: `tests/corpus.rs` (48 HTTP cases under

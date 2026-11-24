@@ -278,14 +278,18 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
             ResolvedBody::Bytes(ctx.r(text).into_bytes())
         }
         Body::Json { text } => {
-            auto_ct(&mut headers, &mut origins, "application/json");
+            auto_ct(
+                &mut headers,
+                &mut origins,
+                BodyKind::Json.content_type().unwrap_or_default(),
+            );
             ResolvedBody::Bytes(ctx.r(text).into_bytes())
         }
         Body::Form { fields } => {
             auto_ct(
                 &mut headers,
                 &mut origins,
-                "application/x-www-form-urlencoded",
+                BodyKind::Form.content_type().unwrap_or_default(),
             );
             let enc: Vec<String> = fields
                 .iter()

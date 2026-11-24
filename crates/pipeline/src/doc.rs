@@ -137,6 +137,35 @@ impl Doc {
         }
     }
 
+    /// A stream of JSON values, such as the output of a jq filter: the raw
+    /// view has one value per line, the pretty view each value formatted and
+    /// foldable.
+    pub fn json_stream(values: &[Vec<u8>]) -> Self {
+        let mut pretty = String::new();
+        let mut fold_end: Vec<u32> = Vec::new();
+        for (i, v) in values.iter().enumerate() {
+            if i > 0 {
+                pretty.push('\n');
+            }
+            let base = fold_end.len() as u32;
+            let (p, f) = pretty_json(v);
+            pretty.push_str(&p);
+            fold_end.extend(
+                f.into_iter()
+                    .map(|e| if e == NO_FOLD { e } else { e + base }),
+            );
+        }
+        let raw = String::from_utf8_lossy(&values.join(&b'\n')).into_owned();
+        Doc {
+            bytes: Vec::new(),
+            raw: Lines::new(raw),
+            pretty: Some(Lines::new(pretty)),
+            fold_end,
+            is_json: true,
+            valid_utf8: true,
+        }
+    }
+
     pub fn text(s: &str) -> Self {
         Doc {
             raw: Lines::new(s.to_string()),
@@ -200,6 +229,92 @@ impl Doc {
 
     pub fn append_text(&mut self, s: &str) {
         self.raw.append(s);
+    }
+
+    /// The jq path of the JSON value on a pretty line, e.g. `.items[0].email`
+    /// (`.` for a top-level value; a closing line gives its container).
+    /// `None` when the document has no pretty form.
+    pub fn json_path(&self, line: usize) -> Option<String> {
+        let pretty = self.pretty.as_ref()?;
+        if line >= pretty.len() {
+            return None;
+        }
+        // One entry per open container: (is an array, next index, its segment).
+        let mut stack: Vec<(bool, usize, String)> = Vec::new();
+        let path = |stack: &[(bool, usize, String)], last: Option<&str>| {
+            let mut p: String = stack.iter().map(|f| f.2.as_str()).collect();
+            p.push_str(last.unwrap_or(""));
+            if p.starts_with('.') {
+                p
+            } else {
+                format!(".{p}")
+            }
+        };
+        for i in 0..=line {
+            let t = pretty.line(i).trim_start();
+            if t.starts_with('}') || t.starts_with(']') {
+                if i == line {
+                    return Some(path(&stack, None));
+                }
+                stack.pop();
+                continue;
+            }
+            let (key, value) = split_key(t);
+            let seg = match stack.last_mut() {
+                Some((true, next, _)) => {
+                    *next += 1;
+                    format!("[{}]", *next - 1)
+                }
+                Some(_) => key.map(key_segment).unwrap_or_default(),
+                None => String::new(),
+            };
+            if i == line {
+                return Some(path(&stack, Some(&seg)));
+            }
+            match value.trim_end_matches(',') {
+                "{" => stack.push((false, 0, seg)),
+                "[" => stack.push((true, 0, seg)),
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+/// Splits a pretty JSON line into its object key (the quoted source text) and
+/// the value after `": "`.
+fn split_key(t: &str) -> (Option<&str>, &str) {
+    if !t.starts_with('"') {
+        return (None, t);
+    }
+    let b = t.as_bytes();
+    let mut i = 1;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'"' => break,
+            _ => i += 1,
+        }
+    }
+    match t.get(i + 1..).and_then(|r| r.strip_prefix(": ")) {
+        Some(value) => (Some(&t[..=i]), value),
+        None => (None, t),
+    }
+}
+
+/// A jq path segment for a quoted key: `.name`, or `["a b"]` when the key
+/// is not a plain identifier.
+fn key_segment(quoted: &str) -> String {
+    let inner = &quoted[1..quoted.len() - 1];
+    let plain = inner
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if plain {
+        format!(".{inner}")
+    } else {
+        format!("[{quoted}]")
     }
 }
 
@@ -404,6 +519,47 @@ pub fn wrap_breaks(line: &str, w: usize, mut brk: impl FnMut(usize)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_path_follows_keys_and_indices() {
+        let d = Doc::from_bytes(
+            br#"{"items":[{"id":1,"a b":{"x":[]}},{"id":2}],"n":"s\"t"}"#.to_vec(),
+            None,
+        );
+        let at = |l| d.json_path(l).unwrap_or_default();
+        let lines: Vec<String> = (0..d.line_count(ViewMode::Pretty))
+            .map(|i| d.line(ViewMode::Pretty, i))
+            .collect();
+        let find = |s: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(s))
+                .unwrap_or(usize::MAX)
+        };
+        assert_eq!(at(0), ".");
+        assert_eq!(at(find("\"items\"")), ".items");
+        assert_eq!(at(find("\"id\": 1")), ".items[0].id");
+        assert_eq!(at(find("\"x\"")), r#".items[0]["a b"].x"#);
+        assert_eq!(at(find("\"id\": 2")), ".items[1].id");
+        assert_eq!(at(find("\"n\"")), ".n");
+        // A closing line belongs to its container.
+        assert_eq!(at(lines.len() - 1), ".");
+        assert_eq!(Doc::text("plain").json_path(0), None);
+        let arr = Doc::from_bytes(br#"[{"a b":1}]"#.to_vec(), None);
+        assert_eq!(arr.json_path(2).as_deref(), Some(r#".[0]["a b"]"#));
+    }
+
+    #[test]
+    fn json_stream_formats_and_folds_each_value() {
+        let d = Doc::json_stream(&[b"{\"a\":1}".to_vec(), b"\"x\"".to_vec(), b"[1,2]".to_vec()]);
+        assert_eq!(d.raw.text, "{\"a\":1}\n\"x\"\n[1,2]");
+        assert_eq!(d.line_count(ViewMode::Pretty), 8);
+        assert_eq!(d.line(ViewMode::Pretty, 3), "\"x\"");
+        // The folds of a later value are shifted to its own lines.
+        assert_eq!(d.fold_end(0), Some(2));
+        assert_eq!(d.fold_end(3), None);
+        assert_eq!(d.fold_end(4), Some(7));
+    }
 
     #[test]
     fn stream_log_events_continue_under_their_message() {

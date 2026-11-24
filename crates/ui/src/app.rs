@@ -27,7 +27,7 @@ use crate::runner::{
     self, Control, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache, WsControl,
     WsUpdate,
 };
-use crate::tab::{Field, Kind, Response, Running, Summary, Tab, Watch};
+use crate::tab::{Field, Kind, QueryBar, QueryMode, Response, Running, Summary, Tab, Watch};
 use crate::theme::Theme;
 use crate::tree::{RowKind, TreeState};
 use crate::viewer::{Doc, ViewMode, Viewer};
@@ -42,6 +42,8 @@ pub enum Focus {
     ReqBody,
     RespTabs,
     RespBody,
+    /// The query bar (jq filter or search) above the response view.
+    RespQuery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +78,16 @@ pub enum Hit {
     Bar(usize),
     ReqTab(usize),
     ReqField(usize),
+    /// The JSON error in the body editor's status (0-based line and column).
+    JsonError {
+        line: usize,
+        col: usize,
+    },
+    /// One option of a choice field drawn as chips (the body type).
+    ChoiceOption {
+        field: usize,
+        index: usize,
+    },
     TableCell {
         field: usize,
         row: usize,
@@ -94,6 +106,10 @@ pub enum Hit {
     },
     RespTab(usize),
     RespView,
+    /// The query bar above the response view.
+    RespQuery,
+    /// A row of the stream message list.
+    StreamMsg(usize),
     ViewMode(ViewMode),
     RespAction(RespAction),
     SidebarBorder,
@@ -883,6 +899,19 @@ impl App {
             return;
         }
         let chord = Chord::from_event(&key);
+        // The query bar closes with a new response or on another tab.
+        if self.focus == Focus::RespQuery && !self.query_shown() {
+            self.focus = Focus::RespBody;
+        }
+        // The query bar keeps Tab (completion) and Up/Down (history).
+        if self.focus == Focus::RespQuery
+            && self.pending.is_empty()
+            && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
+            && key.modifiers.is_empty()
+        {
+            self.query_key(key);
+            return;
+        }
         // Tab inside a multi-line editor indents (unless in vim normal mode).
         if chord == Chord::new(KeyCode::Tab, KeyModifiers::NONE)
             && self.pending.is_empty()
@@ -911,7 +940,8 @@ impl App {
         seq.push(chord);
         let ctxs = self.contexts();
         // Text widgets get plain keys first; only global bindings apply there.
-        let text_focus = matches!(self.focus, Focus::Filter) || self.focused_text().is_some();
+        let text_focus =
+            matches!(self.focus, Focus::Filter | Focus::RespQuery) || self.focused_text().is_some();
         let ctxs: Vec<Ctx> = if text_focus { vec![Ctx::Global] } else { ctxs };
         // In vim normal mode inside tables, `dd` deletes rows like lines.
         match self.keymap.lookup(&ctxs, self.vim, &seq) {
@@ -979,6 +1009,7 @@ impl App {
                 _ => {}
             },
             Focus::RespBody => {}
+            Focus::RespQuery => self.query_key(key),
         }
     }
 
@@ -1330,7 +1361,7 @@ impl App {
                     )
                 }
             }
-            CompleteKind::Fields => None,
+            CompleteKind::Fields | CompleteKind::JqKey => None,
         }
     }
 
@@ -1486,6 +1517,21 @@ impl App {
             self.complete = None;
             return;
         }
+        if kind == CompleteKind::JqKey {
+            match self.jq_complete_context() {
+                Some((_, prefix, start)) => {
+                    if let Some(c) = &mut self.complete {
+                        if c.start.col != start {
+                            self.complete = None;
+                            return;
+                        }
+                        c.filter(prefix);
+                    }
+                }
+                None => self.complete = None,
+            }
+            return;
+        }
         if kind == CompleteKind::Fields {
             let Some(ctx) =
                 crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
@@ -1520,6 +1566,9 @@ impl App {
         let Some(cand) = c.selected().cloned() else {
             return false;
         };
+        if c.kind == CompleteKind::JqKey {
+            return self.jq_complete_insert(c.start, &cand.name);
+        }
         let Some(t) = self.tab_mut() else {
             return false;
         };
@@ -1527,6 +1576,7 @@ impl App {
             return false;
         }
         let ed = match c.kind {
+            CompleteKind::JqKey => None,
             CompleteKind::Fields => t.ed.text_mut(Field::Message),
             CompleteKind::GrpcMethod => Some(&mut t.ed.grpc_method_text),
             CompleteKind::McpServer => Some(&mut t.ed.mcp_server),
@@ -1718,6 +1768,10 @@ impl App {
             Action::ViewHex => self.set_view(ViewMode::Hex),
             Action::Search => self.open_search(),
             Action::Filter => self.open_filter(),
+            Action::FilterHere => self.filter_here(),
+            Action::CopyPath => self.copy_path(),
+            Action::PrevMessage => self.step_message(-1),
+            Action::NextMessage => self.step_message(1),
             Action::SearchNext => self.with_viewer(|v| {
                 v.next_match(1);
             }),
@@ -1940,7 +1994,10 @@ impl App {
 
     fn subtab(&mut self, dir: isize) {
         self.complete = None;
-        let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
+        let resp = matches!(
+            self.focus,
+            Focus::RespTabs | Focus::RespBody | Focus::RespQuery
+        );
         let Some(t) = self.tab_mut() else { return };
         if resp {
             t.resp_tab = crate::list::cycle(t.resp_tab, dir, crate::tab::RESP_TABS.len());
@@ -1957,7 +2014,10 @@ impl App {
 
     fn set_subtab(&mut self, i: usize) {
         self.complete = None;
-        let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
+        let resp = matches!(
+            self.focus,
+            Focus::RespTabs | Focus::RespBody | Focus::RespQuery
+        );
         let Some(t) = self.tab_mut() else { return };
         if resp {
             if i < crate::tab::RESP_TABS.len() {
@@ -2755,11 +2815,6 @@ impl App {
                         }
                         resp.headers = crate::tab::wrapped(Doc::text(&ws_headers_text(headers)));
                     }
-                    sendito_ws::Event::Received { kind, preview, .. } => {
-                        if *kind == sendito_ws::FrameKind::Text {
-                            resp.set_body(Doc::text(&format!("{preview}\n")));
-                        }
-                    }
                     sendito_ws::Event::Finished {
                         code, reason, at, ..
                     } => {
@@ -2784,7 +2839,17 @@ impl App {
                     }
                     _ => {}
                 }
+                let message = matches!(
+                    ev,
+                    sendito_ws::Event::Received {
+                        kind: sendito_ws::FrameKind::Text | sendito_ws::FrameKind::Binary,
+                        ..
+                    }
+                );
                 resp.ws_events.push(ev);
+                if message {
+                    resp.message_arrived();
+                }
                 let size: usize = resp
                     .ws_events
                     .iter()
@@ -3276,33 +3341,28 @@ impl App {
             }
             GrpcUpdate::Event(ev) => {
                 resp.messages.doc.append_text(&event_text(&ev));
-                match &ev {
-                    sendito_grpc::Event::Received { json, .. } => {
-                        resp.set_body(Doc::from_bytes(
-                            json.as_bytes().to_vec(),
-                            Some("application/json"),
-                        ));
+                if let sendito_grpc::Event::Finished {
+                    code, message, at, ..
+                } = &ev
+                {
+                    let name = sendito_grpc::code_name(*code);
+                    resp.summary.status = if message.is_empty() {
+                        format!("{name} ({code})")
+                    } else {
+                        format!("{name} ({code}): {message}")
+                    };
+                    resp.summary.ok = *code == 0;
+                    resp.summary.code = None;
+                    resp.summary.time_ms = Some(at.as_secs_f64() * 1000.0);
+                    if *code != 0 {
+                        resp.summary.error = Some(format!("{name}: {message}"));
                     }
-                    sendito_grpc::Event::Finished { code, message, .. } => {
-                        let name = sendito_grpc::code_name(*code);
-                        resp.summary.status = if message.is_empty() {
-                            format!("{name} ({code})")
-                        } else {
-                            format!("{name} ({code}): {message}")
-                        };
-                        resp.summary.ok = *code == 0;
-                        resp.summary.code = None;
-                        resp.summary.time_ms = Some(match &ev {
-                            sendito_grpc::Event::Finished { at, .. } => at.as_secs_f64() * 1000.0,
-                            _ => 0.0,
-                        });
-                        if *code != 0 {
-                            resp.summary.error = Some(format!("{name}: {message}"));
-                        }
-                    }
-                    _ => {}
                 }
+                let message = matches!(ev, sendito_grpc::Event::Received { .. });
                 resp.grpc_events.push(ev);
+                if message {
+                    resp.message_arrived();
+                }
                 let size: usize = resp
                     .grpc_events
                     .iter()
@@ -4370,42 +4430,267 @@ impl App {
     }
 
     fn open_search(&mut self) {
-        if self.tab().and_then(|t| t.response.as_ref()).is_none() {
-            self.set_status("no response to search yet", StatusKind::Info);
-            return;
-        }
-        self.overlay = Some(Overlay::Prompt(Prompt::new(
-            "Search response",
-            "Find",
-            TextEditor::single(""),
-            vec![],
-            PromptAction::Search,
-        )));
+        self.open_query(QueryMode::Find);
     }
 
     fn open_filter(&mut self) {
+        self.open_query(QueryMode::Jq);
+    }
+
+    /// Opens the query bar above the response view (jq: above the body), or
+    /// focuses it when it is open in that mode.
+    fn open_query(&mut self, mode: QueryMode) {
         if self.tab().and_then(|t| t.response.as_ref()).is_none() {
-            self.set_status("no response to filter yet", StatusKind::Info);
+            let msg = match mode {
+                QueryMode::Jq => "no response to filter yet",
+                QueryMode::Find => "no response to search yet",
+            };
+            self.set_status(msg, StatusKind::Info);
             return;
         }
-        let current = self
-            .tab()
-            .and_then(|t| t.response.as_ref())
-            .and_then(|r| r.jq.clone())
-            .unwrap_or_default();
-        let mut prompt = Prompt::new(
-            "Filter response (jq)",
-            "jq",
-            TextEditor::single(&current).with_placeholder(".data.items[] | select(.ok)"),
-            vec![],
-            PromptAction::Filter,
-        );
-        prompt.note = Some("Enter applies · an empty expression clears the filter".into());
-        self.overlay = Some(Overlay::Prompt(prompt));
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if mode == QueryMode::Jq {
+            t.resp_tab = 0;
+        }
+        let tab = t.resp_tab;
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let open = resp
+            .query
+            .as_ref()
+            .is_some_and(|q| q.mode == mode && q.tab == tab);
+        if !open {
+            let text = match mode {
+                QueryMode::Jq => resp.jq.clone().unwrap_or_default(),
+                QueryMode::Find => resp
+                    .viewer_mut(tab)
+                    .search
+                    .as_ref()
+                    .map(|s| s.query.clone())
+                    .unwrap_or_default(),
+            };
+            resp.query = Some(QueryBar::new(mode, &text, tab));
+        }
+        self.focus = Focus::RespQuery;
+    }
+
+    /// Whether the active tab shows a query bar on its current response tab.
+    pub(crate) fn query_shown(&self) -> bool {
+        self.tab().is_some_and(|t| {
+            t.response
+                .as_ref()
+                .and_then(|r| r.query.as_ref())
+                .is_some_and(|q| q.tab == t.resp_tab)
+        })
+    }
+
+    /// A key typed in the query bar: the text applies at each change (a jq
+    /// filter on a large body waits for Enter).
+    fn query_key(&mut self, key: KeyEvent) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let history = t.jq_history.clone();
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        let mode = q.mode;
+        if key.code == KeyCode::Tab {
+            if mode == QueryMode::Jq {
+                self.jq_complete();
+            }
+            return;
+        }
+        if mode == QueryMode::Jq && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            let pos = match (key.code, q.history_pos) {
+                (_, _) if history.is_empty() => return,
+                (KeyCode::Up, None) => Some(history.len() - 1),
+                (KeyCode::Up, Some(i)) => Some(i.saturating_sub(1)),
+                (_, Some(i)) if i + 1 < history.len() => Some(i + 1),
+                _ => None,
+            };
+            q.history_pos = pos;
+            q.input.set_text(pos.map_or("", |i| history[i].as_str()));
+            q.input.move_to_end();
+            if live {
+                resp.run_query();
+            }
+            return;
+        }
+        match q.input.handle_key(&key, false, &mut self.clipboard) {
+            Outcome::Changed => {
+                q.history_pos = None;
+                if live || mode == QueryMode::Find {
+                    resp.run_query();
+                } else {
+                    q.error = None;
+                }
+                self.complete_typed();
+            }
+            Outcome::Submit => {
+                if !live || mode == QueryMode::Find {
+                    resp.run_query();
+                }
+                self.query_submit();
+            }
+            Outcome::Leave => self.query_leave(),
+            _ => {}
+        }
+    }
+
+    /// Enter in the query bar: keep the result and go back to the view. An
+    /// empty bar closes; a jq error keeps the bar focused.
+    fn query_submit(&mut self) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let Some(q) = resp.query.as_ref() else {
+            return;
+        };
+        let (mode, text) = (q.mode, q.input.text());
+        // The bar shows the error; the text stays for editing.
+        if q.error.is_some() {
+            return;
+        }
+        match resp.query.as_mut() {
+            Some(_) if text.trim().is_empty() => resp.query = None,
+            Some(q) => q.committed = text.clone(),
+            None => {}
+        }
+        self.focus = Focus::RespBody;
+        match mode {
+            QueryMode::Jq => {
+                t.remember_jq(&text);
+                let msg = if text.trim().is_empty() {
+                    "jq filter cleared"
+                } else {
+                    "jq filter applied"
+                };
+                self.set_status(msg, StatusKind::Ok);
+            }
+            QueryMode::Find => {
+                let n = resp.query.as_ref().map(|q| q.tab).map_or(0, |tab| {
+                    resp.viewer_mut(tab)
+                        .search
+                        .as_ref()
+                        .map_or(0, |s| s.matches.len())
+                });
+                if n == 0 && !text.is_empty() {
+                    self.set_status(format!("no match for \"{text}\""), StatusKind::Warn);
+                } else if n > 0 {
+                    self.set_status(
+                        format!("{n} match(es) · n/N next/previous"),
+                        StatusKind::Info,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The jq key context at the query bar's cursor.
+    fn jq_complete_context(&self) -> Option<(String, String, usize)> {
+        let q = self.tab()?.response.as_ref()?.query.as_ref()?;
+        if q.mode != QueryMode::Jq {
+            return None;
+        }
+        crate::complete::jq_context(&q.input.text(), q.input.cursor.col)
+    }
+
+    /// Tab in the jq bar: completes the object key at the cursor. One match
+    /// is inserted at once; more open the popup.
+    fn jq_complete(&mut self) {
+        let Some((base, prefix, start)) = self.jq_complete_context() else {
+            self.set_status("Tab completes a key after a \".\"", StatusKind::Info);
+            return;
+        };
+        let Some(t) = self.tab() else {
+            return;
+        };
+        let Some(r) = t.response.as_ref() else {
+            return;
+        };
+        let src = r.jq_src.as_deref().unwrap_or(r.body.doc.bytes());
+        let mut c = Completion::new(CompleteKind::JqKey, t.id, None);
+        c.start = Pos { row: 0, col: start };
+        c.set_pool(crate::complete::jq_keys(&base, src), prefix);
+        match c.items.len() {
+            0 => self.set_status("no keys to complete here", StatusKind::Info),
+            1 => {
+                let name = c.items[0].name.clone();
+                self.jq_complete_insert(c.start, &name);
+            }
+            _ => self.complete = Some(c),
+        }
+    }
+
+    /// Puts a key over the one typed in the jq bar and runs the filter.
+    fn jq_complete_insert(&mut self, start: Pos, name: &str) -> bool {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return false;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return false;
+        };
+        let line: Vec<char> = q.input.text().chars().collect();
+        let mut end = q.input.cursor.col;
+        while line
+            .get(end)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+        {
+            end += 1;
+        }
+        let span_end = Pos { row: 0, col: end };
+        q.input
+            .replace_span(start, span_end, &crate::complete::jq_key_text(name));
+        if live {
+            resp.run_query();
+        }
+        true
+    }
+
+    /// Esc in the query bar: back to the view with the text the last Enter
+    /// kept; the bar closes when that text is empty.
+    fn query_leave(&mut self) {
+        self.focus = Focus::RespBody;
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        q.history_pos = None;
+        let committed = q.committed.clone();
+        if q.input.text() != committed || q.error.is_some() {
+            q.input.set_text(&committed);
+            q.input.move_to_end();
+            resp.run_query();
+        }
+        if committed.trim().is_empty() {
+            resp.query = None;
+        }
     }
 
     /// Applies (or clears) the jq filter on the active tab's response body and
-    /// shows the body tab, where the result is drawn.
+    /// shows the body tab, where the result is drawn (`:jq <expression>`).
     fn apply_filter(&mut self, expr: &str) -> Result<bool, String> {
         let t = self
             .tab_mut()
@@ -4415,7 +4700,10 @@ impl App {
             .as_mut()
             .ok_or_else(|| "no response to filter yet".to_string())?;
         let applied = resp.apply_jq(expr)?;
+        // The query bar shows the filter that applies.
+        resp.query = applied.then(|| QueryBar::new(QueryMode::Jq, expr.trim(), 0));
         t.resp_tab = 0;
+        t.remember_jq(expr);
         self.focus = Focus::RespBody;
         Ok(applied)
     }
@@ -4793,6 +5081,65 @@ impl App {
             format!("copied {} to the clipboard", human_size(n as u64)),
             StatusKind::Ok,
         );
+    }
+
+    /// The jq path of the JSON value at the body cursor (pretty view).
+    fn body_path(&mut self) -> Option<String> {
+        let t = self.tabs.get_mut(self.active)?;
+        if t.resp_tab != 0 {
+            return None;
+        }
+        t.response.as_mut()?.body.json_path()
+    }
+
+    /// Narrows the jq filter to the JSON value at the cursor.
+    fn filter_here(&mut self) {
+        let Some(path) = self.body_path() else {
+            self.set_status(
+                "no JSON value at the cursor (Pretty view)",
+                StatusKind::Info,
+            );
+            return;
+        };
+        let current = self
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .and_then(|r| r.jq.clone());
+        // A filtered body is the filter's output: the path continues it.
+        let expr = match current {
+            Some(j) if path == "." => j,
+            Some(j) => format!("{j} | {path}"),
+            None => path,
+        };
+        match self.apply_filter(&expr) {
+            Ok(_) => self.set_status("jq filter applied", StatusKind::Ok),
+            Err(e) => self.set_status(e, StatusKind::Error),
+        }
+    }
+
+    /// Shows the previous or next message of a stream in the body.
+    fn step_message(&mut self, step: isize) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        t.resp_tab = 0;
+        let moved = t.response.as_mut().is_some_and(|r| r.select_message(step));
+        if !moved {
+            self.set_status("no other message", StatusKind::Info);
+        }
+    }
+
+    fn copy_path(&mut self) {
+        let Some(path) = self.body_path() else {
+            self.set_status(
+                "no JSON value at the cursor (Pretty view)",
+                StatusKind::Info,
+            );
+            return;
+        };
+        self.clipboard.set(path.clone(), false);
+        self.osc52.push(path.clone());
+        self.set_status(format!("copied {path}"), StatusKind::Ok);
     }
 
     fn prompt_save_body(&mut self) {
@@ -5615,6 +5962,10 @@ impl App {
                             (k(self, Action::ToggleRow), "enable/disable".into()),
                         ]);
                     }
+                    (Focus::ReqBody, Some(Field::BodyKind)) => v.extend([
+                        ("←→".into(), "change type".into()),
+                        ("Enter".into(), "choose".into()),
+                    ]),
                     (Focus::ReqBody, Some(f)) if f.is_choice() => {
                         v.push(("Enter/Space".into(), "choose".into()))
                     }
@@ -5644,10 +5995,30 @@ impl App {
                     _ => {}
                 }
             }
+            Focus::RespQuery => {
+                v.push(("Enter".into(), "keep".into()));
+                v.push(("Esc".into(), "close".into()));
+                let jq = self
+                    .tab()
+                    .and_then(|t| t.response.as_ref())
+                    .and_then(|r| r.query.as_ref())
+                    .is_some_and(|q| q.mode == QueryMode::Jq);
+                if jq {
+                    v.push(("Tab".into(), "complete".into()));
+                    v.push(("↑↓".into(), "history".into()));
+                }
+            }
             Focus::RespTabs | Focus::RespBody => {
                 v.push(("Alt+1-4".into(), "tabs".into()));
                 // View modes, folding and saving only apply to the body.
                 if self.tab().is_some_and(|t| t.resp_tab == 0) {
+                    let stream = self
+                        .tab()
+                        .and_then(|t| t.response.as_ref())
+                        .is_some_and(|r| r.stream_messages().len() > 1);
+                    if stream {
+                        v.push(("[ ]".into(), "message".into()));
+                    }
                     v.extend([
                         ("y".into(), "copy".into()),
                         ("p/r/x".into(), "view".into()),
@@ -5718,8 +6089,6 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
             "create"
         }
         PromptAction::Rename(_) => "rename",
-        PromptAction::Search => "search",
-        PromptAction::Filter => "apply",
         PromptAction::CustomMethod => "use",
         PromptAction::McpServer { .. } => "add",
     }
@@ -6675,7 +7044,6 @@ impl App {
 
     fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent, ctrl: bool) -> bool {
         {
-            let search = p.action == PromptAction::Search;
             // The open option list of a choice row takes the keys first.
             if let Some(hl) = p.open {
                 let n = p
@@ -6701,7 +7069,7 @@ impl App {
             // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
             let confirm_any =
                 matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
-            if confirm_any && !search {
+            if confirm_any {
                 return match self.prompt_ok(p) {
                     Ok(()) => false,
                     Err(e) => {
@@ -6742,30 +7110,13 @@ impl App {
                     }
                     true
                 }
-                KeyCode::Enter => {
-                    if search {
-                        let q = p.input.text();
-                        let mut n = 0;
-                        self.with_viewer(|v| n = v.search(&q));
-                        self.focus = Focus::RespBody;
-                        if n == 0 && !q.is_empty() {
-                            self.set_status(format!("no match for \"{q}\""), StatusKind::Warn);
-                        } else if n > 0 {
-                            self.set_status(
-                                format!("{n} match(es) · n/N next/previous"),
-                                StatusKind::Info,
-                            );
-                        }
-                        return false;
+                KeyCode::Enter => match self.prompt_ok(p) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        p.error = Some(e);
+                        true
                     }
-                    match self.prompt_ok(p) {
-                        Ok(()) => false,
-                        Err(e) => {
-                            p.error = Some(e);
-                            true
-                        }
-                    }
-                }
+                },
                 _ => {
                     if p.focus == 0 {
                         p.input.handle_key(&key, false, &mut self.clipboard);
@@ -7337,19 +7688,6 @@ impl App {
                 self.load_env_into(&mut ed);
                 self.overlay = Some(Overlay::Env(ed));
             }
-            PromptAction::Search => {}
-            PromptAction::Filter => {
-                let applied = self.apply_filter(&value)?;
-                self.set_status(
-                    (if applied {
-                        "jq filter applied"
-                    } else {
-                        "jq filter cleared"
-                    })
-                    .to_string(),
-                    StatusKind::Ok,
-                );
-            }
             PromptAction::CustomMethod => {
                 let m = value.trim().to_ascii_uppercase();
                 if m.is_empty()
@@ -7729,6 +8067,29 @@ impl App {
                 }
                 self.changed();
             }
+            Hit::JsonError { line, col } => {
+                if let Some(t) = self.tab_mut()
+                    && let Some(i) = t.fields().iter().position(|f| f.is_multiline())
+                {
+                    t.field = i;
+                    if let Some(f) = t.current_field()
+                        && let Some(e) = t.ed.text_mut(f)
+                    {
+                        e.move_to(Pos { row: line, col });
+                    }
+                    self.focus = Focus::ReqBody;
+                }
+            }
+            Hit::ChoiceOption { field, index } => {
+                self.focus = Focus::ReqBody;
+                if let Some(t) = self.tab_mut() {
+                    t.field = field;
+                    if let Some(f) = t.current_field() {
+                        t.ed.set_choice(f, index);
+                    }
+                }
+                self.changed();
+            }
             Hit::TextArea { field } => {
                 self.focus = Focus::ReqBody;
                 let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
@@ -7812,6 +8173,13 @@ impl App {
                         v.toggle_fold();
                     }
                 });
+            }
+            Hit::RespQuery => self.focus = Focus::RespQuery,
+            Hit::StreamMsg(i) => {
+                self.focus = Focus::RespBody;
+                if let Some(r) = self.tab_mut().and_then(|t| t.response.as_mut()) {
+                    r.set_message(i);
+                }
             }
             Hit::ViewMode(m) => {
                 self.focus = Focus::RespBody;

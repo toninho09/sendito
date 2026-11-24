@@ -1200,6 +1200,74 @@ pub struct Summary {
     pub error: Option<String>,
 }
 
+/// What the query bar above the response view does with its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryMode {
+    /// A jq expression filters the body.
+    Jq,
+    /// Plain text is searched in the view.
+    Find,
+}
+
+/// The query bar drawn above the response view while a jq filter or a
+/// search is typed or active.
+#[derive(Debug, Clone)]
+pub struct QueryBar {
+    pub mode: QueryMode,
+    pub input: TextEditor,
+    /// The response tab the bar belongs to (jq: always the body).
+    pub tab: usize,
+    /// Why the typed text does not apply; the view keeps the last valid result.
+    pub error: Option<String>,
+    /// The jq history entry shown while Up/Down walk it (`None`: typed text).
+    pub history_pos: Option<usize>,
+    /// The text kept by the last Enter (or the bar's first text): Esc goes
+    /// back to it.
+    pub committed: String,
+}
+
+impl QueryBar {
+    pub fn new(mode: QueryMode, text: &str, tab: usize) -> Self {
+        let placeholder = match mode {
+            QueryMode::Jq => ".items[] | select(.active)",
+            QueryMode::Find => "text to find",
+        };
+        let mut input = TextEditor::single(text).with_placeholder(placeholder);
+        input.move_to_end();
+        Self {
+            mode,
+            input,
+            tab,
+            error: None,
+            history_pos: None,
+            committed: text.to_string(),
+        }
+    }
+}
+
+/// One message of a stream: a gRPC response message or a WebSocket data
+/// frame (text, or binary as base64).
+#[derive(Debug, Clone, Copy)]
+pub struct StreamMsg<'a> {
+    /// Time since the call started.
+    pub at: std::time::Duration,
+    pub size: usize,
+    /// The whole message.
+    pub text: &'a str,
+    /// The message on one line, for the list.
+    pub preview: &'a str,
+    pub json: bool,
+}
+
+impl StreamMsg<'_> {
+    pub fn doc(&self) -> Doc {
+        Doc::from_bytes(
+            self.text.as_bytes().to_vec(),
+            self.json.then_some("application/json"),
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Response {
     pub summary: Summary,
@@ -1216,6 +1284,12 @@ pub struct Response {
     pub jq: Option<String>,
     /// The unfiltered body bytes, captured when the first filter is applied.
     pub jq_src: Option<Vec<u8>>,
+    /// How many values the jq filter gave.
+    pub jq_outputs: usize,
+    /// The query bar above the view, if open.
+    pub query: Option<QueryBar>,
+    /// The stream message the body shows; `None` follows the last one (live).
+    pub stream_sel: Option<usize>,
 }
 
 impl Response {
@@ -1232,6 +1306,9 @@ impl Response {
             results_badge: None,
             jq: None,
             jq_src: None,
+            jq_outputs: 0,
+            query: None,
+            stream_sel: None,
         }
     }
 
@@ -1240,6 +1317,8 @@ impl Response {
     pub fn set_body(&mut self, doc: Doc) {
         self.jq = None;
         self.jq_src = None;
+        self.query = None;
+        self.stream_sel = None;
         self.body = Viewer::new(doc);
     }
 
@@ -1280,23 +1359,141 @@ impl Response {
         };
         let outs = outs?;
         self.jq = Some(expr.to_string());
+        self.jq_outputs = outs.len();
         let doc = match outs.as_slice() {
             [] => Doc::text("(no output)\n"),
             [one] => Doc::from_bytes(one.clone(), Some("application/json")),
-            many => {
-                // One JSON value per line, like jq's own output stream.
-                let mut text = Vec::new();
-                for (i, o) in many.iter().enumerate() {
-                    if i > 0 {
-                        text.push(b'\n');
-                    }
-                    text.extend_from_slice(o);
-                }
-                Doc::from_bytes(text, None)
-            }
+            many => Doc::json_stream(many),
         };
         self.swap_body(doc);
         Ok(true)
+    }
+
+    /// The messages a stream received, in order.
+    pub fn stream_messages(&self) -> Vec<StreamMsg<'_>> {
+        let grpc = self.grpc_events.iter().filter_map(|e| match e {
+            sendito_grpc::Event::Received {
+                json,
+                compact,
+                size,
+                at,
+                ..
+            } => Some(StreamMsg {
+                at: *at,
+                size: *size,
+                text: json,
+                preview: compact,
+                json: true,
+            }),
+            _ => None,
+        });
+        let ws = self.ws_events.iter().filter_map(|e| match e {
+            sendito_ws::Event::Received {
+                kind: sendito_ws::FrameKind::Text | sendito_ws::FrameKind::Binary,
+                preview,
+                size,
+                at,
+                ..
+            } => Some(StreamMsg {
+                at: *at,
+                size: *size,
+                text: preview,
+                preview,
+                json: false,
+            }),
+            _ => None,
+        });
+        grpc.chain(ws).collect()
+    }
+
+    /// A new stream message arrived: the body shows it in live mode.
+    pub fn message_arrived(&mut self) {
+        if self.stream_sel.is_none() {
+            self.set_message(usize::MAX);
+        }
+    }
+
+    /// Shows stream message `i` (the last one for a larger index); the last
+    /// message turns live mode on.
+    pub fn set_message(&mut self, i: usize) {
+        let msgs = self.stream_messages();
+        let Some(last) = msgs.len().checked_sub(1) else {
+            return;
+        };
+        let i = i.min(last);
+        let doc = msgs[i].doc();
+        self.stream_sel = (i < last).then_some(i);
+        self.show_message(doc);
+    }
+
+    /// Moves to the previous (`-1`) or next (`1`) stream message. Returns
+    /// false when there is none.
+    pub fn select_message(&mut self, step: isize) -> bool {
+        let n = self.stream_messages().len();
+        let cur = self.stream_sel.unwrap_or(n.saturating_sub(1)) as isize;
+        let next = cur + step;
+        if n < 2 || next < 0 || next >= n as isize {
+            return false;
+        }
+        self.set_message(next as usize);
+        true
+    }
+
+    /// Puts a stream message in the body. The view mode, the jq filter, the
+    /// search and the query bar stay; a jq error goes to the bar and the body
+    /// shows the message unfiltered.
+    fn show_message(&mut self, doc: Doc) {
+        let expr = self.jq.take();
+        self.jq_src = None;
+        // The first message opens in its own default view (pretty for JSON).
+        if self.body.doc.is_empty() {
+            self.body = Viewer::new(doc);
+        } else {
+            self.swap_body(doc);
+        }
+        if let Some(e) = expr {
+            let err = self.apply_jq(&e).err();
+            if err.is_some() {
+                self.jq = Some(e);
+            }
+            if let Some(q) = self.query.as_mut().filter(|q| q.mode == QueryMode::Jq) {
+                q.error = err;
+            }
+        }
+        if let Some(q) = self
+            .query
+            .as_ref()
+            .filter(|q| q.mode == QueryMode::Find && q.tab == 0)
+        {
+            let text = q.input.text();
+            self.body.search(&text);
+        }
+    }
+
+    /// Whether the body is small enough to filter on every key press; a
+    /// larger body is filtered when Enter is pressed.
+    pub fn live_jq(&self) -> bool {
+        self.jq_src.as_ref().map_or(self.body.doc.len(), Vec::len) <= LIVE_JQ_MAX
+    }
+
+    /// Runs the query bar's text: a jq filter over the body, or a search in
+    /// the view. A jq error is kept on the bar and the body keeps the last
+    /// valid result.
+    pub fn run_query(&mut self) {
+        let Some(q) = &self.query else {
+            return;
+        };
+        let (text, mode, tab) = (q.input.text(), q.mode, q.tab);
+        let error = match mode {
+            QueryMode::Jq => self.apply_jq(&text).err(),
+            QueryMode::Find => {
+                self.viewer_mut(tab).search(&text);
+                None
+            }
+        };
+        if let Some(q) = &mut self.query {
+            q.error = error;
+        }
     }
 
     /// Takes over how `old` showed its body: view mode, wrap, line numbers,
@@ -1313,6 +1510,8 @@ impl Response {
         if let Some(expr) = &old.jq {
             let _ = self.apply_jq(expr);
         }
+        self.query = old.query.clone();
+        self.stream_sel = old.stream_sel;
         // Rows differ when the old view wraps: carry the line. The new viewer
         // has no rows yet, so its cursor is a line until it renders.
         let line = old.body.cursor_line();
@@ -1450,7 +1649,15 @@ pub struct Tab {
     /// The saved request a history copy came from; its history entries and
     /// "save to tree" default to that folder.
     pub origin_path: Option<String>,
+    /// jq expressions applied in this tab, oldest first (kept in memory only).
+    pub jq_history: Vec<String>,
 }
+
+/// The largest body (in bytes) that the jq filter runs on at each key press.
+pub const LIVE_JQ_MAX: usize = 1024 * 1024;
+
+/// How many jq expressions a tab remembers.
+pub const JQ_HISTORY_MAX: usize = 50;
 
 impl Tab {
     pub fn new(
@@ -1481,6 +1688,19 @@ impl Tab {
             model: req.clone(),
             origin: None,
             origin_path: None,
+            jq_history: Vec::new(),
+        }
+    }
+
+    /// Adds a jq expression to the tab's history (not twice in a row).
+    pub fn remember_jq(&mut self, expr: &str) {
+        let expr = expr.trim();
+        if expr.is_empty() || self.jq_history.last().is_some_and(|l| l == expr) {
+            return;
+        }
+        self.jq_history.push(expr.to_string());
+        if self.jq_history.len() > JQ_HISTORY_MAX {
+            self.jq_history.remove(0);
         }
     }
 
@@ -1518,6 +1738,61 @@ impl Tab {
 mod tests {
     use super::*;
     use crate::viewer::ViewMode;
+
+    fn grpc_msg(json: &str) -> sendito_grpc::Event {
+        sendito_grpc::Event::Received {
+            json: json.into(),
+            full: json.into(),
+            compact: json.into(),
+            size: json.len(),
+            at: std::time::Duration::from_millis(5),
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn stream_messages_follow_live_and_keep_the_filter() {
+        let mut r = Response::new();
+        for text in ["one", "two", "three"] {
+            r.grpc_events
+                .push(grpc_msg(&format!("{{\"text\":\"{text}\"}}")));
+            r.message_arrived();
+        }
+        r.ws_events.push(sendito_ws::Event::Received {
+            kind: sendito_ws::FrameKind::Ping,
+            preview: String::new(),
+            size: 0,
+            at: std::time::Duration::ZERO,
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        });
+        assert_eq!(r.stream_messages().len(), 3);
+        assert!(r.body.doc.raw.text.contains("three"));
+        assert_eq!(r.body.mode, ViewMode::Pretty);
+        assert_eq!(r.stream_sel, None);
+        // A filter and its bar stay on the message the body shows.
+        r.query = Some(QueryBar::new(QueryMode::Jq, ".text", 0));
+        assert!(r.apply_jq(".text").is_ok());
+        assert!(r.select_message(-1));
+        assert_eq!(r.stream_sel, Some(1));
+        assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
+        assert!(r.query.is_some());
+        // A new message does not move a paused view.
+        r.grpc_events.push(grpc_msg("{\"text\":\"four\"}"));
+        r.message_arrived();
+        assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
+        // Going to the last message turns live mode on again.
+        assert!(r.select_message(1));
+        assert!(r.select_message(1));
+        assert_eq!(r.stream_sel, None);
+        assert!(!r.select_message(1));
+        assert_eq!(r.body.doc.raw.text.trim(), "\"four\"");
+        // A message the filter fails on shows unfiltered, the error on the bar.
+        r.grpc_events.push(grpc_msg("[1]"));
+        r.message_arrived();
+        assert_eq!(r.body.doc.raw.text, "[1]");
+        assert!(r.query.as_ref().is_some_and(|q| q.error.is_some()));
+        assert_eq!(r.jq.as_deref(), Some(".text"));
+    }
 
     #[test]
     fn jq_filter_state() {

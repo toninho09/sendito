@@ -8,8 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::*;
 use crate::form::Table;
 use crate::keymap::Action;
-use crate::tab::{Field, Kind};
+use crate::tab::{Field, Kind, Tab};
 use crate::theme::Theme;
+use sendito_core::BodyKind;
 
 use super::kit::*;
 use super::table::{TableHit, draw_table};
@@ -614,17 +615,20 @@ fn breadcrumb(path: &str) -> String {
 }
 
 /// Line, column and JSON validity of the selected tab's text editor.
-fn editor_status(app: &mut App, theme: &Theme) -> Spans {
+/// The JSON check and the cursor position of the body editor, and where the
+/// JSON error is (0-based line and column), if any.
+fn editor_status(app: &mut App, theme: &Theme) -> (Spans, Option<(usize, usize)>) {
     let focused = app.focus == Focus::ReqBody;
     let tab = &mut app.tabs[app.active];
     let current = tab.current_field();
     let Some(f) = tab.fields().into_iter().find(|f| f.is_multiline()) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
     let Some(ed) = tab.ed.text_mut(f) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
     let mut out: Spans = Vec::new();
+    let mut error = None;
     if ed.highlight == crate::editor::Highlight::Json {
         let text = ed.text();
         if !text.trim().is_empty() && text.len() <= 64 * 1024 {
@@ -638,10 +642,13 @@ fn editor_status(app: &mut App, theme: &Theme) -> Spans {
             );
             match serde_json::from_str::<serde::de::IgnoredAny>(&probe) {
                 Ok(_) => out.push(("✓ JSON".into(), theme.fg(theme.ok))),
-                Err(e) => out.push((
-                    format!("✗ JSON: line {}, col {}", e.line(), e.column()),
-                    theme.fg(theme.err),
-                )),
+                Err(e) => {
+                    error = Some((e.line().saturating_sub(1), e.column().saturating_sub(1)));
+                    out.push((
+                        format!("✗ JSON: line {}, col {}", e.line(), e.column()),
+                        theme.fg(theme.err),
+                    ));
+                }
             }
         }
     }
@@ -654,7 +661,7 @@ fn editor_status(app: &mut App, theme: &Theme) -> Spans {
             theme.dim(),
         ));
     }
-    out
+    (out, error)
 }
 
 pub(super) fn draw_request(
@@ -782,7 +789,7 @@ pub(super) fn draw_request(
     let cursor = draw_fields(app, buf, content, theme, &is_def, vim);
     // The file on the left of the bottom border, the editor position and
     // JSON check on the right.
-    let status = editor_status(app, theme);
+    let (status, error) = editor_status(app, theme);
     let by = area.y + area.height - 1;
     let mut sx = max_x;
     if !status.is_empty() {
@@ -790,6 +797,12 @@ pub(super) fn draw_request(
         sx = max_x.saturating_sub(w + 1);
         if sx > area.x + 2 {
             let x = put(buf, sx, by, " ", 1, theme.surface());
+            // A click on the JSON error puts the cursor there.
+            if let (Some((line, col)), Some(first)) = (error, status.first()) {
+                let ew = first.0.width() as u16;
+                app.hits
+                    .push((Rect::new(x, by, ew, 1), Hit::JsonError { line, col }));
+            }
             let x = put_spans(buf, x, by, max_x, &status);
             put(buf, x, by, " ", 1, theme.surface());
         }
@@ -938,7 +951,46 @@ pub(super) fn draw_fields(
                 lst,
             );
             let vr = Rect::new(rect.x + label_w, y, rect.width.saturating_sub(label_w), 1);
-            if f.is_choice() {
+            let chips_w: u16 = BodyKind::ALL
+                .iter()
+                .map(|k| k.short_label().width() as u16 + 3)
+                .sum();
+            if *f == Field::BodyKind && chips_w <= vr.width {
+                // Every body type as a chip: the current one stands out.
+                let mut x = vr.x;
+                for (n, k) in BodyKind::ALL.iter().enumerate() {
+                    let label = format!(" {} ", k.short_label());
+                    let w = label.width() as u16;
+                    let st = match (*k == tab.ed.body_kind, is_sel) {
+                        (true, true) => theme.bold(theme.chip(theme.accent)),
+                        (true, false) => theme.bold(theme.bar().patch(theme.accent())),
+                        _ => theme.dim(),
+                    };
+                    put(buf, x, y, &label, w, st);
+                    app.hits.push((
+                        Rect::new(x, y, w, 1),
+                        Hit::ChoiceOption { field: i, index: n },
+                    ));
+                    x += w + 1;
+                }
+                // The Content-Type that goes on the wire, on the right.
+                // A narrow pane drops the source, then the "application/".
+                if let Some((ct, from)) = body_content_type(tab) {
+                    let short = ct.strip_prefix("application/").unwrap_or(&ct);
+                    let end = vr.x + vr.width;
+                    let fit = [
+                        format!("→ {ct} ({from})"),
+                        format!("→ {ct}"),
+                        format!("→ {short}"),
+                    ]
+                    .into_iter()
+                    .find(|t| end >= x + t.width() as u16);
+                    if let Some(t) = fit {
+                        let tw = t.width() as u16;
+                        put(buf, end - tw, y, &t, tw, theme.dim());
+                    }
+                }
+            } else if f.is_choice() {
                 let label = format!(" {} ▾ ", tab.ed.choice_label(*f));
                 let st = if is_sel {
                     theme.chip(theme.accent)
@@ -1023,6 +1075,23 @@ pub(super) fn draw_fields(
     }
     app.areas.field_rects = rects;
     cursor
+}
+
+/// The Content-Type the body adds on the wire and where it comes from: the
+/// body type itself ("auto") or a Content-Type row of the Headers tab.
+fn body_content_type(tab: &Tab) -> Option<(String, &'static str)> {
+    let kind = tab.ed.body_kind;
+    let auto = kind.content_type()?;
+    if kind != BodyKind::Multipart
+        && let sendito_core::Request::Http(r) = &tab.model
+        && let Some(h) = r
+            .headers
+            .iter()
+            .find(|h| h.enabled && h.name.trim().eq_ignore_ascii_case("content-type"))
+    {
+        return Some((h.value.clone(), "Headers"));
+    }
+    Some((auto.to_string(), "auto"))
 }
 
 pub(super) fn choice_hint(f: Field) -> &'static str {
