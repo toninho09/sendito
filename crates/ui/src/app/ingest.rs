@@ -26,7 +26,7 @@ impl App {
             WsUpdate::Event(ev) => {
                 resp.messages.doc.append_text(&ws_event_text(&ev));
                 match &ev {
-                    sendito_ws::Event::Handshake {
+                    sendito_pipeline::ws::Event::Handshake {
                         status,
                         headers,
                         subprotocol,
@@ -45,7 +45,7 @@ impl App {
                         }
                         resp.headers = crate::tab::wrapped(Doc::text(&ws_headers_text(headers)));
                     }
-                    sendito_ws::Event::Finished {
+                    sendito_pipeline::ws::Event::Finished {
                         code, reason, at, ..
                     } => {
                         let label = format!(
@@ -538,7 +538,7 @@ impl App {
         let before = resp.messages.row_count();
         // A unary call's log is short and reads from the top.
         let follow = resp.messages.cursor + 2 >= before
-            && resp.grpc_kind != Some(sendito_grpc::schema::CallKind::Unary);
+            && resp.grpc_kind != Some(sendito_pipeline::grpc::CallKind::Unary);
         match u {
             GrpcUpdate::Started { resolved, kind } => {
                 resp.grpc_kind = Some(kind);
@@ -570,11 +570,11 @@ impl App {
             }
             GrpcUpdate::Event(ev) => {
                 resp.messages.doc.append_text(&event_text(&ev));
-                if let sendito_grpc::Event::Finished {
+                if let sendito_pipeline::grpc::Event::Finished {
                     code, message, at, ..
                 } = &ev
                 {
-                    let name = sendito_grpc::code_name(*code);
+                    let name = sendito_pipeline::grpc::code_name(*code);
                     resp.summary.status = if message.is_empty() {
                         format!("{name} ({code})")
                     } else {
@@ -590,7 +590,8 @@ impl App {
                 // Headers and trailers change only with their own events.
                 let meta = matches!(
                     ev,
-                    sendito_grpc::Event::Headers { .. } | sendito_grpc::Event::Finished { .. }
+                    sendito_pipeline::grpc::Event::Headers { .. }
+                        | sendito_pipeline::grpc::Event::Finished { .. }
                 );
                 resp.push_grpc(ev, keep);
                 resp.summary.size = Some(resp.stream.bytes);

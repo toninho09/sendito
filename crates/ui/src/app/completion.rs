@@ -54,7 +54,7 @@ impl App {
     }
 
     /// The tool list of a tab, when it belongs to the server it was loaded from.
-    pub(super) fn mcp_tools(&self, t: &Tab) -> Vec<sendito_mcp::Tool> {
+    pub(super) fn mcp_tools(&self, t: &Tab) -> Vec<sendito_pipeline::mcp::Tool> {
         if t.mcp_tools_server == t.ed.mcp_server.text() {
             t.mcp_tools.clone()
         } else {

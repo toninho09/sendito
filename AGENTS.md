@@ -24,7 +24,10 @@ cargo (`-p sendito-core`): `core` (model, variables, scripts), `http`, `grpc`,
 request format, environments, secrets, config, history, cookies, session,
 themes), `import` (Postman, Insomnia, Bruno, curl, `.http`), `pipeline` (the
 send pipeline the UI and the CLI share, and the response document model), `ui`
-(ratatui TUI) and `testkit` (echo servers). The `sendito` binary is `src/main.rs`.
+(ratatui TUI), `widgets` (editor, table, list, icons and themes with no app
+state) and `testkit` (echo servers). The `sendito` binary is `src/main.rs`; its
+commands are in `src/cli/`. `ui` reaches the protocol crates only through
+`sendito-pipeline`.
 
 ## Where to start
 
@@ -35,9 +38,9 @@ lists everything a change type touches, and its "Test and tooling map" the tests
 | You are changing | Open first | Then read |
 |---|---|---|
 | A request field or a wire rule | `crates/core/src/model.rs`, `crates/core/src/resolve.rs`, `crates/store/src/request_file.rs` | The `FORMAT.md` section of that request kind; `docs/DEBT.md` when the HTTP library gets in the way |
-| HTTP, gRPC, WebSocket or MCP behaviour | `crates/http/src/lib.rs`, `crates/grpc/src/lib.rs`, `crates/ws/src/lib.rs` or `crates/mcp/src/lib.rs`; the wiring in `crates/pipeline/src/runner.rs` | "What goes on the wire" in `FORMAT.md` |
-| A CLI command | `src/main.rs` | `docs/CLI.md` |
-| A UI surface | `crates/ui/src/app/` and its module under `crates/ui/src/draw/` | The "Terminal UI" tables in `docs/MAP.md`; `docs/reports/ux-critic.md` before changing dialog keys, hint rows or status wording |
+| HTTP, gRPC, WebSocket or MCP behaviour | `crates/http/src/`, `crates/grpc/src/`, `crates/ws/src/` or `crates/mcp/src/`; the wiring in `crates/pipeline/src/runner/` (one module per protocol) | "What goes on the wire" in `FORMAT.md` |
+| A CLI command | `src/cli/` (`args.rs` for the arguments) | `docs/CLI.md` |
+| A UI surface | `crates/ui/src/app/` and its module under `crates/ui/src/draw/`; generic widgets in `crates/widgets/src/` | The "Terminal UI" tables in `docs/MAP.md`; `docs/reports/ux-critic.md` before changing dialog keys, hint rows or status wording |
 | A key or a `:command` | `crates/ui/src/keymap.rs`, the only source (`KEYMAP.md` is generated from it) | "Adding a key, command or setting" in `docs/MAP.md` |
 | A setting | `crates/store/src/config.rs` | The same table, then `docs/FEATURES.md` |
 | Anything else saved on disk | `crates/store/src/` | "Environment files" and "Project and global config" in `FORMAT.md` |

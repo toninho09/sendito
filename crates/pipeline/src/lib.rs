@@ -5,6 +5,27 @@
 pub mod doc;
 pub mod runner;
 
+/// The protocol types that callers of the pipeline (the TUI) read.
+pub mod http {
+    pub use sendito_http::{HttpResponse, ProxySpec, Timing, guess_mime};
+}
+
+/// The gRPC types that callers of the pipeline read.
+pub mod grpc {
+    pub use sendito_grpc::{CallKind, Event, MethodInfo, ServiceInfo, code_name};
+}
+
+/// The WebSocket types that callers of the pipeline read.
+pub mod ws {
+    pub use sendito_ws::{Event, FrameKind};
+}
+
+/// The MCP types and calls that callers of the pipeline use.
+pub mod mcp {
+    pub use sendito_mcp::oauth::login_http;
+    pub use sendito_mcp::{McpError, Options, Tool, list_tools};
+}
+
 pub fn human_size(n: u64) -> String {
     if n < 1024 {
         format!("{n} B")

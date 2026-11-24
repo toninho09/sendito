@@ -27,6 +27,7 @@ sendito-store = { path = "crates/store" }
 sendito-import = { path = "crates/import" }
 sendito-ui = { path = "crates/ui" }
 sendito-ws = { path = "crates/ws" }
+sendito-widgets = { path = "crates/widgets" }
 sendito-testkit = { path = "crates/testkit" }
 
 serde = { version = "1", features = ["derive"] }

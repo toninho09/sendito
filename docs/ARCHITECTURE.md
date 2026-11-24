@@ -12,7 +12,8 @@ library. The non-UI crates build and test without a terminal.
 
 ```text
 .
-├── src/main.rs              # the `sendito` binary: clap CLI, run/export/auth/import
+├── src/main.rs              # the `sendito` binary entry point
+├── src/cli/                 # clap arguments and the run/export/auth/import/theme commands
 ├── crates/
 │   ├── core/                # model, template, vars, resolve, scripts
 │   ├── http/                # reqwest/rustls client, decoding, proxy, TLS, timing
@@ -22,7 +23,8 @@ library. The non-UI crates build and test without a terminal.
 │   ├── store/               # collection, request files, config, env, history, cookies, session, themes
 │   ├── import/              # Postman, Insomnia, Bruno, curl, .http
 │   ├── pipeline/            # the send pipeline the UI and the CLI share; response documents
-│   ├── ui/                  # ratatui app, draw, editors, keymap, theme
+│   ├── ui/                  # ratatui app, draw, overlays, keymap, theme registry
+│   ├── widgets/             # text editor, table form, list, icons, color themes
 │   └── testkit/             # echo servers, MCP OAuth server, proxy, test PKI
 ├── tests/                   # integration, corpus (exact bytes), TLS, proxy
 ├── docs/                    # this documentation
@@ -39,7 +41,8 @@ library. The non-UI crates build and test without a terminal.
 | `sendito-store` | The collection tree on disk, canonical request files, layered config, environments and the four secret sources, cookie jar, history, session restore, themes, `init` |
 | `sendito-import` | Postman v2.1, Insomnia v4/v5, Bruno, curl (import and export), `.http` export, importing into a folder |
 | `sendito-pipeline` | `runner`, the send pipeline that both the UI and the CLI use (scope → pre-request script → resolve → send → extract/assert → history), and the response document the viewer reads (pretty JSON with folding, raw text, hex, search) |
-| `sendito-ui` | The ratatui/crossterm app, drawing, editors, key map and themes |
+| `sendito-ui` | The ratatui/crossterm app, drawing, overlays, key map and the theme registry. It reaches the protocol crates only through `sendito-pipeline` |
+| `sendito-widgets` | Widgets with no app state: the text editor (vim subset), the editable table, list movement, icon sets and color themes |
 | `sendito-testkit` | HTTP/gRPC/WebSocket/MCP echo servers that record exact bytes, a fake MCP OAuth server, a forward proxy and a test CA / server / client |
 | `sendito` (binary) | Argument parsing, the headless `run`, `curl` / `http` export, OAuth login/logout, `import`, `theme` |
 

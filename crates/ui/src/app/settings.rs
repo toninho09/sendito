@@ -212,7 +212,7 @@ impl App {
         }
         match id {
             SettingId::Proxy => {
-                sendito_http::ProxySpec::parse(text)?;
+                sendito_pipeline::http::ProxySpec::parse(text)?;
             }
             SettingId::TlsCa | SettingId::TlsCert | SettingId::TlsKey => {
                 let p = sendito_store::env::expand(&self.project.root, text);

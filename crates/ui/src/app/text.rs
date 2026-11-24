@@ -139,7 +139,7 @@ pub(super) fn waterfall(start: Duration, len: Duration, total: Duration) -> Stri
         .collect()
 }
 
-pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
+pub fn timing_text(r: &sendito_pipeline::http::HttpResponse, body_size: u64) -> String {
     let t = r.timing;
     let total = t.total;
     // A phase that did not happen says why, on its own row. Phases follow
@@ -253,7 +253,7 @@ pub(super) fn mask_header(name: &str, value: &str) -> String {
     }
 }
 
-pub(super) fn headers_text(r: &sendito_http::HttpResponse, o: &HttpOutcome) -> String {
+pub(super) fn headers_text(r: &sendito_pipeline::http::HttpResponse, o: &HttpOutcome) -> String {
     let mut s = format!("{} {} {}\n", r.version, r.status, r.reason);
     for (n, v) in &r.headers {
         s.push_str(&format!("{n}: {v}\n"));
@@ -410,8 +410,8 @@ pub fn mcp_sent_line(e: &runner::McpEvent) -> Option<&str> {
     }
 }
 
-pub fn event_text(e: &sendito_grpc::Event) -> String {
-    use sendito_grpc::Event::*;
+pub fn event_text(e: &sendito_pipeline::grpc::Event) -> String {
+    use sendito_pipeline::grpc::Event::*;
     match e {
         Sent { json, at, wall } => format!(
             "{} +{:>8.3}s  → sent      {json}\n",
@@ -446,7 +446,7 @@ pub fn event_text(e: &sendito_grpc::Event) -> String {
         Finished {
             code, message, at, ..
         } => {
-            let name = sendito_grpc::code_name(*code);
+            let name = sendito_pipeline::grpc::code_name(*code);
             format!(
                 "{:12} +{:>8.3}s  ■ status    {name} ({code}){}{message}\n",
                 "",
@@ -458,19 +458,19 @@ pub fn event_text(e: &sendito_grpc::Event) -> String {
 }
 
 pub(super) fn grpc_headers_text<'a>(
-    events: impl IntoIterator<Item = &'a sendito_grpc::Event>,
+    events: impl IntoIterator<Item = &'a sendito_pipeline::grpc::Event>,
 ) -> String {
     let mut s = String::new();
     for e in events {
         match e {
-            sendito_grpc::Event::Headers { metadata, .. } => {
+            sendito_pipeline::grpc::Event::Headers { metadata, .. } => {
                 s.push_str("Response headers\n");
                 for (k, v) in metadata {
                     s.push_str(&format!("{k}: {v}\n"));
                 }
                 s.push('\n');
             }
-            sendito_grpc::Event::Finished {
+            sendito_pipeline::grpc::Event::Finished {
                 code,
                 message,
                 metadata,
@@ -479,7 +479,7 @@ pub(super) fn grpc_headers_text<'a>(
                 s.push_str("Trailers\n");
                 s.push_str(&format!(
                     "grpc-status: {code} ({})\n",
-                    sendito_grpc::code_name(*code)
+                    sendito_pipeline::grpc::code_name(*code)
                 ));
                 if !message.is_empty() {
                     s.push_str(&format!("grpc-message: {message}\n"));
@@ -526,8 +526,8 @@ fn stream_timing_text(
     s
 }
 
-pub(super) fn ws_event_text(e: &sendito_ws::Event) -> String {
-    use sendito_ws::Event::*;
+pub(super) fn ws_event_text(e: &sendito_pipeline::ws::Event) -> String {
+    use sendito_pipeline::ws::Event::*;
     match e {
         Handshake {
             status,

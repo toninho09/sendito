@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use common::{Harness, Must};
 use sendito_core::resolve::{ResolvedBody, ResolvedHttp};
-use sendito_http::{HttpResponse, Timing};
+use sendito_pipeline::http::{HttpResponse, Timing};
 use sendito_ui::app::{AppMsg, Focus};
 use sendito_ui::runner::{HttpOutcome, ScriptResults};
 use sendito_ui::viewer::Doc;
@@ -202,14 +202,16 @@ fn fake_stream(h: &mut Harness) {
         let json = format!("{{\"text\":\"{text}\",\"n\":{i}}}");
         h.app.on_msg(AppMsg::Grpc {
             tab: id,
-            update: sendito_ui::runner::GrpcUpdate::Event(sendito_grpc::Event::Received {
-                full: json.clone(),
-                compact: json.clone(),
-                size: json.len(),
-                json,
-                at: Duration::from_millis(100 * (i as u64 + 1)),
-                wall: std::time::SystemTime::UNIX_EPOCH,
-            }),
+            update: sendito_ui::runner::GrpcUpdate::Event(
+                sendito_pipeline::grpc::Event::Received {
+                    full: json.clone(),
+                    compact: json.clone(),
+                    size: json.len(),
+                    json,
+                    at: Duration::from_millis(100 * (i as u64 + 1)),
+                    wall: std::time::SystemTime::UNIX_EPOCH,
+                },
+            ),
         });
     }
 }
@@ -435,7 +437,7 @@ fn nerd_icons() {
 #[test]
 fn completion_popup() {
     use sendito_core::complete::FieldNode;
-    use sendito_grpc::{CallKind, MethodInfo, ServiceInfo};
+    use sendito_pipeline::grpc::{CallKind, MethodInfo, ServiceInfo};
     each(|h| {
         open(h, "echo unary");
         let mut inner = FieldNode::new("inner", "sendito.test.v1.Inner", "{}");

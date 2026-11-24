@@ -270,14 +270,15 @@ impl App {
                 let name = scope.render(&server2).text;
                 let transport =
                     runner::mcp_transport(&info, &name, &scope).map_err(|e| (e, false))?;
-                let opts = sendito_mcp::Options {
+                let opts = sendito_pipeline::mcp::Options {
                     timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
                 };
                 let (events, _rx) = mpsc::unbounded_channel();
-                sendito_mcp::list_tools(&transport, &opts, events)
+                sendito_pipeline::mcp::list_tools(&transport, &opts, events)
                     .await
                     .map_err(|e| {
-                        let needs_login = matches!(e, sendito_mcp::McpError::NeedsLogin(_));
+                        let needs_login =
+                            matches!(e, sendito_pipeline::mcp::McpError::NeedsLogin(_));
                         (
                             sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()),
                             needs_login,

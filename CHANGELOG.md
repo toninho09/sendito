@@ -126,6 +126,20 @@
   (with a warning) instead of being overwritten.
 * A config file with a literal OAuth `client_secret` is written owner-only.
 
+### Code layout
+
+No change in behaviour.
+
+* **Large files are split by domain.** The send pipeline (`runner/`) has one
+  module per protocol plus project, scope, OAuth and history. The CLI commands
+  are in `src/cli/`. The HTTP client has `tls`, `proxy`, `timing`, `body` and
+  `redirect` modules. The UI tab, overlays, request pane, MCP OAuth and the
+  WebSocket session are split the same way.
+* **New crate `sendito-widgets`**: the text editor, the editable table, list
+  movement, icons and color themes, with no app state.
+* **`sendito-ui` reaches HTTP, gRPC, WebSocket and MCP only through
+  `sendito-pipeline`**, which re-exports the types the UI reads.
+
 ## 0.2.0 — 2026-11-24
 
 ### Response query bar and body type chips

@@ -251,7 +251,7 @@ impl App {
                         });
                     }
                 };
-                let tokens = sendito_mcp::oauth::login_http(
+                let tokens = sendito_pipeline::mcp::login_http(
                     &settings,
                     Duration::from_secs(300),
                     &runner::open_browser,

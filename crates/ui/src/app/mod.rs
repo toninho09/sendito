@@ -261,14 +261,14 @@ pub enum AppMsg {
         /// Open the picker; a false value only fills the tab's tool list
         /// (completion pulls it in the background).
         open_picker: bool,
-        result: Result<Vec<sendito_mcp::Tool>, String>,
+        result: Result<Vec<sendito_pipeline::mcp::Tool>, String>,
         /// The server needs an OAuth sign-in.
         needs_login: bool,
     },
     Schema {
         tab: u64,
         job: u64,
-        result: Result<Vec<sendito_grpc::ServiceInfo>, String>,
+        result: Result<Vec<sendito_pipeline::grpc::ServiceInfo>, String>,
         open_picker: bool,
         template: Option<String>,
     },

@@ -1,0 +1,985 @@
+//! The editor widgets of a request and their conversion to and from the model.
+
+use super::*;
+
+/// Editor widgets for every field of a request.
+#[derive(Debug, Clone)]
+pub struct Editors {
+    pub kind: Kind,
+    pub method: String,
+    pub url: TextEditor,
+    pub params: Table,
+    pub headers: Table,
+    pub body_kind: BodyKind,
+    pub body_text: TextEditor,
+    pub raw_ct: TextEditor,
+    pub form: Table,
+    pub parts: Table,
+    pub file_path: TextEditor,
+    pub file_ct: TextEditor,
+    pub auth_kind: AuthKind,
+    pub auth_user: TextEditor,
+    pub auth_pass: TextEditor,
+    pub auth_token: TextEditor,
+    pub auth_oauth_name: TextEditor,
+    pub auth_key: TextEditor,
+    pub auth_value: TextEditor,
+    pub auth_in: ApiKeyLocation,
+    pub pre: Table,
+    pub extract: Table,
+    pub asserts: Table,
+    pub timeout: TextEditor,
+    pub follow: bool,
+    pub verify: bool,
+    /// `[options] cookies`: `None` follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
+    pub target: TextEditor,
+    /// `Service/Method`, typed or picked from the schema.
+    pub grpc_method_text: TextEditor,
+    pub message: TextEditor,
+    pub metadata: Table,
+    pub tls: bool,
+    pub grpc_verify: bool,
+    pub deadline: TextEditor,
+    pub schema_files: bool,
+    pub proto_files: TextEditor,
+    pub import_paths: TextEditor,
+    pub mcp_server: TextEditor,
+    pub mcp_tool: TextEditor,
+    pub ws_subprotocols: TextEditor,
+    /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
+    pub script_section: usize,
+}
+
+pub(super) fn ms_text(v: Option<u64>) -> String {
+    v.map(|v| v.to_string()).unwrap_or_default()
+}
+
+pub(super) fn parse_ms(s: &str) -> Option<u64> {
+    s.trim().parse().ok()
+}
+
+pub(super) fn list_text(v: &[String]) -> String {
+    v.join(", ")
+}
+
+pub(super) fn parse_list(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+/// `Service/Method` as shown in the method field.
+pub(super) fn grpc_method_label(service: &str, method: &str) -> String {
+    if service.is_empty() && method.is_empty() {
+        String::new()
+    } else if method.is_empty() {
+        service.to_string()
+    } else {
+        format!("{service}/{method}")
+    }
+}
+
+/// Splits the method field into (service, method). A value without a slash is
+/// the service only: the last dot-separated segment may also be a method, but
+/// guessing there would turn a half-typed service into a wrong call.
+pub(super) fn split_method(text: &str) -> (String, String) {
+    let text = text.trim();
+    match text.rsplit_once('/') {
+        Some((s, m)) => (s.trim().to_string(), m.trim().to_string()),
+        None => (text.to_string(), String::new()),
+    }
+}
+
+pub(super) fn kv_table(name: &'static str, value: &'static str, rows: &[KeyValue]) -> Table {
+    let mut t = Table::kv(name, value);
+    for kv in rows {
+        t.push_texts(kv.enabled, &[&kv.name, &kv.value]);
+    }
+    t
+}
+
+pub(super) fn kv_rows(t: &Table) -> Vec<KeyValue> {
+    t.values()
+        .into_iter()
+        .map(|r| KeyValue {
+            name: r.cells[0].text(),
+            value: r.cells[1].text(),
+            enabled: r.enabled,
+        })
+        .collect()
+}
+
+pub(super) fn t(s: &str) -> Cell {
+    Cell::Text(TextEditor::single(s))
+}
+
+impl Editors {
+    /// The request bar's text editor. Every kind draws the same strip
+    /// `[picker chip][endpoint input]` (gRPC and MCP draw `[input][chip]`):
+    /// part 1 is the endpoint input (URL, target or server), part 0 the
+    /// inline-editable chip (gRPC method, MCP tool).
+    pub fn bar_text(&mut self, part: usize) -> Option<&mut TextEditor> {
+        match (self.kind, part) {
+            (Kind::Http, 1) | (Kind::Ws, 1) => Some(&mut self.url),
+            (Kind::Grpc, 1) => Some(&mut self.target),
+            (Kind::Mcp, 1) => Some(&mut self.mcp_server),
+            (Kind::Grpc, 0) => Some(&mut self.grpc_method_text),
+            (Kind::Mcp, 0) => Some(&mut self.mcp_tool),
+            _ => None,
+        }
+    }
+    pub fn from_request(req: &Request) -> Self {
+        let mut e = Editors {
+            kind: Kind::Http,
+            method: "GET".into(),
+            url: TextEditor::single("")
+                .with_placeholder("https://…  or paste a curl command")
+                .with_highlight(Highlight::Url),
+            params: Table::kv("Name", "Value"),
+            headers: Table::kv("Header", "Value"),
+            body_kind: BodyKind::None,
+            body_text: TextEditor::multi("").with_highlight(Highlight::Json),
+            raw_ct: TextEditor::single("text/plain"),
+            form: Table::kv("Field", "Value"),
+            parts: Table::new(
+                vec![
+                    Column {
+                        title: "Name",
+                        kind: ColKind::Text,
+                        weight: 2,
+                    },
+                    Column {
+                        title: "Kind",
+                        kind: ColKind::Choice(PART_KINDS),
+                        weight: 1,
+                    },
+                    Column {
+                        title: "Value / path",
+                        kind: ColKind::Text,
+                        weight: 2,
+                    },
+                    Column {
+                        title: "Filename",
+                        kind: ColKind::Text,
+                        weight: 3,
+                    },
+                    Column {
+                        title: "Content-Type",
+                        kind: ColKind::Text,
+                        weight: 3,
+                    },
+                ],
+                true,
+            ),
+            file_path: TextEditor::single("")
+                .with_placeholder("path/to/file (relative to the collection)"),
+            file_ct: TextEditor::single("").with_placeholder("application/octet-stream"),
+            auth_kind: AuthKind::None,
+            auth_user: TextEditor::single(""),
+            auth_pass: TextEditor::single(""),
+            auth_token: TextEditor::single("").with_placeholder("{{token}}"),
+            auth_oauth_name: TextEditor::single("").with_placeholder("name from [oauth]"),
+            auth_key: TextEditor::single("X-API-Key"),
+            auth_value: TextEditor::single(""),
+            auth_in: ApiKeyLocation::Header,
+            pre: Table::new(
+                vec![
+                    Column {
+                        title: "Variable",
+                        kind: ColKind::Text,
+                        weight: 2,
+                    },
+                    Column {
+                        title: "Value (template)",
+                        kind: ColKind::Text,
+                        weight: 4,
+                    },
+                ],
+                false,
+            ),
+            extract: Table::new(
+                vec![
+                    Column {
+                        title: "Variable",
+                        kind: ColKind::Text,
+                        weight: 2,
+                    },
+                    Column {
+                        title: "From",
+                        kind: ColKind::Choice(SOURCES),
+                        weight: 1,
+                    },
+                    Column {
+                        title: "JSONPath / header name",
+                        kind: ColKind::Text,
+                        weight: 4,
+                    },
+                    Column {
+                        title: "Secret",
+                        kind: ColKind::Toggle,
+                        weight: 1,
+                    },
+                ],
+                false,
+            ),
+            asserts: Table::new(
+                vec![
+                    Column {
+                        title: "From",
+                        kind: ColKind::Choice(SOURCES),
+                        weight: 1,
+                    },
+                    Column {
+                        title: "JSONPath / header",
+                        kind: ColKind::Text,
+                        weight: 3,
+                    },
+                    Column {
+                        title: "Op",
+                        kind: ColKind::Choice(OPS),
+                        weight: 1,
+                    },
+                    Column {
+                        title: "Expected",
+                        kind: ColKind::Text,
+                        weight: 3,
+                    },
+                ],
+                false,
+            ),
+            timeout: TextEditor::single("").with_placeholder("default"),
+            follow: true,
+            verify: true,
+            cookies: None,
+            target: TextEditor::single("").with_placeholder("localhost:50051  (https:// for TLS)"),
+            grpc_method_text: TextEditor::single("")
+                .with_placeholder("Service/Method  (Enter lists the schema)"),
+            message: TextEditor::multi("{}").with_highlight(Highlight::Json),
+            metadata: Table::kv("Key", "Value"),
+            tls: false,
+            grpc_verify: true,
+            deadline: TextEditor::single("").with_placeholder("none"),
+            schema_files: false,
+            proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
+            import_paths: TextEditor::single("").with_placeholder("protos"),
+            mcp_server: TextEditor::single("")
+                .with_placeholder("server name from [mcp.servers] or http(s):// URL"),
+            mcp_tool: TextEditor::single("").with_placeholder("tool name"),
+            ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
+            script_section: 0,
+        };
+        let scripts = req.scripts();
+        for s in &scripts.pre {
+            e.pre.push(true, vec![t(&s.var), t(&s.value)]);
+        }
+        for x in &scripts.extract {
+            let src = Source::ALL.iter().position(|s| *s == x.source).unwrap_or(0);
+            e.extract.push(
+                true,
+                vec![
+                    t(&x.var),
+                    Cell::Choice(src),
+                    t(&x.expr),
+                    Cell::Toggle(x.secret),
+                ],
+            );
+        }
+        for a in &scripts.asserts {
+            let src = Source::ALL.iter().position(|s| *s == a.source).unwrap_or(0);
+            let op = AssertOp::ALL.iter().position(|o| *o == a.op).unwrap_or(0);
+            e.asserts.push(
+                true,
+                vec![Cell::Choice(src), t(&a.expr), Cell::Choice(op), t(&a.value)],
+            );
+        }
+        e.script_section = if !scripts.pre.is_empty() {
+            0
+        } else if !scripts.extract.is_empty() {
+            1
+        } else if !scripts.asserts.is_empty() {
+            2
+        } else {
+            0
+        };
+        e.set_auth(req.auth());
+        match req {
+            Request::Http(h) => {
+                e.kind = Kind::Http;
+                e.method = h.method.clone();
+                e.url.set_text(&h.url);
+                e.params = kv_table("Name", "Value", &h.params);
+                e.headers = kv_table("Header", "Value", &h.headers);
+                e.body_kind = h.body.kind();
+                match &h.body {
+                    Body::None => {}
+                    Body::Raw { content_type, text } => {
+                        e.raw_ct.set_text(content_type);
+                        e.body_text.set_text(text);
+                        e.body_text.highlight = Highlight::None;
+                    }
+                    Body::Json { text } => e.body_text.set_text(text),
+                    Body::Form { fields } => e.form = kv_table("Field", "Value", fields),
+                    Body::Multipart { parts } => {
+                        for p in parts {
+                            let (kind, value, filename) = match &p.kind {
+                                PartKind::Text { value } => (0, value.clone(), String::new()),
+                                PartKind::File { path, filename } => {
+                                    (1, path.clone(), filename.clone().unwrap_or_default())
+                                }
+                            };
+                            e.parts.push(
+                                p.enabled,
+                                vec![
+                                    t(&p.name),
+                                    Cell::Choice(kind),
+                                    t(&value),
+                                    t(&filename),
+                                    t(&p.content_type),
+                                ],
+                            );
+                        }
+                    }
+                    Body::File { path, content_type } => {
+                        e.file_path.set_text(path);
+                        e.file_ct.set_text(content_type);
+                    }
+                }
+                e.timeout.set_text(&ms_text(h.options.timeout_ms));
+                e.follow = h.options.follow_redirects;
+                e.verify = h.options.verify_tls;
+                e.cookies = h.options.cookies;
+            }
+            Request::Grpc(g) => {
+                e.kind = Kind::Grpc;
+                e.target.set_text(&g.target);
+                e.grpc_method_text
+                    .set_text(&grpc_method_label(&g.service, &g.method));
+                e.message.set_text(&g.message);
+                e.metadata = kv_table("Key", "Value", &g.metadata);
+                e.tls = g.tls;
+                e.grpc_verify = g.verify_tls;
+                e.deadline.set_text(&ms_text(g.deadline_ms));
+                if let SchemaSource::Files {
+                    files,
+                    import_paths,
+                } = &g.schema
+                {
+                    e.schema_files = true;
+                    e.proto_files.set_text(&list_text(files));
+                    e.import_paths.set_text(&list_text(import_paths));
+                }
+            }
+            Request::Ws(w) => {
+                e.kind = Kind::Ws;
+                e.url.placeholder = "ws://host:port/path  (wss:// for TLS)".into();
+                e.url.set_text(&w.url);
+                e.headers = kv_table("Header", "Value", &w.headers);
+                e.ws_subprotocols.set_text(&list_text(&w.subprotocols));
+                e.message.set_text(&w.messages);
+                e.timeout.set_text(&ms_text(w.options.timeout_ms));
+                e.deadline.set_text(&ms_text(w.options.deadline_ms));
+                e.tls = w.options.tls;
+                e.grpc_verify = w.options.verify_tls;
+                e.cookies = w.options.cookies;
+            }
+            Request::Mcp(m) => {
+                e.kind = Kind::Mcp;
+                e.mcp_server.set_text(&m.server);
+                e.mcp_tool.set_text(&m.tool);
+                e.message.set_text(&m.arguments);
+                e.timeout.set_text(&ms_text(m.timeout_ms));
+            }
+        }
+        e
+    }
+
+    fn set_auth(&mut self, a: &Auth) {
+        self.auth_kind = a.kind();
+        match a {
+            Auth::None => {}
+            Auth::Basic { username, password } => {
+                self.auth_user.set_text(username);
+                self.auth_pass.set_text(password);
+            }
+            Auth::Bearer { token } => self.auth_token.set_text(token),
+            Auth::OAuth { name } => self.auth_oauth_name.set_text(name),
+            Auth::ApiKey {
+                key,
+                value,
+                location,
+            } => {
+                self.auth_key.set_text(key);
+                self.auth_value.set_text(value);
+                self.auth_in = *location;
+            }
+        }
+    }
+
+    fn auth(&self) -> Auth {
+        match self.auth_kind {
+            AuthKind::None => Auth::None,
+            AuthKind::Basic => Auth::Basic {
+                username: self.auth_user.text(),
+                password: self.auth_pass.text(),
+            },
+            AuthKind::Bearer => Auth::Bearer {
+                token: self.auth_token.text(),
+            },
+            AuthKind::OAuth => Auth::OAuth {
+                name: self.auth_oauth_name.text(),
+            },
+            AuthKind::ApiKey => Auth::ApiKey {
+                key: self.auth_key.text(),
+                value: self.auth_value.text(),
+                location: self.auth_in,
+            },
+        }
+    }
+
+    fn scripts(&self) -> Scripts {
+        Scripts {
+            pre: self
+                .pre
+                .values()
+                .into_iter()
+                .map(|r| SetVar {
+                    var: r.cells[0].text(),
+                    value: r.cells[1].text(),
+                })
+                .collect(),
+            extract: self
+                .extract
+                .values()
+                .into_iter()
+                .map(|r| Extract {
+                    var: r.cells[0].text(),
+                    source: Source::ALL[r.cells[1].choice().min(2)],
+                    expr: r.cells[2].text(),
+                    secret: r.cells[3].toggle(),
+                })
+                .collect(),
+            asserts: self
+                .asserts
+                .values()
+                .into_iter()
+                .map(|r| Assertion {
+                    source: Source::ALL[r.cells[0].choice().min(2)],
+                    expr: r.cells[1].text(),
+                    op: AssertOp::ALL[r.cells[2].choice().min(AssertOp::ALL.len() - 1)],
+                    value: r.cells[3].text(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The gRPC service part of `Service/Method`.
+    pub fn service(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).0
+    }
+
+    /// The gRPC method part of `Service/Method`.
+    pub fn method(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).1
+    }
+
+    pub fn to_request(&self) -> Request {
+        match self.kind {
+            Kind::Http => {
+                let body = match self.body_kind {
+                    BodyKind::None => Body::None,
+                    BodyKind::Json => Body::Json {
+                        text: self.body_text.text(),
+                    },
+                    BodyKind::Raw => Body::Raw {
+                        content_type: self.raw_ct.text(),
+                        text: self.body_text.text(),
+                    },
+                    BodyKind::Form => Body::Form {
+                        fields: kv_rows(&self.form),
+                    },
+                    BodyKind::Multipart => Body::Multipart {
+                        parts: self
+                            .parts
+                            .values()
+                            .into_iter()
+                            .map(|r| {
+                                let value = r.cells[2].text();
+                                let filename = r.cells[3].text();
+                                MultipartPart {
+                                    name: r.cells[0].text(),
+                                    kind: if r.cells[1].choice() == 1 {
+                                        PartKind::File {
+                                            path: value,
+                                            filename: if filename.is_empty() {
+                                                None
+                                            } else {
+                                                Some(filename)
+                                            },
+                                        }
+                                    } else {
+                                        PartKind::Text { value }
+                                    },
+                                    content_type: r.cells[4].text(),
+                                    enabled: r.enabled,
+                                }
+                            })
+                            .collect(),
+                    },
+                    BodyKind::File => Body::File {
+                        path: self.file_path.text(),
+                        content_type: self.file_ct.text(),
+                    },
+                };
+                Request::Http(HttpRequest {
+                    method: self.method.clone(),
+                    url: self.url.text(),
+                    params: kv_rows(&self.params),
+                    headers: kv_rows(&self.headers),
+                    body,
+                    auth: self.auth(),
+                    options: HttpOptions {
+                        timeout_ms: parse_ms(&self.timeout.text()),
+                        follow_redirects: self.follow,
+                        verify_tls: self.verify,
+                        cookies: self.cookies,
+                    },
+                    scripts: self.scripts(),
+                })
+            }
+            Kind::Grpc => Request::Grpc(GrpcRequest {
+                target: self.target.text(),
+                service: self.service(),
+                method: self.method(),
+                message: self.message.text(),
+                metadata: kv_rows(&self.metadata),
+                auth: self.auth(),
+                tls: self.tls,
+                verify_tls: self.grpc_verify,
+                deadline_ms: parse_ms(&self.deadline.text()),
+                schema: if self.schema_files {
+                    SchemaSource::Files {
+                        files: parse_list(&self.proto_files.text()),
+                        import_paths: parse_list(&self.import_paths.text()),
+                    }
+                } else {
+                    SchemaSource::Reflection
+                },
+                scripts: self.scripts(),
+            }),
+            Kind::Ws => Request::Ws(WebSocketRequest {
+                url: self.url.text(),
+                headers: kv_rows(&self.headers),
+                subprotocols: parse_list(&self.ws_subprotocols.text()),
+                messages: self.message.text(),
+                auth: self.auth(),
+                options: WsOptions {
+                    timeout_ms: parse_ms(&self.timeout.text()),
+                    deadline_ms: parse_ms(&self.deadline.text()),
+                    verify_tls: self.grpc_verify,
+                    tls: self.tls,
+                    cookies: self.cookies,
+                },
+                scripts: self.scripts(),
+            }),
+            Kind::Mcp => Request::Mcp(McpRequest {
+                server: self.mcp_server.text(),
+                tool: self.mcp_tool.text(),
+                arguments: self.message.text(),
+                timeout_ms: parse_ms(&self.timeout.text()),
+                scripts: self.scripts(),
+            }),
+        }
+    }
+
+    /// Fields of a request sub-tab, top to bottom.
+    pub fn fields(&self, tab: usize) -> Vec<Field> {
+        let auth_fields = |out: &mut Vec<Field>| {
+            out.push(Field::AuthKind);
+            match self.auth_kind {
+                AuthKind::None => {}
+                AuthKind::Basic => out.extend([Field::AuthUser, Field::AuthPass]),
+                AuthKind::Bearer => out.push(Field::AuthToken),
+                AuthKind::OAuth => out.push(Field::AuthOAuthName),
+                AuthKind::ApiKey => out.extend([Field::AuthKey, Field::AuthValue, Field::AuthIn]),
+            }
+        };
+        let mut v = Vec::new();
+        match self.kind {
+            Kind::Http => match tab {
+                0 => v.push(Field::Params),
+                1 => v.push(Field::Headers),
+                2 => {
+                    v.push(Field::BodyKind);
+                    match self.body_kind {
+                        BodyKind::None => {}
+                        BodyKind::Json => v.push(Field::BodyText),
+                        BodyKind::Raw => v.extend([Field::RawContentType, Field::BodyText]),
+                        BodyKind::Form => v.push(Field::FormFields),
+                        BodyKind::Multipart => v.push(Field::Parts),
+                        BodyKind::File => v.extend([Field::FilePath, Field::FileContentType]),
+                    }
+                }
+                3 => auth_fields(&mut v),
+                4 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::FollowRedirects,
+                    Field::VerifyTls,
+                    Field::Cookies,
+                ]),
+            },
+            Kind::Grpc => match tab {
+                0 => v.push(Field::Message),
+                1 => v.push(Field::Metadata),
+                2 => auth_fields(&mut v),
+                3 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => {
+                    v.push(Field::SchemaSource);
+                    if self.schema_files {
+                        v.extend([Field::ProtoFiles, Field::ImportPaths]);
+                    }
+                    v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
+                }
+            },
+            Kind::Ws => match tab {
+                0 => v.push(Field::Headers),
+                1 => v.push(Field::WsMessages),
+                2 => auth_fields(&mut v),
+                3 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::Deadline,
+                    Field::WsSubprotocols,
+                    Field::Tls,
+                    Field::GrpcVerify,
+                    Field::Cookies,
+                ]),
+            },
+            Kind::Mcp => match tab {
+                0 => v.extend([Field::McpServer, Field::McpTool]),
+                1 => v.push(Field::Message),
+                2 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.push(Field::Timeout),
+            },
+        }
+        v
+    }
+
+    fn script_table(&self) -> Field {
+        match self.script_section {
+            1 => Field::ScriptExtract,
+            2 => Field::ScriptAssert,
+            _ => Field::ScriptPre,
+        }
+    }
+
+    fn script_options(&self) -> Vec<String> {
+        vec![
+            format!("Pre-request: set variables ({})", self.pre.values().len()),
+            format!("After response: extract ({})", self.extract.values().len()),
+            format!(
+                "After response: assertions ({})",
+                self.asserts.values().len()
+            ),
+        ]
+    }
+
+    pub fn tab_names(&self) -> &'static [&'static str] {
+        match self.kind {
+            Kind::Http => HTTP_TABS,
+            Kind::Grpc => GRPC_TABS,
+            Kind::Ws => WS_TABS,
+            Kind::Mcp => MCP_TABS,
+        }
+    }
+
+    pub fn text_mut(&mut self, f: Field) -> Option<&mut TextEditor> {
+        Some(match f {
+            Field::BodyText => &mut self.body_text,
+            Field::RawContentType => &mut self.raw_ct,
+            Field::FilePath => &mut self.file_path,
+            Field::FileContentType => &mut self.file_ct,
+            Field::AuthUser => &mut self.auth_user,
+            Field::AuthPass => &mut self.auth_pass,
+            Field::AuthToken => &mut self.auth_token,
+            Field::AuthOAuthName => &mut self.auth_oauth_name,
+            Field::AuthKey => &mut self.auth_key,
+            Field::AuthValue => &mut self.auth_value,
+            Field::Timeout => &mut self.timeout,
+            Field::Message => &mut self.message,
+            Field::ProtoFiles => &mut self.proto_files,
+            Field::ImportPaths => &mut self.import_paths,
+            Field::Deadline => &mut self.deadline,
+            Field::McpServer => &mut self.mcp_server,
+            Field::McpTool => &mut self.mcp_tool,
+            Field::WsSubprotocols => &mut self.ws_subprotocols,
+            Field::WsMessages => &mut self.message,
+            _ => return None,
+        })
+    }
+
+    pub fn table_mut(&mut self, f: Field) -> Option<&mut Table> {
+        Some(match f {
+            Field::Params => &mut self.params,
+            Field::Headers => &mut self.headers,
+            Field::FormFields => &mut self.form,
+            Field::Parts => &mut self.parts,
+            Field::ScriptPre => &mut self.pre,
+            Field::ScriptExtract => &mut self.extract,
+            Field::ScriptAssert => &mut self.asserts,
+            Field::Metadata => &mut self.metadata,
+            _ => return None,
+        })
+    }
+
+    /// Current value label of a choice or toggle field.
+    pub fn choice_label(&self, f: Field) -> String {
+        match f {
+            Field::BodyKind => self.body_kind.label().into(),
+            Field::AuthKind => self.auth_kind.label().into(),
+            Field::AuthIn => match self.auth_in {
+                ApiKeyLocation::Header => "Header".into(),
+                ApiKeyLocation::Query => "Query parameter".into(),
+            },
+            Field::SchemaSource => {
+                if self.schema_files {
+                    "Proto files".into()
+                } else {
+                    "Server reflection".into()
+                }
+            }
+            Field::ScriptSection => self
+                .script_options()
+                .get(self.script_section)
+                .cloned()
+                .unwrap_or_default(),
+            Field::FollowRedirects => onoff(self.follow),
+            Field::VerifyTls => onoff(self.verify),
+            Field::Cookies => match self.cookies {
+                None => "Config default".into(),
+                Some(true) => "On".into(),
+                Some(false) => "Off".into(),
+            },
+            Field::Tls => onoff(self.tls),
+            Field::GrpcVerify => onoff(self.grpc_verify),
+            _ => String::new(),
+        }
+    }
+
+    pub fn choice_options(&self, f: Field) -> Vec<String> {
+        match f {
+            Field::BodyKind => BodyKind::ALL
+                .iter()
+                .map(|k| k.label().to_string())
+                .collect(),
+            Field::AuthKind => AuthKind::ALL
+                .iter()
+                .filter(|k| self.kind == Kind::Http || **k != AuthKind::OAuth)
+                .map(|k| k.label().to_string())
+                .collect(),
+            Field::AuthIn => vec!["Header".into(), "Query parameter".into()],
+            Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
+            Field::ScriptSection => self.script_options(),
+            Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
+            _ => vec![],
+        }
+    }
+
+    /// Cycles a choice (dir = ±1) or flips a toggle. Returns true if changed.
+    pub fn cycle(&mut self, f: Field, dir: isize) -> bool {
+        let step = |i: usize, n: usize| crate::list::cycle(i, dir, n);
+        match f {
+            Field::BodyKind => {
+                let i = BodyKind::ALL
+                    .iter()
+                    .position(|k| *k == self.body_kind)
+                    .unwrap_or(0);
+                self.set_body_kind(BodyKind::ALL[step(i, BodyKind::ALL.len())]);
+            }
+            Field::AuthKind => {
+                let i = AuthKind::ALL
+                    .iter()
+                    .position(|k| *k == self.auth_kind)
+                    .unwrap_or(0);
+                let len = if self.kind == Kind::Http {
+                    AuthKind::ALL.len()
+                } else {
+                    AuthKind::ALL.len() - 1
+                };
+                self.auth_kind = AuthKind::ALL[step(i, len)];
+            }
+            Field::AuthIn => {
+                self.auth_in = match self.auth_in {
+                    ApiKeyLocation::Header => ApiKeyLocation::Query,
+                    ApiKeyLocation::Query => ApiKeyLocation::Header,
+                }
+            }
+            Field::SchemaSource => self.schema_files = !self.schema_files,
+            Field::ScriptSection => self.script_section = step(self.script_section, 3),
+            Field::FollowRedirects => self.follow = !self.follow,
+            Field::VerifyTls => self.verify = !self.verify,
+            Field::Cookies => {
+                let index = match self.cookies {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                };
+                self.cookies = match step(index, 3) {
+                    0 => None,
+                    1 => Some(true),
+                    _ => Some(false),
+                };
+            }
+            Field::Tls => self.tls = !self.tls,
+            Field::GrpcVerify => self.grpc_verify = !self.grpc_verify,
+            _ => return false,
+        }
+        true
+    }
+
+    pub fn set_choice(&mut self, f: Field, index: usize) {
+        match f {
+            Field::BodyKind => {
+                if let Some(k) = BodyKind::ALL.get(index) {
+                    self.set_body_kind(*k);
+                }
+            }
+            Field::AuthKind => {
+                if let Some(k) = AuthKind::ALL.get(index) {
+                    self.auth_kind = *k;
+                }
+            }
+            Field::AuthIn => {
+                self.auth_in = if index == 1 {
+                    ApiKeyLocation::Query
+                } else {
+                    ApiKeyLocation::Header
+                }
+            }
+            Field::SchemaSource => self.schema_files = index == 1,
+            Field::ScriptSection => self.script_section = index.min(2),
+            Field::Cookies => {
+                self.cookies = match index {
+                    1 => Some(true),
+                    2 => Some(false),
+                    _ => None,
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn set_body_kind(&mut self, k: BodyKind) {
+        self.body_kind = k;
+        self.body_text.highlight = if k == BodyKind::Json {
+            Highlight::Json
+        } else {
+            Highlight::None
+        };
+    }
+
+    /// Headers Sendito will add from the body and auth settings (shown under Headers).
+    pub fn auto_headers(&self) -> Vec<(String, String)> {
+        let mut v = Vec::new();
+        let has = |n: &str| {
+            kv_rows(&self.headers)
+                .iter()
+                .any(|h| h.enabled && h.name.eq_ignore_ascii_case(n))
+        };
+        let ct = match self.body_kind {
+            BodyKind::Json => Some("application/json".to_string()),
+            BodyKind::Raw => Some(self.raw_ct.text()).filter(|s| !s.is_empty()),
+            BodyKind::Form => Some("application/x-www-form-urlencoded".to_string()),
+            BodyKind::Multipart => Some("multipart/form-data; boundary=…".to_string()),
+            BodyKind::File => Some(if self.file_ct.text().is_empty() {
+                "application/octet-stream".to_string()
+            } else {
+                self.file_ct.text()
+            }),
+            BodyKind::None => None,
+        };
+        if let Some(ct) = ct
+            && (!has("content-type") || self.body_kind == BodyKind::Multipart)
+        {
+            v.push(("Content-Type".into(), ct));
+        }
+        match self.auth_kind {
+            AuthKind::Basic if !has("authorization") => v.push((
+                "Authorization".into(),
+                "Basic base64(username:password)".into(),
+            )),
+            AuthKind::Bearer if !has("authorization") => v.push((
+                "Authorization".into(),
+                format!("Bearer {}", self.auth_token.text()),
+            )),
+            AuthKind::OAuth if !has("authorization") => v.push((
+                "Authorization".into(),
+                "Bearer •••••• (OAuth keychain)".into(),
+            )),
+            AuthKind::ApiKey
+                if self.auth_in == ApiKeyLocation::Header && !has(&self.auth_key.text()) =>
+            {
+                v.push((self.auth_key.text(), self.auth_value.text()))
+            }
+            _ => {}
+        }
+        v
+    }
+
+    /// Applies vim mode to every editor (normal mode when enabled).
+    pub fn set_vim(&mut self, on: bool) {
+        let mode = if on {
+            crate::editor::VimMode::Normal
+        } else {
+            crate::editor::VimMode::Insert
+        };
+        for e in [
+            &mut self.url,
+            &mut self.body_text,
+            &mut self.raw_ct,
+            &mut self.file_path,
+            &mut self.file_ct,
+            &mut self.auth_user,
+            &mut self.auth_pass,
+            &mut self.auth_token,
+            &mut self.auth_oauth_name,
+            &mut self.auth_key,
+            &mut self.auth_value,
+            &mut self.timeout,
+            &mut self.target,
+            &mut self.message,
+            &mut self.deadline,
+            &mut self.proto_files,
+            &mut self.import_paths,
+            &mut self.ws_subprotocols,
+        ] {
+            e.vim = mode;
+        }
+        for t in [
+            &mut self.params,
+            &mut self.headers,
+            &mut self.form,
+            &mut self.parts,
+            &mut self.pre,
+            &mut self.extract,
+            &mut self.asserts,
+            &mut self.metadata,
+        ] {
+            for r in &mut t.rows {
+                for c in &mut r.cells {
+                    if let Cell::Text(e) = c {
+                        e.vim = mode;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn onoff(b: bool) -> String {
+    if b { "On".into() } else { "Off".into() }
+}

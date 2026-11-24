@@ -3322,20 +3322,27 @@ dependencies = [
  "jaq-all",
  "ratatui",
  "sendito-core",
- "sendito-grpc",
- "sendito-http",
  "sendito-import",
- "sendito-mcp",
  "sendito-pipeline",
  "sendito-store",
  "sendito-testkit",
- "sendito-ws",
+ "sendito-widgets",
  "serde",
  "serde_json",
  "tempfile",
  "time",
  "tokio",
  "toml",
+ "unicode-width 0.2.3",
+]
+
+[[package]]
+name = "sendito-widgets"
+version = "0.2.0"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "sendito-core",
  "unicode-width 0.2.3",
 ]
 
