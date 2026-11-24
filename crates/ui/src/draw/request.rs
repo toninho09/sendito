@@ -557,7 +557,7 @@ pub(super) fn draw_request(
             ],
             Kind::Mcp => vec![
                 0,
-                0,
+                usize::from(e.message.text().trim() != "{}" && !e.message.text().trim().is_empty()),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],

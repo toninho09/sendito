@@ -73,7 +73,12 @@ Sends a request without the UI, or runs every request in a folder.
 
 One request: the response body goes to **stdout**, and the status, timing and
 assertion results go to **stderr**. A failure is signalled by the exit code (see
-below), so `sendito run x > body.txt` is safe.
+below), so `sendito run x > body.txt` is safe: redirected output holds the body
+bytes unchanged (a line break is added only when stdout is a terminal). A body
+cut at `[http] max_body_mb` prints a warning on stderr. A variable whose secret
+did not load (no keychain entry, no `secrets.toml` value) counts as unresolved,
+also when the collection defines the same name; an active environment file that
+cannot be read makes every collection variable unresolved.
 
 For a WebSocket request (`kind = "websocket"`) the session opens, the message
 document is sent, the text frames received are printed on **stdout** (one per

@@ -32,15 +32,35 @@ pub fn initialize_params() -> Value {
     })
 }
 
-/// `true` when `v` is a response to the request with this `id` (notifications
-/// have no `id` and are logged, not matched).
+/// `true` when `v` is a response to the request with this `id`. Notifications
+/// have no `id`, and a request from the server (such as `ping`) has a
+/// `method`: both are logged, not matched.
 pub fn is_response_to(v: &Value, id: u64) -> bool {
     v.get("id") == Some(&json!(id))
+        && v.get("method").is_none()
+        && (v.get("result").is_some() || v.get("error").is_some())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_request_with_the_same_id_is_not_the_response() {
+        assert!(!is_response_to(
+            &json!({"jsonrpc":"2.0","id":2,"method":"ping"}),
+            2
+        ));
+        assert!(!is_response_to(&json!({"jsonrpc":"2.0","id":2}), 2));
+        assert!(is_response_to(
+            &json!({"jsonrpc":"2.0","id":2,"result":{}}),
+            2
+        ));
+        assert!(is_response_to(
+            &json!({"jsonrpc":"2.0","id":2,"error":{}}),
+            2
+        ));
+    }
 
     #[test]
     fn matches_only_the_same_id() {

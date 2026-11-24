@@ -88,20 +88,22 @@ impl Wire for StdioConn {
     ) -> Pin<Box<dyn Future<Output = Result<Value, McpError>> + Send + 'a>> {
         Box::pin(async move {
             let mut line = String::new();
-            // Long lines grow the buffer; `take` avoids it for the rest.
-            let n = self
-                .reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::Transport(e.to_string()))?;
-            if n == 0 {
-                return Err(McpError::Closed);
+            loop {
+                line.clear();
+                let n = self
+                    .reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|e| McpError::Transport(e.to_string()))?;
+                if n == 0 {
+                    return Err(McpError::Closed);
+                }
+                // A blank line carries no message: read on.
+                let t = line.trim();
+                if !t.is_empty() {
+                    return serde_json::from_str(t).map_err(|e| McpError::Json(e.to_string()));
+                }
             }
-            let t = line.trim();
-            if t.is_empty() {
-                return Err(McpError::Json("an empty line from the server".into()));
-            }
-            serde_json::from_str(t).map_err(|e| McpError::Json(e.to_string()))
         })
     }
 }

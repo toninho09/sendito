@@ -363,10 +363,17 @@ pub async fn open(s: &ConnSettings) -> Result<Session, WsError> {
         .ok_or_else(|| WsError::Url(s.url.clone()))?
         .to_string();
     let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
+    // `[::1]` keeps its brackets in the CONNECT target; the address lookup
+    // and the TLS server name need the bare address.
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(&host)
+        .to_string();
 
     let limit = s.handshake_timeout;
     let raw: Transport = match &s.proxy {
-        None => connect_with_timeout((host.as_str(), port), limit)
+        None => connect_with_timeout((bare.as_str(), port), limit)
             .await
             .map_err(|e| fail(e.to_string()))
             .map(|tcp| Box::new(tcp) as Transport)?,
@@ -377,7 +384,7 @@ pub async fn open(s: &ConnSettings) -> Result<Session, WsError> {
 
     let stream = if secure {
         let cfg = sendito_http::tls_config(s.verify_tls, &[], &s.tls).map_err(fail)?;
-        let name = ServerName::try_from(host.clone())
+        let name = ServerName::try_from(bare.clone())
             .map_err(|e| WsError::Url(format!("{host}: {e}")))?
             .to_owned();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(cfg));
@@ -684,7 +691,7 @@ async fn run(
     let mut close_sleep = std::pin::pin!(tokio::time::sleep_until(tokio::time::Instant::now()));
     loop {
         tokio::select! {
-            _ = &mut deadline_sleep, if deadline.is_some() && !deadline_done => {
+            _ = &mut deadline_sleep, if deadline.is_some() && !deadline_done && our_close.is_none() => {
                 deadline_done = true;
                 let reason = format!(
                     "deadline of {} ms reached",
@@ -695,17 +702,14 @@ async fn run(
                 // dropping the connection; the reason names why.
                 rx_open = false;
                 our_close = Some(1000);
-                close_sleep
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + close_timeout);
-                if let Err(e) = sink
-                    .send(Message::Close(Some(CloseFrame {
-                        code: 1000.into(),
-                        reason: Utf8Bytes::from(reason),
-                    })))
-                    .await
-                {
-                    finish(1006, error_chain(&e));
+                let close_at = tokio::time::Instant::now() + close_timeout;
+                close_sleep.as_mut().reset(close_at);
+                let close = sink.send(Message::Close(Some(CloseFrame {
+                    code: 1000.into(),
+                    reason: Utf8Bytes::from(reason),
+                })));
+                if let Err(e) = write_within(close, Some(close_at)).await {
+                    finish(1006, e);
                     return;
                 }
                 let _ = events.send(sent(FrameKind::Close, String::new(), 0));
@@ -726,40 +730,42 @@ async fn run(
                     rx_open = false;
                     continue;
                 };
+                // Data frames must go out before the deadline.
+                let until = deadline_at.filter(|_| !deadline_done);
                 let out = match cmd {
                     Cmd::Text(t) => {
                         let len = t.len();
-                        sink.send(Message::Text(t.clone().into())).await
+                        write_within(sink.send(Message::Text(t.clone().into())), until).await
                             .map(|_| { let _ = events.send(sent(FrameKind::Text, t, len)); })
                     }
                     Cmd::Binary(b) => {
                         let preview = base64::engine::general_purpose::STANDARD.encode(b.iter());
                         let len = b.len();
-                        sink.send(Message::Binary(b.into())).await
+                        write_within(sink.send(Message::Binary(b.into())), until).await
                             .map(|_| { let _ = events.send(sent(FrameKind::Binary, preview, len)); })
                     }
                     Cmd::Ping(p) => {
                         let preview = String::from_utf8_lossy(&p).into_owned();
                         let len = p.len();
-                        sink.send(Message::Ping(p.into())).await
+                        write_within(sink.send(Message::Ping(p.into())), until).await
                             .map(|_| { let _ = events.send(sent(FrameKind::Ping, preview, len)); })
                     }
                     Cmd::Close(code, reason) => {
                         // After our close, only the peer's answer matters.
                         rx_open = false;
                         our_close = Some(code);
-                        close_sleep
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + close_timeout);
-                        sink.send(Message::Close(Some(CloseFrame {
+                        let close_at = tokio::time::Instant::now() + close_timeout;
+                        close_sleep.as_mut().reset(close_at);
+                        let close = sink.send(Message::Close(Some(CloseFrame {
                             code: code.into(),
                             reason: Utf8Bytes::from(reason),
-                        }))).await
+                        })));
+                        write_within(close, Some(close_at)).await
                             .map(|_| { let _ = events.send(sent(FrameKind::Close, String::new(), 0)); })
                     }
                 };
                 if let Err(e) = out {
-                    finish(1006, error_chain(&e));
+                    finish(1006, e);
                     return;
                 }
             }
@@ -777,19 +783,28 @@ async fn run(
                         ));
                         // The library queued the pong reply; flush drives it out.
                         let preview = String::from_utf8_lossy(&p).into_owned();
-                        match sink.flush().await {
+                        let until = if our_close.is_some() {
+                            Some(close_sleep.deadline())
+                        } else {
+                            deadline_at.filter(|_| !deadline_done)
+                        };
+                        match write_within(sink.flush(), until).await {
                             Ok(()) => {
                                 let _ = events.send(sent(FrameKind::Pong, preview, 0));
                             }
                             Err(e) => {
-                                finish(1006, error_chain(&e));
+                                finish(1006, e);
                                 return;
                             }
                         }
                     }
                     Some(Ok(Message::Close(f))) => {
                         // The library queued the close echo; flush drives it out.
-                        let _ = sink.flush().await;
+                        let _ = write_within(
+                            sink.flush(),
+                            Some(tokio::time::Instant::now() + close_timeout),
+                        )
+                        .await;
                         let (code, reason) = f
                             .map(|c| (u16::from(c.code), c.reason.to_string()))
                             .unwrap_or((1005, String::new()));
@@ -824,6 +839,22 @@ async fn run(
             }
         }
     }
+}
+
+/// Runs one write with a time limit. A peer that stops reading blocks a
+/// write, and while it waits the session loop runs no timer, so the write
+/// itself must end when the deadline or the close timer is due.
+async fn write_within(
+    write: impl std::future::Future<Output = Result<(), tokio_tungstenite::tungstenite::Error>>,
+    until: Option<tokio::time::Instant>,
+) -> Result<(), String> {
+    let r = match until {
+        Some(t) => tokio::time::timeout_at(t, write)
+            .await
+            .map_err(|_| "the peer stopped reading; a write did not finish in time".to_string())?,
+        None => write.await,
+    };
+    r.map_err(|e| error_chain(&e))
 }
 
 fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {

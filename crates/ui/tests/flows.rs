@@ -1266,6 +1266,34 @@ fn flow_grpc_message_completion() {
     assert_eq!(call.messages, vec!["{\"text\":\"hi\"}".to_string()]);
 }
 
+/// Completing inside an existing key replaces the whole key and keeps its
+/// value, so the JSON stays valid.
+#[test]
+fn flow_completion_inside_an_existing_key() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.key("ctrl+w k");
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("enter");
+    let _ = h.wait_for("Choose a gRPC method", 5);
+    h.key("esc");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.message.set_text("{\"tet\": \"x\"}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 0, col: 4 };
+        t.refresh_model();
+    }
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.type_text("x");
+    assert!(h.app.complete.is_some(), "popup opens inside the key");
+    h.key("enter");
+    let text = h.app.tabs[h.app.active].ed.message.text();
+    let v: serde_json::Value = serde_json::from_str(&text).must();
+    assert_eq!(v, serde_json::json!({"text": "x"}), "{text}");
+}
+
 /// The method chip is editable and the schema completes it inline.
 #[test]
 fn flow_grpc_method_completion() {
@@ -1799,6 +1827,44 @@ fn flow_mcp_editor_adds_and_keeps_servers() {
     assert_eq!(h.app.project.config.mcp.servers.len(), 3);
 }
 
+/// The editor shows and writes only the project file's servers: a server
+/// from the global config (which may hold a literal token) never reaches the
+/// versioned project file, and it stays usable after a save.
+#[test]
+fn flow_mcp_editor_never_copies_global_servers() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let global = h.dir.path().join("global.toml");
+    std::fs::write(
+        &global,
+        "[mcp.servers.github]\ncommand = \"gh-mcp\"\nenv = { GITHUB_TOKEN = \"ghp_literal\" }\n",
+    )
+    .must();
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[collection]\nname = \"demo\"\n\n[mcp.servers.files]\ncommand = \"npx\"\n",
+    );
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        Some(global),
+    );
+    assert_eq!(h.app.project.config.mcp.servers.len(), 2);
+    h.key("ctrl+w S");
+    let sc = h.screen();
+    assert!(sc.contains("files") && !sc.contains("github"), "{sc}");
+    h.key("ctrl+s");
+    assert!(!matches!(h.app.overlay, Some(Overlay::Mcp(ref m)) if m.error.is_some()));
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(
+        !text.contains("github") && !text.contains("ghp_literal"),
+        "{text}"
+    );
+    assert_eq!(h.app.project.config.mcp.servers.len(), 2);
+}
+
 /// `Esc` on a dirty editor asks before discarding; Discard drops the edit and
 /// leaves the file alone.
 #[test]
@@ -2052,8 +2118,25 @@ fn flow_cancelling_a_prompt_keeps_the_editor() {
         matches!(h.app.overlay, Some(Overlay::Env(_))),
         "Esc on the prompt means cancel, not close"
     );
-    // Ctrl+N parks the editor; cancelling the name prompt goes back to it.
+    // Ctrl+N with unsaved edits is refused: creating an environment loads
+    // it into the editor, which would drop them.
     h.key("ctrl+n");
+    match &h.app.overlay {
+        Some(Overlay::Env(e)) => assert!(e.dirty && e.error.is_some()),
+        _ => panic!("Ctrl+N left the dirty editor"),
+    }
+    assert!(h.app.parked_env.is_none());
+}
+
+/// On a clean editor, Ctrl+N parks it, and cancelling the name prompt (by
+/// Esc) goes back to it.
+#[test]
+fn flow_new_env_prompt_cancel_returns_to_the_editor() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("envs");
+    h.key("ctrl+n");
+    assert!(matches!(h.app.overlay, Some(Overlay::Prompt(_))));
     h.key("esc");
     assert!(matches!(h.app.overlay, Some(Overlay::Env(_))));
     assert!(h.app.parked_env.is_none());

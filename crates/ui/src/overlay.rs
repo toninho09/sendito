@@ -9,6 +9,8 @@ use crate::viewer::Viewer;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
     SendAnyway,
+    /// Send although a secret did not load (its `{{name}}` goes out as typed).
+    SendMissingSecrets,
     Delete(String),
     Quit,
     /// Close tab: button 0 = save, 1 = discard.
@@ -39,7 +41,8 @@ pub enum PromptAction {
     },
     SaveBody,
     NewEnv,
-    SaveHistory(usize),
+    /// The entry itself, not its row: the list can reload under the prompt.
+    SaveHistory(Box<sendito_store::history::HistoryEntry>),
     CustomMethod,
     Search,
     Filter,

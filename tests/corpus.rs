@@ -596,6 +596,7 @@ async fn http_corpus() {
         expires_at: None,
         client_id: "client".into(),
         client_secret: None,
+        bound_to: None,
     };
     let account = runner::oauth_token_account(&p.name, Some("corpus"), "sample");
     e.keychain.set(&account, &tokens.to_json()).must();

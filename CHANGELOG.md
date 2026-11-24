@@ -1,5 +1,94 @@
 # Changelog
 
+## Unreleased — review fixes
+
+* **The MCP server editor and `:mcpadd` write only the project's servers.**
+  They used to copy every server of the merged config, the global file's
+  included (with any literal token), into the versioned project file. While
+  the project config has an error they write nothing (they used to read no
+  servers and then delete them all).
+* **A secret that did not load stops the send.** In the UI the send asks first
+  (and a watch stops), with its own "Send anyway"; `sendito run` exits `3`. This
+  holds also when the collection defines the same name (whose value used to be
+  sent instead), when the name is used inside another variable's value, when
+  the active environment file cannot be read, and for the MCP server
+  configuration a tool call uses (URL, headers, bearer token, command,
+  arguments, environment).
+* **No secret leaks in output.** Assertion results (`actual` and the label) are
+  masked in every protocol, not only HTTP and WebSocket; a gRPC failure message
+  (a connect error names the resolved target) and a WebSocket close reason are
+  masked before history and the UI see them; the request as sent (Headers tab,
+  the WebSocket "connecting to" line, the gRPC "at" line in the UI and in
+  `sendito run`) masks a secret in the URL or a header; WebSocket handshake
+  `Set-Cookie` values are masked as on HTTP responses; a syntax error in `secrets.toml` names the line and the reason, not
+  the line's text. `session.toml` and `history.jsonl` are written `0600`.
+* **OAuth tokens stay with their server.** Stored tokens record the MCP server
+  URL as configured, or the HTTP token endpoint; another server in the config
+  gets no token and a "sign in again" message. A refresh whose token cannot be
+  saved still serves the request. The login callback drops idle browser
+  connections, and `http://[::1]` counts as loopback.
+* **`sendito run`.** The body on a redirected stdout is byte-exact (the line
+  break is added only on a terminal); a body cut at `max_body_mb` prints a
+  warning; a secret that did not load counts as unresolved (exit `3`) instead of
+  sending `{{name}}`; `--no-cookies` also applies to WebSocket requests.
+* **curl import and export.** An option's value is never split (`-d -10`) or
+  read as the URL (`-D file`, `-c jar`, `--socks5 h`, …; many more options are
+  known); `--oauth2-bearer` imports bearer auth. Export quotes the method, and a
+  typed text part as `name="value";type=…`, so curl never reads a file for a
+  value that starts with `@` or `<`. `.http` export keeps header values on one
+  line and warns about a body line that starts with `###`.
+* **gRPC.** Loading the schema and connecting are bounded by `[http]
+  timeout_ms` and stop on Cancel, so a server that never answers reflection
+  cannot hang a run; a call that ends with no status is `UNKNOWN` (2), not OK.
+* **WebSocket.** A write that the peer never reads ends at the deadline or the
+  close timer instead of blocking the session; `ws://[::1]` works; a deadline
+  after your own close no longer sends a second Close frame.
+* **MCP.** A request from the server with the same id (such as `ping`) is no
+  longer taken as the reply; blank lines on stdio are skipped; a configured
+  `Authorization` header wins over the bearer or OAuth token (OAuth is then not
+  needed).
+* **Requests.** An auth header that a request header replaces is never sent,
+  so its variables no longer count as unresolved (HTTP, gRPC, WebSocket); a
+  multipart body removes every `Content-Type` row; gRPC and
+  WebSocket targets match their scheme in any case (`HTTPS://`).
+* **Files.** `sendito init` appends to a `.gitignore` that is not UTF-8 instead
+  of replacing it; one bad line in `history.jsonl` no longer hides (and, at the
+  next trim, deletes) the entries after it; a folder symlink that leads back up
+  the tree is not followed, and a folder duplicate copies links as links; a
+  setting changed in the UI keeps the comments of the config file; an
+  environment cannot be named `runtime` (an import renames it).
+* **Terminal UI.**
+  * No crash on a non-ASCII method in a request file.
+  * The environment editor keeps unsaved edits on `Ctrl+N` and on an outside
+    click of the "New environment" prompt, and never writes over an environment
+    file that cannot be read.
+  * `:wq` on an unnamed request leaves the name prompt up.
+  * Saving the response body saves the bytes received, not the jq output; a jq
+    filter with endless output (`repeat(1)`) stops instead of freezing the UI.
+  * The history list keeps its selection when new entries arrive, and saving an
+    entry saves the one you chose.
+  * A curl import that fails keeps the dialog and the pasted text.
+  * `Ctrl+W x` cancels the request in view before background jobs.
+  * The MCP server editor refuses two servers with one name.
+  * New tabs get the lowest free "untitled N" name.
+  * The Mouse setting turns capture on or off at once.
+  * Closing the last tab shows the hidden sidebar so focus has a place.
+  * Search and wrap keep the cursor on its line in the response viewer.
+  * Control characters in a field are drawn as spaces, never sent to the
+    terminal; a tab takes one column.
+  * A paste into the environment or MCP editor counts as an edit (Esc asks);
+    the environment editor refuses two variables with one name.
+  * Watch repeats keep the response view: the last response stays until the
+    next one arrives, and the view mode, wrap, jq filter and position carry
+    over.
+  * Completing inside an existing JSON key replaces the whole key and keeps
+    its value.
+  * `:curl!` and `:httpfile!` warn when a secret did not load.
+  * Opening a WebSocket request focuses its URL, not the static badge.
+  * Format JSON (`Ctrl+W f`) works on WebSocket messages; the MCP Args tab
+    shows its "set" marker; picking another MCP tool replaces the previous
+    tool's argument template.
+
 ## Unreleased — hardening
 
 * **Redirects to another origin no longer carry authentication.** A followed

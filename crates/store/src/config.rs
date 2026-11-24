@@ -330,43 +330,77 @@ pub fn load(global: Option<&Path>, project: Option<&Path>) -> (Config, Vec<Strin
     (cfg, warnings)
 }
 
-/// Replaces `[mcp.servers]` in a config file, keeping the rest of the file.
-/// An empty map removes the table.
-pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Result<()> {
-    let mut t = read_table(path)
-        .map_err(StoreError::Invalid)?
-        .unwrap_or_default();
-    let mcp = t
-        .entry("mcp".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let toml::Value::Table(mcp) = mcp else {
-        return Err(StoreError::Invalid("[mcp] is not a table".into()));
+/// Reads a config file for an edit that keeps its comments and layout.
+fn read_doc(path: &Path) -> Result<toml_edit::DocumentMut> {
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(StoreError::io(path, e)),
     };
+    text.parse()
+        .map_err(|e| StoreError::Invalid(format!("{}: {e}", path.display())))
+}
+
+/// The table `name` at the top of `doc`, created (without its own header
+/// line when it holds only sub-tables) if it is missing.
+fn doc_table<'a>(
+    doc: &'a mut toml_edit::DocumentMut,
+    name: &str,
+) -> Result<&'a mut dyn toml_edit::TableLike> {
+    let item = doc.entry(name).or_insert_with(|| {
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(true);
+        toml_edit::Item::Table(t)
+    });
+    item.as_table_like_mut()
+        .ok_or_else(|| StoreError::Invalid(format!("[{name}] is not a table")))
+}
+
+/// Replaces `[mcp.servers]` in a config file, keeping the rest of the file
+/// (comments too). An empty map removes the table.
+pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Result<()> {
+    let mut doc = read_doc(path)?;
+    let mcp = doc_table(&mut doc, "mcp")?;
     if servers.is_empty() {
         mcp.remove("servers");
     } else {
+        let mut wrap = toml::Table::new();
         let value = toml::Value::try_from(servers)
             .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
-        mcp.insert("servers".to_string(), value);
+        wrap.insert("servers".to_string(), value);
+        let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let mut src: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
+        let item = src
+            .remove("servers")
+            .ok_or_else(|| StoreError::Invalid("cannot write [mcp.servers]".into()))?;
+        mcp.insert("servers", item);
     }
-    let text = toml::to_string(&t).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    write_atomic(path, text.as_bytes())
+    write_atomic(path, doc.to_string().as_bytes())
 }
 
-/// Sets `section.key = value` in a config file, keeping other content.
+/// Sets `section.key = value` in a config file, keeping other content
+/// (comments too).
 pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
-    let mut t = read_table(path)
-        .map_err(StoreError::Invalid)?
-        .unwrap_or_default();
-    let sec = t
-        .entry(section.to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let toml::Value::Table(sec) = sec else {
-        return Err(StoreError::Invalid(format!("[{section}] is not a table")));
-    };
-    sec.insert(key.to_string(), value);
-    let text = toml::to_string(&t).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    write_atomic(path, text.as_bytes())
+    let mut doc = read_doc(path)?;
+    let v: toml_edit::Value = value
+        .to_string()
+        .parse()
+        .map_err(|e| StoreError::Invalid(format!("cannot write {section}.{key}: {e}")))?;
+    let sec = doc_table(&mut doc, section)?;
+    match sec.get_mut(key).and_then(toml_edit::Item::as_value_mut) {
+        // Keep the comment written after the old value on its line.
+        Some(old) => {
+            let decor = old.decor().clone();
+            *old = v;
+            *old.decor_mut() = decor;
+        }
+        None => {
+            sec.insert(key, toml_edit::Item::Value(v));
+        }
+    }
+    write_atomic(path, doc.to_string().as_bytes())
 }
 
 #[cfg(test)]
@@ -539,6 +573,24 @@ scopes = ["read"]
             toml::Value::String("ansi".into()),
         )
         .unwrap();
+        // Comments and other lines survive an edit.
+        fs::write(
+            &p,
+            "# my settings\n[ui]\ntheme = \"dusk\" # mine\nmouse = false\n",
+        )
+        .unwrap();
+        set_value(&p, "ui", "theme", toml::Value::String("ansi".into())).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        assert_eq!(
+            text,
+            "# my settings\n[ui]\ntheme = \"ansi\" # mine\nmouse = false\n"
+        );
+        set_mcp_servers(&p, &BTreeMap::new()).unwrap();
+        assert!(
+            fs::read_to_string(&p)
+                .unwrap()
+                .starts_with("# my settings\n")
+        );
         fs::write(&p, "ui = 1").unwrap();
         assert!(set_value(&p, "ui", "x", toml::Value::Boolean(true)).is_err());
         assert!(global_path().is_some());

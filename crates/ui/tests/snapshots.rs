@@ -288,9 +288,10 @@ fn overlays() {
         snap("env_picker", h);
         h.key("esc ctrl+w V");
         snap("env_editor", h);
-        // The MCP servers editor, from the demo config's own servers.
-        h.app.project.config.mcp.servers.insert(
-            "echo".into(),
+        // The MCP servers editor shows the project file's own servers.
+        let mut servers = std::collections::BTreeMap::new();
+        servers.insert(
+            "echo".to_string(),
             sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
                 url: "http://127.0.0.1:9/mcp".into(),
                 headers: Default::default(),
@@ -298,14 +299,19 @@ fn overlays() {
                 auth: None,
             }),
         );
-        h.app.project.config.mcp.servers.insert(
-            "files".into(),
+        servers.insert(
+            "files".to_string(),
             sendito_store::config::McpServer::Stdio(sendito_store::config::McpStdioServer {
                 command: "npx".into(),
                 args: vec!["-y".into(), "@mcp/server-fs".into()],
                 env: Default::default(),
             }),
         );
+        sendito_store::config::set_mcp_servers(
+            &sendito_store::config::project_path(h.dir.path()),
+            &servers,
+        )
+        .unwrap();
         h.key("esc ctrl+w S");
         snap("mcp_servers", h);
         h.key("esc ctrl+w i");

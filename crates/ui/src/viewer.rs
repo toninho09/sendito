@@ -82,10 +82,13 @@ impl Viewer {
     }
 
     pub fn toggle_wrap(&mut self) {
+        // With no rows, the cursor is a line index: render maps it back.
+        let line = self.cursor_line();
         self.wrap = !self.wrap;
         self.hscroll = 0;
         self.rows = None;
         self.rows_width = 0;
+        self.cursor = line;
     }
 
     fn folds_active(&self) -> bool {
@@ -333,7 +336,7 @@ impl Viewer {
         for h in hidden {
             self.folded.remove(&h);
         }
-        self.rows_width = 0;
+        // Rebuild at the width last drawn, so the row index stays right.
         let w = self.last_width();
         self.rebuild_rows(w);
         self.cursor = self.row_of_line(line);
@@ -411,7 +414,10 @@ impl Viewer {
                 || self.rows_width != text_w
                 || self.rows_lines != self.doc.line_count(self.mode))
         {
+            // The rows move when the width changes: keep the cursor on its line.
+            let line = self.cursor_line();
             self.rebuild_rows(text_w);
+            self.cursor = self.row_of_line(line);
         } else if !self.wrap && !self.folds_active() {
             self.rows = None;
         }

@@ -226,7 +226,9 @@ message = '''
 [options]
 tls = true                       # TLS when the target has no scheme; default false
 verify_tls = false               # default true
-deadline_ms = 2000               # sent as grpc-timeout and enforced by the client
+deadline_ms = 2000               # sent as grpc-timeout and enforced by the client;
+                                 # loading the schema and connecting are bounded
+                                 # by [http] timeout_ms instead
 
 [schema]                         # optional; default: server reflection
 source = "files"                 # reflection | files
@@ -425,7 +427,8 @@ ask for `:curl!`), and scrubbed from error messages. A secret a server echoes is
 masked as it was sent and when it comes back JSON-escaped or percent-encoded;
 secrets shorter than 3 characters are not masked in echoes.
 
-Environment names cannot start with `_`. The environment editor (`Ctrl+W V`) can
+Environment names cannot start with `_`, and `runtime` is reserved for the
+values scripts set. The environment editor (`Ctrl+W V`) can
 set secret values; they are written to their source (secrets file or keychain),
 never to the env file.
 
@@ -545,7 +548,17 @@ from the collection to authorize; `sendito mcp logout <server>` deletes its
 tokens. Tokens are stored in the OS keychain under `<collection>/mcp/<server>`.
 Do not put client secrets directly in versioned config. Server command, arguments,
 environment values, URL, headers and bearer token are rendered when calling a
-tool. OAuth login currently uses the configured URL and OAuth settings literally.
+tool. A `headers` entry named `Authorization` wins over the bearer or OAuth
+token, as in HTTP requests. OAuth login currently uses the configured URL and
+OAuth settings literally.
+
+Stored OAuth tokens (HTTP and MCP) record the server they were issued for: the
+MCP server URL as configured, or the HTTP token endpoint. When the config names
+another server, the tokens are not sent and the request asks to sign in again.
+
+Settings changed in the UI write only the key they change, and the MCP server
+editor only the `[mcp.servers]` table: the rest of the config file, comments
+included, stays as it was.
 
 `NO_COLOR` (any non-empty value) disables colors regardless of the theme.
 `auto` picks `daylight` when `COLORFGBG` reports a light background, else `dusk`.
@@ -556,6 +569,9 @@ Theme files are `*.toml` in `themes/` next to the global config file and in
 format and every color token are in [docs/THEMES.md](docs/THEMES.md).
 
 ## Local state files
+
+Both files are written owner-only (`0600` on Unix): a draft or a stored request
+can hold a token typed into it.
 
 * `session.toml` — open tabs (path, or the unsaved request as a draft in request
   format), active tab, layout, expanded folders, active environment and non-secret

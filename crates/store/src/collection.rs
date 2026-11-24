@@ -212,6 +212,9 @@ impl Collection {
             let Ok(ft) = e.file_type() else { continue };
             let path = e.path();
             let is_dir = if ft.is_symlink() {
+                if links_to_ancestor(&path, dir) {
+                    continue;
+                }
                 path.is_dir()
             } else {
                 ft.is_dir()
@@ -387,6 +390,30 @@ impl Collection {
     }
 }
 
+/// True when the symlink `link` inside `dir` leads back to a folder already
+/// on the path to `dir` (or above one). Each folder on the path is checked,
+/// so two sibling folders that link to each other stop too. Following such
+/// a link repeats the tree without end.
+fn links_to_ancestor(link: &Path, dir: &Path) -> bool {
+    let Ok(target) = fs::canonicalize(link) else {
+        return false;
+    };
+    dir.ancestors()
+        .any(|a| fs::canonicalize(a).is_ok_and(|c| c.starts_with(&target)))
+}
+
+#[cfg(unix)]
+fn copy_link(src: &Path, dst: &Path) -> Result<()> {
+    let target = fs::read_link(src).map_err(|e| StoreError::io(src, e))?;
+    std::os::unix::fs::symlink(target, dst).map_err(|e| StoreError::io(dst, e))
+}
+
+/// Links need extra rights on Windows: they are left out of the copy.
+#[cfg(not(unix))]
+fn copy_link(_src: &Path, _dst: &Path) -> Result<()> {
+    Ok(())
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to).map_err(|e| StoreError::io(to, e))?;
     for e in fs::read_dir(from)
@@ -395,6 +422,12 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     {
         let src = e.path();
         let dst = to.join(e.file_name());
+        // A link is copied as a link: following it could copy files from
+        // outside the collection (or loop).
+        if e.file_type().is_ok_and(|t| t.is_symlink()) {
+            copy_link(&src, &dst)?;
+            continue;
+        }
         if src.is_dir() {
             copy_dir(&src, &dst)?;
         } else {
@@ -569,6 +602,38 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let c = Collection::new(d.path(), vec!["target".into()]);
         (d, c)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_an_ancestor_is_not_followed() {
+        let (d, c) = coll();
+        let users = c.create_folder("", "Users").unwrap();
+        c.create_request(&users, "a", &Request::new_http()).unwrap();
+        std::os::unix::fs::symlink("..", d.path().join("Users/up")).unwrap();
+        std::os::unix::fs::symlink(".", d.path().join("self")).unwrap();
+        let root = c.scan().unwrap();
+        assert_eq!(root.folders.len(), 1);
+        assert!(root.folders[0].folders.is_empty());
+        // Two folders that link to each other.
+        let admin = c.create_folder("", "Admin").unwrap();
+        c.create_request(&admin, "b", &Request::new_http()).unwrap();
+        std::os::unix::fs::symlink("../Admin", d.path().join("Users/to-admin")).unwrap();
+        std::os::unix::fs::symlink("../Users", d.path().join("Admin/to-users")).unwrap();
+        let root = c.scan().unwrap();
+        assert_eq!(root.folders.len(), 2);
+        // A duplicate keeps links as links: nothing behind them is copied.
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("id_key"), "private").unwrap();
+        std::os::unix::fs::symlink(outside.path(), d.path().join("Users/keys")).unwrap();
+        let copy = c.duplicate(&users).unwrap();
+        let keys = d.path().join(&copy).join("keys");
+        assert!(
+            fs::symlink_metadata(&keys)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]

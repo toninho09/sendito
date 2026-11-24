@@ -526,11 +526,12 @@ fn ctx_for(
     }
 }
 
-async fn scope_of(project: &Project, env: &Option<String>) -> (Scope, Vec<String>) {
+/// The loaded scope, its errors and the names whose value did not load.
+async fn scope_of(project: &Project, env: &Option<String>) -> (Scope, Vec<String>, Vec<String>) {
     let envs = project.envs.clone();
     let e2 = env.clone();
     tokio::task::spawn_blocking(move || {
-        runner::build_scope(&envs, e2.as_deref(), &Default::default())
+        runner::build_scope_checked(&envs, e2.as_deref(), &Default::default())
     })
     .await
     .unwrap_or_default()
@@ -592,8 +593,13 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
             "warning: --report json applies to folder runs; ignoring it for a single request"
         );
     }
-    let names = runner::names_scope(&project.envs, env.as_deref(), &Default::default());
-    let un = runner::unresolved(&req, &names);
+    let (scope, errors, failed) = scope_of(&project, &env).await;
+    for e in &errors {
+        eprintln!("warning: {e}");
+    }
+    // Check against the loaded values, as a folder run does: a secret that
+    // failed to load (no keychain entry, no secrets.toml) is unresolved.
+    let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
     if !un.is_empty() && !allow_unresolved {
         eprintln!(
             "sendito: unresolved variables: {} (define them in the environment or pass --allow-unresolved)",
@@ -603,10 +609,6 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                 .join(", ")
         );
         return ExitCode::from(3);
-    }
-    let (scope, errors) = scope_of(&project, &env).await;
-    for e in &errors {
-        eprintln!("warning: {e}");
     }
     let ctx = ctx_for(
         &project,
@@ -648,8 +650,17 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                         }
                         eprintln!();
                     }
+                    if r.truncated {
+                        eprintln!(
+                            "sendito: warning: the body is cut at the [http] max_body_mb limit"
+                        );
+                    }
                     let _ = out.write_all(o.doc.bytes());
-                    if !o.doc.bytes().ends_with(b"\n") && !o.doc.is_empty() {
+                    // Keep redirected output byte-exact; end the line only on a terminal.
+                    if std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        && !o.doc.bytes().ends_with(b"\n")
+                        && !o.doc.is_empty()
+                    {
                         let _ = out.write_all(b"\n");
                     }
                     0
@@ -672,6 +683,8 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
             let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
             drop(ctl_tx);
+            // A secret in the target must not reach the log, as for WebSocket.
+            let uri_secrets = scope.secret_values();
             let run = runner::exec_grpc(&ctx, &g, scope, errors, utx, ctl_rx);
             let mut code = 0u8;
             let mut fails = 0;
@@ -680,7 +693,7 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                     match u {
                         GrpcUpdate::Started { resolved, kind } => eprintln!(
                             "{} /{}/{} ({})",
-                            resolved.uri,
+                            sendito_core::vars::scrub(&resolved.uri, &uri_secrets),
                             resolved.service,
                             resolved.method,
                             kind.label()
@@ -726,7 +739,10 @@ async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> E
                 ExitCode::SUCCESS
             }
         }
-        Request::Ws(w) => {
+        Request::Ws(mut w) => {
+            if no_cookies {
+                w.options.cookies = Some(false);
+            }
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
             let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
             drop(ctl_tx);
@@ -901,7 +917,7 @@ async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCo
         eprintln!("sendito: no requests under {what}");
         return ExitCode::from(3);
     }
-    let (mut scope, scope_errors) = scope_of(&project, &env).await;
+    let (mut scope, scope_errors, failed) = scope_of(&project, &env).await;
     for e in &scope_errors {
         eprintln!("warning: {e}");
     }
@@ -952,7 +968,7 @@ async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCo
             Request::Ws(_) => "websocket",
             Request::Mcp(_) => "mcp",
         };
-        let un = runner::unresolved(&req, &scope);
+        let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
         if !un.is_empty() && !allow_unresolved {
             nunresolved += 1;
             let names = un
@@ -1136,10 +1152,14 @@ async fn run_one(
             }
         }
         Request::Ws(w) => {
+            let mut w = w.clone();
+            if no_cookies {
+                w.options.cookies = Some(false);
+            }
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
             let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
             drop(ctl_tx);
-            let run = runner::exec_ws(ctx, w, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
+            let run = runner::exec_ws(ctx, &w, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
             let mut code = 1006i64;
             let mut label = String::from("close 1006");
             let mut error: Option<String> = None;

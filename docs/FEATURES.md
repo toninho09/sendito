@@ -270,7 +270,10 @@ from the request.
 * **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) opens the
   servers as a table — name, kind (`http`/`stdio`) and the URL or command line —
   and `Ctrl+S` writes `[mcp.servers]` to the project config
-  (`.sendito/config.toml`), keeping the rest of the file. Rows whose name and
+  (`.sendito/config.toml`), keeping the rest of the file. It shows and writes
+  only the project file's servers: servers from the global config are used but
+  never copied into the project file. While the project config has an error,
+  the editor and `:mcpadd` show it and write nothing. Rows whose name and
   URL/command line did not change keep their `args`, `env`, `headers` and `auth`,
   which are edited in the file. `:mcpadd <name>` asks for the URL or command and
   adds one server at once.
@@ -315,7 +318,11 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   `{{$isoTimestamp}}` (RFC 3339 UTC), `{{$randomInt}}` (0–1000).
 * **Unresolved placeholders** are red in the editor and named in the status line.
   Sending asks for confirmation; `sendito run` refuses unless
-  `--allow-unresolved` is given.
+  `--allow-unresolved` is given. A secret that did not load (no keychain entry,
+  no `secrets.toml` value) counts as unresolved: the send stops and asks, and
+  a watch stops. An active-environment secret that did not load never falls
+  back to the collection's value for the same name, and while the active
+  environment file cannot be read no collection value stands in for it.
 * **Four secret sources**, mixable in one environment:
 
 | `source` | Value lives in | Secret |
@@ -336,8 +343,12 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   recognised, and secrets shorter than 3 characters are not masked in echoes.
 * The **environment editor** (`Ctrl+W V`) edits variables in a table, writes
   secret values to their source, and shows whether each one is set.
-* Environment names cannot start with `_`. `_collection` holds the
-  collection-level variables' secrets.
+* Environment names cannot start with `_`, and `runtime` is reserved.
+  `_collection` holds the collection-level variables' secrets.
+* The editor never loses edits: switching (`Ctrl+PageUp`/`Ctrl+PageDown`) and
+  `Ctrl+N` wait until the edits are saved (`Ctrl+S`) or discarded, and an
+  environment file that cannot be read shows its error and is not overwritten
+  by `Ctrl+S`.
 
 ![Switching environment to resolve an undefined variable](media/recordings/04-switch-env.gif)
 

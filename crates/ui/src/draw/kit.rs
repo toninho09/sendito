@@ -251,8 +251,8 @@ pub fn short_method(m: &str) -> &str {
         "DELETE" => "DEL",
         "OPTIONS" => "OPT",
         "CONNECT" => "CONN",
-        m if m.len() > 5 => &m[..5],
-        m => m,
+        // Cut on a char boundary: a method read from a file can be non-ASCII.
+        m => m.char_indices().nth(5).map_or(m, |(i, _)| &m[..i]),
     }
 }
 
@@ -677,6 +677,13 @@ pub(super) fn wrap_text(s: &str, w: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_method_cuts_on_char_boundaries() {
+        assert_eq!(short_method("PURGÉ!"), "PURGÉ");
+        assert_eq!(short_method("PATCH"), "PATCH");
+        assert_eq!(short_method("DELETE"), "DEL");
+    }
 
     #[test]
     fn labels_fit_and_scrollbar_thumb() {

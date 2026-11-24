@@ -310,6 +310,13 @@ impl Envs {
                     "environment names cannot start with '_'".into(),
                 ));
             }
+            // Script values live in a scope layer with this name.
+            if env.name == sendito_core::script::RUNTIME_LAYER {
+                return Err(StoreError::Invalid(format!(
+                    "\"{}\" is reserved for values set by scripts",
+                    env.name
+                )));
+            }
         }
         let p = self.env_path(&env.name);
         let text = env_to_toml(env);
@@ -348,7 +355,18 @@ impl Envs {
         match fs::read_to_string(&path) {
             Ok(t) => {
                 make_private(&path);
-                toml::from_str(&t).map_err(|e| format!("secrets.toml: {e}"))
+                // The full error quotes the failing line, which holds a
+                // secret: report the position and the reason only.
+                toml::from_str(&t).map_err(|e: toml::de::Error| {
+                    let line = e
+                        .span()
+                        .and_then(|r| t.get(..r.start))
+                        .map(|head| head.matches('\n').count() + 1);
+                    match line {
+                        Some(l) => format!("secrets.toml line {l}: {}", e.message()),
+                        None => format!("secrets.toml: {}", e.message()),
+                    }
+                })
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
             Err(e) => Err(format!("secrets.toml: {e}")),
@@ -505,6 +523,18 @@ pub fn expand(root: &Path, p: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_secrets_toml_error_does_not_quote_the_secret() {
+        let d = tempfile::tempdir().unwrap();
+        let envs = Envs::new(d.path(), "c", Arc::new(MemoryKeychain::default()));
+        let p = envs.secrets_path();
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, "[local]\ntoken = \"s3cr3t\"\ntoken = \"s3cr3t\"\n").unwrap();
+        let e = envs.load_local().unwrap_err();
+        assert!(!e.contains("s3cr3t"), "{e}");
+        assert!(e.contains("line 3"), "{e}");
+    }
 
     fn envs() -> (tempfile::TempDir, Envs) {
         let d = tempfile::tempdir().unwrap();

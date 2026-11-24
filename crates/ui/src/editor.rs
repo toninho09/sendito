@@ -1439,7 +1439,7 @@ impl TextEditor {
         let mut w = 0usize;
         let mut col = 0usize;
         for ch in line.chars() {
-            let cw = ch.width().unwrap_or(0);
+            let cw = cell_width(ch);
             if w + cw > target {
                 break;
             }
@@ -1464,7 +1464,7 @@ impl TextEditor {
     }
 
     fn display_col(line: &str, col: usize) -> usize {
-        line.chars().take(col).map(|c| c.width().unwrap_or(0)).sum()
+        line.chars().take(col).map(cell_width).sum()
     }
 
     /// Draws the editor into `area` and returns the cursor's screen position.
@@ -1555,7 +1555,7 @@ impl TextEditor {
             let styles = self.line_styles(line, theme, is_defined);
             let mut x = 0usize;
             for (ci, ch) in line.chars().enumerate() {
-                let cw = ch.width().unwrap_or(0);
+                let cw = cell_width(ch);
                 if x + cw <= self.scroll_col {
                     x += cw;
                     continue;
@@ -1571,9 +1571,11 @@ impl TextEditor {
                         st = st.patch(sel_style);
                     }
                 }
+                // Control characters never reach the terminal: an ESC in a
+                // field could start an escape sequence there.
                 let shown = if self.mask {
                     '•'
-                } else if ch == '\t' {
+                } else if ch.is_control() {
                     ' '
                 } else {
                     ch
@@ -1770,6 +1772,16 @@ pub fn json_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> 
         i += 1;
     }
     out
+}
+
+/// Screen columns of one character. A control character (a tab too) takes
+/// one cell and is drawn as a space.
+fn cell_width(ch: char) -> usize {
+    if ch.is_control() {
+        1
+    } else {
+        ch.width().unwrap_or(0)
+    }
 }
 
 #[cfg(test)]

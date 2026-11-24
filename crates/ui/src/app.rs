@@ -19,7 +19,7 @@ use sendito_store::session::{Layout, Session, SessionTab};
 use tokio::sync::mpsc;
 
 use crate::complete::{CompleteKind, Completion};
-use crate::editor::{Clipboard, Outcome, TextEditor, VimMode};
+use crate::editor::{Clipboard, Outcome, Pos, TextEditor, VimMode};
 use crate::form::TableOutcome;
 use crate::keymap::{Action, Chord, Ctx, Keymap, Lookup};
 use crate::overlay::*;
@@ -207,8 +207,11 @@ pub enum AppMsg {
     },
     History(Vec<HistoryEntry>),
     Scope {
-        result: Box<(Scope, Vec<String>)>,
+        /// The scope, its errors and the names whose value did not load.
+        result: Box<(Scope, Vec<String>, Vec<String>)>,
         then: ScopeThen,
+        /// "Send anyway" was chosen in the "Secrets not loaded" dialog.
+        secrets_ok: bool,
     },
 }
 
@@ -246,6 +249,18 @@ pub enum ScopeThen {
         name: String,
         path: Option<String>,
     },
+}
+
+impl ScopeThen {
+    /// The tab and the request this send is for.
+    fn request(&self) -> (u64, Request) {
+        match self {
+            ScopeThen::Http { tab, req, .. } => (*tab, Request::Http((**req).clone())),
+            ScopeThen::Grpc { tab, req, .. } => (*tab, Request::Grpc((**req).clone())),
+            ScopeThen::Ws { tab, req, .. } => (*tab, Request::Ws((**req).clone())),
+            ScopeThen::Mcp { tab, req, .. } => (*tab, Request::Mcp((**req).clone())),
+        }
+    }
 }
 
 /// Rectangles from the last frame, used for mouse handling.
@@ -328,6 +343,9 @@ pub struct App {
     pub osc52: Vec<String>,
     pub size: (u16, u16),
     pub parked_env: Option<EnvEditor>,
+    /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
+    /// send only.
+    secrets_ok: bool,
     /// The MCP servers editor parked behind its save/discard confirmation.
     pub parked_mcp: Option<McpEditor>,
     /// The prompt or import dialog parked behind its discard confirmation.
@@ -444,6 +462,7 @@ impl App {
             osc52: Vec::new(),
             size: (80, 24),
             parked_env: None,
+            secrets_ok: false,
             parked_mcp: None,
             parked_dialog: None,
             last_report: None,
@@ -723,8 +742,15 @@ impl App {
                     p.sel = 0;
                     p.armed = true;
                 }
-                Overlay::Env(e) => e.table.paste(s),
-                Overlay::Mcp(m) => m.table.paste(s),
+                // A paste is an edit: Esc must ask before it is lost.
+                Overlay::Env(e) => {
+                    e.table.paste(s);
+                    e.dirty = true;
+                }
+                Overlay::Mcp(m) => {
+                    m.table.paste(s);
+                    m.dirty = true;
+                }
                 _ => {}
             }
             return;
@@ -1510,11 +1536,46 @@ impl App {
         match c.kind {
             // The key is replaced in place; the rest of the JSON stays.
             CompleteKind::Fields => {
-                let insert = cand.insert(c.quoted);
-                ed.replace_span(c.start, ed.cursor, &insert);
-                if cand.cursor_back > 0 {
-                    let back = cand.cursor_back as usize;
-                    ed.cursor.col = ed.cursor.col.saturating_sub(back);
+                // The rest of the key after the cursor is replaced too, and an
+                // existing `: value` is kept: only the name changes then.
+                let line: Vec<char> = ed
+                    .lines()
+                    .get(ed.cursor.row)
+                    .map(|l| l.chars().collect())
+                    .unwrap_or_default();
+                let mut end = ed.cursor.col;
+                while line.get(end).is_some_and(|ch| {
+                    !matches!(ch, '"' | ':' | ',' | '{' | '}') && !ch.is_whitespace()
+                }) {
+                    end += 1;
+                }
+                let closed = c.quoted && line.get(end) == Some(&'"');
+                if closed {
+                    end += 1;
+                }
+                let mut after = end;
+                while line.get(after).is_some_and(|ch| ch.is_whitespace()) {
+                    after += 1;
+                }
+                let has_value = line.get(after) == Some(&':');
+                let span_end = Pos {
+                    row: ed.cursor.row,
+                    col: end,
+                };
+                if has_value {
+                    let name = if c.quoted {
+                        format!("{}\"", cand.name)
+                    } else {
+                        format!("\"{}\"", cand.name)
+                    };
+                    ed.replace_span(c.start, span_end, &name);
+                } else {
+                    let insert = cand.insert(c.quoted);
+                    ed.replace_span(c.start, span_end, &insert);
+                    if cand.cursor_back > 0 {
+                        let back = cand.cursor_back as usize;
+                        ed.cursor.col = ed.cursor.col.saturating_sub(back);
+                    }
                 }
             }
             // Single-line name fields take the whole suggestion.
@@ -1756,6 +1817,15 @@ impl App {
 
     /// The top bar part to focus for the active tab: every kind draws the
     /// same `[picker chip][endpoint input]` strip, and the input is part 1.
+    /// Focus for an opened request: the URL for HTTP and WebSocket (whose
+    /// part 0 is a static badge), the method or tool chip for gRPC and MCP.
+    fn open_focus(kind: Kind) -> Focus {
+        match kind {
+            Kind::Http | Kind::Ws => Focus::Bar(1),
+            _ => Focus::Bar(0),
+        }
+    }
+
     fn top_bar_focus(&self) -> Focus {
         Focus::Bar(1)
     }
@@ -1916,12 +1986,18 @@ impl App {
         self.complete = None;
         self.clear_transient_status();
         let id = self.alloc_id();
-        let n = self.tabs.iter().filter(|t| t.path.is_none()).count() + 1;
-        let name = if n == 1 {
-            "untitled".to_string()
-        } else {
-            format!("untitled {n}")
+        // The lowest free name: two open tabs never share one.
+        let label = |n: usize| {
+            if n == 1 {
+                "untitled".to_string()
+            } else {
+                format!("untitled {n}")
+            }
         };
+        let name = (1..)
+            .map(label)
+            .find(|l| !self.tabs.iter().any(|t| t.path.is_none() && t.name == *l))
+            .unwrap_or_default();
         let blank = req == Request::new_http()
             || req == Request::new_grpc()
             || req == Request::new_ws()
@@ -1949,11 +2025,7 @@ impl App {
             .position(|t| t.path.as_deref() == Some(rel))
         {
             self.active = i;
-            self.focus = Focus::Bar(if self.tabs[i].ed.kind == Kind::Http {
-                1
-            } else {
-                0
-            });
+            self.focus = Self::open_focus(self.tabs[i].ed.kind);
             return;
         }
         match self.project.coll.load(rel) {
@@ -1968,14 +2040,10 @@ impl App {
                 );
                 tab.ed.set_vim(self.vim);
                 tab.refresh_model();
-                let non_http = tab.ed.kind != Kind::Http;
+                let kind = tab.ed.kind;
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
-                self.focus = if non_http {
-                    Focus::Bar(0)
-                } else {
-                    Focus::Bar(1)
-                };
+                self.focus = Self::open_focus(kind);
                 self.session_dirty = true;
             }
             Err(e) => self.set_status(format!("cannot open: {e}"), StatusKind::Error),
@@ -2015,6 +2083,8 @@ impl App {
             self.active = self.tabs.len().saturating_sub(1);
         }
         if self.tabs.is_empty() {
+            // With no tab left, the tree is the only place for focus: show it.
+            self.layout.sidebar_visible = true;
             self.focus = Focus::Sidebar;
         }
         self.session_dirty = true;
@@ -2228,7 +2298,7 @@ impl App {
         if let Request::Ws(w) = &req
             && w.url.trim().is_empty()
         {
-            self.focus = Focus::Bar(0);
+            self.focus = Focus::Bar(1);
             self.set_status("enter a ws:// or wss:// URL first", StatusKind::Warn);
             return;
         }
@@ -2286,9 +2356,13 @@ impl App {
         // A history copy is recorded under the request it came from.
         let path = tab.path.clone().or_else(|| tab.origin_path.clone());
         let edited = tab.path.is_some() && tab.dirty();
-        let mut resp = Response::new();
-        resp.summary.status = String::new();
-        tab.response = Some(resp);
+        // A watch repeat keeps the last response on screen until the new
+        // one arrives and takes over its view.
+        if !(from_watch && tab.response.is_some()) {
+            let mut resp = Response::new();
+            resp.summary.status = String::new();
+            tab.response = Some(resp);
+        }
         // A new request makes earlier messages stale.
         self.status = None;
         if edited && !from_watch {
@@ -2329,15 +2403,17 @@ impl App {
                 path,
             },
         };
+        let secrets_ok = std::mem::take(&mut self.secrets_ok);
         let task = self.rt.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                runner::build_scope(&envs, active.as_deref(), &runtime)
+                runner::build_scope_checked(&envs, active.as_deref(), &runtime)
             })
             .await
-            .unwrap_or_else(|e| (Scope::new(), vec![e.to_string()]));
+            .unwrap_or_else(|e| (Scope::new(), vec![e.to_string()], Vec::new()));
             let _ = tx.send(AppMsg::Scope {
                 result: Box::new(result),
                 then,
+                secrets_ok,
             });
         });
         let tab = &mut self.tabs[self.active];
@@ -2352,6 +2428,48 @@ impl App {
         if let Some(w) = &mut tab.watch {
             w.next = Instant::now() + w.interval;
         }
+    }
+
+    /// Stops a send whose secrets did not load, and asks before sending
+    /// the placeholders as typed (a watch stops: it would repeat this).
+    fn secrets_missing(&mut self, tab: u64, un: &[String], errors: &[String]) {
+        let active = self.tab().is_some_and(|t| t.id == tab);
+        if let Some(t) = self.tab_by_id(tab) {
+            t.running = None;
+            t.watch = None;
+            if t.response
+                .as_ref()
+                .is_some_and(|r| r.summary.status.is_empty())
+            {
+                t.response = None;
+            }
+        }
+        let list = un
+            .iter()
+            .map(|u| format!("{{{{{u}}}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Another tab, or a dialog the user is working in (which must not
+        // be replaced): the status line says it instead.
+        if !active || self.overlay.is_some() {
+            self.set_status(
+                format!("not sent: {list} could not be loaded or checked"),
+                StatusKind::Error,
+            );
+            return;
+        }
+        self.overlay = Some(Overlay::Confirm(Confirm {
+            title: "Secrets not loaded".into(),
+            message: format!(
+                "{list}: a secret did not load, or the environment file cannot be read so \
+                 its values cannot be checked ({}). Send anyway sends the request as it \
+                 resolves now: as typed, braces included, or with a value from another layer.",
+                errors.join("; ")
+            ),
+            buttons: vec!["Send anyway".into(), "Cancel".into()],
+            sel: 1,
+            action: ConfirmAction::SendMissingSecrets,
+        }));
     }
 
     fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {
@@ -2499,25 +2617,29 @@ impl App {
     }
 
     fn cancel(&mut self) {
-        if let Some((_, task)) = self.cookies_job.take() {
-            task.abort();
-            self.set_status("cookie command cancelled", StatusKind::Info);
-            return;
-        }
-        if let Some((_, task)) = self.oauth_login.take() {
-            task.abort();
-            self.set_status("OAuth login cancelled", StatusKind::Info);
-            return;
-        }
-        if let Some((_, task)) = self.mcp_discovery.take() {
-            task.abort();
-            self.set_status("MCP tool discovery cancelled", StatusKind::Info);
-            return;
-        }
-        if let Some((_, task)) = self.schema_job.take() {
-            task.abort();
-            self.set_status("schema load cancelled", StatusKind::Info);
-            return;
+        // The request in view comes first; background jobs are cancelled
+        // when it is not running.
+        if !self.tab().is_some_and(|t| t.running.is_some()) {
+            if let Some((_, task)) = self.cookies_job.take() {
+                task.abort();
+                self.set_status("cookie command cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.oauth_login.take() {
+                task.abort();
+                self.set_status("OAuth login cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.mcp_discovery.take() {
+                task.abort();
+                self.set_status("MCP tool discovery cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.schema_job.take() {
+                task.abort();
+                self.set_status("schema load cancelled", StatusKind::Info);
+                return;
+            }
         }
         let Some(t) = self.tab_mut() else { return };
         let Some(r) = &t.running else {
@@ -2593,7 +2715,7 @@ impl App {
                 // The resolved URL can carry an API key in its query string.
                 resp.messages
                     .doc
-                    .append_text(&format!("connecting to {}\n", mask_url(&resolved.url)));
+                    .append_text(&format!("connecting to {}\n", resolved.url));
             }
             WsUpdate::Event(ev) => {
                 resp.messages.doc.append_text(&ws_event_text(&ev));
@@ -2724,8 +2846,29 @@ impl App {
 
     pub fn on_msg(&mut self, msg: AppMsg) {
         match msg {
-            AppMsg::Scope { result, then } => {
-                let (scope, errors) = *result;
+            AppMsg::Scope {
+                result,
+                then,
+                secrets_ok,
+            } => {
+                let (scope, errors, failed) = *result;
+                // A secret that did not load (no keychain entry, no
+                // secrets.toml value) passed the names check: check the
+                // loaded values before `{{name}}` (or a lower layer's value)
+                // goes out. "Send anyway" for undefined names does not cover it.
+                if !secrets_ok && !failed.is_empty() {
+                    let (tab, req) = then.request();
+                    let un = runner::unresolved_send(
+                        &req,
+                        &scope,
+                        &failed,
+                        &self.project.config.mcp.servers,
+                    );
+                    if !un.is_empty() {
+                        self.secrets_missing(tab, &un, &errors);
+                        return;
+                    }
+                }
                 self.start_with_scope(scope, errors, then);
             }
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
@@ -2925,11 +3068,19 @@ impl App {
                 }
             }
             AppMsg::History(h) => {
-                self.history_sel = h.len().saturating_sub(1).min(self.history_sel);
-                self.history_sel = 0;
-                self.history_follow = true;
+                // Keep the selection on the same entry: new ones arrive on top.
+                let key = |e: &sendito_store::history::HistoryEntry| (e.ts.clone(), e.name.clone());
+                let selected = self
+                    .history
+                    .as_ref()
+                    .and_then(|old| old.get(self.history_sel))
+                    .map(key);
                 let mut h = h;
                 h.reverse();
+                self.history_sel = selected
+                    .and_then(|k| h.iter().position(|e| key(e) == k))
+                    .unwrap_or(0);
+                self.history_follow = true;
                 self.history = Some(h);
             }
         }
@@ -3048,6 +3199,12 @@ impl App {
                 &o.scope_errors,
                 &o.resolved.notes,
             )));
+            if t.watch.is_some()
+                && o.response.is_ok()
+                && let Some(old) = &t.response
+            {
+                resp.keep_view_of(old);
+            }
             t.response = Some(resp);
         }
         self.apply_updates(updates);
@@ -3559,12 +3716,38 @@ impl App {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
         match self.project.envs.load(&name) {
             Ok(env) => ed.load(&env, |v| self.project.envs.is_set(&name, v)),
-            Err(e) => ed.error = Some(e.to_string()),
+            Err(e) => {
+                // Never show (and so never save) another environment's rows.
+                ed.table = EnvEditor::table();
+                ed.dirty = false;
+                ed.error = Some(e.to_string());
+            }
         }
     }
 
     fn save_env_editor(&mut self, ed: &mut EnvEditor) -> bool {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
+        // A file that does not parse was never loaded: saving would replace
+        // it with what the editor shows.
+        match self.project.envs.load(&name) {
+            Ok(_) => {}
+            // A deleted file is written again.
+            Err(sendito_store::StoreError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                ed.error = Some(format!("not saved: fix the file first ({e})"));
+                return false;
+            }
+        }
+        // `to_env` keeps the last of two rows with one name: say so instead.
+        let mut seen = std::collections::HashSet::new();
+        for r in ed.table.values() {
+            let var = r.cells[0].text().trim().to_string();
+            if !var.is_empty() && !seen.insert(var.clone()) {
+                ed.error = Some(format!("{var}: two variables have this name"));
+                return false;
+            }
+        }
         let (env, secrets) = ed.to_env(&name);
         if let Err(e) = self.project.envs.save(&env) {
             ed.error = Some(e.to_string());
@@ -3597,6 +3780,34 @@ impl App {
         sendito_store::config::project_path(&self.project.root)
     }
 
+    /// The project file's own `[mcp.servers]`. The editors work on these
+    /// only: the merged config also holds the global file's servers, whose
+    /// literal values (tokens) must never be copied into the project file,
+    /// which is versioned.
+    ///
+    /// A project file that does not load cleanly is an error: its servers
+    /// would read as none, and a write would delete them.
+    fn project_mcp_servers(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, sendito_store::config::McpServer>, String> {
+        let (cfg, warnings) = sendito_store::config::load(None, Some(&self.project_config_path()));
+        if warnings.is_empty() {
+            Ok(cfg.mcp.servers)
+        } else {
+            Err(format!("fix the config first: {}", warnings.join("; ")))
+        }
+    }
+
+    /// Reloads the merged servers (global and project) after a write.
+    fn reload_mcp_servers(&mut self) {
+        let path = self.project_config_path();
+        self.project.config.mcp.servers =
+            sendito_store::config::load(self.project.global_config.as_deref(), Some(&path))
+                .0
+                .mcp
+                .servers;
+    }
+
     pub fn open_mcp_editor(&mut self) {
         self.clear_transient_status();
         let mut ed = McpEditor {
@@ -3604,7 +3815,10 @@ impl App {
             dirty: false,
             error: None,
         };
-        ed.load(&self.project.config.mcp.servers);
+        match self.project_mcp_servers() {
+            Ok(servers) => ed.load(&servers),
+            Err(e) => ed.error = Some(e),
+        }
         self.overlay = Some(Overlay::Mcp(ed));
     }
 
@@ -3638,13 +3852,30 @@ impl App {
     /// keeping what the table does not show (env, headers, auth) for a row
     /// whose name and command/URL did not change.
     fn save_mcp_editor(&mut self, ed: &mut McpEditor) -> bool {
+        // `rows` keeps the first of two rows with one name: say so instead of
+        // dropping the other one on save.
+        let mut seen = std::collections::HashSet::new();
+        for r in ed.table.values() {
+            let name = r.cells[0].text().trim().to_string();
+            if !name.is_empty() && !seen.insert(name.clone()) {
+                ed.error = Some(format!("{name}: two servers have this name"));
+                return false;
+            }
+        }
+        let own = match self.project_mcp_servers() {
+            Ok(own) => own,
+            Err(e) => {
+                ed.error = Some(e);
+                return false;
+            }
+        };
         let mut servers = std::collections::BTreeMap::new();
         for (name, kind, value) in ed.rows() {
             if value.is_empty() {
                 ed.error = Some(format!("{name}: set a URL or a command"));
                 return false;
             }
-            let old = self.project.config.mcp.servers.get(&name).cloned();
+            let old = own.get(&name).cloned();
             servers.insert(name, mcp_server_entry(kind, &value, old));
         }
         let path = self.project_config_path();
@@ -3653,8 +3884,8 @@ impl App {
             return false;
         }
         let n = servers.len();
-        self.project.config.mcp.servers = servers;
-        ed.load(&self.project.config.mcp.servers);
+        self.reload_mcp_servers();
+        ed.load(&servers);
         self.set_status(
             format!("saved {n} MCP server(s) to {}", path.display()),
             StatusKind::Ok,
@@ -3679,12 +3910,12 @@ impl App {
                 "an http server needs a URL".into()
             });
         }
-        let mut servers = self.project.config.mcp.servers.clone();
+        let mut servers = self.project_mcp_servers()?;
         let old = servers.get(name).cloned();
         servers.insert(name.to_string(), mcp_server_entry(kind, value, old));
         let path = self.project_config_path();
         sendito_store::config::set_mcp_servers(&path, &servers).map_err(|e| e.to_string())?;
-        self.project.config.mcp.servers = servers;
+        self.reload_mcp_servers();
         self.set_status(
             format!("added MCP server {name} to {}", path.display()),
             StatusKind::Ok,
@@ -3818,7 +4049,7 @@ impl App {
             "Name",
             input,
             vec![("In folder".into(), labels, idx)],
-            PromptAction::SaveHistory(i),
+            PromptAction::SaveHistory(Box::new(e)),
         );
         prompt.note = note;
         self.overlay = Some(Overlay::Prompt(prompt));
@@ -4238,6 +4469,8 @@ impl App {
             return Err("paste a curl command or enter a file path".into());
         }
         if t.starts_with("curl ") || t == "curl" {
+            // Check first: on an error the dialog stays open with the text.
+            sendito_import::curl::import(t).map_err(|e| format!("curl: {e}"))?;
             self.overlay = None;
             self.import_curl(t);
             return Ok(());
@@ -4369,6 +4602,28 @@ impl App {
         }));
     }
 
+    /// The scope an export renders with, and a warning naming the secrets
+    /// that did not load (they stay `{{placeholders}}` in the output).
+    fn export_scope(&self, include_secrets: bool) -> (Scope, String) {
+        if !include_secrets {
+            return (self.names.clone(), String::new());
+        }
+        let (scope, errors) = runner::build_scope(
+            &self.project.envs,
+            self.active_env.as_deref(),
+            &self.runtime,
+        );
+        let warning = if errors.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "NOT LOADED (left as typed, or a value from another layer): {}\n\n",
+                errors.join("; ")
+            )
+        };
+        (scope, warning)
+    }
+
     pub fn export_curl(&mut self, include_secrets: bool) {
         let Some(t) = self.tab() else { return };
         let Request::Http(h) = &t.model else {
@@ -4376,16 +4631,7 @@ impl App {
             return;
         };
         let h = h.clone();
-        let scope = if include_secrets {
-            runner::build_scope(
-                &self.project.envs,
-                self.active_env.as_deref(),
-                &self.runtime,
-            )
-            .0
-        } else {
-            self.names.clone()
-        };
+        let (scope, warning) = self.export_scope(include_secrets);
         let cmd = sendito_import::curl::export(&h, &scope, include_secrets, &self.project.root);
         self.clipboard.set(cmd.clone(), false);
         self.osc52.push(cmd.clone());
@@ -4416,16 +4662,23 @@ impl App {
         self.overlay = Some(Overlay::Report(Report {
             title: "Copy as curl".into(),
             viewer: Viewer::new(Doc::text(&format!(
-                "{cmd}\n\n── notes (not part of the command) ──\n{flags}{note}\n"
+                "{cmd}\n\n── notes (not part of the command) ──\n{warning}{flags}{note}\n"
             ))),
             copy_text: cmd,
             copied: true,
             close_status: Some("the curl command was sent to the terminal clipboard".into()),
         }));
-        self.set_status(
-            "curl command sent to the terminal clipboard",
-            StatusKind::Ok,
-        );
+        if warning.is_empty() {
+            self.set_status(
+                "curl command sent to the terminal clipboard",
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                "curl command sent to the terminal clipboard; some secrets did not load",
+                StatusKind::Warn,
+            );
+        }
     }
 
     /// Copies the active request as an .http file (JetBrains HTTP client /
@@ -4438,16 +4691,7 @@ impl App {
         };
         let name = t.name.clone();
         let h = h.clone();
-        let scope = if include_secrets {
-            runner::build_scope(
-                &self.project.envs,
-                self.active_env.as_deref(),
-                &self.runtime,
-            )
-            .0
-        } else {
-            self.names.clone()
-        };
+        let (scope, warning) = self.export_scope(include_secrets);
         let file = sendito_import::http_file::export(
             &name,
             &h,
@@ -4465,18 +4709,25 @@ impl App {
         self.overlay = Some(Overlay::Report(Report {
             title: "Copy as .http".into(),
             viewer: Viewer::new(Doc::text(&format!(
-                "{file}\n\n── notes (not part of the file) ──\n{note}\n"
+                "{file}\n\n── notes (not part of the file) ──\n{warning}{note}\n"
             ))),
             copy_text: file,
             copied: true,
             close_status: Some("the .http file was sent to the terminal clipboard".into()),
         }));
-        self.set_status(".http file sent to the terminal clipboard", StatusKind::Ok);
+        if warning.is_empty() {
+            self.set_status(".http file sent to the terminal clipboard", StatusKind::Ok);
+        } else {
+            self.set_status(
+                ".http file sent to the terminal clipboard; some secrets did not load",
+                StatusKind::Warn,
+            );
+        }
     }
 
     fn format_body(&mut self) {
         let Some(t) = self.tab_mut() else { return };
-        let ed = if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp) {
+        let ed = if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp | Kind::Ws) {
             &mut t.ed.message
         } else {
             &mut t.ed.body_text
@@ -4553,10 +4804,12 @@ impl App {
         let r = t.response.as_ref().ok_or("no response")?;
         let p =
             sendito_store::env::expand(&std::env::current_dir().unwrap_or_default(), path.trim());
-        std::fs::write(&p, r.body.doc.bytes()).map_err(|e| format!("{}: {e}", p.display()))?;
+        // The jq filter is display-only: save the body as received.
+        let bytes = r.jq_src.as_deref().unwrap_or(r.body.doc.bytes());
+        std::fs::write(&p, bytes).map_err(|e| format!("{}: {e}", p.display()))?;
         Ok(format!(
             "saved {} to {}",
-            human_size(r.body.doc.len() as u64),
+            human_size(bytes.len() as u64),
             p.display()
         ))
     }
@@ -4784,7 +5037,11 @@ impl App {
             }
             "wq" | "x" => {
                 self.save();
-                self.request_quit();
+                // An unnamed request opens the name prompt: let it stay up
+                // instead of hiding it under the quit dialog.
+                if self.overlay.is_none() {
+                    self.request_quit();
+                }
             }
             "q" | "quit" => self.request_quit(),
             "q!" | "quit!" => self.quit = true,
@@ -5647,19 +5904,11 @@ fn watch_text(samples: &[(bool, f64)]) -> String {
 }
 
 fn request_headers_text(o: &HttpOutcome) -> String {
-    let mut s = format!(
-        "Request sent\n{} {}\n",
-        o.resolved.method,
-        mask_url(&o.resolved.url)
-    );
+    let mut s = format!("Request sent\n{} {}\n", o.resolved.method, o.resolved.url);
     for (n, v) in &o.resolved.headers {
         s.push_str(&format!("{n}: {}\n", mask_header(n, v)));
     }
     s
-}
-
-fn mask_url(u: &str) -> String {
-    u.to_string()
 }
 
 /// Authorization values are shown masked in the UI.
@@ -6570,6 +6819,12 @@ impl App {
                 return true;
             }
             if ctrl && key.code == KeyCode::Char('n') {
+                // Creating an environment loads it into the editor: unsaved
+                // edits would be lost, as when switching.
+                if e.dirty {
+                    e.error = Some("save (Ctrl+S) or discard changes before creating one".into());
+                    return true;
+                }
                 let ed = std::mem::replace(
                     e,
                     EnvEditor {
@@ -6698,6 +6953,12 @@ impl App {
         match action {
             ConfirmAction::SendAnyway => {
                 if sel == 0 {
+                    self.send(true);
+                }
+            }
+            ConfirmAction::SendMissingSecrets => {
+                if sel == 0 {
+                    self.secrets_ok = true;
                     self.send(true);
                 }
             }
@@ -6888,8 +7149,14 @@ impl App {
                     let args = t.ed.message.text();
                     let unchanged =
                         matches!(&t.saved, Some(Request::Mcp(saved)) if saved.arguments == args);
-                    if unchanged
-                        && (args.trim().is_empty() || args.trim() == "{}")
+                    // Arguments that are still another tool's template are
+                    // replaced too: they were not typed by the user.
+                    let a_template = t
+                        .mcp_tools
+                        .iter()
+                        .any(|tl| mcp_argument_template(&tl.input_schema) == args);
+                    if ((unchanged && (args.trim().is_empty() || args.trim() == "{}"))
+                        || a_template)
                         && let Some(tool) = t.mcp_tools.get(index)
                     {
                         let template = mcp_argument_template(&tool.input_schema);
@@ -6999,15 +7266,9 @@ impl App {
                 self.set_status(format!("saved {rel}"), StatusKind::Ok);
                 self.session_dirty = true;
             }
-            PromptAction::SaveHistory(i) => {
+            PromptAction::SaveHistory(e) => {
                 let folders = self.tree.all_folders();
                 let folder = folders.get(choice).cloned().unwrap_or_default();
-                let e = self
-                    .history
-                    .as_ref()
-                    .and_then(|h| h.get(i))
-                    .cloned()
-                    .ok_or("entry gone")?;
                 let req = sendito_store::request_file::parse(&e.request)?;
                 let rel = self
                     .project
@@ -7549,6 +7810,15 @@ impl App {
                 return;
             }
             (Overlay::Mcp(_), OverlayHit::Outside) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            // A "new environment" prompt returns to the env editor parked
+            // behind it, as Esc does, so the editor's changes are kept.
+            (Overlay::Prompt(p), OverlayHit::Outside)
+                if !p.pending() && matches!(p.action, PromptAction::NewEnv) =>
+            {
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;

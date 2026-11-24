@@ -40,6 +40,12 @@ fn first_line(s: &str) -> String {
         .to_string()
 }
 
+/// Most outputs one filter may give. A filter such as `repeat(1)` never
+/// ends; it runs on the UI thread, so it stops here.
+const MAX_OUTPUTS: usize = 100_000;
+/// Most bytes all outputs of one filter may hold.
+const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
+
 /// Runs `expr` over the JSON document in `input` once and returns every
 /// output value as compact JSON bytes.
 ///
@@ -54,6 +60,7 @@ pub fn apply(expr: &str, input: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     let vars = Vars::default();
     let inputs = std::iter::once(Ok::<_, std::convert::Infallible>(input));
     let mut out = Vec::new();
+    let mut total = 0usize;
     let run = data::run(
         &runner,
         &filter,
@@ -65,6 +72,13 @@ pub fn apply(expr: &str, input: &[u8]) -> Result<Vec<Vec<u8>>, String> {
             let mut buf = Vec::new();
             let pp = json::write::Pp::default();
             json::write::write(&mut buf, &pp, 0, &v).map_err(|e| first_line(&e.to_string()))?;
+            total += buf.len();
+            if out.len() >= MAX_OUTPUTS || total > MAX_OUTPUT_BYTES {
+                return Err(format!(
+                    "filter stopped: more than {MAX_OUTPUTS} outputs or {} MB",
+                    MAX_OUTPUT_BYTES / (1024 * 1024)
+                ));
+            }
             out.push(buf);
             Ok(())
         },
@@ -77,6 +91,12 @@ pub fn apply(expr: &str, input: &[u8]) -> Result<Vec<Vec<u8>>, String> {
 mod tests {
     use super::apply;
     use serde_json::json;
+
+    #[test]
+    fn an_endless_filter_stops() {
+        let e = apply("repeat(1)", b"{}").unwrap_err();
+        assert!(e.contains("filter stopped"), "{e}");
+    }
 
     fn one(expr: &str, input: serde_json::Value) -> serde_json::Value {
         let out = apply(expr, serde_json::to_string(&input).unwrap().as_bytes()).unwrap();

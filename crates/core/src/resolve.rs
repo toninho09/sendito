@@ -205,6 +205,27 @@ fn auth_header(ctx: &mut Ctx<'_>, auth: &Auth) -> Option<(String, String)> {
 }
 
 /// Resolves an HTTP request. `base_dir` anchors relative file paths (the collection root).
+/// The auth header, and whether it is added: `taken` says that the request
+/// already defines a header with that name, which then wins. The variables of
+/// an auth header that is not added do not count as unresolved: it is never
+/// sent.
+fn auth_unless(
+    ctx: &mut Ctx,
+    auth: &Auth,
+    taken: impl Fn(&str) -> bool,
+) -> Option<(String, String, bool)> {
+    let mut own = Ctx {
+        scope: ctx.scope,
+        unresolved: Vec::new(),
+    };
+    let (name, value) = auth_header(&mut own, auth)?;
+    let added = !taken(&name);
+    if added {
+        ctx.unresolved.extend(own.unresolved);
+    }
+    Some((name, value, added))
+}
+
 pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> ResolvedHttp {
     let mut ctx = Ctx {
         scope,
@@ -290,7 +311,7 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
             ResolvedBody::File(resolve_path(base_dir, &ctx.r(path)))
         }
         Body::Multipart { parts } => {
-            if let Some(i) = headers
+            while let Some(i) = headers
                 .iter()
                 .position(|(n, _)| n.eq_ignore_ascii_case("content-type"))
             {
@@ -330,14 +351,16 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
         }
     };
 
-    if let Some((name, value)) = auth_header(&mut ctx, &req.auth) {
-        if has_header(&headers, &name) {
+    if let Some((name, value, added)) =
+        auth_unless(&mut ctx, &req.auth, |n| has_header(&headers, n))
+    {
+        if added {
+            headers.push((name, value));
+            origins.push(HeaderOrigin::Auth);
+        } else {
             notes.push(format!(
                 "auth header '{name}' not added: the request already defines it"
             ));
-        } else {
-            headers.push((name, value));
-            origins.push(HeaderOrigin::Auth);
         }
     }
 
@@ -411,6 +434,13 @@ pub fn resolve_mcp(req: &McpRequest, scope: &Scope) -> ResolvedMcp {
     }
 }
 
+/// Strips a URL scheme prefix such as `https://`, ignoring ASCII case.
+fn strip_scheme<'a>(s: &'a str, scheme: &str) -> Option<&'a str> {
+    let head = s.get(..scheme.len())?;
+    head.eq_ignore_ascii_case(scheme)
+        .then(|| &s[scheme.len()..])
+}
+
 /// Resolves a gRPC request. A target scheme (`https://`/`http://`) overrides `tls`.
 pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
     let mut ctx = Ctx {
@@ -418,13 +448,13 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
         unresolved: Vec::new(),
     };
     let target = ctx.r(req.target.trim());
-    let (tls, host) = if let Some(rest) = target.strip_prefix("https://") {
+    let (tls, host) = if let Some(rest) = strip_scheme(&target, "https://") {
         (true, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("http://") {
+    } else if let Some(rest) = strip_scheme(&target, "http://") {
         (false, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("grpcs://") {
+    } else if let Some(rest) = strip_scheme(&target, "grpcs://") {
         (true, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("grpc://") {
+    } else if let Some(rest) = strip_scheme(&target, "grpc://") {
         (false, rest.to_string())
     } else {
         (req.tls, target.clone())
@@ -437,11 +467,10 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
         .filter(|m| m.enabled && !m.name.trim().is_empty())
         .map(|m| (ctx.r(m.name.trim()).to_ascii_lowercase(), ctx.r(&m.value)))
         .collect();
-    if let Some((n, v)) = auth_header(&mut ctx, &req.auth) {
-        let n = n.to_ascii_lowercase();
-        if !metadata.iter().any(|(k, _)| *k == n) {
-            metadata.push((n, v));
-        }
+    if let Some((n, v, true)) = auth_unless(&mut ctx, &req.auth, |n| {
+        metadata.iter().any(|(k, _)| k.eq_ignore_ascii_case(n))
+    }) {
+        metadata.push((n.to_ascii_lowercase(), v));
     }
     if let Auth::ApiKey {
         key,
@@ -476,14 +505,11 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
         unresolved: Vec::new(),
     };
     let raw = ctx.r(req.url.trim());
-    let (tls, rest) = if let Some(rest) = raw
-        .strip_prefix("wss://")
-        .or_else(|| raw.strip_prefix("https://"))
+    let (tls, rest) = if let Some(rest) =
+        strip_scheme(&raw, "wss://").or_else(|| strip_scheme(&raw, "https://"))
     {
         (true, rest)
-    } else if let Some(rest) = raw
-        .strip_prefix("ws://")
-        .or_else(|| raw.strip_prefix("http://"))
+    } else if let Some(rest) = strip_scheme(&raw, "ws://").or_else(|| strip_scheme(&raw, "http://"))
     {
         (false, rest)
     } else {
@@ -508,9 +534,9 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
         .filter(|h| h.enabled && !h.name.trim().is_empty())
         .map(|h| (ctx.r(h.name.trim()), ctx.r(&h.value)))
         .collect();
-    if let Some((n, v)) = auth_header(&mut ctx, &req.auth)
-        && !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(&n))
-    {
+    if let Some((n, v, true)) = auth_unless(&mut ctx, &req.auth, |n| {
+        headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(n))
+    }) {
         headers.push((n, v));
     }
     ResolvedWs {
@@ -664,6 +690,26 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_auth_header_does_not_count_as_unresolved() {
+        let req = HttpRequest {
+            url: "http://h/".into(),
+            headers: vec![KeyValue::new("Authorization", "Bearer fixed")],
+            auth: Auth::Bearer {
+                token: "{{missing}}".into(),
+            },
+            ..Default::default()
+        };
+        let r = resolve_http(&req, &Scope::new(), Path::new("."));
+        assert!(r.unresolved.is_empty(), "{:?}", r.unresolved);
+        let req = HttpRequest {
+            headers: vec![],
+            ..req
+        };
+        let r = resolve_http(&req, &Scope::new(), Path::new("."));
+        assert_eq!(r.unresolved, vec!["missing".to_string()]);
+    }
     use crate::vars::VarValue;
     use std::collections::BTreeMap;
 

@@ -54,19 +54,149 @@ const OUTPUT_ONLY_WITH_VALUE: &[&str] = &[
     "--trace",
     "--trace-ascii",
     "--stderr",
+    "-D",
+    "--dump-header",
+    "--output-dir",
+    "--etag-save",
+    "--libcurl",
 ];
 
 fn normalize_continuations(cmd: &str) -> String {
     cmd.replace("\\\r\n", " ").replace("\\\n", " ")
 }
 
+/// Short options that take a value (`-XPOST` and `-X POST` are the same).
+const SHORT_WITH_VALUE: &[char] = &[
+    'X', 'H', 'd', 'F', 'u', 'A', 'e', 'b', 'm', 'o', 'w', 'x', 'c', 'T', 'E', 'K', 'r', 'z', 'U',
+    'Y', 'y', 'Q', 'P', 't', 'C', 'D',
+];
+
+/// Long options that take a value and that the importer reads.
+const LONG_WITH_VALUE: &[&str] = &[
+    "--request",
+    "--header",
+    "--data",
+    "--data-ascii",
+    "--data-raw",
+    "--data-binary",
+    "--data-urlencode",
+    "--json",
+    "--form",
+    "--form-string",
+    "--user",
+    "--user-agent",
+    "--referer",
+    "--cookie",
+    "--max-time",
+    "--url",
+    "--proxy",
+    "--oauth2-bearer",
+];
+
+/// Options that take a value but cannot be imported; the value is skipped
+/// with a note, so it is never read as the URL.
+const UNSUPPORTED_WITH_VALUE: &[&str] = &[
+    "--connect-timeout",
+    "--retry",
+    "--retry-delay",
+    "--retry-max-time",
+    "--max-redirs",
+    "--cacert",
+    "--capath",
+    "--cert",
+    "--cert-type",
+    "--key",
+    "--key-type",
+    "--pass",
+    "--resolve",
+    "--connect-to",
+    "-c",
+    "--cookie-jar",
+    "-T",
+    "--upload-file",
+    "-E",
+    "-K",
+    "--config",
+    "--limit-rate",
+    "-r",
+    "--range",
+    "-z",
+    "--time-cond",
+    "-U",
+    "--proxy-user",
+    "--noproxy",
+    "--unix-socket",
+    "--abstract-unix-socket",
+    "--interface",
+    "--local-port",
+    "--dns-servers",
+    "-Y",
+    "--speed-limit",
+    "-y",
+    "--speed-time",
+    "--max-filesize",
+    "--expect100-timeout",
+    "--keepalive-time",
+    "--pinnedpubkey",
+    "--ciphers",
+    "--tls-max",
+    "--aws-sigv4",
+    "--netrc-file",
+    "--proto",
+    "--proto-redir",
+    "-Q",
+    "--quote",
+    "-P",
+    "--ftp-port",
+    "-t",
+    "--telnet-option",
+    "-C",
+    "--continue-at",
+    "--socks4",
+    "--socks4a",
+    "--socks5",
+    "--socks5-hostname",
+    "--preproxy",
+    "--proxy-header",
+    "--crlfile",
+    "--request-target",
+    "--url-query",
+    "--etag-compare",
+    "--happy-eyeballs-timeout-ms",
+    "--hostpubmd5",
+    "--hostpubsha256",
+    "--mail-from",
+    "--mail-rcpt",
+    "--variable",
+];
+
+fn takes_value(opt: &str) -> bool {
+    LONG_WITH_VALUE.contains(&opt)
+        || UNSUPPORTED_WITH_VALUE.contains(&opt)
+        || OUTPUT_ONLY_WITH_VALUE.contains(&opt)
+        || opt
+            .strip_prefix('-')
+            .and_then(|c| {
+                let mut it = c.chars();
+                it.next().filter(|_| it.next().is_none())
+            })
+            .is_some_and(|c| SHORT_WITH_VALUE.contains(&c))
+}
+
 /// Splits combined short flags (`-sSL` → `-s -S -L`) and attached values
-/// (`-XPOST` → `-X POST`, `-HAccept:x` → `-H Accept:x`).
+/// (`-XPOST` → `-X POST`, `-HAccept:x` → `-H Accept:x`). The value of an
+/// option is never split, so `-d -10` keeps `-10` as the body.
 fn expand(tokens: Vec<String>) -> Vec<String> {
-    const WITH_VALUE: &[char] = &['X', 'H', 'd', 'F', 'u', 'A', 'e', 'b', 'm', 'o', 'w', 'x'];
     let mut out = Vec::new();
+    let mut value_next = false;
     for t in tokens {
+        if value_next {
+            value_next = false;
+            out.push(t);
+            continue;
+        }
         if t.starts_with("--") || !t.starts_with('-') || t.len() <= 2 {
+            value_next = takes_value(&t);
             out.push(t);
             continue;
         }
@@ -75,9 +205,11 @@ fn expand(tokens: Vec<String>) -> Vec<String> {
         while i < chars.len() {
             let c = chars[i];
             out.push(format!("-{c}"));
-            if WITH_VALUE.contains(&c) {
+            if SHORT_WITH_VALUE.contains(&c) {
                 let rest: String = chars[i + 1..].iter().collect();
-                if !rest.is_empty() {
+                if rest.is_empty() {
+                    value_next = true;
+                } else {
                     out.push(rest);
                 }
                 break;
@@ -86,6 +218,40 @@ fn expand(tokens: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+/// Splits a `-F` value into its content and its `;type=`/`;filename=`
+/// parameters. A content in double quotes (`name="a;b"`) is literal text:
+/// `\\` and `\"` are its escapes. The flag is true for a quoted content.
+fn split_form_value(rest: &str, literal: bool) -> (String, Vec<String>, bool) {
+    if literal {
+        return (rest.to_string(), Vec::new(), false);
+    }
+    if let Some(body) = rest.strip_prefix('"') {
+        let mut value = String::new();
+        let mut chars = body.char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' => {
+                    if let Some((_, n)) = chars.next() {
+                        value.push(n);
+                    }
+                }
+                '"' => {
+                    let tail = &body[i + 1..];
+                    let segs = tail
+                        .strip_prefix(';')
+                        .map(|t| t.split(';').map(str::to_string).collect())
+                        .unwrap_or_default();
+                    return (value, segs, true);
+                }
+                _ => value.push(c),
+            }
+        }
+    }
+    let mut segs: Vec<String> = rest.split(';').map(str::to_string).collect();
+    let first = segs.remove(0);
+    (first, segs, false)
 }
 
 /// Parses a curl command line into a request.
@@ -178,8 +344,7 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
                     notes.push(format!("ignored malformed form field {f:?}"));
                     continue;
                 };
-                let mut segs = if literal { vec![rest.to_string()] } else { rest.split(';').map(str::to_string).collect() };
-                let first = segs.remove(0);
+                let (first, segs, quoted) = split_form_value(rest, literal);
                 let mut ct = String::new();
                 let mut filename = None;
                 for s in segs {
@@ -189,9 +354,10 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
                         filename = Some(v.trim_matches('"').to_string());
                     }
                 }
-                let kind = if let (false, Some(p)) = (literal, first.strip_prefix('@')) {
+                let plain = literal || quoted;
+                let kind = if let (false, Some(p)) = (plain, first.strip_prefix('@')) {
                     PartKind::File { path: p.to_string(), filename }
-                } else if let (false, Some(p)) = (literal, first.strip_prefix('<')) {
+                } else if let (false, Some(p)) = (plain, first.strip_prefix('<')) {
                     notes.push(format!("form field {name}=<{p}: file contents sent as a file part"));
                     PartKind::File { path: p.to_string(), filename }
                 } else {
@@ -244,7 +410,8 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
                     "{t} {v} not imported: set [http] proxy in .sendito/config.toml"
                 ))
             }
-            "--connect-timeout" | "--retry" | "--retry-delay" | "--max-redirs" | "--cacert" | "--cert" | "--key" | "--resolve" => {
+            "--oauth2-bearer" => auth = Auth::Bearer { token: val(&t)? },
+            s if UNSUPPORTED_WITH_VALUE.contains(&s) => {
                 let v = val(&t)?;
                 notes.push(format!("{t} {v} not supported; ignored"));
             }
@@ -407,7 +574,7 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
         "HEAD" if !has_body => args.push("--head".into()),
         m => {
             args.push("-X".into());
-            args.push(m.into());
+            args.push(shell_quote(m));
         }
     }
     args.push(shell_quote(&r.url));
@@ -445,7 +612,10 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
                     sendito_core::resolve::PartData::Text(t) => {
                         if let Some(ct) = &p.content_type {
                             args.push("-F".into());
-                            args.push(shell_quote(&format!("{}={};type={ct}", p.name, t)));
+                            // A quoted value keeps a leading `@` or `<` and any `;`
+                            // literal: curl does not read a file for it.
+                            let v = t.replace('\\', "\\\\").replace('"', "\\\"");
+                            args.push(shell_quote(&format!("{}=\"{v}\";type={ct}", p.name)));
                         } else {
                             args.push("--form-string".into());
                             args.push(shell_quote(&format!("{}={}", p.name, t)));
@@ -639,6 +809,79 @@ mod tests {
         let r =
             import("curl http://h -d @data.txt -b cookies.txt -H bad -m x -F bad extra").unwrap();
         assert_eq!(r.notes.len(), 6, "{:?}", r.notes);
+    }
+
+    #[test]
+    fn option_values_are_not_split_or_read_as_the_url() {
+        let r = import("curl -d '-10.5' https://x/a").unwrap();
+        assert_eq!(r.request.url, "https://x/a");
+        assert!(matches!(&r.request.body, Body::Raw { text, .. } if text == "-10.5"));
+        assert!(r.notes.is_empty(), "{:?}", r.notes);
+
+        let r = import("curl -D h.txt -sD- https://api.example/x").unwrap();
+        assert_eq!(r.request.url, "https://api.example/x");
+        assert!(r.notes.is_empty(), "{:?}", r.notes);
+
+        let r = import("curl --oauth2-bearer abc https://api.example/x").unwrap();
+        assert_eq!(r.request.url, "https://api.example/x");
+        assert_eq!(
+            r.request.auth,
+            Auth::Bearer {
+                token: "abc".into()
+            }
+        );
+
+        for opt in [
+            "-c jar.txt",
+            "-T up.bin",
+            "--limit-rate 1k",
+            "-E c.pem",
+            "--socks5 h:1",
+        ] {
+            let r = import(&format!("curl {opt} https://api.example/x")).unwrap();
+            assert_eq!(r.request.url, "https://api.example/x", "{opt}");
+            assert_eq!(r.notes.len(), 1, "{opt}: {:?}", r.notes);
+        }
+    }
+
+    #[test]
+    fn export_quotes_method_and_typed_text_parts() {
+        let req = HttpRequest {
+            method: "GET; touch pwned #".into(),
+            url: "http://h/x".into(),
+            ..Default::default()
+        };
+        let out = export(&req, &Scope::new(), true, Path::new(""));
+        assert!(out.contains("-X 'GET; TOUCH PWNED #'"), "{out}");
+
+        let req = HttpRequest {
+            method: "POST".into(),
+            url: "http://h/x".into(),
+            body: Body::Multipart {
+                parts: vec![MultipartPart {
+                    name: "note".into(),
+                    kind: PartKind::Text {
+                        value: "@dr\"a;ft".into(),
+                    },
+                    content_type: "text/plain".into(),
+                    enabled: true,
+                }],
+            },
+            ..Default::default()
+        };
+        let out = export(&req, &Scope::new(), true, Path::new(""));
+        assert!(out.contains(r#"note="@dr\"a;ft";type=text/plain"#), "{out}");
+        let back = import(&out).unwrap();
+        let Body::Multipart { parts } = &back.request.body else {
+            panic!("{out}")
+        };
+        assert_eq!(
+            parts[0].kind,
+            PartKind::Text {
+                value: "@dr\"a;ft".into()
+            }
+        );
+        assert_eq!(parts[0].content_type, "text/plain");
     }
 
     fn scope() -> Scope {

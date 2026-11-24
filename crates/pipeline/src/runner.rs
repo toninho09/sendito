@@ -149,22 +149,46 @@ pub fn build_scope(
     active: Option<&str>,
     runtime: &BTreeMap<String, VarValue>,
 ) -> (Scope, Vec<String>) {
+    let (scope, errors, _) = build_scope_checked(envs, active, runtime);
+    (scope, errors)
+}
+
+/// [`build_scope`], plus the names of the variables whose value did not load
+/// (a missing keychain entry or `secrets.toml` value). An active-environment
+/// name that failed would resolve from the collection layer below, which is
+/// not the value the user chose; [`unresolved_loaded`] prevents that.
+pub fn build_scope_checked(
+    envs: &Envs,
+    active: Option<&str>,
+    runtime: &BTreeMap<String, VarValue>,
+) -> (Scope, Vec<String>, Vec<String>) {
     let mut scope = Scope::new();
     let mut errors = Vec::new();
+    let mut failed = Vec::new();
     for name in [Some(COLLECTION_ENV), active].into_iter().flatten() {
         match envs.load(name) {
             Ok(env) => {
                 let r = envs.resolve(&env);
                 for (var, e) in r.errors {
                     errors.push(format!("{{{{{var}}}}}: {e}"));
+                    failed.push(var);
                 }
                 scope.push_layer(name, r.vars);
             }
-            Err(e) => errors.push(e.to_string()),
+            Err(e) => {
+                errors.push(e.to_string());
+                // The active environment cannot be read: none of its values
+                // are known, so no collection value may stand in for one.
+                if name != COLLECTION_ENV
+                    && let Some(base) = scope.layers().first()
+                {
+                    failed.extend(base.vars.keys().cloned());
+                }
+            }
         }
     }
     scope.push_layer(RUNTIME_LAYER, runtime.clone());
-    (scope, errors)
+    (scope, errors, failed)
 }
 
 /// Names a pre-request script will define (they count as resolved).
@@ -184,6 +208,96 @@ pub fn unresolved(req: &Request, names: &Scope) -> Vec<String> {
         scope.set(RUNTIME_LAYER, v, VarValue::plain("x"));
     }
     sendito_core::resolve::unresolved_vars(req, &scope)
+}
+
+/// Unresolved variables against the loaded scope, where a name in `failed`
+/// (see [`build_scope_checked`]) counts as unresolved even when a lower layer
+/// defines it.
+pub fn unresolved_loaded(req: &Request, scope: &Scope, failed: &[String]) -> Vec<String> {
+    unresolved(req, &without(scope, failed))
+}
+
+/// The check before a send with the loaded scope: [`unresolved_loaded`], plus
+/// for an MCP request the failed names its server's configuration uses.
+pub fn unresolved_send(
+    req: &Request,
+    scope: &Scope,
+    failed: &[String],
+    servers: &BTreeMap<String, sendito_store::config::McpServer>,
+) -> Vec<String> {
+    let mut un = unresolved_loaded(req, scope, failed);
+    if let Request::Mcp(m) = req {
+        let server = scope.render(&m.server).text;
+        for name in mcp_config_failed(servers, &server, scope, failed) {
+            if !un.contains(&name) {
+                un.push(name);
+            }
+        }
+    }
+    un
+}
+
+/// `scope` with `names` (active-environment variables that did not load)
+/// removed from the collection layer below, so they never resolve from it,
+/// also inside another value. A runtime value above still wins.
+fn without(scope: &Scope, names: &[String]) -> Scope {
+    let mut out = Scope::new();
+    for l in scope.layers() {
+        let vars = l
+            .vars
+            .iter()
+            .filter(|(k, _)| l.name != COLLECTION_ENV || !names.contains(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        out.push_layer(l.name.clone(), vars);
+    }
+    out
+}
+
+/// The names in `failed` that an MCP server's configuration uses (command,
+/// arguments, environment, URL, headers, bearer token), also through other
+/// values. They are rendered when the tool is called, outside the request.
+fn mcp_config_failed(
+    servers: &BTreeMap<String, sendito_store::config::McpServer>,
+    server: &str,
+    scope: &Scope,
+    failed: &[String],
+) -> Vec<String> {
+    use sendito_store::config::{McpServer, McpServerAuth};
+    if failed.is_empty() {
+        return Vec::new();
+    }
+    let mut texts: Vec<&str> = Vec::new();
+    match servers.get(server) {
+        Some(McpServer::Stdio(s)) => {
+            texts.push(&s.command);
+            texts.extend(s.args.iter().map(String::as_str));
+            texts.extend(s.env.values().map(String::as_str));
+        }
+        Some(McpServer::Http(h)) => {
+            texts.push(&h.url);
+            texts.extend(h.headers.values().map(String::as_str));
+            // An Authorization header wins over the token, which is then unused.
+            let explicit = h
+                .headers
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("authorization"));
+            if let (Some(McpServerAuth::Bearer { token }), false) = (&h.auth, explicit) {
+                texts.push(token);
+            }
+        }
+        None => {}
+    }
+    let stripped = without(scope, failed);
+    let mut out = Vec::new();
+    for t in texts {
+        for name in stripped.unresolved(t) {
+            if failed.contains(&name) && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default)]
@@ -354,6 +468,15 @@ fn http_secrets(req: &HttpRequest, scope: &Scope) -> Vec<String> {
         }
     }
     secrets
+}
+
+/// Masks secret values in assertion results; their text reaches the screen
+/// and the CLI output, so this runs whatever `mask_echoed_secrets` says.
+fn scrub_asserts(asserts: &mut [AssertResult], secrets: &[String]) {
+    for a in asserts {
+        a.actual = sendito_core::vars::scrub(&a.actual, secrets);
+        a.label = sendito_core::vars::scrub(&a.label, secrets);
+    }
 }
 
 /// Masks secret values in an event shown to the user.
@@ -652,10 +775,9 @@ pub async fn exec_http(
                 }
             }
             results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-            for assertion in &mut results.asserts {
-                assertion.actual = sendito_core::vars::scrub(&assertion.actual, &cookie_secrets);
-                assertion.label = sendito_core::vars::scrub(&assertion.label, &cookie_secrets);
-            }
+            let mut assert_secrets = http_secrets(req, &scope);
+            assert_secrets.extend(cookie_secrets.iter().cloned());
+            scrub_asserts(&mut results.asserts, &assert_secrets);
             // Secrets echoed back by the server are masked before display.
             let secrets = if ctx.mask_echoed_secrets {
                 let mut secrets = http_secrets(req, &scope);
@@ -709,6 +831,16 @@ pub async fn exec_http(
             (Err(msg), Doc::default())
         }
     };
+    // `resolved` is only shown from here on (the Headers tab lists the
+    // request as sent): a secret in the query or a header is masked.
+    let shown = http_secrets(req, &scope);
+    resolved.url = sendito_core::vars::scrub(&resolved.url, &shown);
+    for (_, v) in &mut resolved.headers {
+        *v = sendito_core::vars::scrub(v, &shown);
+    }
+    for n in &mut resolved.notes {
+        *n = sendito_core::vars::scrub(n, &shown);
+    }
     HttpOutcome {
         resolved,
         response,
@@ -862,7 +994,10 @@ pub async fn exec_grpc(
         ),
         _ => String::new(),
     };
+    let fail_secrets = scope.secret_values();
     let fail = |msg: String, results: ScriptResults| {
+        // A connect error names the resolved target, which can be secret.
+        let msg = sendito_core::vars::scrub(&msg, &fail_secrets);
         let entry = history_entry(
             ctx,
             &template,
@@ -888,45 +1023,64 @@ pub async fn exec_grpc(
     if resolved.service.is_empty() || resolved.method.is_empty() {
         return fail("choose a service and method first".into(), results);
     }
-    let schema = match load_schema(
-        &ctx.root,
-        &resolved,
-        &req.schema,
-        &ctx.schemas,
-        false,
-        &ctx.send.tls,
-    )
-    .await
-    {
-        Ok(s) => s,
+    // Loading the schema and connecting are bounded by the [http] timeout,
+    // so a server that never answers reflection cannot hang the run; Cancel
+    // stops them too. The deadline covers the call only (`grpc-timeout`).
+    let deadline = resolved.deadline_ms.map(Duration::from_millis);
+    let prepare = async {
+        let schema = load_schema(
+            &ctx.root,
+            &resolved,
+            &req.schema,
+            &ctx.schemas,
+            false,
+            &ctx.send.tls,
+        )
+        .await?;
+        let method = schema
+            .method(&resolved.service, &resolved.method)
+            .map_err(|e| e.to_string())?;
+        let kind = sendito_grpc::CallKind::of(&method);
+        let msgs = sendito_grpc::schema::parse_messages(
+            &method.input(),
+            &resolved.message,
+            kind.client_streams(),
+        )?;
+        let metadata = sendito_grpc::metadata_map(&resolved.metadata).map_err(|e| e.to_string())?;
+        let channel = sendito_grpc::connect(&conn_settings(&resolved, &ctx.send.tls))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>((method, kind, msgs, metadata, channel))
+    };
+    let prep_limit = ctx.send.default_timeout;
+    let cancelled = async {
+        loop {
+            match control.recv().await {
+                Some(Control::Grpc(GrpcControl::Cancel)) => return,
+                Some(_) => {}
+                None => std::future::pending::<()>().await,
+            }
+        }
+    };
+    let prepared = tokio::select! {
+        r = prepare => r,
+        () = tokio::time::sleep(prep_limit) => Err(format!(
+            "the schema load or the connection took more than {} ms ([http] timeout_ms)",
+            prep_limit.as_millis()
+        )),
+        () = cancelled => Err("cancelled".into()),
+    };
+    let (method, kind, msgs, metadata, channel) = match prepared {
+        Ok(p) => p,
         Err(e) => return fail(e, results),
     };
-    let method = match schema.method(&resolved.service, &resolved.method) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string(), results),
-    };
-    let kind = sendito_grpc::CallKind::of(&method);
-    let msgs = match sendito_grpc::schema::parse_messages(
-        &method.input(),
-        &resolved.message,
-        kind.client_streams(),
-    ) {
-        Ok(m) => m,
-        Err(e) => return fail(e, results),
-    };
-    let metadata = match sendito_grpc::metadata_map(&resolved.metadata) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string(), results),
-    };
-    let channel = match sendito_grpc::connect(&conn_settings(&resolved, &ctx.send.tls)).await {
-        Ok(c) => c,
-        Err(e) => return fail(e.to_string(), results),
-    };
+    // The UI shows this target ("at …"): a secret in it is masked.
+    let mut shown = resolved.clone();
+    shown.uri = sendito_core::vars::scrub(&shown.uri, &scope.secret_values());
     let _ = updates.send(GrpcUpdate::Started {
-        resolved: resolved.clone(),
+        resolved: shown,
         kind,
     });
-    let deadline = resolved.deadline_ms.map(Duration::from_millis);
     let secrets = scope.secret_values();
     let mut call = sendito_grpc::start_call(channel, &method, metadata, deadline, msgs);
     let mut events: Vec<Event> = Vec::new();
@@ -967,13 +1121,16 @@ pub async fn exec_grpc(
         }
     }
     let (body, headers, code) = last_message(&events);
+    // A call that ends with no status is a failure, not OK: report UNKNOWN (2).
+    let code = if code < 0 { 2 } else { code };
     let view = ResponseView {
-        status: code.max(0) as u16,
+        status: code as u16,
         headers: &headers,
         body: &body,
     };
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+    scrub_asserts(&mut results.asserts, &scope.secret_values());
     let total = events
         .iter()
         .rev()
@@ -1047,7 +1204,17 @@ fn scrub_ws_event(ev: sendito_ws::Event, secrets: &[String]) -> sendito_ws::Even
             wall,
         } => sendito_ws::Event::Handshake {
             status,
-            headers: kv(headers),
+            // Set-Cookie values are masked, as on an HTTP response.
+            headers: kv(headers)
+                .into_iter()
+                .map(|(k, v)| {
+                    if k.eq_ignore_ascii_case("set-cookie") {
+                        (k, "••••••".to_string())
+                    } else {
+                        (k, v)
+                    }
+                })
+                .collect(),
             subprotocol,
             at,
             wall,
@@ -1214,10 +1381,11 @@ pub async fn exec_ws(
             break;
         }
     }
-    let _ = updates.send(WsUpdate::Started {
-        resolved: resolved.clone(),
-    });
     let secrets = scope.secret_values();
+    // The UI shows this URL ("connecting to"): a key in the query is masked.
+    let mut shown = resolved.clone();
+    shown.url = sendito_core::vars::scrub(&shown.url, &secrets);
+    let _ = updates.send(WsUpdate::Started { resolved: shown });
     let mut events: Vec<sendito_ws::Event> = Vec::new();
     let mut control_open = true;
     if let Some(e) = initial_error {
@@ -1290,11 +1458,10 @@ pub async fn exec_ws(
     };
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-    for assertion in &mut results.asserts {
-        let all = [&secrets[..], &cookie_secrets[..]].concat();
-        assertion.actual = sendito_core::vars::scrub(&assertion.actual, &all);
-        assertion.label = sendito_core::vars::scrub(&assertion.label, &all);
-    }
+    scrub_asserts(
+        &mut results.asserts,
+        &[&secrets[..], &cookie_secrets[..]].concat(),
+    );
     let total = events
         .iter()
         .rev()
@@ -1315,7 +1482,12 @@ pub async fn exec_ws(
     } else if reason.is_empty() {
         Some(format!("close {code}"))
     } else {
-        Some(format!("close {code}: {reason}"))
+        // The peer's reason can echo a secret: mask it before history.
+        let all = [&secrets[..], &cookie_secrets[..]].concat();
+        Some(format!(
+            "close {code}: {}",
+            sendito_core::vars::scrub(&reason, &all)
+        ))
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
     write_history(ctx, &entry);
@@ -1439,7 +1611,13 @@ pub fn mcp_transport(
                 h.headers.iter().map(|(k, v)| (k.clone(), r(v))).collect();
             let auth = match &h.auth {
                 Some(sendito_store::config::McpServerAuth::Bearer { token }) => {
-                    headers.push(("Authorization".into(), format!("Bearer {}", r(token))));
+                    // A configured Authorization header wins, as in HTTP requests.
+                    if !headers
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                    {
+                        headers.push(("Authorization".into(), format!("Bearer {}", r(token))));
+                    }
                     None
                 }
                 Some(sendito_store::config::McpServerAuth::Oauth {
@@ -1449,20 +1627,29 @@ pub fn mcp_transport(
                     token_url,
                     registration_url,
                     scopes,
-                }) => Some(Arc::new(sendito_mcp::RefreshingProvider::new(
-                    Arc::new(KeychainStore(info.keychain.clone())),
-                    mcp_token_account(&info.collection, server),
-                    r(&h.url),
-                    sendito_mcp::oauth::OAuthSettings {
-                        client_id: client_id.clone(),
-                        client_secret: client_secret.clone(),
-                        authorize_url: authorize_url.clone(),
-                        token_url: token_url.clone(),
-                        registration_url: registration_url.clone(),
-                        scopes: scopes.clone(),
-                    },
-                )) as Arc<dyn sendito_mcp::TokenProvider>),
-                None => None,
+                }) if !headers
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization")) =>
+                {
+                    let mut p = sendito_mcp::RefreshingProvider::new(
+                        Arc::new(KeychainStore(info.keychain.clone())),
+                        mcp_token_account(&info.collection, server),
+                        r(&h.url),
+                        sendito_mcp::oauth::OAuthSettings {
+                            client_id: client_id.clone(),
+                            client_secret: client_secret.clone(),
+                            authorize_url: authorize_url.clone(),
+                            token_url: token_url.clone(),
+                            registration_url: registration_url.clone(),
+                            scopes: scopes.clone(),
+                        },
+                    );
+                    // `sendito mcp login` binds the tokens to the URL as configured.
+                    p.binding = Some(h.url.clone());
+                    Some(Arc::new(p) as Arc<dyn sendito_mcp::TokenProvider>)
+                }
+                // No auth, or an explicit Authorization header that wins.
+                _ => None,
             };
             sendito_mcp::Transport::Http {
                 url: r(&h.url),
@@ -1594,6 +1781,7 @@ pub async fn exec_mcp(
             };
             results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
             results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+            scrub_asserts(&mut results.asserts, &secrets);
             let size = body.len() as u64;
             let entry = history_entry(
                 ctx,
@@ -1625,6 +1813,55 @@ pub async fn exec_mcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_secret_is_unresolved_even_with_a_lower_value() {
+        let req = Request::Http(HttpRequest {
+            url: "https://h/{{api_key}}/{{base}}".into(),
+            ..Default::default()
+        });
+        let mut low = BTreeMap::new();
+        low.insert("api_key".to_string(), VarValue::plain("dev-placeholder"));
+        low.insert("base".to_string(), VarValue::plain("x"));
+        let scope = Scope::new().with_layer(COLLECTION_ENV, low);
+        assert!(unresolved_loaded(&req, &scope, &[]).is_empty());
+        assert_eq!(
+            unresolved_loaded(&req, &scope, &["api_key".into(), "unused".into()]),
+            vec!["api_key".to_string()]
+        );
+        // Also through another value.
+        let req = Request::Http(HttpRequest {
+            url: "https://h/{{auth}}".into(),
+            ..Default::default()
+        });
+        let mut low = BTreeMap::new();
+        low.insert("api_key".to_string(), VarValue::plain("dev"));
+        low.insert("auth".to_string(), VarValue::plain("Bearer {{api_key}}"));
+        let scope = Scope::new().with_layer(COLLECTION_ENV, low);
+        assert!(!unresolved_loaded(&req, &scope, &["api_key".into()]).is_empty());
+        // And through an MCP server's configuration.
+        let mut servers = BTreeMap::new();
+        servers.insert(
+            "remote".to_string(),
+            sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
+                url: "https://m/mcp".into(),
+                headers: BTreeMap::new(),
+                verify_tls: true,
+                auth: Some(sendito_store::config::McpServerAuth::Bearer {
+                    token: "{{auth}}".into(),
+                }),
+            }),
+        );
+        let req = Request::Mcp(McpRequest {
+            server: "remote".into(),
+            tool: "t".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            unresolved_send(&req, &scope, &["api_key".into()], &servers),
+            vec!["api_key".to_string()]
+        );
+    }
 
     #[test]
     fn ws_urls_map_to_their_http_equivalent_for_the_jar() {

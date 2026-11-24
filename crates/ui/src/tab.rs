@@ -1298,6 +1298,28 @@ impl Response {
         Ok(true)
     }
 
+    /// Takes over how `old` showed its body: view mode, wrap, line numbers,
+    /// the jq filter and the position. A watch repeat uses it so the view
+    /// does not jump back to the raw body at line 1 on every send.
+    pub fn keep_view_of(&mut self, old: &Response) {
+        // A blank response (a send in progress) has no view to keep.
+        if old.summary.status.is_empty() {
+            return;
+        }
+        self.body.mode = old.body.mode;
+        self.body.wrap = old.body.wrap;
+        self.body.numbers = old.body.numbers;
+        if let Some(expr) = &old.jq {
+            let _ = self.apply_jq(expr);
+        }
+        // Rows differ when the old view wraps: carry the line. The new viewer
+        // has no rows yet, so its cursor is a line until it renders.
+        let line = old.body.cursor_line();
+        self.body.cursor = line;
+        self.body.scroll = line.saturating_sub(old.body.cursor.saturating_sub(old.body.scroll));
+        self.body.hscroll = old.body.hscroll;
+    }
+
     /// Swaps the body viewer's document, keeping the view mode, wrap and line
     /// numbers.
     fn swap_body(&mut self, doc: Doc) {

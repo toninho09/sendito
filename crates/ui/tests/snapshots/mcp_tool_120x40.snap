@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   MCP untitled ● ×    +                                                               ● local ▾   F1  all keys
 ╭ Requests  History ─────────╮ ▍example                http://127.0.0.1:9/mcp  search               ▾  × Cancel   Send
-│▸ Orders/                   │╭─ Tool  Args  Scripts  Options ────────────── untitled · no file yet (Ctrl+S saves it) ─╮
+│▸ Orders/                   │╭─ Tool  Args 1  Scripts  Options ──────────── untitled · no file yet (Ctrl+S saves it) ─╮
 │▸ Users/                    ││ Server         example                                                                 │
 │  GRPC  echo unary          ││ Tool           search                                                                  │
 │  GET   health              ││                                                                                        │

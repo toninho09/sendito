@@ -52,9 +52,7 @@ pub struct RunOptions {
     pub started: Option<Instant>,
 }
 
-struct TermGuard {
-    mouse: bool,
-}
+struct TermGuard;
 
 impl TermGuard {
     fn enter(mouse: bool) -> io::Result<Self> {
@@ -72,15 +70,14 @@ impl TermGuard {
             out,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         );
-        Ok(Self { mouse })
+        Ok(Self)
     }
 }
 
-fn leave_terminal(out: &mut impl Write, mouse: bool) {
+fn leave_terminal(out: &mut impl Write) {
     let _ = execute!(out, PopKeyboardEnhancementFlags);
-    if mouse {
-        let _ = execute!(out, DisableMouseCapture);
-    }
+    // Always: the Mouse setting can turn capture on while the UI runs.
+    let _ = execute!(out, DisableMouseCapture);
     let _ = execute!(
         out,
         crossterm::cursor::SetCursorStyle::DefaultUserShape,
@@ -94,7 +91,7 @@ fn leave_terminal(out: &mut impl Write, mouse: bool) {
 
 impl Drop for TermGuard {
     fn drop(&mut self) {
-        leave_terminal(&mut io::stdout(), self.mouse);
+        leave_terminal(&mut io::stdout());
         let _ = disable_raw_mode();
     }
 }
@@ -110,9 +107,9 @@ struct PanicGuard {
 }
 
 impl PanicGuard {
-    fn enter(mouse: bool) -> Self {
+    fn enter() -> Self {
         Self::install(move || {
-            leave_terminal(&mut io::stdout(), mouse);
+            leave_terminal(&mut io::stdout());
             let _ = disable_raw_mode();
         })
     }
@@ -160,7 +157,7 @@ pub fn run(
         None => None,
     };
     let guard = TermGuard::enter(mouse)?;
-    let hook = PanicGuard::enter(mouse);
+    let hook = PanicGuard::enter();
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     // The alternate screen starts empty; ratatui's `clear()` would also query the
@@ -195,7 +192,17 @@ fn event_loop(
     let mut last_anim = Instant::now();
     let mut shape: Option<bool> = None;
     let mut title = String::new();
+    let mut mouse = app.project.config.ui.mouse;
     loop {
+        // The Mouse setting takes effect at once, not at the next start.
+        if app.project.config.ui.mouse != mouse {
+            mouse = app.project.config.ui.mouse;
+            let _ = if mouse {
+                execute!(io::stdout(), EnableMouseCapture)
+            } else {
+                execute!(io::stdout(), DisableMouseCapture)
+            };
+        }
         if dirty {
             let t0 = Instant::now();
             terminal.draw(|f| draw::draw(app, f))?;
@@ -393,23 +400,18 @@ mod tests {
     #[test]
     fn leave_terminal_restores_the_screen() {
         let mut out = Vec::new();
-        leave_terminal(&mut out, false);
+        leave_terminal(&mut out);
         let text = String::from_utf8(out).unwrap();
-        for code in ["\x1b[?1049l", "\x1b[?2004l", "\x1b[23;0t"] {
+        for code in [
+            "\x1b[?1006l",
+            "\x1b[?1000l",
+            "\x1b[?1049l",
+            "\x1b[?2004l",
+            "\x1b[23;0t",
+        ] {
             assert!(text.contains(code), "{code:?} missing from {text:?}");
         }
         assert!(text.ends_with("\x1b[23;0t"), "{text:?}");
-        assert!(
-            !text.contains("\x1b[?100"),
-            "mouse was never captured: {text:?}"
-        );
-
-        let mut out = Vec::new();
-        leave_terminal(&mut out, true);
-        let text = String::from_utf8(out).unwrap();
-        for code in ["\x1b[?1006l", "\x1b[?1000l", "\x1b[?1049l"] {
-            assert!(text.contains(code), "{code:?} missing from {text:?}");
-        }
     }
 
     #[test]

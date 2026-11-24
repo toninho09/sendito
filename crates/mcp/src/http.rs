@@ -90,7 +90,13 @@ impl HttpConn {
         for (k, v) in &self.headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        if let Some(token) = bearer {
+        // An Authorization header in the configuration wins, as in HTTP
+        // requests: two Authorization headers would reach the server.
+        let explicit = self
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+        if let (Some(token), false) = (bearer, explicit) {
             req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
         }
         if let Some(sid) = &self.session_id {

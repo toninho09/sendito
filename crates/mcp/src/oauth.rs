@@ -47,6 +47,10 @@ pub struct Tokens {
     pub client_id: String,
     /// A dynamically registered client secret, stored with the tokens.
     pub client_secret: Option<String>,
+    /// The MCP server URL or the token endpoint the tokens were issued for.
+    /// Tokens are never sent to another one. `None` in logins saved before
+    /// this field existed.
+    pub bound_to: Option<String>,
 }
 
 const EXPIRY_SLACK: u64 = 30;
@@ -64,6 +68,7 @@ impl Tokens {
             "expires_at": self.expires_at,
             "client_id": self.client_id,
             "client_secret": self.client_secret,
+            "bound_to": self.bound_to,
         })
         .to_string()
     }
@@ -77,6 +82,10 @@ impl Tokens {
             client_id: v.get("client_id")?.as_str()?.to_string(),
             client_secret: v
                 .get("client_secret")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            bound_to: v
+                .get("bound_to")
                 .and_then(Value::as_str)
                 .map(str::to_string),
         })
@@ -120,6 +129,8 @@ pub fn validate_oauth_url(url: &str) -> Result<(), McpError> {
     let local = parsed.host_str().is_some_and(|host| {
         host.eq_ignore_ascii_case("localhost")
             || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
     });
@@ -409,9 +420,19 @@ async fn authorize_with_resource(
                 continue;
             };
             let mut buf = [0u8; 4096];
-            let n = tokio::io::AsyncReadExt::read(&mut sock, &mut buf)
-                .await
-                .unwrap_or(0);
+            // Browsers open spare connections that send nothing: drop them
+            // after a short wait, so the real redirect is served.
+            let n = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::io::AsyncReadExt::read(&mut sock, &mut buf),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(0);
+            if n == 0 {
+                continue;
+            }
             let req = String::from_utf8_lossy(&buf[..n]).into_owned();
             let target = req.split(' ').nth(1).unwrap_or_default().to_string();
             let query = target.split_once('?').map(|(_, q)| q.to_string());
@@ -571,6 +592,7 @@ async fn token_request(
         expires_at,
         client_id: client_id.to_string(),
         client_secret: None,
+        bound_to: None,
     })
 }
 
@@ -612,6 +634,7 @@ pub async fn login(
     .await?;
     let mut tokens = exchange(&endpoints, granted, &client_id, client_secret.as_deref()).await?;
     tokens.client_secret = client_secret;
+    tokens.bound_to = Some(resource_url.to_string());
     note(format!(
         "signed in (expires {})",
         tokens
@@ -654,6 +677,7 @@ pub async fn login_http(
     )
     .await?;
     tokens.client_secret = settings.client_secret.clone();
+    tokens.bound_to = Some(endpoints.token.clone());
     Ok(tokens)
 }
 
@@ -685,6 +709,10 @@ pub struct RefreshingProvider {
     pub account: String,
     pub resource_url: Option<String>,
     pub settings: OAuthSettings,
+    /// What stored tokens must be bound to (`Tokens::bound_to`): the server
+    /// URL as configured, before `{{variables}}` render, as login stores it.
+    /// `None` uses the resource URL or the token endpoint.
+    pub binding: Option<String>,
     endpoints: Mutex<Option<Endpoints>>,
 }
 
@@ -700,6 +728,7 @@ impl RefreshingProvider {
             account,
             resource_url: Some(resource_url),
             settings,
+            binding: None,
             endpoints: Mutex::new(None),
         }
     }
@@ -710,6 +739,7 @@ impl RefreshingProvider {
             account,
             resource_url: None,
             settings,
+            binding: None,
             endpoints: Mutex::new(None),
         }
     }
@@ -750,6 +780,18 @@ impl TokenProvider for RefreshingProvider {
                     "not signed in (run `sendito auth login`)".into()
                 }));
             };
+            let want = self
+                .binding
+                .clone()
+                .or_else(|| self.resource_url.clone())
+                .or_else(|| self.settings.token_url.clone());
+            if let (Some(have), Some(want)) = (&tokens.bound_to, &want)
+                && have != want
+            {
+                return Err(McpError::Message(format!(
+                    "the saved sign-in is for {have}, not {want}; sign in again"
+                )));
+            }
             if !force_refresh && !tokens.expired(unix_now()) {
                 return Ok(tokens.access);
             }
@@ -770,13 +812,13 @@ impl TokenProvider for RefreshingProvider {
             )
             .await?;
             tokens.client_secret = client_secret;
+            tokens.bound_to = want;
             let store = self.store.clone();
             let account = self.account.clone();
             let serialized = tokens.to_json();
-            tokio::task::spawn_blocking(move || store.set(&account, &serialized))
-                .await
-                .map_err(|_| McpError::Transport("keychain task failed".into()))?
-                .map_err(McpError::Transport)?;
+            // The refresh worked: a failed save must not fail this request.
+            // The next run refreshes again from the stored refresh token.
+            let _ = tokio::task::spawn_blocking(move || store.set(&account, &serialized)).await;
             Ok(tokens.access)
         })
     }
@@ -903,6 +945,7 @@ mod tests {
         assert!(validate_oauth_url("https://example.com/token").is_ok());
         assert!(validate_oauth_url("http://127.0.0.1:1234/token").is_ok());
         assert!(validate_oauth_url("http://localhost:1234/token").is_ok());
+        assert!(validate_oauth_url("http://[::1]:1234/token").is_ok());
         assert!(validate_oauth_url("http://example.com/token").is_err());
         assert!(validate_oauth_url("https://user:password@example.com/token").is_err());
     }
@@ -915,6 +958,7 @@ mod tests {
             expires_at: Some(100),
             client_id: "cli".into(),
             client_secret: Some("client-secret".into()),
+            bound_to: Some("https://a.example/mcp".into()),
         };
         let back = Tokens::from_json(&t.to_json());
         assert_eq!(back.as_ref(), Some(&t));

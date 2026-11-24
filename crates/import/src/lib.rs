@@ -272,7 +272,10 @@ pub fn write(
     if let Some(envs) = envs {
         let mut taken = envs.list();
         for imported in &result.environments {
-            let raw_name = if imported.name.starts_with('_') {
+            // `_…` names and `runtime` are reserved in a collection.
+            let raw_name = if imported.name.starts_with('_')
+                || imported.name == sendito_core::script::RUNTIME_LAYER
+            {
                 format!("env-{}", imported.name)
             } else {
                 imported.name.clone()

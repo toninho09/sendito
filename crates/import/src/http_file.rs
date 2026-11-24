@@ -36,6 +36,16 @@ fn multipart_boundary(parts: &[sendito_core::resolve::ResolvedPart]) -> String {
     unreachable!("the loop returns on the first free name")
 }
 
+/// Keeps a value on one line: a CR or LF in it would start a new header or
+/// request line in the file.
+fn one_line(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.contains(['\r', '\n']) {
+        s.replace(['\r', '\n'], " ").into()
+    } else {
+        s.into()
+    }
+}
+
 /// Exports a request as one `###` request block.
 ///
 /// With `include_secrets` false, variables whose value is secret stay as
@@ -110,7 +120,16 @@ pub fn export(
             "# Set sendito_basic_credentials to base64(username:password) before sending.\n",
         );
     }
-    out.push_str(&format!("{} {}\n", r.method, r.url));
+    if let ResolvedBody::Bytes(b) = &r.body
+        && String::from_utf8_lossy(b)
+            .lines()
+            .any(|l| l.starts_with("###"))
+    {
+        out.push_str(
+            "# The body has a line that starts with ###: editors read it as a new request.\n",
+        );
+    }
+    out.push_str(&format!("{} {}\n", one_line(&r.method), one_line(&r.url)));
     for ((n, v), origin) in r.headers.iter().zip(&r.header_origins) {
         if basic_placeholder
             && *origin == HeaderOrigin::Auth
@@ -124,7 +143,7 @@ pub fn export(
         if multipart && n.eq_ignore_ascii_case("content-type") {
             out.push_str(&format!("{n}: multipart/form-data; boundary={boundary}\n"));
         } else {
-            out.push_str(&format!("{n}: {v}\n"));
+            out.push_str(&format!("{}: {}\n", one_line(n), one_line(v)));
         }
     }
     if multipart
