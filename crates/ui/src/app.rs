@@ -156,8 +156,20 @@ pub enum OverlayHit {
     },
     /// The ✕ of an MCP servers row.
     McpDelete(usize),
-    /// A button of the MCP servers editor (0 = save, 1 = add, 2 = close).
+    /// A button of the MCP servers editor (0 = save, 1 = add, 2 = details,
+    /// 3 = close).
     McpButton(usize),
+    /// A tab of a config editor (MCP server details, OAuth, keymap).
+    CfgTab(usize),
+    /// A cell of a config editor.
+    CfgCell {
+        row: usize,
+        col: usize,
+    },
+    /// The ✕ of a config editor row.
+    CfgDelete(usize),
+    /// A button of a config editor (0 = save, 1 = add, 2 = close).
+    CfgButton(usize),
     /// Dead space inside a dialog frame; clicking it does nothing.
     Dialog,
     Outside,
@@ -215,6 +227,8 @@ pub enum AppMsg {
         /// (completion pulls it in the background).
         open_picker: bool,
         result: Result<Vec<sendito_mcp::Tool>, String>,
+        /// The server needs an OAuth sign-in.
+        needs_login: bool,
     },
     Schema {
         tab: u64,
@@ -235,6 +249,9 @@ pub enum AppMsg {
 
 /// Outcome of a `:cookies` command, produced off the UI thread (the jar is
 /// guarded by a cross-process lock).
+/// The last row of the cookie jar picker.
+const CLEAR_COOKIES: &str = "Clear all cookies";
+
 pub enum CookiesOutcome {
     List(Vec<String>),
     Done(&'static str),
@@ -355,6 +372,8 @@ pub struct App {
     mcp_discovery_seq: u64,
     oauth_login: Option<(u64, tokio::task::JoinHandle<()>)>,
     oauth_login_seq: u64,
+    /// What to do when the running MCP sign-in succeeds.
+    oauth_then: Option<McpLoginThen>,
     cookies_job: Option<(u64, tokio::task::JoinHandle<()>)>,
     cookies_job_seq: u64,
     pub filter: TextEditor,
@@ -366,6 +385,10 @@ pub struct App {
     secrets_ok: bool,
     /// The MCP servers editor parked behind its save/discard confirmation.
     pub parked_mcp: Option<McpEditor>,
+    /// A config editor kept behind its "unsaved changes" dialog.
+    pub parked_cfg: Option<crate::config_editor::CfgEditor>,
+    /// The config file settings are saved to (the settings dialog chooses).
+    pub config_scope: ConfigScope,
     /// The prompt or import dialog parked behind its discard confirmation.
     pub parked_dialog: Option<Overlay>,
     /// The last report dialog (title, text), reopened by :report.
@@ -380,6 +403,15 @@ pub fn no_color() -> bool {
 
 fn vim_label(e: &TextEditor) -> VimMode {
     e.vim
+}
+
+/// The follow-up of an MCP sign-in.
+struct McpLoginThen {
+    server: String,
+    /// The server had no auth table: write `type = "oauth"` on success.
+    write_auth: bool,
+    /// The request to run again (tab id and what to run).
+    retry: Option<(u64, McpAfterLogin)>,
 }
 
 impl App {
@@ -474,6 +506,7 @@ impl App {
             mcp_discovery_seq: 0,
             oauth_login: None,
             oauth_login_seq: 0,
+            oauth_then: None,
             cookies_job: None,
             cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
@@ -482,6 +515,8 @@ impl App {
             parked_env: None,
             secrets_ok: false,
             parked_mcp: None,
+            parked_cfg: None,
+            config_scope: ConfigScope::default(),
             parked_dialog: None,
             last_report: None,
             cursor: None,
@@ -543,7 +578,7 @@ impl App {
 
     /// Drops a confirmation or note (not warnings or errors): a new action
     /// makes it stale.
-    fn clear_transient_status(&mut self) {
+    pub(crate) fn clear_transient_status(&mut self) {
         if matches!(self.status, Some((_, StatusKind::Ok | StatusKind::Info, _))) {
             self.status = None;
         }
@@ -768,6 +803,12 @@ impl App {
                 Overlay::Mcp(m) => {
                     m.table.paste(s);
                     m.dirty = true;
+                }
+                Overlay::Cfg(e) => {
+                    if let Some(t) = e.table() {
+                        t.paste(s);
+                        e.dirty = true;
+                    }
                 }
                 _ => {}
             }
@@ -1712,7 +1753,7 @@ impl App {
             Action::Palette => self.open_palette(""),
             Action::Complete => self.refresh_complete(),
             Action::Help => self.open_help(),
-            Action::Settings => self.overlay = Some(Overlay::Settings { sel: 0 }),
+            Action::Settings => self.open_settings(SettingId::Theme),
             Action::SelectEnv => self.open_env_picker(),
             Action::ManageEnvs => self.open_env_editor(),
             Action::ManageMcpServers => self.open_mcp_editor(),
@@ -2703,6 +2744,7 @@ impl App {
             }
             if let Some((_, task)) = self.oauth_login.take() {
                 task.abort();
+                self.oauth_then = None;
                 self.set_status("OAuth login cancelled", StatusKind::Info);
                 return;
             }
@@ -2962,9 +3004,9 @@ impl App {
                         "Open this URL in a browser if it did not open automatically:\n\n{url}\n\nWaiting for the callback. Close this dialog and use Ctrl+W x to cancel.\n"
                     );
                     if self.overlay.is_none() {
-                        self.show_report("HTTP OAuth login", &text);
+                        self.show_report("OAuth login", &text);
                     } else {
-                        self.last_report = Some(("HTTP OAuth login".into(), text));
+                        self.last_report = Some(("OAuth login".into(), text));
                         self.set_status("OAuth URL available with :report", StatusKind::Info);
                     }
                 }
@@ -2972,12 +3014,18 @@ impl App {
             AppMsg::OAuthDone { job, result } => {
                 if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
                     self.oauth_login = None;
-                    if matches!(&self.overlay, Some(Overlay::Report(r)) if r.title == "HTTP OAuth login")
+                    if matches!(&self.overlay, Some(Overlay::Report(r)) if r.title == "OAuth login")
                     {
                         self.overlay = None;
                     }
+                    let then = self.oauth_then.take();
                     match result {
-                        Ok(message) => self.set_status(message, StatusKind::Ok),
+                        Ok(message) => {
+                            self.set_status(message, StatusKind::Ok);
+                            if let Some(then) = then {
+                                self.after_mcp_login(then);
+                            }
+                        }
                         Err(e) => self.set_status(e, StatusKind::Error),
                     }
                 }
@@ -2987,27 +3035,27 @@ impl App {
                     self.cookies_job = None;
                     self.status = None;
                     match result {
+                        Ok(CookiesOutcome::List(rows)) if rows.is_empty() => self
+                            .set_status("no cookies in the active environment", StatusKind::Info),
+                        Ok(CookiesOutcome::List(rows)) if self.overlay.is_none() => {
+                            let mut items = rows;
+                            items.push(CLEAR_COOKIES.into());
+                            self.overlay = Some(Overlay::Picker(Picker::new(
+                                "Cookie jar (Enter deletes)",
+                                items,
+                                vec![],
+                                PickAction::Cookie,
+                                None,
+                            )));
+                        }
+                        // Another dialog opened meanwhile: keep the list for :report.
                         Ok(CookiesOutcome::List(rows)) => {
-                            let text = if rows.is_empty() {
-                                "No cookies in this environment.\n".to_string()
-                            } else {
-                                format!(
-                                    "{}\n\n:cookies delete <number> removes one; :cookies clear removes all.\n",
-                                    rows.join("\n")
-                                )
-                            };
-                            if self.overlay.is_none() {
-                                self.overlay = Some(Overlay::Report(Report {
-                                    title: "Cookie jar".into(),
-                                    viewer: Viewer::new(Doc::text(&text)),
-                                    copy_text: text,
-                                    copied: false,
-                                    close_status: None,
-                                }));
-                            } else {
-                                self.last_report = Some(("Cookie jar".into(), text));
-                                self.set_status("cookies listed with :report", StatusKind::Info);
-                            }
+                            let text = format!(
+                                "{}\n\n:cookies delete <number> removes one; :cookies clear removes all.\n",
+                                rows.join("\n")
+                            );
+                            self.last_report = Some(("Cookie jar".into(), text));
+                            self.set_status("cookies listed with :report", StatusKind::Info);
                         }
                         Ok(CookiesOutcome::Done(m)) => self.set_status(m, StatusKind::Ok),
                         Err(e) => self.set_status(format!("cookie jar: {e}"), StatusKind::Error),
@@ -3020,6 +3068,7 @@ impl App {
                 server,
                 open_picker,
                 result,
+                needs_login,
             } => {
                 if !self
                     .mcp_discovery
@@ -3078,6 +3127,15 @@ impl App {
                                 c.failed = Some("tools");
                             }
                             self.set_status(format!("tools: {e}"), StatusKind::Error);
+                            // A sign-in is offered when the list was asked
+                            // for, not for a background completion pull.
+                            if needs_login && open_picker {
+                                self.offer_mcp_login(
+                                    tab,
+                                    &server,
+                                    McpAfterLogin::Tools { open_picker },
+                                );
+                            }
                         }
                     }
                 }
@@ -3446,6 +3504,7 @@ impl App {
 
     fn on_mcp(&mut self, tab_id: u64, u: runner::McpUpdate) {
         let mut status: Option<(String, StatusKind)> = None;
+        let mut login_offer: Option<String> = None;
         let mut updates = Vec::new();
         let Some(t) = self.tab_by_id(tab_id) else {
             return;
@@ -3466,7 +3525,11 @@ impl App {
                 result,
                 scripts,
                 scope_errors,
+                needs_login,
             } => {
+                if needs_login {
+                    login_offer = Some(t.ed.mcp_server.text());
+                }
                 let time_ms = t
                     .running
                     .as_ref()
@@ -3564,6 +3627,160 @@ impl App {
         if let Some((s, k)) = status {
             self.set_status(s, k);
         }
+        if let Some(server) = login_offer {
+            self.offer_mcp_login(tab_id, &server, McpAfterLogin::Send);
+        }
+    }
+
+    /// A server asked for a sign-in: offer it when the server is an HTTP
+    /// entry of `[mcp.servers]` without a bearer token.
+    fn offer_mcp_login(&mut self, tab: u64, server: &str, after: McpAfterLogin) {
+        use sendito_store::config::{McpServer, McpServerAuth};
+        let can_login = matches!(
+            self.project.config.mcp.servers.get(server),
+            Some(McpServer::Http(h)) if !matches!(h.auth, Some(McpServerAuth::Bearer { .. }))
+        );
+        if !can_login || self.overlay.is_some() {
+            return;
+        }
+        self.overlay = Some(Overlay::Confirm(Confirm {
+            title: "Sign in".into(),
+            message: format!(
+                "\"{server}\" asks you to sign in. Sign in now? Your browser opens for the sign-in."
+            ),
+            buttons: vec!["Sign in".into(), "Cancel".into()],
+            sel: 0,
+            action: ConfirmAction::McpLogin {
+                server: server.to_string(),
+                tab,
+                after,
+            },
+        }));
+    }
+
+    /// Starts the OAuth sign-in (or sign-out) of an MCP server. A sign-in
+    /// writes `type = "oauth"` for a server without auth, then runs `retry`.
+    fn mcp_oauth_command(
+        &mut self,
+        server: &str,
+        login: bool,
+        retry: Option<(u64, McpAfterLogin)>,
+    ) {
+        use sendito_store::config::McpServer;
+        if self.oauth_login.is_some() {
+            self.set_status("an OAuth operation is already running", StatusKind::Warn);
+            return;
+        }
+        let write_auth = matches!(
+            self.project.config.mcp.servers.get(server),
+            Some(McpServer::Http(h)) if h.auth.is_none()
+        );
+        let info = runner::McpRunInfo::of(&self.project);
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let name = server.to_string();
+        self.oauth_login_seq = self.oauth_login_seq.wrapping_add(1);
+        let job = self.oauth_login_seq;
+        let tx = self.tx.clone();
+        let task = self.rt.spawn(async move {
+            let result: Result<String, String> = async {
+                if !login {
+                    runner::mcp_logout(&info, &name)
+                        .await
+                        .map_err(|_| "could not delete OAuth tokens".to_string())?;
+                    return Ok(format!("signed out of \"{name}\""));
+                }
+                let (scope, errors) = tokio::task::spawn_blocking(move || {
+                    runner::build_scope(&envs, env.as_deref(), &runtime)
+                })
+                .await
+                .map_err(|_| "environment resolution failed".to_string())?;
+                if !errors.is_empty() {
+                    return Err("cannot resolve environment secrets".into());
+                }
+                let note = |text: String| {
+                    if let Some(url) = text.strip_prefix("authorization URL:\n  ") {
+                        let _ = tx.send(AppMsg::OAuthUrl {
+                            job,
+                            url: url.into(),
+                        });
+                    }
+                };
+                runner::mcp_login(&info, &name, scope, &runner::open_browser, &note).await?;
+                Ok(format!("signed in to \"{name}\""))
+            }
+            .await;
+            let _ = tx.send(AppMsg::OAuthDone { job, result });
+        });
+        self.oauth_login = Some((job, task));
+        self.oauth_then = login.then(|| McpLoginThen {
+            server: server.to_string(),
+            write_auth,
+            retry,
+        });
+        self.set_status(
+            if login {
+                format!("signing in to \"{server}\"… (Ctrl+W x cancels)")
+            } else {
+                format!("removing the OAuth tokens of \"{server}\"")
+            },
+            StatusKind::Info,
+        );
+    }
+
+    /// After a successful MCP sign-in: save `type = "oauth"` when the server
+    /// had no auth, then run the request that asked for the sign-in.
+    fn after_mcp_login(&mut self, then: McpLoginThen) {
+        if then.write_auth {
+            let path = match self.project_mcp_servers() {
+                Ok(own) if own.contains_key(&then.server) => Some(self.project_config_path()),
+                Ok(_) => self.project.global_config.clone(),
+                Err(e) => {
+                    self.set_status(format!("signed in, but {e}"), StatusKind::Warn);
+                    return;
+                }
+            };
+            let auth = sendito_store::config::McpServerAuth::oauth();
+            let written = path
+                .ok_or_else(|| "no config file holds this server".to_string())
+                .and_then(|p| {
+                    sendito_store::config::set_mcp_server_auth(&p, &then.server, &auth)
+                        .map(|()| p)
+                        .map_err(|e| e.to_string())
+                });
+            match written {
+                Ok(p) => {
+                    self.reload_mcp_servers();
+                    self.set_status(
+                        format!(
+                            "signed in to \"{}\"; saved auth type = \"oauth\" to {}",
+                            then.server,
+                            p.display()
+                        ),
+                        StatusKind::Ok,
+                    );
+                }
+                Err(e) => {
+                    self.set_status(
+                        format!("signed in, but the auth was not saved: {e}"),
+                        StatusKind::Warn,
+                    );
+                    return;
+                }
+            }
+        }
+        let Some((tab, after)) = then.retry else {
+            return;
+        };
+        let Some(i) = self.tabs.iter().position(|t| t.id == tab) else {
+            return;
+        };
+        self.active = i;
+        match after {
+            McpAfterLogin::Send => self.send(false),
+            McpAfterLogin::Tools { open_picker } => self.load_mcp_tools(open_picker),
+        }
     }
 
     // ----- MCP discovery ------------------------------------------------
@@ -3618,32 +3835,42 @@ impl App {
             self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
         }
         let task = self.rt.spawn(async move {
+            // The error carries whether the server needs a sign-in.
             let result = async {
                 let (scope, errors) = tokio::task::spawn_blocking(move || {
                     runner::build_scope(&envs, env.as_deref(), &runtime)
                 })
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| (e.to_string(), false))?;
                 if !errors.is_empty() {
-                    return Err(errors.join("; "));
+                    return Err((errors.join("; "), false));
                 }
                 let name = scope.render(&server2).text;
-                let transport = runner::mcp_transport(&info, &name, &scope)?;
+                let transport =
+                    runner::mcp_transport(&info, &name, &scope).map_err(|e| (e, false))?;
                 let opts = sendito_mcp::Options {
                     timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
                 };
                 let (events, _rx) = mpsc::unbounded_channel();
                 sendito_mcp::list_tools(&transport, &opts, events)
                     .await
-                    .map_err(|e| sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()))
+                    .map_err(|e| {
+                        let needs_login = matches!(e, sendito_mcp::McpError::NeedsLogin(_));
+                        (
+                            sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()),
+                            needs_login,
+                        )
+                    })
             }
             .await;
+            let needs_login = matches!(result, Err((_, true)));
             let _ = tx.send(AppMsg::McpTools {
                 job,
                 tab,
                 server,
                 open_picker,
-                result,
+                result: result.map_err(|(e, _)| e),
+                needs_login,
             });
         });
         self.mcp_discovery = Some((job, task));
@@ -3852,7 +4079,7 @@ impl App {
 
     /// The project config file (`<root>/.sendito/config.toml`), where servers
     /// added from the interface are written.
-    fn project_config_path(&self) -> std::path::PathBuf {
+    pub(crate) fn project_config_path(&self) -> std::path::PathBuf {
         sendito_store::config::project_path(&self.project.root)
     }
 
@@ -3863,7 +4090,7 @@ impl App {
     ///
     /// A project file that does not load cleanly is an error: its servers
     /// would read as none, and a write would delete them.
-    fn project_mcp_servers(
+    pub(crate) fn project_mcp_servers(
         &self,
     ) -> Result<std::collections::BTreeMap<String, sendito_store::config::McpServer>, String> {
         let (cfg, warnings) = sendito_store::config::load(None, Some(&self.project_config_path()));
@@ -3875,7 +4102,7 @@ impl App {
     }
 
     /// Reloads the merged servers (global and project) after a write.
-    fn reload_mcp_servers(&mut self) {
+    pub(crate) fn reload_mcp_servers(&mut self) {
         let path = self.project_config_path();
         self.project.config.mcp.servers =
             sendito_store::config::load(self.project.global_config.as_deref(), Some(&path))
@@ -3925,7 +4152,7 @@ impl App {
     }
 
     /// Replaces `[mcp.servers]` in the project config with the editor's rows,
-    /// keeping what the table does not show (env, headers, auth) for a row
+    /// keeping what the table does not show (env, headers, OAuth fields) for a row
     /// whose name and command/URL did not change.
     fn save_mcp_editor(&mut self, ed: &mut McpEditor) -> bool {
         // `rows` keeps the first of two rows with one name: say so instead of
@@ -3946,13 +4173,36 @@ impl App {
             }
         };
         let mut servers = std::collections::BTreeMap::new();
-        for (name, kind, value) in ed.rows() {
-            if value.is_empty() {
+        let mut plain_tokens = Vec::new();
+        for row in ed.rows() {
+            let name = row.name;
+            if row.value.is_empty() {
                 ed.error = Some(format!("{name}: set a URL or a command"));
                 return false;
             }
+            if row.kind == 1 && row.auth != 0 {
+                ed.error = Some(format!(
+                    "{name}: a stdio server has no auth; set it to none"
+                ));
+                return false;
+            }
+            if row.auth == 1 && row.token.is_empty() {
+                ed.error = Some(format!("{name}: set a token, or set the auth to none"));
+                return false;
+            }
+            if row.auth == 1 && !row.token.contains("{{") {
+                plain_tokens.push(name.clone());
+            }
             let old = own.get(&name).cloned();
-            servers.insert(name, mcp_server_entry(kind, &value, old));
+            let old_auth = match &old {
+                Some(sendito_store::config::McpServer::Http(h)) => h.auth.clone(),
+                _ => None,
+            };
+            let mut entry = mcp_server_entry(row.kind, &row.value, old);
+            if let sendito_store::config::McpServer::Http(h) = &mut entry {
+                h.auth = mcp_server_auth(row.auth, &row.token, old_auth);
+            }
+            servers.insert(name, entry);
         }
         let path = self.project_config_path();
         if let Err(e) = sendito_store::config::set_mcp_servers(&path, &servers) {
@@ -3962,10 +4212,21 @@ impl App {
         let n = servers.len();
         self.reload_mcp_servers();
         ed.load(&servers);
-        self.set_status(
-            format!("saved {n} MCP server(s) to {}", path.display()),
-            StatusKind::Ok,
-        );
+        if plain_tokens.is_empty() {
+            self.set_status(
+                format!("saved {n} MCP server(s) to {}", path.display()),
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                format!(
+                    "saved {n} MCP server(s); the token of {} is plain text in a versioned file: \
+                     put it in an environment secret and write {{{{name}}}}",
+                    plain_tokens.join(", ")
+                ),
+                StatusKind::Warn,
+            );
+        }
         true
     }
 
@@ -4354,9 +4615,6 @@ impl App {
     pub fn open_palette(&mut self, prefill: &str) {
         self.clear_transient_status();
         let mut items: Vec<(PaletteItem, String, String)> = Vec::new();
-        for (c, d) in COMMANDS {
-            items.push((PaletteItem::Command(c, d), c.to_string(), d.to_string()));
-        }
         for a in Action::ALL {
             if matches!(
                 a,
@@ -4408,8 +4666,19 @@ impl App {
                 String::new(),
             ));
         }
+        for (id, label) in SETTINGS {
+            items.push((
+                PaletteItem::Setting(*id),
+                format!("Setting: {label}"),
+                self.setting_value(*id),
+            ));
+        }
+        // Commands come last: the untouched list starts with the actions.
+        for (c, d) in COMMANDS {
+            items.push((PaletteItem::Command(c, d), c.to_string(), d.to_string()));
+        }
         let mut input = TextEditor::single(prefill)
-            .with_placeholder("type to search actions and requests, or : for commands");
+            .with_placeholder("type to search actions, settings, commands and requests");
         input.move_to_end();
         let armed = true;
         self.overlay = Some(Overlay::Palette(Palette {
@@ -5245,12 +5514,19 @@ impl App {
 
     fn http_oauth_command(&mut self, arg: &str) {
         let Some((action, name)) = arg.split_once(char::is_whitespace) else {
-            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            self.set_status("usage: :auth login|logout <name>", StatusKind::Error);
             return;
         };
         let name = name.trim();
         if name.is_empty() || !matches!(action, "login" | "logout") {
-            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            self.set_status("usage: :auth login|logout <name>", StatusKind::Error);
+            return;
+        }
+        // An [oauth] identity wins over an MCP server with the same name.
+        if !self.project.config.oauth.contains_key(name)
+            && self.project.config.mcp.servers.contains_key(name)
+        {
+            self.mcp_oauth_command(name, action == "login", None);
             return;
         }
         if self.oauth_login.is_some() {
@@ -5260,7 +5536,7 @@ impl App {
         let identity = self.project.config.oauth.get(name).cloned();
         if action == "login" && identity.is_none() {
             self.set_status(
-                "OAuth identity is not defined in [oauth]",
+                "not an OAuth identity of [oauth] or a server of [mcp.servers]",
                 StatusKind::Error,
             );
             return;
@@ -5294,20 +5570,6 @@ impl App {
                 }
                 let identity = identity.ok_or("OAuth identity is not defined")?;
                 let settings = runner::oauth_settings(&identity, &scope)?;
-                let opener = |url: &str| {
-                    let program = if cfg!(target_os = "macos") {
-                        "open"
-                    } else {
-                        "xdg-open"
-                    };
-                    std::process::Command::new(program)
-                        .arg(url)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .is_ok()
-                };
                 let note = |text: String| {
                     if let Some(url) = text.strip_prefix("authorization URL:\n  ") {
                         let _ = tx.send(AppMsg::OAuthUrl {
@@ -5319,7 +5581,7 @@ impl App {
                 let tokens = sendito_mcp::oauth::login_http(
                     &settings,
                     Duration::from_secs(300),
-                    &opener,
+                    &runner::open_browser,
                     &note,
                 )
                 .await
@@ -5346,6 +5608,111 @@ impl App {
         );
     }
 
+    /// True when the active tab is one of `kinds`; otherwise the status
+    /// says that `what` is not available.
+    fn tab_kind_in(&mut self, kinds: &[Kind], what: &str) -> bool {
+        let kind = self.tab().map(|t| t.ed.kind);
+        match kind {
+            Some(k) if kinds.contains(&k) => true,
+            Some(k) => {
+                let name = match k {
+                    Kind::Http => "HTTP",
+                    Kind::Grpc => "gRPC",
+                    Kind::Ws => "WebSocket",
+                    Kind::Mcp => "MCP",
+                };
+                self.set_status(
+                    format!("{what} is not available for {name} requests"),
+                    StatusKind::Warn,
+                );
+                false
+            }
+            None => {
+                self.set_status("open a request first", StatusKind::Warn);
+                false
+            }
+        }
+    }
+
+    /// The "New environment" name dialog.
+    fn prompt_new_env(&mut self) {
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "New environment",
+            "Name",
+            TextEditor::single(""),
+            vec![],
+            PromptAction::NewEnv,
+        )));
+    }
+
+    /// Lists the themes; choosing one applies and saves it.
+    fn open_theme_picker(&mut self) {
+        let items = self.themes.names();
+        let cur = items
+            .iter()
+            .position(|n| *n == self.project.config.ui.theme);
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "Theme",
+            items,
+            vec![],
+            PickAction::Theme,
+            cur,
+        )));
+    }
+
+    /// Lists the HTTP OAuth identities and the MCP servers that use OAuth.
+    fn open_auth_picker(&mut self, login: bool) {
+        use sendito_store::config::{McpServer, McpServerAuth};
+        let c = &self.project.config;
+        let mut items: Vec<String> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
+        for name in c.oauth.keys() {
+            items.push(name.clone());
+            details.push("HTTP identity".into());
+        }
+        for (name, s) in &c.mcp.servers {
+            // An [oauth] identity wins over a server with the same name.
+            if let McpServer::Http(h) = s
+                && matches!(h.auth, Some(McpServerAuth::Oauth { .. }))
+                && !c.oauth.contains_key(name)
+            {
+                items.push(name.clone());
+                details.push("MCP server".into());
+            }
+        }
+        if items.is_empty() {
+            self.set_status(
+                "no OAuth identities or MCP servers with OAuth are configured",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        let title = if login { "Sign in" } else { "Sign out" };
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            title,
+            items,
+            details,
+            PickAction::Auth { login },
+            None,
+        )));
+    }
+
+    /// Lists the MCP servers; choosing one opens its details editor.
+    fn open_mcp_details_picker(&mut self) {
+        let items: Vec<String> = self.project.config.mcp.servers.keys().cloned().collect();
+        if items.is_empty() {
+            self.set_status("no servers configured in [mcp.servers]", StatusKind::Warn);
+            return;
+        }
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "Edit an MCP server",
+            items,
+            vec![],
+            PickAction::McpServerDetails,
+            None,
+        )));
+    }
+
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
         let (word, arg) = cmd
@@ -5355,6 +5722,7 @@ impl App {
         match word {
             "send" => self.send(false),
             "cancel" => self.cancel(),
+            "auth" if matches!(arg, "login" | "logout") => self.open_auth_picker(arg == "login"),
             "auth" => self.http_oauth_command(arg),
             "watch" => {
                 let secs = if arg.is_empty() {
@@ -5390,6 +5758,8 @@ impl App {
                 }
             }
             "envs" => self.open_env_editor(),
+            "newenv" => self.prompt_new_env(),
+            "theme" if arg.is_empty() => self.open_theme_picker(),
             "theme" => self.theme_command(arg),
             "w" | "write" | "save" => self.save(),
             "saveas" => {
@@ -5416,6 +5786,36 @@ impl App {
             "mcpservers" => self.open_mcp_server_picker(),
             "mcpadd" => self.prompt_mcp_add(arg),
             "mcptools" => self.load_mcp_tools(true),
+            "mcpedit" if arg.is_empty() => self.open_mcp_details_picker(),
+            "mcpedit" => {
+                if let Err(e) = self.open_mcp_server_editor(arg) {
+                    self.set_status(e, StatusKind::Error);
+                }
+            }
+            "method" => {
+                if self.tab_kind_in(&[Kind::Http], "the method") {
+                    self.open_method_picker(None);
+                }
+            }
+            "bodytype" => {
+                if self.tab_kind_in(&[Kind::Http], "the body type") {
+                    self.open_choice_picker(Field::BodyKind);
+                }
+            }
+            "authtype" => {
+                if self.tab_kind_in(&[Kind::Http, Kind::Grpc, Kind::Ws], "the auth type") {
+                    self.open_choice_picker(Field::AuthKind);
+                }
+            }
+            "grpcmethod" => {
+                if self.tab_kind_in(&[Kind::Grpc], "the gRPC method") {
+                    self.open_grpc_method_picker();
+                }
+            }
+            "rescan" => {
+                self.rescan();
+                self.set_status("collection read from disk again", StatusKind::Ok);
+            }
             "import" => {
                 if arg.is_empty() {
                     self.open_import("");
@@ -5452,7 +5852,9 @@ impl App {
             }
             "template" => self.load_schema(false, true, false),
             "reload" => self.load_schema(false, false, true),
-            "settings" => self.overlay = Some(Overlay::Settings { sel: 0 }),
+            "settings" => self.open_settings(SettingId::Theme),
+            "oauth" => self.open_oauth_editor(),
+            "keymap" => self.open_keymap_editor(),
             "help" | "h" => self.open_help(),
             "report" => match self.last_report.clone() {
                 Some((title, text)) => self.show_report(&title, &text),
@@ -5478,43 +5880,234 @@ impl App {
 
     // ----- settings -----------------------------------------------------
 
+    /// Opens the settings dialog with `id` selected.
+    pub fn open_settings(&mut self, id: SettingId) {
+        let sel = SETTINGS.iter().position(|(s, _)| *s == id).unwrap_or(0);
+        self.overlay = Some(Overlay::Settings { sel });
+    }
+
     pub fn setting_value(&self, id: SettingId) -> String {
-        let ui = &self.project.config.ui;
+        let c = &self.project.config;
+        let on = |b: bool| if b { "On" } else { "Off" }.to_string();
+        let raw = self.setting_raw(id);
         match id {
-            SettingId::Vim => {
-                if self.vim {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
+            SettingId::Scope => match self.config_scope {
+                ConfigScope::Global => "global".into(),
+                ConfigScope::Project => "project".into(),
+            },
+            SettingId::Vim => on(self.vim),
+            SettingId::Theme => c.ui.theme.clone(),
+            SettingId::Icons => c.ui.icons.clone(),
+            SettingId::Sidebar => c.ui.sidebar.clone(),
+            SettingId::Mouse => on(c.ui.mouse),
+            SettingId::ConfirmQuit => on(c.ui.confirm_quit),
+            SettingId::History => on(c.history.enabled),
+            SettingId::CookieJar => on(c.http.cookie_jar),
+            SettingId::Hints => c.ui.hints.clone(),
+            SettingId::WatchInterval => format!("{raw} s"),
+            SettingId::MaxBody => format!("{raw} MB"),
+            SettingId::GrpcDeadline | SettingId::WsTimeout if raw == "0" => "none".into(),
+            SettingId::HttpTimeout
+            | SettingId::GrpcDeadline
+            | SettingId::WsTimeout
+            | SettingId::McpTimeout => format!("{raw} ms"),
+            SettingId::CollectionName if raw.is_empty() => {
+                format!("{} (folder name)", self.project.name)
             }
-            SettingId::Theme => ui.theme.clone(),
-            SettingId::Icons => ui.icons.clone(),
-            SettingId::Sidebar => ui.sidebar.clone(),
-            SettingId::Mouse => {
-                if ui.mouse {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            SettingId::ConfirmQuit => {
-                if ui.confirm_quit {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            SettingId::History => {
-                if self.project.config.history.enabled {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            SettingId::WatchInterval => format!("{} s", self.project.config.ui.watch_interval_s),
-            SettingId::Hints => ui.hints.clone(),
+            SettingId::CollectionIgnore if raw.is_empty() => "none".into(),
+            SettingId::OAuthIds => match c.oauth.len() {
+                1 => "1 identity".into(),
+                n => format!("{n} identities"),
+            },
+            SettingId::KeyBindings => match c.keymap.values().map(BTreeMap::len).sum::<usize>() {
+                1 => "1 change".into(),
+                n => format!("{n} changes"),
+            },
+            _ if raw.is_empty() => "not set".into(),
+            _ => raw,
         }
+    }
+
+    /// A typed setting's value as its dialog shows it (no unit; empty when
+    /// it is not set).
+    pub fn setting_raw(&self, id: SettingId) -> String {
+        let c = &self.project.config;
+        let opt = |v: &Option<String>| v.clone().unwrap_or_default();
+        match id {
+            SettingId::HistoryMax => c.history.max_entries.to_string(),
+            SettingId::WatchInterval => c.ui.watch_interval_s.to_string(),
+            SettingId::HttpTimeout => c.http.timeout_ms.to_string(),
+            SettingId::GrpcDeadline => c.grpc.deadline_ms.to_string(),
+            SettingId::WsTimeout => c.websocket.timeout_ms.to_string(),
+            SettingId::McpTimeout => c.mcp.timeout_ms.to_string(),
+            SettingId::MaxBody => c.http.max_body_mb.to_string(),
+            SettingId::Proxy => opt(&c.http.proxy),
+            SettingId::TlsCa => opt(&c.http.tls.ca),
+            SettingId::TlsCert => opt(&c.http.tls.client_cert),
+            SettingId::TlsKey => opt(&c.http.tls.client_key),
+            SettingId::CollectionName => opt(&c.collection.name),
+            SettingId::CollectionIgnore => c.collection.ignore.join(", "),
+            _ => String::new(),
+        }
+    }
+
+    /// The config file that settings and the OAuth and keymap editors write
+    /// to; `None` when there is no global file to write.
+    pub fn scope_path(&self, scope: ConfigScope) -> Option<std::path::PathBuf> {
+        match scope {
+            ConfigScope::Global => self.project.global_config.clone(),
+            ConfigScope::Project => Some(self.project_config_path()),
+        }
+    }
+
+    /// The file a setting is saved to: the chosen scope, except the
+    /// collection name, which only means something in the project file.
+    pub fn setting_path(&self, id: SettingId) -> Option<std::path::PathBuf> {
+        match id {
+            SettingId::CollectionName => self.scope_path(ConfigScope::Project),
+            _ => self.scope_path(self.config_scope),
+        }
+    }
+
+    /// Writes a setting to its file (`None` removes the key). Says so when the
+    /// project file sets the same key, since that value wins at the next start.
+    /// Returns false when the write failed.
+    fn save_setting(&mut self, id: SettingId, value: Option<toml::Value>) -> bool {
+        let (Some((section, key)), Some(path)) = (id.key(), self.setting_path(id)) else {
+            return true;
+        };
+        if let Err(e) = sendito_store::config::set_value(&path, section, key, value) {
+            self.set_status(format!("could not write settings: {e}"), StatusKind::Error);
+            return false;
+        }
+        let project = self.project_config_path();
+        if path != project && sendito_store::config::has_value(&project, section, key) {
+            self.set_status(
+                format!(
+                    "saved to the global config, but the project config also sets \
+                     {section}.{key} and wins when Sendito starts again: \
+                     save to project instead"
+                ),
+                StatusKind::Warn,
+            );
+        }
+        true
+    }
+
+    /// Opens the dialog that types a value for a number, path or text setting.
+    fn prompt_setting(&mut self, id: SettingId) {
+        let label = SETTINGS
+            .iter()
+            .find(|(s, _)| *s == id)
+            .map(|(_, l)| *l)
+            .unwrap_or("");
+        let mut prompt = Prompt::new(
+            label,
+            "Value",
+            TextEditor::single(&self.setting_raw(id)),
+            Vec::new(),
+            PromptAction::Setting(id),
+        );
+        prompt.note = Some(setting_note(id).into());
+        self.overlay = Some(Overlay::Prompt(prompt));
+    }
+
+    /// Reads a typed setting: the value to save (`None` removes the key) or
+    /// why the text is not valid.
+    fn parse_setting(&self, id: SettingId, text: &str) -> Result<Option<toml::Value>, String> {
+        let text = text.trim();
+        if let Some(min) = id.min() {
+            return match text.parse::<u64>() {
+                Ok(n) if n >= min => i64::try_from(n)
+                    .map(|n| Some(toml::Value::Integer(n)))
+                    .map_err(|_| "the number is too large".to_string()),
+                _ => Err(format!("type a whole number ({min} or more)")),
+            };
+        }
+        if text.is_empty() {
+            return Ok(None);
+        }
+        match id {
+            SettingId::Proxy => {
+                sendito_http::ProxySpec::parse(text)?;
+            }
+            SettingId::TlsCa | SettingId::TlsCert | SettingId::TlsKey => {
+                let p = sendito_store::env::expand(&self.project.root, text);
+                if !p.is_file() {
+                    return Err(format!("no file at {}", p.display()));
+                }
+            }
+            SettingId::CollectionIgnore => {
+                let dirs: Vec<toml::Value> = text
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty())
+                    .map(|d| toml::Value::String(d.to_string()))
+                    .collect();
+                return Ok(Some(toml::Value::Array(dirs)));
+            }
+            _ => {}
+        }
+        Ok(Some(toml::Value::String(text.to_string())))
+    }
+
+    /// Saves a typed setting and applies it at once.
+    fn set_typed_setting(&mut self, id: SettingId, text: &str) -> Result<(), String> {
+        let value = self.parse_setting(id, text)?;
+        let num = value
+            .as_ref()
+            .and_then(toml::Value::as_integer)
+            .unwrap_or(0) as u64;
+        let s = value
+            .as_ref()
+            .and_then(toml::Value::as_str)
+            .map(str::to_string);
+        let c = &mut self.project.config;
+        match id {
+            SettingId::HistoryMax => c.history.max_entries = num as usize,
+            SettingId::WatchInterval => c.ui.watch_interval_s = num,
+            SettingId::HttpTimeout => c.http.timeout_ms = num,
+            SettingId::GrpcDeadline => c.grpc.deadline_ms = num,
+            SettingId::WsTimeout => c.websocket.timeout_ms = num,
+            SettingId::McpTimeout => c.mcp.timeout_ms = num,
+            SettingId::MaxBody => c.http.max_body_mb = num,
+            SettingId::Proxy => c.http.proxy = s,
+            SettingId::TlsCa => c.http.tls.ca = s,
+            SettingId::TlsCert => c.http.tls.client_cert = s,
+            SettingId::TlsKey => c.http.tls.client_key = s,
+            SettingId::CollectionName => c.collection.name = s,
+            SettingId::CollectionIgnore => {
+                c.collection.ignore = match &value {
+                    Some(toml::Value::Array(a)) => a
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect(),
+                    _ => sendito_store::config::CollectionConfig::default().ignore,
+                }
+            }
+            _ => {}
+        }
+        let problems = self.project.apply_config();
+        if matches!(id, SettingId::CollectionIgnore) {
+            self.rescan();
+        }
+        self.clear_transient_status();
+        if !self.save_setting(id, value) {
+            return Ok(());
+        }
+        let mut notes = Vec::new();
+        if id == SettingId::CollectionName {
+            notes.push(format!(
+                "collection name: {}; keychain secrets saved under the old name \
+                 are not found until you set them again",
+                self.project.name
+            ));
+        }
+        notes.extend(problems);
+        if !notes.is_empty() {
+            self.set_status(notes.join("; "), StatusKind::Warn);
+        }
+        Ok(())
     }
 
     /// Switches to theme `name` (not saved to the config).
@@ -5563,15 +6156,7 @@ impl App {
             self.reload_themes();
         } else if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(arg)).cloned() {
             self.apply_theme(&n);
-            if let Some(p) = self.project.global_config.clone()
-                && let Err(e) = sendito_store::config::set_value(
-                    &p,
-                    "ui",
-                    "theme",
-                    toml::Value::String(n.clone()),
-                )
-            {
-                self.set_status(format!("could not write settings: {e}"), StatusKind::Error);
+            if !self.save_setting(SettingId::Theme, Some(toml::Value::String(n.clone()))) {
                 return;
             }
             let notes = self.themes.notes(&n);
@@ -5589,91 +6174,82 @@ impl App {
     }
 
     pub fn change_setting(&mut self, id: SettingId, dir: isize) {
-        let (section, key, value) = match id {
+        if id.typed() {
+            self.prompt_setting(id);
+            return;
+        }
+        match id {
+            SettingId::OAuthIds => return self.open_oauth_editor(),
+            SettingId::KeyBindings => return self.open_keymap_editor(),
+            _ => {}
+        }
+        let c = &mut self.project.config;
+        let value = match id {
+            SettingId::Scope => {
+                self.config_scope = match self.config_scope {
+                    ConfigScope::Global => ConfigScope::Project,
+                    ConfigScope::Project => ConfigScope::Global,
+                };
+                return;
+            }
             SettingId::Vim => {
                 self.vim = !self.vim;
-                self.project.config.ui.vim_mode = self.vim;
+                c.ui.vim_mode = self.vim;
                 let vim = self.vim;
                 for t in &mut self.tabs {
                     t.ed.set_vim(vim);
                 }
-                ("ui", "vim_mode", toml::Value::Boolean(self.vim))
+                toml::Value::Boolean(vim)
             }
             SettingId::Theme => {
                 let names = self.themes.names();
-                let i = names
-                    .iter()
-                    .position(|n| *n == self.project.config.ui.theme)
-                    .unwrap_or(0) as isize;
-                let next = names[crate::list::cycle(i as usize, dir, names.len())].clone();
+                let i = names.iter().position(|n| *n == c.ui.theme).unwrap_or(0);
+                let next = names[crate::list::cycle(i, dir, names.len())].clone();
                 self.apply_theme(&next);
-                ("ui", "theme", toml::Value::String(next))
+                toml::Value::String(next)
             }
             SettingId::Icons => {
                 let v = if self.icons.nerd { "unicode" } else { "nerd" };
-                self.project.config.ui.icons = v.into();
+                c.ui.icons = v.into();
                 self.icons = crate::icons::Icons::by_name(v);
-                ("ui", "icons", toml::Value::String(v.into()))
+                toml::Value::String(v.into())
             }
             SettingId::Sidebar => {
-                let v = if self.project.config.ui.sidebar == "right" {
+                let v = if c.ui.sidebar == "right" {
                     "left"
                 } else {
                     "right"
                 };
-                self.project.config.ui.sidebar = v.into();
-                ("ui", "sidebar", toml::Value::String(v.into()))
+                c.ui.sidebar = v.into();
+                toml::Value::String(v.into())
             }
             SettingId::Mouse => {
-                self.project.config.ui.mouse = !self.project.config.ui.mouse;
-                (
-                    "ui",
-                    "mouse",
-                    toml::Value::Boolean(self.project.config.ui.mouse),
-                )
+                c.ui.mouse = !c.ui.mouse;
+                toml::Value::Boolean(c.ui.mouse)
             }
             SettingId::ConfirmQuit => {
-                self.project.config.ui.confirm_quit = !self.project.config.ui.confirm_quit;
-                (
-                    "ui",
-                    "confirm_quit",
-                    toml::Value::Boolean(self.project.config.ui.confirm_quit),
-                )
+                c.ui.confirm_quit = !c.ui.confirm_quit;
+                toml::Value::Boolean(c.ui.confirm_quit)
             }
             SettingId::History => {
-                self.project.config.history.enabled = !self.project.config.history.enabled;
-                (
-                    "history",
-                    "enabled",
-                    toml::Value::Boolean(self.project.config.history.enabled),
-                )
+                c.history.enabled = !c.history.enabled;
+                toml::Value::Boolean(c.history.enabled)
             }
-            SettingId::WatchInterval => {
-                const STEPS: [u64; 4] = [5, 10, 30, 60];
-                let i = STEPS
-                    .iter()
-                    .position(|s| *s == self.project.config.ui.watch_interval_s)
-                    .unwrap_or(0) as isize;
-                let next = STEPS[crate::list::cycle(i as usize, dir, STEPS.len())];
-                self.project.config.ui.watch_interval_s = next;
-                ("ui", "watch_interval_s", toml::Value::Integer(next as i64))
+            SettingId::CookieJar => {
+                c.http.cookie_jar = !c.http.cookie_jar;
+                toml::Value::Boolean(c.http.cookie_jar)
             }
             SettingId::Hints => {
                 const LEVELS: [&str; 3] = ["full", "short", "off"];
-                let i = LEVELS
-                    .iter()
-                    .position(|l| *l == self.project.config.ui.hints)
-                    .unwrap_or(1);
+                let i = LEVELS.iter().position(|l| *l == c.ui.hints).unwrap_or(1);
                 let next = LEVELS[crate::list::cycle(i, dir, LEVELS.len())];
-                self.project.config.ui.hints = next.into();
-                ("ui", "hints", toml::Value::String(next.into()))
+                c.ui.hints = next.into();
+                toml::Value::String(next.into())
             }
+            _ => return,
         };
-        if let Some(p) = self.project.global_config.clone()
-            && let Err(e) = sendito_store::config::set_value(&p, section, key, value)
-        {
-            self.set_status(format!("could not write settings: {e}"), StatusKind::Error);
-        }
+        self.clear_transient_status();
+        self.save_setting(id, Some(value));
     }
 
     // ----- hints --------------------------------------------------------
@@ -5783,8 +6359,26 @@ impl App {
                         .into(),
                     ),
                 ]),
+                Overlay::Cfg(e) => {
+                    v.push(("Ctrl+S".into(), "save".into()));
+                    v.push(("Ctrl+N".into(), "add row".into()));
+                    v.push(("Ctrl+D".into(), "delete row".into()));
+                    if e.tabs.len() > 1 {
+                        v.push(("Ctrl+PgUp/PgDn".into(), "tab".into()));
+                    }
+                    v.push((
+                        "Esc".into(),
+                        if e.dirty {
+                            "close (asks to save)"
+                        } else {
+                            "close"
+                        }
+                        .into(),
+                    ));
+                }
                 Overlay::Mcp(m) => v.extend([
                     ("Ctrl+S".into(), "save".into()),
+                    ("Ctrl+O".into(), "details".into()),
                     ("Ctrl+N".into(), "add row".into()),
                     ("Ctrl+D".into(), "delete row".into()),
                     ("Space".into(), "kind".into()),
@@ -5821,9 +6415,15 @@ impl App {
                     ("↑↓ PgUp PgDn".into(), "scroll".into()),
                     ("Esc".into(), "close".into()),
                 ]),
-                Overlay::Settings { .. } => v.extend([
+                Overlay::Settings { sel } => v.extend([
                     ("↑↓".into(), "move".into()),
-                    ("←→ Space".into(), "change".into()),
+                    if SETTINGS.get(*sel).is_some_and(|(id, _)| id.typed()) {
+                        ("Enter".into(), "type a value".into())
+                    } else if SETTINGS.get(*sel).is_some_and(|(id, _)| id.opens()) {
+                        ("Enter".into(), "open the editor".into())
+                    } else {
+                        ("←→ Space".into(), "change".into())
+                    },
                     ("Esc".into(), "close".into()),
                 ]),
             }
@@ -6079,6 +6679,73 @@ fn mcp_server_entry(
     }
 }
 
+/// The auth of an HTTP server from the editor's Auth and Token cells
+/// (`MCP_AUTHS`). An OAuth server keeps its fields from the file.
+fn mcp_server_auth(
+    choice: usize,
+    token: &str,
+    old: Option<sendito_store::config::McpServerAuth>,
+) -> Option<sendito_store::config::McpServerAuth> {
+    use sendito_store::config::McpServerAuth;
+    match (choice, old) {
+        (0, _) => None,
+        (1, _) => Some(McpServerAuth::Bearer {
+            token: token.to_string(),
+        }),
+        (_, Some(old @ McpServerAuth::Oauth { .. })) => Some(old),
+        _ => Some(McpServerAuth::oauth()),
+    }
+}
+
+/// What a typed setting does and what it takes: the settings dialog shows it
+/// for the selected row, and the dialog that types the value shows it too.
+pub fn setting_note(id: SettingId) -> &'static str {
+    match id {
+        SettingId::HistoryMax => "History keeps this many entries; the oldest go first.",
+        SettingId::WatchInterval => {
+            "The :watch command re-sends the active request every this many seconds."
+        }
+        SettingId::HttpTimeout => {
+            "Milliseconds an HTTP request waits when it sets no timeout of its own."
+        }
+        SettingId::GrpcDeadline => {
+            "Milliseconds a gRPC call may take when it sets no deadline of its own; 0 = no deadline."
+        }
+        SettingId::WsTimeout => {
+            "Milliseconds a WebSocket handshake may take when the request sets none; 0 = no limit."
+        }
+        SettingId::McpTimeout => {
+            "Milliseconds an MCP call (handshake included) may take when the request sets none."
+        }
+        SettingId::MaxBody => "Response bodies larger than this many MB are cut (a note says so).",
+        SettingId::Proxy => {
+            "env (read HTTPS_PROXY, HTTP_PROXY, NO_PROXY) or a URL: http://, https://, socks5://host:port. Empty = the client default. gRPC does not use it."
+        }
+        SettingId::TlsCa => {
+            "PEM file whose certificates replace the system roots. Relative to the collection; ~/ is your home. Empty = system roots."
+        }
+        SettingId::TlsCert => {
+            "PEM file with the client certificate chain; set the client key too. Relative to the collection; ~/ is your home."
+        }
+        SettingId::TlsKey => {
+            "PEM file with the client private key; set the client certificate too. Relative to the collection; ~/ is your home."
+        }
+        SettingId::CollectionName => {
+            "Saved to the project config. Keychain secrets are stored under this name: after a change, set them again. Empty = the folder name."
+        }
+        SettingId::OAuthIds => {
+            "Named OAuth identities (authorization code + PKCE) that HTTP requests sign in with. Enter opens the editor."
+        }
+        SettingId::KeyBindings => {
+            "Your own keys for actions, replacing the default ones. Enter opens the editor."
+        }
+        SettingId::CollectionIgnore => {
+            "Directory names the request tree skips, separated by commas. Empty = the defaults (target, node_modules, vendor, dist, build)."
+        }
+        _ => "",
+    }
+}
+
 /// What confirming a prompt does, for its button and the hint row.
 pub fn prompt_verb(a: &PromptAction) -> &'static str {
     match a {
@@ -6091,6 +6758,7 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
         PromptAction::Rename(_) => "rename",
         PromptAction::CustomMethod => "use",
         PromptAction::McpServer { .. } => "add",
+        PromptAction::Setting(_) => "save",
     }
 }
 
@@ -6775,6 +7443,7 @@ impl App {
             Overlay::Import(i) => self.import_key(i, key, ctrl),
             Overlay::Env(e) => self.env_key(e, key, ctrl),
             Overlay::Mcp(m) => self.mcp_key(m, key, ctrl),
+            Overlay::Cfg(e) => self.cfg_key(e, key),
         }
     }
 
@@ -6957,6 +7626,14 @@ impl App {
         }
     }
 
+    /// Puts `:<base> ` in the palette input so the argument can be typed.
+    fn prefill_command(p: &mut Palette, base: &str) {
+        let mut input = TextEditor::single(&format!(":{base} "));
+        input.move_to_end();
+        p.input = input;
+        p.sel = 0;
+    }
+
     fn palette_key(&mut self, p: &mut Palette, key: KeyEvent) -> bool {
         {
             let vis = p.visible();
@@ -7002,14 +7679,12 @@ impl App {
                         } else if let Some(i) = vis.get(p.sel)
                             && let PaletteItem::Command(c, _) = p.items[*i].0
                         {
-                            let word = c.split_whitespace().next().unwrap_or(c);
+                            let (base, _) = command_base(c);
                             if c.contains('<') || c.contains('[') {
-                                let mut input = TextEditor::single(&format!("{word} "));
-                                input.move_to_end();
-                                p.input = input;
+                                Self::prefill_command(p, base);
                                 return true;
                             }
-                            self.run_command(word);
+                            self.run_command(base);
                         }
                         return false;
                     }
@@ -7022,7 +7697,16 @@ impl App {
                                 self.open_request(&rel);
                             }
                             PaletteItem::Env(e) => self.set_env(e),
-                            PaletteItem::Command(c, _) => self.run_command(c),
+                            PaletteItem::Setting(id) => self.open_settings(id),
+                            PaletteItem::Command(c, _) => {
+                                // A command that needs an argument waits for it.
+                                let (base, needs_arg) = command_base(c);
+                                if needs_arg {
+                                    Self::prefill_command(p, base);
+                                    return true;
+                                }
+                                self.run_command(base);
+                            }
                         }
                     }
                     false
@@ -7087,6 +7771,9 @@ impl App {
                         && let Some(ed) = self.parked_env.take()
                     {
                         self.overlay = Some(Overlay::Env(ed));
+                    }
+                    if let PromptAction::Setting(id) = p.action {
+                        self.open_settings(id);
                     }
                     false
                 }
@@ -7212,13 +7899,7 @@ impl App {
                     },
                 );
                 self.parked_env = Some(ed);
-                self.overlay = Some(Overlay::Prompt(Prompt::new(
-                    "New environment",
-                    "Name",
-                    TextEditor::single(""),
-                    vec![],
-                    PromptAction::NewEnv,
-                )));
+                self.prompt_new_env();
                 return false;
             }
             if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
@@ -7304,6 +7985,29 @@ impl App {
                     m.dirty = true;
                 }
                 return true;
+            }
+            if ctrl && key.code == KeyCode::Char('o') {
+                if m.dirty {
+                    m.error = Some("save (Ctrl+S) before you edit the details of a server".into());
+                    return true;
+                }
+                let name = m
+                    .table
+                    .rows
+                    .get(m.table.sel_row)
+                    .map(|r| r.cells[0].text().trim().to_string())
+                    .unwrap_or_default();
+                if name.is_empty() {
+                    m.error = Some("select a server first".into());
+                    return true;
+                }
+                return match self.open_mcp_server_editor(&name) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        m.error = Some(e);
+                        true
+                    }
+                };
             }
             if ctrl && key.code == KeyCode::Char('n') {
                 // The trailing row is the one typed into to add a server.
@@ -7431,6 +8135,7 @@ impl App {
                     _ => self.overlay = Some(Overlay::Env(ed)),
                 }
             }
+            ConfirmAction::CfgClose => self.cfg_close(sel),
             ConfirmAction::McpClose => {
                 let Some(mut ed) = self.parked_mcp.take() else {
                     return;
@@ -7456,6 +8161,11 @@ impl App {
                     self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 }
             }
+            ConfirmAction::McpLogin { server, tab, after } => {
+                if sel == 0 {
+                    self.mcp_oauth_command(&server, true, Some((tab, after)));
+                }
+            }
             ConfirmAction::ClearHistory => {
                 if sel == 0 {
                     let _ = sendito_store::history::clear(&sendito_store::history::history_path(
@@ -7463,6 +8173,16 @@ impl App {
                     ));
                     self.history = Some(Vec::new());
                     self.set_status("history cleared", StatusKind::Ok);
+                }
+            }
+            ConfirmAction::DeleteCookie(n) => {
+                if sel == 0 {
+                    self.cookies_command(&format!("delete {n}"));
+                }
+            }
+            ConfirmAction::ClearCookies => {
+                if sel == 0 {
+                    self.cookies_command("clear");
                 }
             }
         }
@@ -7552,6 +8272,38 @@ impl App {
                 self.changed();
             }
             PickAction::RequestKind => {}
+            PickAction::Theme => self.theme_command(item),
+            PickAction::Cookie => {
+                let (title, message, action) = if item == CLEAR_COOKIES {
+                    (
+                        "Clear cookies",
+                        "Delete every cookie of the active environment?".to_string(),
+                        ConfirmAction::ClearCookies,
+                    )
+                } else {
+                    (
+                        "Delete cookie",
+                        format!("Delete this cookie?\n{item}"),
+                        ConfirmAction::DeleteCookie(index + 1),
+                    )
+                };
+                self.overlay = Some(Overlay::Confirm(Confirm {
+                    title: title.into(),
+                    message,
+                    buttons: vec!["Delete".into(), "Cancel".into()],
+                    sel: 1,
+                    action,
+                }));
+            }
+            PickAction::Auth { login } => {
+                let verb = if login { "login" } else { "logout" };
+                self.http_oauth_command(&format!("{verb} {item}"));
+            }
+            PickAction::McpServerDetails => {
+                if let Err(e) = self.open_mcp_server_editor(item) {
+                    self.set_status(e, StatusKind::Error);
+                }
+            }
         }
     }
 
@@ -7705,6 +8457,10 @@ impl App {
             PromptAction::McpServer { name } => {
                 self.add_mcp_server(&name, choice, &value)?;
             }
+            PromptAction::Setting(id) => {
+                self.set_typed_setting(id, &value)?;
+                self.open_settings(id);
+            }
         }
         Ok(())
     }
@@ -7806,6 +8562,11 @@ impl App {
                     }
                     Overlay::Env(e) => e.table.move_selection(d.signum()),
                     Overlay::Mcp(m) => m.table.move_selection(d.signum()),
+                    Overlay::Cfg(e) => {
+                        if let Some(t) = e.table() {
+                            t.move_selection(d.signum());
+                        }
+                    }
                     Overlay::Prompt(p) => {
                         if let Some(hl) = p.open {
                             let n = p
@@ -8216,7 +8977,7 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
-            (Overlay::Mcp(_), OverlayHit::Outside) => {
+            (Overlay::Mcp(_) | Overlay::Cfg(_), OverlayHit::Outside) => {
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
@@ -8411,6 +9172,30 @@ impl App {
             (Overlay::Mcp(_), OverlayHit::McpButton(1)) => {
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(2)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Cfg(e), OverlayHit::CfgTab(i)) => {
+                e.current = i.min(e.tables.len().saturating_sub(1));
+            }
+            (Overlay::Cfg(e), OverlayHit::CfgCell { row, col }) => {
+                crate::config_editor::cfg_click(e, row, col, x.saturating_sub(rect.x));
+            }
+            (Overlay::Cfg(e), OverlayHit::CfgDelete(row)) => {
+                crate::config_editor::cfg_delete(e, row);
+            }
+            (Overlay::Cfg(_), OverlayHit::CfgButton(i)) => {
+                let key = match i {
+                    0 => KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                    1 => KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+                    _ => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                };
+                self.overlay = Some(ov);
+                self.overlay_key(key);
                 return;
             }
             (Overlay::Mcp(_), OverlayHit::McpButton(_)) => {

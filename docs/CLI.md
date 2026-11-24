@@ -193,13 +193,14 @@ Runs (or forgets) the OAuth login for an MCP server from `[mcp.servers]`.
 
 | Subcommand | Arguments |
 |---|---|
-| `mcp login <server>` | server name |
+| `mcp login <server> [--env <name>]` | server name; the environment renders `{{variables}}` in the URL and OAuth settings |
 | `mcp logout <server>` | server name |
 
 The authorization URL is printed and a browser is opened when available; the
 redirect must reach Sendito's local loopback listener. Tokens are stored in the
 OS keychain under `<collection>/mcp/<server>`. Use it before calling a server
-whose auth table has `type = "oauth"`.
+whose auth table has `type = "oauth"`. In the app, `:auth login <server>` does the
+same, and a server that asks for a sign-in offers it.
 
 ---
 

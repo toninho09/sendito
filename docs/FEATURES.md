@@ -25,7 +25,7 @@ requests as plain TOML files that you can version in git.
 | History | yes | `run` records it | [Storage](#storage) |
 | Cookie jar | yes | `--no-cookies` | [HTTP](#http) |
 | OAuth 2 (HTTP) | yes | `sendito auth` | [HTTP](#http) |
-| OAuth 2.1 (MCP) | uses tokens | `sendito mcp login` | [MCP](#mcp) |
+| OAuth 2.1 (MCP) | yes | `sendito mcp login` | [MCP](#mcp) |
 | Themes and icons | yes | `sendito theme` | [Themes and icons](#themes-and-icons) |
 | Folders of requests in CI | — | `sendito run <folder>` | [Headless and CI](#headless-and-ci) |
 
@@ -279,22 +279,36 @@ from the request.
   empty or `{}`, fills an argument template from the tool's input schema.
   `:mcpservers` and `:mcptools` run the same pickers from the palette.
 * **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) opens the
-  servers as a table — name, kind (`http`/`stdio`) and the URL or command line —
+  servers as a table — name, kind (`http`/`stdio`), the URL or command line,
+  and for HTTP servers the auth (`none`/`bearer`/`oauth`) and the bearer token —
   and `Ctrl+S` writes `[mcp.servers]` to the project config
   (`.sendito/config.toml`), keeping the rest of the file. It shows and writes
   only the project file's servers: servers from the global config are used but
   never copied into the project file. While the project config has an error,
   the editor and `:mcpadd` show it and write nothing. Rows whose name and
-  URL/command line did not change keep their `args`, `env`, `headers` and `auth`,
-  which are edited in the file. `:mcpadd <name>` asks for the URL or command and
-  adds one server at once.
+  URL/command line did not change keep their `args`, `env` and `headers`. A
+  server set to `oauth` keeps its OAuth fields. `Ctrl+O` (or the Details
+  button) opens the selected saved server: the `env` table of a stdio server,
+  or for an HTTP server an Options tab (`verify_tls` and the OAuth overrides
+  `client_id`, `client_secret`, `authorize_url`, `token_url`,
+  `registration_url`, `scopes`, which need the auth set to `oauth`) and a
+  Headers tab. A plain `client_secret`, or a plain value in a header whose name
+  says it holds a credential (`authorization`, `*key*`, `*token*`, `*secret*`),
+  gets a warning on save. `:mcpadd <name>` asks for the URL or command and adds
+  one server at once.
 * **Auth**:
   * static **bearer** (`{{variables}}` allowed);
   * **OAuth 2.1** — metadata discovery (RFC 9728 / RFC 8414), PKCE, dynamic
     client registration (RFC 7591), refresh with a 30 s expiry slack, one retry
     after a `401`. Tokens live in the OS keychain under `<collection>/mcp/<server>`.
-    Sign in from a shell with `sendito mcp login <server>` before calling; `:auth
-    login` in the app is for HTTP OAuth identities only.
+    Sign in with `:auth login <server>` in the app or `sendito mcp login <server>`
+    in a shell.
+  * **Sign-in when asked** — a `401` with a Bearer challenge (when the config
+    sends no `Authorization` header), or no valid saved sign-in, opens a
+    "Sign in now?" dialog for a server of `[mcp.servers]`. Sign in opens the
+    browser, then runs the call or the tool list again. A server without an
+    auth table gets `type = "oauth"` in the config file that defines it.
+    Background tool completion does not open the dialog.
 * **Results**: `isError: true` is treated as a result, not a transport failure —
   it is exit code 1 in `sendito run`. `content` items and `structuredContent` are
   visible to scripts. Tabs: **Body · Request · Timing · Log**.
@@ -531,7 +545,7 @@ Import gaps are listed in [DEBT.md](DEBT.md).
 * **Overlays** over a dimmed backdrop: command palette, help (searchable, two
   columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
-  folder), the environment editor, the import dialog and the report dialog.
+  folder, theme, OAuth sign-in, cookie jar), the environment editor, the import dialog and the report dialog.
   Clicks inside a dialog act inside it; only the controls do something. A
   settings row is selected by a click and changed by its value chip (or a
   double click), like ←/→ on the keyboard.
@@ -540,7 +554,10 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   40×8 a message replaces the layout; 120×40 and 200×60 are the tested sizes.
 
 **Command palette** (`Ctrl+P` or `:`): actions with their keys, all requests,
-all environments, and the `:commands`.
+all environments, every setting ("Setting: …" with its value; Enter opens the
+settings dialog on that row) and the `:commands`. The search finds commands
+without the `:`; a command that needs an argument puts `:<command> ` in the
+input and waits for it. Rows that hold the typed text as written come first.
 
 | Command | Does |
 |---|---|
@@ -549,20 +566,24 @@ all environments, and the `:commands`.
 | `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment |
-| `:envs` | Edit environments |
-| `:auth login <identity>` / `:auth logout <identity>` | HTTP OAuth sign in / out |
+| `:envs`, `:newenv` | Edit environments / create one |
+| `:auth login [name]` / `:auth logout [name]` | OAuth sign in / out: an `[oauth]` identity, else an MCP server; without a name, a picker lists them |
 | `:w`, `:saveas <name>`, `:wq`, `:q`, `:q!` | Save / save as / save and quit / quit / quit without saving |
 | `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request |
 | `:mcpservers`, `:mcptools` | Choose an MCP server / discover and choose a tool |
 | `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the project config / add one |
+| `:mcpedit [name]` | Edit the details of an MCP server (a picker without a name) |
+| `:method`, `:bodytype`, `:authtype`, `:grpcmethod` | Open the method, body type, auth type or gRPC method picker of the active request |
+| `:rescan` | Read the collection from disk again |
 | `:import [path]` | Import a collection or paste curl |
 | `:curl`, `:curl!`, `:httpfile`, `:httpfile!` | Export (without / with secrets) |
-| `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar |
+| `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar: `:cookies` lists the cookies; Enter deletes one, the last row clears all |
 | `:history`, `:clearhistory` | Show / clear history |
 | `:format` | Pretty-print the JSON body |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
-| `:settings`, `:theme <name>`, `:theme reload`, `:help` | Settings / theme / help |
+| `:settings`, `:theme [name]`, `:theme reload`, `:help` | Settings / theme (a picker without a name) / help |
+| `:oauth`, `:keymap` | Edit the HTTP OAuth identities / your key bindings |
 | `:report`, `:savebody [path]` | Reopen the last report / save the response body |
 
 **Mouse**: click to focus, select rows, switch and close tabs (middle-click
@@ -596,20 +617,59 @@ in-app help, and can be remapped in `[keymap.all]`, `[keymap.conventional]` or
 
 ## Settings
 
-`Ctrl+W ,` or `:settings`. Changes take effect at once and are written to the
-global config.
+`Ctrl+W ,` or `:settings`. Changes take effect at once. **Save changes to**
+chooses the file: `global` (`~/.config/sendito/config.toml`, every
+collection, the default) or `project` (`.sendito/config.toml`, this collection,
+shared through git). The project file wins over the global one: when a change
+goes to the global file and the project file sets the same key, the status
+says so. The choice lasts for the session.
+
+On/off and choice rows change with ← → or Space. Number, path and text rows
+open a dialog on Enter: the value is checked before it is saved, and an empty
+path or text removes the key. Two rows open editors of their own.
 
 | Setting | Config key | Effect |
 |---|---|---|
+| Save changes to | — | The file settings, `:oauth` and `:keymap` write |
 | Theme | `ui.theme` | Colors; `auto` follows the terminal background |
 | Icons | `ui.icons` | `unicode` (any font) or `nerd` (needs a Nerd Font) |
 | Key hints | `ui.hints` | Footer hints: `full`, `short` (default) or `off` |
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
+| Key bindings | `keymap.*` | Opens the keymap editor (`:keymap`) |
 | Sidebar position | `ui.sidebar` | `left` or `right` |
 | Mouse support | `ui.mouse` | Clicks, wheel, dragging tree items and borders |
 | Confirm quit with unsaved changes | `ui.confirm_quit` | Ask before quitting with unsaved tabs |
 | Record history | `history.enabled` | Keep sent requests in History |
-| Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends |
+| History entries kept | `history.max_entries` | The oldest entries go first (1 or more) |
+| Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends (1 or more) |
+| HTTP request timeout | `http.timeout_ms` | When a request sets none (1 or more) |
+| gRPC deadline | `grpc.deadline_ms` | When a request sets none; 0 = none |
+| WebSocket handshake timeout | `websocket.timeout_ms` | When a request sets none; 0 = none |
+| MCP call timeout | `mcp.timeout_ms` | When a request sets none (1 or more) |
+| Largest response body | `http.max_body_mb` | Larger bodies are cut (1 or more) |
+| Cookie jar | `http.cookie_jar` | When a request's `[options] cookies` says nothing |
+| Proxy | `http.proxy` | `env` or a proxy URL, checked before it is saved |
+| OAuth identities | `oauth.*` | Opens the OAuth editor (`:oauth`) |
+| CA certificates (PEM) | `http.tls.ca` | The file must exist |
+| Client certificate (PEM) | `http.tls.client_cert` | The file must exist; a missing key is reported |
+| Client key (PEM) | `http.tls.client_key` | The file must exist; a missing certificate is reported |
+| Collection name | `collection.name` | Always saved to the project file. Keychain secrets are stored under it: after a change, set them again (the dialog and the status say so) |
+| Skipped directories | `collection.ignore` | Comma-separated; empty = the defaults |
+
+**OAuth editor** (`:oauth`): one row per `[oauth.<name>]` identity — name,
+authorize URL, token URL, client ID, client secret and scopes (separated by
+spaces). The name, the two URLs and the client ID are required. A client
+secret without `{{variable}}` is saved with a warning: keep it in an
+environment secret and write `{{name}}`.
+
+**Keymap editor** (`:keymap`): tabs `all`, `conventional` and `vim`, one row per
+action with its keys (comma-separated, e.g. `ctrl+g, f9`; empty keys unbind
+the action). The line under the table describes the action or lists the
+actions that start with what was typed. An unknown action or key is refused;
+saved keys apply at once.
+
+Both editors read and write only the chosen file, and refuse to write while
+that file has an error.
 
 ---
 
@@ -654,7 +714,7 @@ Terminals without 24-bit color get the nearest of 256.
   `bg` alone gives a consistent theme.
 * `sendito theme list` shows every theme, its file and any problems;
   `sendito theme print <name>` prints a complete file to start from;
-  `:theme <name>` applies one and `:theme reload` re-reads the files.
+  `:theme <name>` applies one, `:theme` lists them, `:theme reload` re-reads the files.
 * Problems (unknown token, bad color, an `extends` loop, low contrast) are
   reported and skipped; they never stop startup.
 * **Icons** `unicode` (works with any font) or `nerd` (folders, sidebar modes,

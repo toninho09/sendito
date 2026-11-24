@@ -208,8 +208,9 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
-| `:auth login <identity>` | Sign in to an HTTP OAuth identity |
-| `:auth logout <identity>` | Remove HTTP OAuth tokens for this environment |
+| `:newenv` | Create an environment (asks for the name) |
+| `:auth login [name]` | Sign in to an HTTP OAuth identity or an MCP server (lists them without a name) |
+| `:auth logout [name]` | Remove the OAuth tokens of an identity or an MCP server (lists them without a name) |
 | `:w` | Save the request |
 | `:saveas <name>` | Save the request under a new name |
 | `:wq` | Save and quit |
@@ -222,13 +223,19 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:mcpservers` | Choose an MCP server |
 | `:mcpservers edit` | Edit the MCP servers in the project config (Ctrl+W S) |
 | `:mcpadd <name>` | Add an MCP server to the project config (asks for the URL or command) |
+| `:mcpedit [name]` | Edit the details of an MCP server: env, headers, TLS, OAuth (lists them without a name) |
 | `:mcptools` | Discover and choose an MCP tool |
+| `:method` | Choose the HTTP method |
+| `:bodytype` | Choose the body type of the HTTP request |
+| `:authtype` | Choose the auth type of the request |
+| `:grpcmethod` | Choose the gRPC service and method |
+| `:rescan` | Read the collection from disk again |
 | `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
 | `:httpfile` | Copy the request as an .http file |
 | `:httpfile!` | Copy the .http file including secret values |
-| `:cookies` | List the active environment's cookies (values masked) |
+| `:cookies` | Manage the active environment's cookies: delete one or clear all (values masked) |
 | `:cookies clear` | Clear the active environment's cookies |
 | `:cookies delete <number>` | Delete one cookie from the active environment |
 | `:history` | Show history |
@@ -238,7 +245,9 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
 | `:settings` | Open settings |
-| `:theme <name>` | Switch theme; :theme reload reads your theme files again |
+| `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
+| `:keymap` | Edit your key bindings (the file Settings saves to) |
+| `:theme [name]` | Switch theme (lists them without a name); :theme reload reads your theme files again |
 | `:help` | Show keys |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |

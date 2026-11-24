@@ -3,42 +3,42 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                        ╭─ Settings ─────────────────────────────────────────────────────────╮                        │
-│                        │                                                                    │                        │
-│                        │  Appearance                                                        │                        │
+╭ Requests  History ─────╭─ Settings ─────────────────────────────────────────────────────────╮────────────────────────╮
+│▸ Orders/               │                                                                    │                        │
+│▸ Users/                │  Saving                                                            │                        │
+│  GRPC  echo unary      │    Save changes to                                    ‹ global ›   │                        │
+│  GET   health          │  Appearance                                                        │                        │
 │                        │    Theme                              ███████  ‹ auto › (1 of 7)   │                        │
 │                        │    Icons                                             ‹ unicode ›   │                        │
 │                        │    Key hints                                           ‹ short ›   │                        │
 │                        │  Editing                                                           │                        │
 │                        │    Vim mode                                              ‹ Off ›   │                        │
+│                        │    Key bindings                                    ‹ 0 changes ›   │                        │
 │                        │  Layout                                                            │                        │
 │                        │    Sidebar position                                     ‹ left ›   │                        │
 │                        │  Behavior                                                          │                        │
-│                        │    Mouse support                                          ‹ On ›   │ ds)                    │
-│                        │    Confirm quit with unsaved changes                      ‹ On ›   │ nd                     │
+│                        │    Mouse support                                          ‹ On ›   │                        │
+│                        │    Confirm quit with unsaved changes                      ‹ On ›   │                        │
 │                        │    Record history                                         ‹ On ›   │                        │
-│                        │    Watch interval                                        ‹ 5 s ›   │ the mouse)             │
-│                        │ ────────────────────────────────────────────────────────────────── │ ide                    │
+│                        │    History entries kept                                ‹ 10000 ›   │                        │
+│                        │    Watch interval                                        ‹ 5 s ›   │ ds)                    │
+│                        │  Timeouts                                                          │ nd                     │
+│                        │    HTTP request timeout                             ‹ 30000 ms ›   │                        │
+│                        │    gRPC deadline                                        ‹ none ›   │ the mouse)             │
+│                        │    WebSocket handshake timeout                          ‹ none ›   │ ide                    │
+│                        │    MCP call timeout                                 ‹ 30000 ms ›   │                        │
+│                        │  HTTP                                                              │                        │
+│                        │    Largest response body                              ‹ 100 MB ›   │                        │
+│                        │    Cookie jar                                            ‹ Off ›   │                        │
+│                        │    Proxy                                             ‹ not set ›   │                        │
+│                        │    OAuth identities                             ‹ 0 identities ›   │                        │
+│                        │  TLS                                                               │                        │
+│                        │ ────────────────────────────────────────────────────────────────── │                        │
 │                        │  Colors: auto follows the terminal; ansi uses your terminal        │                        │
 │                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │
 │                        │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                        │
-│                        │                                                                    │                        │
 │                        │  Changes apply at once and are saved to                            │                        │
 │                        │  ~/.config/sendito/config.toml                                     │                        │
 │                        ╰────────────────────────────────────────────────────────────────────╯                        │
-│                                                                                                                      │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+╰─── 6 requests · 2 folder                                                                      ───────────────────────╯
  demo                                                                             ↑↓ move · ←→ Space change · Esc close

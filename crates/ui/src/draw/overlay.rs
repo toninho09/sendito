@@ -7,6 +7,7 @@ use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
+use crate::config_editor::CfgEditor;
 use crate::editor::TextEditor;
 use crate::overlay::*;
 use crate::theme::Theme;
@@ -53,16 +54,7 @@ fn settings_rows() -> Vec<(Option<&'static str>, usize)> {
     SETTINGS
         .iter()
         .enumerate()
-        .map(|(i, (id, _))| {
-            let h = match id {
-                SettingId::Theme => Some("Appearance"),
-                SettingId::Vim => Some("Editing"),
-                SettingId::Sidebar => Some("Layout"),
-                SettingId::Mouse => Some("Behavior"),
-                _ => None,
-            };
-            (h, i)
-        })
+        .map(|(i, (id, _))| (id.heading(), i))
         .collect()
 }
 
@@ -121,6 +113,24 @@ impl EditorHits for McpHits {
     }
 }
 
+/// Where a config editor's clicks go.
+struct CfgHits;
+
+impl EditorHits for CfgHits {
+    fn tab(&self, i: usize) -> OverlayHit {
+        OverlayHit::CfgTab(i)
+    }
+    fn cell(&self, row: usize, col: usize) -> OverlayHit {
+        OverlayHit::CfgCell { row, col }
+    }
+    fn delete(&self, row: usize) -> OverlayHit {
+        OverlayHit::CfgDelete(row)
+    }
+    fn button(&self, i: usize) -> OverlayHit {
+        OverlayHit::CfgButton(i)
+    }
+}
+
 /// The screen a dialog is drawn on: the whole overlay `area`, the `body` the
 /// dialog and its shadow stay in (the area without the footer), the theme
 /// and the style of a line of dialog text.
@@ -169,6 +179,7 @@ pub(super) fn draw_overlay(
         Overlay::Picker(p) => draw_picker(app, buf, frame, &is_def, p, &mut cursor),
         Overlay::Env(e) => draw_env(app, buf, frame, &is_def, e, &mut cursor),
         Overlay::Mcp(m) => draw_mcp(app, buf, frame, &is_def, m, &mut cursor),
+        Overlay::Cfg(e) => draw_cfg(app, buf, frame, &is_def, e, &mut cursor),
         Overlay::Import(i) => draw_import(app, buf, frame, &is_def, i, &mut cursor),
         Overlay::Report(rep) => draw_report(app, buf, frame, rep),
     }
@@ -411,7 +422,9 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
     // above it; the list takes what is left and scrolls to keep the
     // selection visible on a short terminal.
     let footer = if inner.height >= 5 { 2 } else { 0 };
-    let info = if inner.height >= last + 1 + footer + 4 {
+    // The description stays while the list keeps room for a few rows: it is
+    // where a setting says what it takes.
+    let info = if inner.height >= (last + 1).min(8) + footer + 4 {
         4
     } else {
         0
@@ -566,21 +579,28 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
             Some(SettingId::History) => {
                 "Keep sent requests in History (F7) to reopen or resend.".to_string()
             }
-            Some(SettingId::WatchInterval) => {
-                "The :watch command re-sends the active request on this interval.".to_string()
+            Some(SettingId::Scope) => {
+                "global: every collection (~/.config/sendito/config.toml). project: this collection (.sendito/config.toml, shared through git); it wins over global."
+                    .to_string()
+            }
+            Some(SettingId::CookieJar) => {
+                "HTTP requests keep and send cookies when their [options] cookies says nothing."
+                    .to_string()
             }
             Some(SettingId::Hints) => {
                 "Keys in the footer: full shows all that fit, short the most used, off only Ctrl+W and F1."
                     .to_string()
             }
+            Some(id) => crate::app::setting_note(id).to_string(),
             None => String::new(),
         };
         let values = match id {
             Some(SettingId::Theme) => app.themes.names().join(" / "),
             Some(SettingId::Icons) => crate::icons::ICON_SETS.join(" / "),
             Some(SettingId::Sidebar) => "left / right".into(),
-            Some(SettingId::WatchInterval) => "5 / 10 / 30 / 60 s".into(),
             Some(SettingId::Hints) => "full / short / off".into(),
+            Some(SettingId::Scope) => "global / project".into(),
+            Some(id) if id.typed() || id.opens() => String::new(),
             Some(_) => "On / Off".into(),
             None => String::new(),
         };
@@ -594,10 +614,15 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
             y + 3,
             frame.theme.overlay(),
         );
-        let vline = format!(
-            "{}: {values}  (← → / Space)",
-            SETTINGS.get(*sel).map(|(_, l)| *l).unwrap_or("")
-        );
+        let label = SETTINGS.get(*sel).map(|(_, l)| *l).unwrap_or("");
+        let opens = SETTINGS.get(*sel).is_some_and(|(id, _)| id.opens());
+        let vline = if opens {
+            format!("{label}: Enter opens the editor")
+        } else if values.is_empty() {
+            format!("{label}: type a value  (Enter)")
+        } else {
+            format!("{label}: {values}  (← → / Space)")
+        };
         put(
             buf,
             inner.x + 2,
@@ -608,11 +633,10 @@ fn draw_settings(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, sel: &mut us
         );
     }
     if footer > 0 {
-        let path = app
-            .project
-            .global_config
-            .as_ref()
-            .map(|p| crate::app::display_path(p, app.home.as_deref()))
+        let path = SETTINGS
+            .get(*sel)
+            .and_then(|(id, _)| app.setting_path(*id))
+            .map(|p| crate::app::display_path(&p, app.home.as_deref()))
             .unwrap_or_else(|| "(not saved)".into());
         let tw = inner.width.saturating_sub(4);
         put(
@@ -1035,7 +1059,7 @@ fn draw_env(
             explain,
             error: e.error.as_deref(),
             dirty: e.dirty,
-            buttons: ["Save (Ctrl+S)", "New env (Ctrl+N)", "Close (Esc)"],
+            buttons: &["Save (Ctrl+S)", "New env (Ctrl+N)", "Close (Esc)"],
             is_def,
         },
         &mut e.table,
@@ -1052,16 +1076,23 @@ fn draw_mcp(
     cursor: &mut Option<(u16, u16)>,
 ) {
     let explain = match m.table.rows.get(m.table.sel_row) {
-        Some(r) => match r.cells.get(1).map(|c| c.choice()) {
-            Some(1) => "stdio: started as a child process; the value is the command.",
+        Some(r) => match (r.cells.get(1).map(|c| c.choice()), m.table.sel_col) {
+            (Some(1), _) => "stdio: started as a child process; the value is the command.",
+            (_, 3) => {
+                "Auth: none, bearer (the Token column) or oauth (sign in when the server asks)."
+            }
+            (_, 4) => {
+                "Token: the bearer token; write {{name}} and keep the value in an environment secret."
+            }
             _ => "http: a URL the tool calls go to (variables allowed).",
         },
         None => "Type a name in the last row to add a server.",
     };
-    let legend = "Each row is a [mcp.servers] entry: a name, the kind (Space changes it) \
-            and the URL or command. Typing in the last row adds one; ✕ deletes a row (Ctrl+D). \
-            Args, env, headers and auth are edited in the config file. Ctrl+S saves to \
-            .sendito/config.toml; Esc asks before discarding unsaved changes.";
+    let legend = "Each row is a [mcp.servers] entry: a name, the kind and the auth (Space \
+            changes them), the URL or command, and a bearer token. Typing in the last row adds \
+            one; ✕ deletes a row (Ctrl+D). Ctrl+O opens the selected server's env (stdio) or \
+            headers, TLS check and OAuth fields (http). Ctrl+S saves to .sendito/config.toml; \
+            Esc asks before discarding unsaved changes.";
     *cursor = editor::render(
         app,
         buf,
@@ -1072,7 +1103,7 @@ fn draw_mcp(
             width: 108,
             // The frame grows with the list: a few servers get a short
             // dialog, a long list scrolls inside the screen height.
-            height: (m.table.rows.len() as u16 + 12)
+            height: (m.table.rows.len() as u16 + 13)
                 .min(frame.area.height.saturating_sub(4).max(12)),
             tabs: Vec::new(),
             tab_sel: 0,
@@ -1081,11 +1112,93 @@ fn draw_mcp(
             explain,
             error: m.error.as_deref(),
             dirty: m.dirty,
-            buttons: ["Save (Ctrl+S)", "Add row (Ctrl+N)", "Close (Esc)"],
+            buttons: &[
+                "Save (Ctrl+S)",
+                "Add row (Ctrl+N)",
+                "Details (Ctrl+O)",
+                "Close (Esc)",
+            ],
             is_def,
         },
         &mut m.table,
         &McpHits,
+    );
+}
+
+fn draw_cfg(
+    app: &mut App,
+    buf: &mut Buffer,
+    frame: Frame<'_>,
+    is_def: &impl Fn(&str) -> bool,
+    e: &mut CfgEditor,
+    cursor: &mut Option<(u16, u16)>,
+) {
+    use crate::config_editor::CfgKind;
+    let file = crate::app::display_path(&e.path, app.home.as_deref());
+    let (title, legend) = match &e.kind {
+        CfgKind::McpServer { name, http: true } => (
+            format!("MCP server {name}"),
+            format!(
+                "Options: the TLS check and, for auth = oauth, the OAuth overrides (empty = \
+                 discovery). Headers: sent with every POST. Ctrl+PgUp/PgDn switches tabs. \
+                 Ctrl+S saves to {file}; Esc returns to the servers."
+            ),
+        ),
+        CfgKind::McpServer { name, .. } => (
+            format!("MCP server {name}"),
+            format!(
+                "Variables added to the child process's environment. Typing in the last row \
+                 adds one; ✕ deletes a row (Ctrl+D). Ctrl+S saves to {file}; Esc returns to \
+                 the servers."
+            ),
+        ),
+        CfgKind::OAuth => (
+            "OAuth identities".to_string(),
+            format!(
+                "Each row is an [oauth.<name>] identity (authorization code + PKCE) that a \
+                 request's auth names. Typing in the last row adds one; ✕ deletes a row \
+                 (Ctrl+D). Ctrl+S saves to {file} (Settings chooses the file); Esc asks \
+                 before discarding unsaved changes."
+            ),
+        ),
+        CfgKind::Keymap => (
+            "Key bindings".to_string(),
+            format!(
+                "Each row replaces the keys of one action: all applies in both modes, \
+                 conventional and vim in one. Keys look like ctrl+s, f5 or \"ctrl+w x\" (a \
+                 sequence). Ctrl+PgUp/PgDn switches tabs. Ctrl+S saves to {file} (Settings \
+                 chooses the file)."
+            ),
+        ),
+    };
+    let explain = crate::config_editor::cfg_explain(e);
+    let rows = e.tables.get(e.current).map_or(0, |t| t.rows.len()) as u16;
+    let current = e.current;
+    let tabs = e.tabs.clone();
+    let Some(table) = e.tables.get_mut(current) else {
+        return;
+    };
+    *cursor = editor::render(
+        app,
+        buf,
+        frame.body,
+        frame.theme,
+        EditorDialog {
+            title: &title,
+            width: 112,
+            height: (rows + 14).min(frame.area.height.saturating_sub(4).max(12)),
+            tabs,
+            tab_sel: current,
+            reserved: 3,
+            legend: &legend,
+            explain: &explain,
+            error: e.error.as_deref(),
+            dirty: e.dirty,
+            buttons: &["Save (Ctrl+S)", "Add row (Ctrl+N)", "Close (Esc)"],
+            is_def,
+        },
+        table,
+        &CfgHits,
     );
 }
 

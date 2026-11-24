@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sendito_mcp::oauth::{OAuthSettings, RefreshingProvider, TokenStore, login};
-use sendito_mcp::{Options, Transport, call_tool};
+use sendito_mcp::{McpError, Options, Transport, call_tool};
 
 #[derive(Default)]
 struct MemStore(Mutex<BTreeMap<String, String>>);
@@ -211,6 +211,79 @@ async fn not_signed_in_is_a_clear_error() -> Result<(), Box<dyn std::error::Erro
         .map(|e| e.to_string())
         .unwrap_or_default();
     assert!(err.contains("not signed in"), "got: {err}");
+    Ok(())
+}
+
+fn transport(
+    url: String,
+    headers: Vec<(String, String)>,
+    auth: Option<Arc<RefreshingProvider>>,
+) -> Transport {
+    Transport::Http {
+        url,
+        headers,
+        verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
+        auth: auth.map(|p| p as Arc<dyn sendito_mcp::TokenProvider>),
+    }
+}
+
+async fn call_err(t: &Transport) -> Option<McpError> {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    call_tool(t, "add", "{}", &Options::default(), tx)
+        .await
+        .err()
+}
+
+#[tokio::test]
+async fn missing_tokens_need_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let provider = Arc::new(RefreshingProvider::new(
+        Arc::new(MemStore::default()),
+        "acct".into(),
+        srv.mcp_url(),
+        OAuthSettings::default(),
+    ));
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), Some(provider))).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bearer_challenge_without_auth_needs_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), None)).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
+    // A configured Authorization header that is refused is a plain error:
+    // the header is wrong, a sign-in does not fix it.
+    let headers = vec![("Authorization".to_string(), "Bearer wrong".to_string())];
+    let err = call_err(&transport(srv.mcp_url(), headers, None)).await;
+    assert!(matches!(err, Some(McpError::Transport(_))), "got: {err:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn tokens_for_another_server_need_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let store = Arc::new(MemStore::default());
+    let tokens = sendito_mcp::oauth::Tokens {
+        access: "a".into(),
+        refresh: None,
+        expires_at: None,
+        client_id: "c".into(),
+        client_secret: None,
+        bound_to: Some("https://other.test/mcp".into()),
+    };
+    store.set("acct", &tokens.to_json())?;
+    let provider = Arc::new(RefreshingProvider::new(
+        store,
+        "acct".into(),
+        srv.mcp_url(),
+        OAuthSettings::default(),
+    ));
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), Some(provider))).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
     Ok(())
 }
 

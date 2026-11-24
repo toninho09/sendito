@@ -296,11 +296,13 @@ lists them as a table and saves `[mcp.servers]` to the project config, and
 `:mcpadd <name>` asks for the URL or command and adds one at once. The server field
 takes a configured name or a direct `http(s)://` URL.
 
-For OAuth instead of bearer, use `type = "oauth"` in the auth table and run
-`sendito mcp login remote` from the collection before calling. The authorization
-URL is printed and a browser is opened when available; the redirect must reach
-Sendito's local loopback listener. Tokens are stored in the OS keychain. Use
-`sendito mcp logout remote` to remove them. See [FORMAT.md](FORMAT.md) for all
+For OAuth, you do not need to edit the file: call a tool or list the tools, and
+when the server asks for a sign-in the app shows "Sign in now?". Sign in opens the
+browser, stores the tokens in the OS keychain, saves `type = "oauth"` for the server
+and runs the call again. You can also sign in with `:auth login remote` in the app
+or `sendito mcp login remote` in a shell, and sign out with `:auth logout remote` or
+`sendito mcp logout remote`. The redirect must reach Sendito's local loopback
+listener. The servers editor (`Ctrl+W S`) also sets the auth of each server. See [FORMAT.md](FORMAT.md) for all
 options and [docs/DEBT.md](docs/DEBT.md) for current MCP limitations.
 
 ![The command palette, where :newmcp and :mcptools live](docs/media/screenshots/120x40-dusk-palette.png)
@@ -463,6 +465,14 @@ The Settings dialog (`Ctrl+W ,`) changes, at once:
 | Confirm quit with unsaved changes | ask before quitting while tabs have unsaved changes |
 | Record history | keep sent requests in History (`F7`) to reopen or resend |
 | Watch interval | default seconds between watch re-sends (`ui.watch_interval_s`) |
+
+It also holds the timeouts, the largest response body, the cookie jar, the
+proxy, the TLS files and the collection name and skipped directories. Number,
+path and text values are typed in a dialog that checks them. **Save changes to**
+chooses the global file or the project file. `:oauth` edits the HTTP OAuth
+identities and `:keymap` your key bindings; `Ctrl+O` in the MCP servers editor
+edits a server's env, headers and OAuth fields. See
+[Settings](docs/FEATURES.md#settings).
 
 ## The screen
 

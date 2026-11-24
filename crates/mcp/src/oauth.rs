@@ -709,10 +709,6 @@ pub struct RefreshingProvider {
     pub account: String,
     pub resource_url: Option<String>,
     pub settings: OAuthSettings,
-    /// What stored tokens must be bound to (`Tokens::bound_to`): the server
-    /// URL as configured, before `{{variables}}` render, as login stores it.
-    /// `None` uses the resource URL or the token endpoint.
-    pub binding: Option<String>,
     endpoints: Mutex<Option<Endpoints>>,
 }
 
@@ -728,7 +724,6 @@ impl RefreshingProvider {
             account,
             resource_url: Some(resource_url),
             settings,
-            binding: None,
             endpoints: Mutex::new(None),
         }
     }
@@ -739,7 +734,6 @@ impl RefreshingProvider {
             account,
             resource_url: None,
             settings,
-            binding: None,
             endpoints: Mutex::new(None),
         }
     }
@@ -774,21 +768,22 @@ impl TokenProvider for RefreshingProvider {
                 .map_err(McpError::Transport)?
                 .and_then(|s| Tokens::from_json(&s));
             let Some(mut tokens) = stored else {
-                return Err(McpError::Message(if self.resource_url.is_some() {
+                return Err(McpError::NeedsLogin(if self.resource_url.is_some() {
                     "not signed in (run `sendito mcp login`)".into()
                 } else {
                     "not signed in (run `sendito auth login`)".into()
                 }));
             };
+            // What stored tokens must be bound to (`Tokens::bound_to`): the
+            // rendered server URL for MCP, the token endpoint for HTTP.
             let want = self
-                .binding
+                .resource_url
                 .clone()
-                .or_else(|| self.resource_url.clone())
                 .or_else(|| self.settings.token_url.clone());
             if let (Some(have), Some(want)) = (&tokens.bound_to, &want)
                 && have != want
             {
-                return Err(McpError::Message(format!(
+                return Err(McpError::NeedsLogin(format!(
                     "the saved sign-in is for {have}, not {want}; sign in again"
                 )));
             }
@@ -796,7 +791,9 @@ impl TokenProvider for RefreshingProvider {
                 return Ok(tokens.access);
             }
             let Some(refresh) = tokens.refresh.clone() else {
-                return Err(McpError::Message("the token expired; sign in again".into()));
+                return Err(McpError::NeedsLogin(
+                    "the token expired; sign in again".into(),
+                ));
             };
             let endpoints = self.endpoints().await?;
             let client_secret = tokens

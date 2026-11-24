@@ -55,49 +55,58 @@ impl Project {
     /// Opens a collection with an explicit global config path (tests pass `None`).
     pub fn open_with(root: &Path, keychain: Arc<dyn Keychain>, global: Option<PathBuf>) -> Self {
         let project = sendito_store::config::project_path(root);
-        let (config, mut warnings) = sendito_store::config::load(global.as_deref(), Some(&project));
-        if let Some(p) = &config.http.proxy
+        let (config, warnings) = sendito_store::config::load(global.as_deref(), Some(&project));
+        let mut p = Self {
+            root: root.to_path_buf(),
+            coll: Collection::new(root, Vec::new()),
+            envs: Arc::new(Envs::new(root, String::new(), keychain)),
+            config,
+            warnings,
+            name: String::new(),
+            theme_dirs: sendito_store::themes::dirs(global.as_deref(), root),
+            global_config: global,
+            tls: sendito_http::TlsMaterial::default(),
+        };
+        let problems = p.apply_config();
+        p.warnings.extend(problems);
+        p
+    }
+
+    /// Recomputes what depends on `config` after it changed: the TLS
+    /// material, the collection name (and so the keychain accounts) and the
+    /// ignore list. Returns the problems found (a bad proxy, half a client
+    /// certificate pair).
+    pub fn apply_config(&mut self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let root = self.root.clone();
+        if let Some(p) = &self.config.http.proxy
             && let Err(e) = sendito_http::ProxySpec::parse(p)
         {
-            warnings.push(e);
+            problems.push(e);
         }
-        let tls = {
-            let t = &config.http.tls;
-            let m = sendito_http::TlsMaterial {
-                ca: t.ca.as_deref().map(|p| sendito_store::env::expand(root, p)),
-                client_cert: t
-                    .client_cert
-                    .as_deref()
-                    .map(|p| sendito_store::env::expand(root, p)),
-                client_key: t
-                    .client_key
-                    .as_deref()
-                    .map(|p| sendito_store::env::expand(root, p)),
-            };
-            if let Some(e) = m.pair_error() {
-                warnings.push(e);
-            }
-            m
+        let t = &self.config.http.tls;
+        let path = |p: &Option<String>| p.as_deref().map(|p| sendito_store::env::expand(&root, p));
+        self.tls = sendito_http::TlsMaterial {
+            ca: path(&t.ca),
+            client_cert: path(&t.client_cert),
+            client_key: path(&t.client_key),
         };
-        let name = config.collection.name.clone().unwrap_or_else(|| {
+        if let Some(e) = self.tls.pair_error() {
+            problems.push(e);
+        }
+        self.name = self.config.collection.name.clone().unwrap_or_else(|| {
             root.canonicalize()
                 .ok()
                 .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "collection".into())
         });
-        let coll = Collection::new(root, config.collection.ignore.clone());
-        let envs = Arc::new(Envs::new(root, name.clone(), keychain));
-        Self {
-            root: root.to_path_buf(),
-            coll,
-            envs,
-            config,
-            warnings,
-            name,
-            theme_dirs: sendito_store::themes::dirs(global.as_deref(), root),
-            global_config: global,
-            tls,
-        }
+        self.coll = Collection::new(&root, self.config.collection.ignore.clone());
+        self.envs = Arc::new(Envs::new(
+            &root,
+            self.name.clone(),
+            self.envs.keychain.clone(),
+        ));
+        problems
     }
 
     pub fn send_options(&self) -> SendOptions {
@@ -391,14 +400,7 @@ pub fn oauth_settings(
     scope: &Scope,
 ) -> Result<sendito_mcp::oauth::OAuthSettings, String> {
     let render = |text: &str, field: &str, allow_secret: bool| {
-        let r = scope.render(text);
-        if !r.unresolved.is_empty() || r.text.contains("{{") {
-            return Err(format!("OAuth {field} contains unresolved variables"));
-        }
-        if r.secret && !allow_secret {
-            return Err(format!("OAuth {field} must not contain secret variables"));
-        }
-        Ok(r.text)
+        render_oauth_field(scope, text, field, allow_secret)
     };
     Ok(sendito_mcp::oauth::OAuthSettings {
         client_id: Some(render(&identity.client_id, "client_id", false)?),
@@ -416,6 +418,123 @@ pub fn oauth_settings(
             .collect::<Result<_, _>>()?,
         registration_url: None,
     })
+}
+
+/// Renders one OAuth setting. Only `client_secret` may hold a secret.
+fn render_oauth_field(
+    scope: &Scope,
+    text: &str,
+    field: &str,
+    allow_secret: bool,
+) -> Result<String, String> {
+    let r = scope.render(text);
+    if !r.unresolved.is_empty() || r.text.contains("{{") {
+        return Err(format!("OAuth {field} contains unresolved variables"));
+    }
+    if r.secret && !allow_secret {
+        return Err(format!("OAuth {field} must not contain secret variables"));
+    }
+    Ok(r.text)
+}
+
+/// The OAuth settings of an MCP server, with `{{variables}}` rendered. A
+/// server without an OAuth table gets empty settings: discovery and dynamic
+/// client registration then supply everything.
+pub fn mcp_oauth_settings(
+    auth: Option<&sendito_store::config::McpServerAuth>,
+    scope: &Scope,
+) -> Result<sendito_mcp::oauth::OAuthSettings, String> {
+    let Some(sendito_store::config::McpServerAuth::Oauth {
+        client_id,
+        client_secret,
+        authorize_url,
+        token_url,
+        registration_url,
+        scopes,
+    }) = auth
+    else {
+        return Ok(Default::default());
+    };
+    let opt = |v: &Option<String>, field: &str, allow_secret: bool| {
+        v.as_deref()
+            .map(|t| render_oauth_field(scope, t, field, allow_secret))
+            .transpose()
+    };
+    Ok(sendito_mcp::oauth::OAuthSettings {
+        client_id: opt(client_id, "client_id", false)?,
+        client_secret: opt(client_secret, "client_secret", true)?,
+        authorize_url: opt(authorize_url, "authorize_url", false)?,
+        token_url: opt(token_url, "token_url", false)?,
+        registration_url: opt(registration_url, "registration_url", false)?,
+        scopes: scopes
+            .iter()
+            .map(|t| render_oauth_field(scope, t, "scope", false))
+            .collect::<Result<_, _>>()?,
+    })
+}
+
+/// Opens `url` in the default browser. Returns `false` when no browser starts.
+pub fn open_browser(url: &str) -> bool {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+/// The interactive OAuth sign-in for an HTTP server of `[mcp.servers]`.
+/// `scope` renders the URL and the OAuth settings.
+/// Stores the tokens in the keychain. A server without an auth table works
+/// too: the caller writes `type = "oauth"` to the config.
+pub async fn mcp_login(
+    info: &McpRunInfo,
+    server: &str,
+    scope: Scope,
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
+) -> Result<(), String> {
+    let Some(sendito_store::config::McpServer::Http(h)) = info.servers.get(server) else {
+        return Err(format!(
+            "server {server:?} is not an HTTP entry of [mcp.servers]"
+        ));
+    };
+    if matches!(
+        h.auth,
+        Some(sendito_store::config::McpServerAuth::Bearer { .. })
+    ) {
+        return Err(format!(
+            "server {server:?} uses a bearer token; set its auth to oauth first"
+        ));
+    }
+    let settings = mcp_oauth_settings(h.auth.as_ref(), &scope)?;
+    let url = render_oauth_field(&scope, &h.url, "server URL", false)?;
+    // `Scope` is not `Sync`: let go of it before the first await.
+    drop(scope);
+    let tokens = sendito_mcp::oauth::login(&url, &settings, Duration::from_secs(300), opener, note)
+        .await
+        .map_err(|e| format!("login failed: {e}"))?;
+    let keychain = info.keychain.clone();
+    let account = mcp_token_account(&info.collection, server);
+    tokio::task::spawn_blocking(move || keychain.set(&account, &tokens.to_json()))
+        .await
+        .map_err(|_| "keychain task failed".to_string())?
+        .map_err(|e| format!("cannot store the tokens: {e}"))
+}
+
+/// Forgets the stored tokens of an MCP server.
+pub async fn mcp_logout(info: &McpRunInfo, server: &str) -> Result<(), String> {
+    let keychain = info.keychain.clone();
+    let account = mcp_token_account(&info.collection, server);
+    tokio::task::spawn_blocking(move || keychain.delete(&account))
+        .await
+        .map_err(|_| "keychain task failed".to_string())?
 }
 
 fn history_entry(
@@ -1620,32 +1739,19 @@ pub fn mcp_transport(
                     }
                     None
                 }
-                Some(sendito_store::config::McpServerAuth::Oauth {
-                    client_id,
-                    client_secret,
-                    authorize_url,
-                    token_url,
-                    registration_url,
-                    scopes,
-                }) if !headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("authorization")) =>
+                Some(sendito_store::config::McpServerAuth::Oauth { .. })
+                    if !headers
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("authorization")) =>
                 {
-                    let mut p = sendito_mcp::RefreshingProvider::new(
+                    // The login binds the tokens to the rendered URL, which
+                    // is the provider's default binding.
+                    let p = sendito_mcp::RefreshingProvider::new(
                         Arc::new(KeychainStore(info.keychain.clone())),
                         mcp_token_account(&info.collection, server),
                         r(&h.url),
-                        sendito_mcp::oauth::OAuthSettings {
-                            client_id: client_id.clone(),
-                            client_secret: client_secret.clone(),
-                            authorize_url: authorize_url.clone(),
-                            token_url: token_url.clone(),
-                            registration_url: registration_url.clone(),
-                            scopes: scopes.clone(),
-                        },
+                        mcp_oauth_settings(h.auth.as_ref(), scope)?,
                     );
-                    // `sendito mcp login` binds the tokens to the URL as configured.
-                    p.binding = Some(h.url.clone());
                     Some(Arc::new(p) as Arc<dyn sendito_mcp::TokenProvider>)
                 }
                 // No auth, or an explicit Authorization header that wins.
@@ -1676,6 +1782,8 @@ pub enum McpUpdate {
         result: Option<Vec<u8>>,
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The server needs an OAuth sign-in (`McpError::NeedsLogin`).
+        needs_login: bool,
     },
 }
 
@@ -1726,7 +1834,7 @@ pub async fn exec_mcp(
     };
     let secrets = scope.secret_values();
     let started = std::time::Instant::now();
-    let fail = |msg: String, results: ScriptResults| {
+    let fail = |msg: String, results: ScriptResults, needs_login: bool| {
         let msg = sendito_core::vars::scrub(&msg, &secrets);
         let entry = history_entry(
             ctx,
@@ -1744,14 +1852,15 @@ pub async fn exec_mcp(
             result: None,
             scripts: results,
             scope_errors: scope_errors.clone(),
+            needs_login,
         });
     };
     if resolved.server.is_empty() || resolved.tool.is_empty() {
-        return fail("choose a server and tool first".into(), results);
+        return fail("choose a server and tool first".into(), results, false);
     }
     let transport = match mcp_transport(info, &resolved.server, &scope) {
         Ok(t) => t,
-        Err(e) => return fail(e, results),
+        Err(e) => return fail(e, results, false),
     };
     let timeout = resolved.timeout_ms.unwrap_or(info.timeout_ms);
     let opts = sendito_mcp::Options {
@@ -1804,9 +1913,13 @@ pub async fn exec_mcp(
                 result: Some(body),
                 scripts: results,
                 scope_errors,
+                needs_login: false,
             });
         }
-        Err(e) => fail(e.to_string(), results),
+        Err(e) => {
+            let needs_login = matches!(e, sendito_mcp::McpError::NeedsLogin(_));
+            fail(e.to_string(), results, needs_login)
+        }
     }
 }
 

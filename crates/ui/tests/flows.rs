@@ -74,6 +74,81 @@ fn flow_mcp_direct_url_server() {
     );
 }
 
+/// A server that answers 401 with a Bearer challenge offers a sign-in, also
+/// when the config has no auth table for it. Cancel leaves the config as is.
+#[test]
+fn flow_mcp_server_asking_for_a_sign_in_offers_it() {
+    use sendito_ui::overlay::{ConfirmAction, McpAfterLogin, Overlay};
+    let rt = tokio::runtime::Runtime::new().must();
+    let srv = rt.block_on(sendito_testkit::mcp_auth::start()).must();
+    let config = format!(
+        "[collection]\nname = \"demo\"\n[mcp.servers.secure]\nurl = \"{}\"\n",
+        srv.mcp_url()
+    );
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(d, ".sendito/config.toml", &config);
+    });
+    h.app.run_command("newmcp");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.type_text("secure");
+    h.app.run_command("mcptools");
+    let sc = h.wait_for("asks you to sign in", 10);
+    assert!(sc.contains("Sign in"), "{sc}");
+    assert!(matches!(
+        &h.app.overlay,
+        Some(Overlay::Confirm(c)) if matches!(
+            &c.action,
+            ConfirmAction::McpLogin { server, after: McpAfterLogin::Tools { open_picker: true }, .. }
+                if server == "secure"
+        )
+    ));
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert_eq!(text, config, "cancel writes nothing");
+}
+
+/// The servers editor shows and writes the auth of an HTTP server.
+#[test]
+fn flow_mcp_editor_shows_and_writes_auth() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = Harness::with(160, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            "[collection]\nname = \"demo\"\n\
+             [mcp.servers.a]\nurl = \"https://a.test/mcp\"\n\
+             [mcp.servers.a.auth]\ntype = \"oauth\"\nscopes = [\"read\"]\n\
+             [mcp.servers.b]\nurl = \"https://b.test/mcp\"\n",
+        );
+    });
+    h.key("ctrl+w S");
+    let sc = h.screen();
+    assert!(sc.contains("Auth") && sc.contains("oauth"), "{sc}");
+    // Row b: Auth to bearer and a token variable.
+    match &mut h.app.overlay {
+        Some(Overlay::Mcp(m)) => {
+            m.table.rows[1].cells[3] = sendito_ui::form::Cell::Choice(1);
+            m.table.rows[1].cells[4] =
+                sendito_ui::form::Cell::Text(sendito_ui::editor::TextEditor::single("{{tok}}"));
+        }
+        _ => panic!("the MCP editor did not open"),
+    }
+    h.key("ctrl+s");
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    // a keeps its OAuth fields; b gets the bearer token.
+    assert!(
+        text.contains("type = \"oauth\"") && text.contains("\"read\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("type = \"bearer\"") && text.contains("{{tok}}"),
+        "{text}"
+    );
+}
+
 #[test]
 fn flow_mcp_discover_and_call() {
     let rt = tokio::runtime::Runtime::new().must();
@@ -840,7 +915,7 @@ fn flow_http_oauth_invalid_endpoint_reports_error() {
 }
 
 #[test]
-fn flow_cookie_jar_report_and_delete() {
+fn flow_cookie_jar_list_and_delete() {
     let mut h = Harness::new(120, 40);
     h.app.set_env(Some("local".into()));
     sendito_store::cookies::store_response(
@@ -853,9 +928,16 @@ fn flow_cookie_jar_report_and_delete() {
     h.app.run_command("cookies");
     let screen = h.wait_for("Cookie jar", 5);
     assert!(screen.contains("session"), "{screen}");
+    assert!(screen.contains("Clear all cookies"), "{screen}");
     assert!(!screen.contains("private-value"));
-    h.key("esc");
-    h.app.run_command("cookies delete 1");
+    // Enter on the cookie asks first; Delete removes it.
+    h.key("enter");
+    assert!(matches!(
+        h.app.overlay,
+        Some(sendito_ui::overlay::Overlay::Confirm(_))
+    ));
+    h.key("left");
+    h.key("enter");
     h.wait_for("cookie deleted", 5);
     assert!(
         sendito_store::cookies::describe(h.dir.path(), "local")
@@ -2125,7 +2207,7 @@ fn flow_settings_click_selects_and_the_value_changes() {
         .hits
         .iter()
         .rev()
-        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Item(0))))
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Item(1))))
         .map(|(r, _)| *r)
         .must();
     h.click(row.x + 2, row.y);
@@ -2135,7 +2217,7 @@ fn flow_settings_click_selects_and_the_value_changes() {
         .hits
         .iter()
         .rev()
-        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Value(0))))
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Value(1))))
         .map(|(r, _)| *r)
         .must();
     h.click(value.x + 1, value.y);
@@ -2291,11 +2373,11 @@ fn flow_wheel_over_the_dialog() {
     };
     // Outside the dialog (sidebar) does nothing.
     h.scroll(2, 20, true);
-    assert_eq!(sel(&h), 0);
+    assert_eq!(sel(&h), 1);
     // Over the dialog moves the selection.
     let (x, y) = h.find("Appearance").must();
     h.scroll(x, y, true);
-    assert_eq!(sel(&h), 1, "the wheel moved the settings selection");
+    assert_eq!(sel(&h), 2, "the wheel moved the settings selection");
 
     // The env table follows the wheel as well (keyboard arrows already did).
     let mut h = harness(&servers(), 120, 40);
@@ -2512,4 +2594,395 @@ fn flow_url_card_on_low_screen() {
     open(&mut h, "health");
     let sc = h.screen();
     assert!(!sc.contains("╭ HTTP ") && sc.contains("Send"), "{sc}");
+}
+
+/// The status line text.
+fn status(h: &Harness) -> String {
+    h.app
+        .status
+        .as_ref()
+        .map(|s| s.0.clone())
+        .unwrap_or_default()
+}
+
+/// Selects the settings row labelled `label` (the dialog must be open).
+fn select_setting(h: &mut Harness, label: &str) {
+    let i = sendito_ui::overlay::SETTINGS
+        .iter()
+        .position(|(_, l)| *l == label)
+        .must();
+    if let Some(sendito_ui::overlay::Overlay::Settings { sel }) = &mut h.app.overlay {
+        *sel = i;
+    }
+}
+
+/// A number setting is typed in a dialog: a bad value keeps the dialog open
+/// with the reason, a good one applies at once and returns to the settings.
+/// Saved to project, it lands in the project config.
+#[test]
+fn flow_settings_typed_values_and_scope() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("settings");
+    // The scope row comes first: switch it to the project file.
+    select_setting(&mut h, "Save changes to");
+    h.key("right");
+    h.draw();
+    assert!(h.screen().contains("project"), "{}", h.screen());
+
+    select_setting(&mut h, "HTTP request timeout");
+    h.key("enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Prompt(_))));
+    assert!(h.screen().contains("30000"), "{}", h.screen());
+    h.key("ctrl+a");
+    h.type_text("zero");
+    h.key("enter");
+    h.draw();
+    assert!(
+        h.screen().contains("type a whole number (1 or more)"),
+        "{}",
+        h.screen()
+    );
+    h.key("ctrl+a");
+    h.type_text("1500");
+    h.key("enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Settings { .. })));
+    assert_eq!(h.app.project.config.http.timeout_ms, 1500);
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(file.contains("[http]\ntimeout_ms = 1500"), "{file}");
+    assert!(file.contains("name = \"demo\""), "{file}");
+
+    // A text setting checks its value; empty removes the key.
+    select_setting(&mut h, "Proxy");
+    h.key("enter");
+    h.type_text("ftp://x");
+    h.key("enter");
+    h.draw();
+    assert!(
+        h.screen().contains("invalid [http] proxy"),
+        "{}",
+        h.screen()
+    );
+    h.key("ctrl+a");
+    h.type_text("env");
+    h.key("enter");
+    assert_eq!(h.app.project.config.http.proxy.as_deref(), Some("env"));
+    select_setting(&mut h, "Proxy");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.key("backspace");
+    h.key("enter");
+    assert_eq!(h.app.project.config.http.proxy, None);
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(!file.contains("proxy"), "{file}");
+
+    // Esc in the value dialog returns to the settings with nothing changed.
+    select_setting(&mut h, "Largest response body");
+    h.key("enter");
+    h.type_text("9");
+    h.key("esc");
+    assert!(matches!(h.app.overlay, Some(Overlay::Settings { .. })));
+    assert_eq!(h.app.project.config.http.max_body_mb, 100);
+
+    // Saved to the global file while the project file sets the same key:
+    // the status says the project value wins.
+    select_setting(&mut h, "Save changes to");
+    h.key("right");
+    select_setting(&mut h, "HTTP request timeout");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.type_text("2000");
+    h.key("enter");
+    assert!(
+        status(&h).contains("project config also sets"),
+        "{}",
+        status(&h)
+    );
+    let global = std::fs::read_to_string(h.dir.path().join(".config/sendito/config.toml")).must();
+    assert!(global.contains("timeout_ms = 2000"), "{global}");
+}
+
+/// A TLS path must name a file, and a client certificate without its key is
+/// reported; the collection name change warns about keychain secrets.
+#[test]
+fn flow_settings_tls_and_collection_name() {
+    let mut h = harness(&servers(), 120, 40);
+    common::write(h.dir.path(), "certs/client.pem", "x");
+    h.app.run_command("settings");
+    select_setting(&mut h, "Client certificate (PEM)");
+    h.key("enter");
+    h.type_text("certs/none.pem");
+    h.key("enter");
+    h.draw();
+    assert!(h.screen().contains("no file at"), "{}", h.screen());
+    h.key("ctrl+a");
+    h.type_text("certs/client.pem");
+    h.key("enter");
+    assert_eq!(
+        h.app.project.config.http.tls.client_cert.as_deref(),
+        Some("certs/client.pem")
+    );
+    assert!(h.app.project.tls.client_cert.is_some());
+    assert!(status(&h).contains("client_key"), "{}", status(&h));
+
+    select_setting(&mut h, "Collection name");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.type_text("renamed");
+    h.key("enter");
+    assert_eq!(h.app.project.name, "renamed");
+    assert_eq!(h.app.project.envs.collection_name, "renamed");
+    assert!(status(&h).contains("keychain"), "{}", status(&h));
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(file.contains("name = \"renamed\""), "{file}");
+}
+
+/// Opens the settings, sets the scope to the project file and closes them.
+fn save_to_project(h: &mut Harness) {
+    h.app.config_scope = sendito_ui::overlay::ConfigScope::Project;
+}
+
+fn project_file(h: &Harness) -> String {
+    std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must()
+}
+
+/// Ctrl+O on a server opens its details: the OAuth overrides and headers of
+/// an http server, the env of a stdio one; Ctrl+S writes them and Esc goes
+/// back to the servers table.
+#[test]
+fn flow_mcp_server_details() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[collection]\nname = \"demo\"\n\n\
+         [mcp.servers.files]\ncommand = \"npx\"\n\n\
+         [mcp.servers.remote]\nurl = \"https://example.test/mcp\"\n\
+         [mcp.servers.remote.auth]\ntype = \"oauth\"\n",
+    );
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        None,
+    );
+    h.key("ctrl+w S");
+    // Rows are sorted by name: files, remote.
+    h.key("down");
+    h.key("ctrl+o");
+    assert!(
+        matches!(h.app.overlay, Some(Overlay::Cfg(_))),
+        "{}",
+        h.screen()
+    );
+    let sc = h.screen();
+    assert!(sc.contains("MCP server remote"), "{sc}");
+    assert!(
+        sc.contains("verify_tls") && sc.contains("client_id"),
+        "{sc}"
+    );
+    // The client_id row: type its value.
+    h.key("down");
+    h.key("tab");
+    h.type_text("my-app");
+    // A header on the second tab.
+    h.key("ctrl+pagedown");
+    h.type_text("x-api-key");
+    h.key("tab");
+    h.type_text("plain");
+    h.key("ctrl+s");
+    let file = project_file(&h);
+    assert!(file.contains("client_id = \"my-app\""), "{file}");
+    assert!(file.contains("x-api-key = \"plain\""), "{file}");
+    assert!(status(&h).contains("plain text"), "{}", status(&h));
+    h.key("esc");
+    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+
+    // The stdio server has an env table.
+    h.key("up");
+    h.key("ctrl+o");
+    assert!(h.screen().contains("Environment"), "{}", h.screen());
+    h.type_text("DEBUG");
+    h.key("tab");
+    h.type_text("1");
+    h.key("ctrl+s");
+    assert!(
+        project_file(&h).contains("DEBUG = \"1\""),
+        "{}",
+        project_file(&h)
+    );
+    // OAuth fields need auth = oauth: none of them on a stdio server, and a
+    // dirty servers table must be saved first.
+    h.key("esc");
+    h.type_text("x");
+    h.key("ctrl+o");
+    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+    assert!(h.screen().contains("save (Ctrl+S)"), "{}", h.screen());
+}
+
+/// The OAuth editor writes [oauth.<name>] to the file the settings choose;
+/// missing fields are reported, a plain secret is saved with a warning.
+#[test]
+fn flow_oauth_editor() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    save_to_project(&mut h);
+    h.app.run_command("oauth");
+    assert!(matches!(h.app.overlay, Some(Overlay::Cfg(_))));
+    h.type_text("gh");
+    h.key("tab");
+    h.type_text("https://github.com/login/oauth/authorize");
+    h.key("ctrl+s");
+    assert!(h.screen().contains("gh: set a token URL"), "{}", h.screen());
+    h.key("tab");
+    h.type_text("https://github.com/login/oauth/access_token");
+    h.key("tab");
+    h.type_text("abc");
+    h.key("tab");
+    h.type_text("{{gh_secret}}");
+    h.key("tab");
+    h.type_text("repo read:user");
+    h.key("ctrl+s");
+    assert!(status(&h).starts_with("saved to"), "{}", status(&h));
+    let id = &h.app.project.config.oauth["gh"];
+    assert_eq!(id.client_id, "abc");
+    assert_eq!(id.client_secret.as_deref(), Some("{{gh_secret}}"));
+    assert_eq!(id.scopes, vec!["repo", "read:user"]);
+    assert!(
+        project_file(&h).contains("[oauth.gh]"),
+        "{}",
+        project_file(&h)
+    );
+}
+
+/// The keymap editor replaces an action's keys at once; an unknown action
+/// or key is refused.
+#[test]
+fn flow_keymap_editor() {
+    use sendito_ui::keymap::{Action, Chord, Ctx, Lookup};
+    let mut h = harness(&servers(), 120, 40);
+    save_to_project(&mut h);
+    h.app.run_command("settings");
+    select_setting(&mut h, "Key bindings");
+    h.key("enter");
+    assert!(h.screen().contains("Key bindings"), "{}", h.screen());
+    h.type_text("sav");
+    assert!(h.screen().contains("Actions: save"), "{}", h.screen());
+    h.type_text("e");
+    h.key("tab");
+    h.type_text("ctrl+nope");
+    h.key("ctrl+s");
+    assert!(h.screen().contains("save:"), "{}", h.screen());
+    h.key("ctrl+a");
+    h.type_text("ctrl+g, f9");
+    h.key("ctrl+s");
+    let g = Chord::parse("ctrl+g").must();
+    assert_eq!(
+        h.app.keymap.lookup(&[Ctx::Global], false, &[g]),
+        Lookup::Action(Action::Save)
+    );
+    let file = project_file(&h);
+    assert!(file.contains("[keymap.all]"), "{file}");
+    assert!(file.contains("save = [\"ctrl+g\", \"f9\"]"), "{file}");
+}
+
+/// The palette finds settings and commands without a ':' prefix.
+#[test]
+fn flow_palette_finds_settings_and_commands() {
+    use sendito_ui::overlay::{Overlay, SETTINGS, SettingId};
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+p");
+    h.type_text("setting: vim mode");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Settings { sel }) => assert_eq!(SETTINGS[*sel].0, SettingId::Vim),
+        _ => panic!("the settings dialog did not open"),
+    }
+    h.key("esc");
+    // A command that needs an argument waits for it in the input.
+    h.key("ctrl+p");
+    h.type_text("saveas");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Palette(p)) => assert_eq!(p.input.text(), ":saveas "),
+        _ => panic!("the palette closed"),
+    }
+    h.key("esc");
+    // The typed text as written wins over scattered matches.
+    h.key("ctrl+p");
+    h.type_text("rescan");
+    h.key("enter");
+    assert!(h.screen().contains("collection read from disk again"));
+}
+
+#[test]
+fn flow_theme_picker_applies_the_theme() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("theme");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme"));
+    h.type_text("daylight");
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "daylight");
+}
+
+#[test]
+fn flow_auth_and_mcp_pickers() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    // Nothing to sign in to: the status says so.
+    h.app.run_command("auth login");
+    assert!(h.app.overlay.is_none());
+    assert!(h.screen().contains("no OAuth identities"));
+    h.app.project.config.oauth.insert(
+        "service".into(),
+        sendito_store::config::OAuthIdentity::default(),
+    );
+    h.app.run_command("auth logout");
+    match &h.app.overlay {
+        Some(Overlay::Picker(p)) => {
+            assert_eq!(p.items, vec!["service".to_string()]);
+            assert_eq!(p.details, vec!["HTTP identity".to_string()]);
+        }
+        _ => panic!("the sign-out picker did not open"),
+    }
+    h.key("esc");
+    h.app.run_command("mcpadd ledger");
+    h.type_text("https://mcp.example.test/mcp");
+    h.key("enter");
+    h.app.run_command("mcpedit");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.items.contains(&"ledger".to_string()))
+    );
+    h.type_text("ledger");
+    h.key("enter");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Cfg(_))),
+        "{}",
+        h.screen()
+    );
+}
+
+#[test]
+fn flow_request_pickers_follow_the_request_kind() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("newgrpc");
+    h.app.run_command("method");
+    assert!(h.app.overlay.is_none());
+    assert!(
+        h.screen()
+            .contains("the method is not available for gRPC requests")
+    );
+    h.app.run_command("new");
+    h.app.run_command("method");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "HTTP method"));
+    h.key("esc");
+    h.app.run_command("bodytype");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(_))));
+    h.key("esc");
+    h.app.run_command("newenv");
+    h.type_text("staging");
+    h.key("enter");
+    assert!(h.app.project.envs.list().contains(&"staging".to_string()));
 }

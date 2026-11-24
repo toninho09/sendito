@@ -574,6 +574,7 @@ fn recordings() {
     let mut h = harness(&s, w, ht, "dusk");
     h.key("ctrl+w ,");
     r.shot(&mut h, "Ctrl+W ,: settings", 1200);
+    h.key("down down down");
     h.key("enter");
     r.shot(&mut h, "Vim mode on", 1000);
     h.key("esc");

@@ -12,7 +12,7 @@ Sendito ships seven themes and reads your own from TOML files.
 | `contrast` | black and white with yellow focus, heavy borders on the focused pane |
 | `ansi` | your terminal's own 16 colors |
 
-Pick one in Settings (`Ctrl+W ,`), with `:theme <name>` in the command palette, or
+Pick one in Settings (`Ctrl+W ,`), with `:theme` (a list) or `:theme <name>` in the command palette, or
 with `theme = "<name>"` under `[ui]` in the config. `NO_COLOR=1` turns colors off
 whatever the theme. Terminals without 24-bit color get the nearest of 256 colors.
 

@@ -77,6 +77,12 @@ struct HttpConn {
 }
 
 impl HttpConn {
+    fn has_explicit_authorization(&self) -> bool {
+        self.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+    }
+
     fn build_request(&self, line: &str, bearer: Option<&str>) -> reqwest::RequestBuilder {
         let mut req = self
             .client
@@ -92,11 +98,7 @@ impl HttpConn {
         }
         // An Authorization header in the configuration wins, as in HTTP
         // requests: two Authorization headers would reach the server.
-        let explicit = self
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
-        if let (Some(token), false) = (bearer, explicit) {
+        if let (Some(token), false) = (bearer, self.has_explicit_authorization()) {
             req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
         }
         if let Some(sid) = &self.session_id {
@@ -112,6 +114,20 @@ impl HttpConn {
     /// parks the body (JSON or SSE) for `recv`.
     async fn take_response(&mut self, resp: reqwest::Response) -> Result<(), McpError> {
         let status = resp.status();
+        // A Bearer challenge asks for a sign-in, unless the configuration
+        // sends its own Authorization header (then the header is wrong).
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            && !self.has_explicit_authorization()
+            && resp
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("bearer"))
+        {
+            return Err(McpError::NeedsLogin(
+                "the server asks you to sign in (HTTP 401)".into(),
+            ));
+        }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             let preview: String = body.chars().take(200).collect();

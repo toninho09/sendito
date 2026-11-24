@@ -64,6 +64,11 @@ pub enum McpError {
     Rpc { code: i64, message: String },
     #[error("{0}")]
     Message(String),
+    /// The server needs an OAuth sign-in: no token, a token for another
+    /// server, an expired token without refresh, or a `401` with a Bearer
+    /// challenge. The UI offers to sign in.
+    #[error("{0}")]
+    NeedsLogin(String),
 }
 
 /// Where and how to reach a server. Built from the collection config.

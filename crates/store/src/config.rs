@@ -211,6 +211,20 @@ pub struct McpHttpServer {
     pub auth: Option<McpServerAuth>,
 }
 
+impl McpServerAuth {
+    /// OAuth with discovery and dynamic registration (no fields set).
+    pub fn oauth() -> Self {
+        McpServerAuth::Oauth {
+            client_id: None,
+            client_secret: None,
+            authorize_url: None,
+            token_url: None,
+            registration_url: None,
+            scopes: Vec::new(),
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -345,54 +359,106 @@ fn read_doc(path: &Path) -> Result<toml_edit::DocumentMut> {
         .map_err(|e| StoreError::Invalid(format!("{}: {e}", path.display())))
 }
 
-/// The table `name` at the top of `doc`, created (without its own header
-/// line when it holds only sub-tables) if it is missing.
+/// The table at the dotted path `keys` in `doc`, with each missing table
+/// created (without its own header line while it holds only sub-tables).
 fn doc_table<'a>(
     doc: &'a mut toml_edit::DocumentMut,
-    name: &str,
+    keys: &[&str],
 ) -> Result<&'a mut dyn toml_edit::TableLike> {
-    let item = doc.entry(name).or_insert_with(|| {
-        let mut t = toml_edit::Table::new();
-        t.set_implicit(true);
-        toml_edit::Item::Table(t)
-    });
-    item.as_table_like_mut()
-        .ok_or_else(|| StoreError::Invalid(format!("[{name}] is not a table")))
+    let mut cur: &mut dyn toml_edit::TableLike = doc.as_table_mut();
+    for (i, name) in keys.iter().enumerate() {
+        let item = cur.entry(name).or_insert_with(|| {
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(true);
+            toml_edit::Item::Table(t)
+        });
+        cur = item.as_table_like_mut().ok_or_else(|| {
+            StoreError::Invalid(format!("[{}] is not a table", keys[..=i].join(".")))
+        })?;
+    }
+    Ok(cur)
+}
+
+/// Replaces the table at the dotted path `keys` (for example `["mcp",
+/// "servers"]`) with `value`, keeping the rest of the file (comments too).
+/// A value that serializes to an empty table removes the table.
+pub fn set_table<T: Serialize>(path: &Path, keys: &[&str], value: &T) -> Result<()> {
+    let (last, parent) = keys
+        .split_last()
+        .ok_or_else(|| StoreError::Invalid("no table to write".into()))?;
+    let name = keys.join(".");
+    let value = toml::Value::try_from(value)
+        .map_err(|e| StoreError::Invalid(format!("cannot write [{name}]: {e}")))?;
+    let mut doc = read_doc(path)?;
+    let sec = doc_table(&mut doc, parent)?;
+    if value.as_table().is_some_and(toml::Table::is_empty) {
+        sec.remove(last);
+    } else {
+        let mut wrap = toml::Table::new();
+        wrap.insert((*last).to_string(), value);
+        let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let mut src: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|e| StoreError::Invalid(format!("cannot write [{name}]: {e}")))?;
+        let item = src
+            .remove(last)
+            .ok_or_else(|| StoreError::Invalid(format!("cannot write [{name}]")))?;
+        sec.insert(last, item);
+    }
+    write_atomic(path, doc.to_string().as_bytes())
 }
 
 /// Replaces `[mcp.servers]` in a config file, keeping the rest of the file
 /// (comments too). An empty map removes the table.
 pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Result<()> {
+    set_table(path, &["mcp", "servers"], servers)
+}
+
+/// Sets `[mcp.servers.<server>.auth]` in a config file, keeping the rest of
+/// the file (comments too). The server must already be in that file.
+pub fn set_mcp_server_auth(path: &Path, server: &str, auth: &McpServerAuth) -> Result<()> {
     let mut doc = read_doc(path)?;
-    let mcp = doc_table(&mut doc, "mcp")?;
-    if servers.is_empty() {
-        mcp.remove("servers");
-    } else {
-        let mut wrap = toml::Table::new();
-        let value = toml::Value::try_from(servers)
-            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
-        wrap.insert("servers".to_string(), value);
-        let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
-        let mut src: toml_edit::DocumentMut = text
-            .parse()
-            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
-        let item = src
-            .remove("servers")
-            .ok_or_else(|| StoreError::Invalid("cannot write [mcp.servers]".into()))?;
-        mcp.insert("servers", item);
-    }
+    let entry = doc
+        .get_mut("mcp")
+        .and_then(|m| m.get_mut("servers"))
+        .and_then(|s| s.get_mut(server))
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| {
+            StoreError::Invalid(format!(
+                "[mcp.servers.{server}] is not in {}",
+                path.display()
+            ))
+        })?;
+    let mut wrap = toml::Table::new();
+    let value = toml::Value::try_from(auth)
+        .map_err(|e| StoreError::Invalid(format!("cannot write the auth of {server}: {e}")))?;
+    wrap.insert("auth".to_string(), value);
+    let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let mut src: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| StoreError::Invalid(format!("cannot write the auth of {server}: {e}")))?;
+    let item = src
+        .remove("auth")
+        .ok_or_else(|| StoreError::Invalid(format!("cannot write the auth of {server}")))?;
+    entry.insert("auth", item);
     write_atomic(path, doc.to_string().as_bytes())
 }
 
 /// Sets `section.key = value` in a config file, keeping other content
-/// (comments too).
-pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
+/// (comments too). `section` is a dotted path (`http.tls`); `None` removes
+/// the key.
+pub fn set_value(path: &Path, section: &str, key: &str, value: Option<toml::Value>) -> Result<()> {
     let mut doc = read_doc(path)?;
+    let keys: Vec<&str> = section.split('.').collect();
+    let sec = doc_table(&mut doc, &keys)?;
+    let Some(value) = value else {
+        sec.remove(key);
+        return write_atomic(path, doc.to_string().as_bytes());
+    };
     let v: toml_edit::Value = value
         .to_string()
         .parse()
         .map_err(|e| StoreError::Invalid(format!("cannot write {section}.{key}: {e}")))?;
-    let sec = doc_table(&mut doc, section)?;
     match sec.get_mut(key).and_then(toml_edit::Item::as_value_mut) {
         // Keep the comment written after the old value on its line.
         Some(old) => {
@@ -407,9 +473,54 @@ pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> R
     write_atomic(path, doc.to_string().as_bytes())
 }
 
+/// Whether a config file sets `section.key` (`section` is a dotted path).
+/// A file that cannot be read sets nothing.
+pub fn has_value(path: &Path, section: &str, key: &str) -> bool {
+    let Ok(Some(t)) = read_table(path) else {
+        return false;
+    };
+    let mut cur = &t;
+    for name in section.split('.') {
+        match cur.get(name).and_then(toml::Value::as_table) {
+            Some(next) => cur = next,
+            None => return false,
+        }
+    }
+    cur.contains_key(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_mcp_server_auth_keeps_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("config.toml");
+        fs::write(
+            &p,
+            "# servers\n[mcp.servers.a]\nurl = \"https://a/mcp\" # main\n\n[mcp.servers.b]\nurl = \"https://b/mcp\"\n",
+        )
+        .unwrap();
+        let auth = McpServerAuth::oauth();
+        set_mcp_server_auth(&p, "a", &auth).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        assert!(
+            text.contains("# servers") && text.contains("# main"),
+            "{text}"
+        );
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty(), "{w:?}");
+        let McpServer::Http(a) = &c.mcp.servers["a"] else {
+            panic!("a is not http")
+        };
+        assert_eq!(a.auth, Some(auth.clone()));
+        let McpServer::Http(b) = &c.mcp.servers["b"] else {
+            panic!("b is not http")
+        };
+        assert_eq!(b.auth, None);
+        assert!(set_mcp_server_auth(&p, "missing", &auth).is_err());
+    }
 
     #[test]
     fn layering() {
@@ -565,7 +676,7 @@ scopes = ["read"]
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("c.toml");
         fs::write(&p, "[http]\ntimeout_ms = 5\n").unwrap();
-        set_value(&p, "ui", "vim_mode", toml::Value::Boolean(true)).unwrap();
+        set_value(&p, "ui", "vim_mode", Some(toml::Value::Boolean(true))).unwrap();
         let (c, w) = load(None, Some(&p));
         assert!(w.is_empty());
         assert!(c.ui.vim_mode);
@@ -574,7 +685,7 @@ scopes = ["read"]
             &d.path().join("new/c.toml"),
             "ui",
             "theme",
-            toml::Value::String("ansi".into()),
+            Some(toml::Value::String("ansi".into())),
         )
         .unwrap();
         // Comments and other lines survive an edit.
@@ -583,7 +694,7 @@ scopes = ["read"]
             "# my settings\n[ui]\ntheme = \"dusk\" # mine\nmouse = false\n",
         )
         .unwrap();
-        set_value(&p, "ui", "theme", toml::Value::String("ansi".into())).unwrap();
+        set_value(&p, "ui", "theme", Some(toml::Value::String("ansi".into()))).unwrap();
         let text = fs::read_to_string(&p).unwrap();
         assert_eq!(
             text,
@@ -596,8 +707,65 @@ scopes = ["read"]
                 .starts_with("# my settings\n")
         );
         fs::write(&p, "ui = 1").unwrap();
-        assert!(set_value(&p, "ui", "x", toml::Value::Boolean(true)).is_err());
+        assert!(set_value(&p, "ui", "x", Some(toml::Value::Boolean(true))).is_err());
         assert!(global_path().is_some());
         assert!(project_path(Path::new("/x")).ends_with(".sendito/config.toml"));
+    }
+
+    #[test]
+    fn set_value_nested_and_remove() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        fs::write(&p, "[http]\ntimeout_ms = 5 # short\n").unwrap();
+        set_value(
+            &p,
+            "http.tls",
+            "ca",
+            Some(toml::Value::String("ca.pem".into())),
+        )
+        .unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.http.tls.ca.as_deref(), Some("ca.pem"));
+        assert_eq!(c.http.timeout_ms, 5);
+        assert!(has_value(&p, "http.tls", "ca"));
+        assert!(has_value(&p, "http", "timeout_ms"));
+        assert!(!has_value(&p, "http", "proxy"));
+        assert!(!has_value(&d.path().join("none.toml"), "http", "proxy"));
+        set_value(&p, "http.tls", "ca", None).unwrap();
+        set_value(&p, "http", "proxy", None).unwrap();
+        let (c, _) = load(None, Some(&p));
+        assert_eq!(c.http.tls.ca, None);
+        assert!(fs::read_to_string(&p).unwrap().contains("# short"));
+        fs::write(&p, "[http]\ntls = 1\n").unwrap();
+        assert!(set_value(&p, "http.tls", "ca", None).is_err());
+    }
+
+    #[test]
+    fn set_table_writes_and_removes() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        fs::write(&p, "# top\n[ui]\nmouse = false\n").unwrap();
+        let mut ids = BTreeMap::new();
+        ids.insert(
+            "gh".to_string(),
+            OAuthIdentity {
+                authorize_url: "https://a".into(),
+                token_url: "https://t".into(),
+                client_id: "id".into(),
+                client_secret: Some("{{s}}".into()),
+                scopes: vec!["repo".into()],
+            },
+        );
+        set_table(&p, &["oauth"], &ids).unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.oauth, ids);
+        assert!(!c.ui.mouse);
+        set_table(&p, &["oauth"], &BTreeMap::<String, OAuthIdentity>::new()).unwrap();
+        let (c, _) = load(None, Some(&p));
+        assert!(c.oauth.is_empty());
+        assert!(fs::read_to_string(&p).unwrap().starts_with("# top\n"));
+        assert!(set_table(&p, &[], &ids).is_err());
     }
 }

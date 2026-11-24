@@ -21,10 +21,30 @@ pub enum ConfirmAction {
     EnvClose,
     /// MCP servers editor closing with changes: 0 = save, 1 = discard.
     McpClose,
+    /// A config editor (MCP server details, OAuth, keymap) closing with
+    /// changes: 0 = save, 1 = discard.
+    CfgClose,
     /// Prompt or import dialog closing with typed text: 0 = discard,
     /// 1 = keep editing.
     DialogClose,
     ClearHistory,
+    /// Delete the cookie with this number from the active environment's jar.
+    DeleteCookie(usize),
+    /// Delete every cookie of the active environment.
+    ClearCookies,
+    /// An MCP server asks for a sign-in: 0 = sign in, then do `after` in `tab`.
+    McpLogin {
+        server: String,
+        tab: u64,
+        after: McpAfterLogin,
+    },
+}
+
+/// What runs again after a sign-in that a failed MCP call started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAfterLogin {
+    Send,
+    Tools { open_picker: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +68,8 @@ pub enum PromptAction {
     McpServer {
         name: String,
     },
+    /// A typed setting of the settings dialog (number, path or text).
+    Setting(SettingId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +82,15 @@ pub enum PickAction {
     MoveTo(String),
     Choice(crate::tab::Field),
     RequestKind,
+    Theme,
+    /// The cookie jar: item i is cookie i + 1; the last item clears all.
+    Cookie,
+    /// Sign in to (or out of) an OAuth identity or an MCP server.
+    Auth {
+        login: bool,
+    },
+    /// Open the details editor of an MCP server.
+    McpServerDetails,
 }
 
 pub struct Prompt {
@@ -188,6 +219,8 @@ pub enum PaletteItem {
     Open(String),
     Env(Option<String>),
     Command(&'static str, &'static str),
+    /// Opens the settings dialog on this row.
+    Setting(SettingId),
 }
 
 pub struct Palette {
@@ -213,13 +246,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "Switch environment (names listed as you type)",
     ),
     (":envs", "Edit environments"),
+    (":newenv", "Create an environment (asks for the name)"),
     (
-        ":auth login <identity>",
-        "Sign in to an HTTP OAuth identity",
+        ":auth login [name]",
+        "Sign in to an HTTP OAuth identity or an MCP server (lists them without a name)",
     ),
     (
-        ":auth logout <identity>",
-        "Remove HTTP OAuth tokens for this environment",
+        ":auth logout [name]",
+        "Remove the OAuth tokens of an identity or an MCP server (lists them without a name)",
     ),
     (":w", "Save the request"),
     (":saveas <name>", "Save the request under a new name"),
@@ -239,7 +273,16 @@ pub const COMMANDS: &[(&str, &str)] = &[
         ":mcpadd <name>",
         "Add an MCP server to the project config (asks for the URL or command)",
     ),
+    (
+        ":mcpedit [name]",
+        "Edit the details of an MCP server: env, headers, TLS, OAuth (lists them without a name)",
+    ),
     (":mcptools", "Discover and choose an MCP tool"),
+    (":method", "Choose the HTTP method"),
+    (":bodytype", "Choose the body type of the HTTP request"),
+    (":authtype", "Choose the auth type of the request"),
+    (":grpcmethod", "Choose the gRPC service and method"),
+    (":rescan", "Read the collection from disk again"),
     (
         ":import [path]",
         "Import a Postman/Insomnia file or Bruno directory, or paste curl",
@@ -253,7 +296,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":httpfile!", "Copy the .http file including secret values"),
     (
         ":cookies",
-        "List the active environment's cookies (values masked)",
+        "Manage the active environment's cookies: delete one or clear all (values masked)",
     ),
     (":cookies clear", "Clear the active environment's cookies"),
     (
@@ -274,8 +317,16 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":reload", "Reload the gRPC schema"),
     (":settings", "Open settings"),
     (
-        ":theme <name>",
-        "Switch theme; :theme reload reads your theme files again",
+        ":oauth",
+        "Edit the HTTP OAuth identities (the file Settings saves to)",
+    ),
+    (
+        ":keymap",
+        "Edit your key bindings (the file Settings saves to)",
+    ),
+    (
+        ":theme [name]",
+        "Switch theme (lists them without a name); :theme reload reads your theme files again",
     ),
     (":help", "Show keys"),
     (
@@ -284,6 +335,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (":savebody [path]", "Save the response body to a file"),
 ];
+
+/// A palette command without its arguments (`":auth login [name]"` →
+/// `"auth login"`) and whether it needs an argument before it can run.
+pub fn command_base(c: &str) -> (&str, bool) {
+    let c = c.trim_start_matches(':');
+    let end = c.find(['<', '[']).unwrap_or(c.len());
+    (c[..end].trim(), c.contains('<'))
+}
 
 impl Palette {
     pub fn visible(&self) -> Vec<usize> {
@@ -327,14 +386,17 @@ impl Palette {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, (it, label, detail))| {
-                !matches!(it, PaletteItem::Command(..))
-                    && (q.is_empty()
-                        || fuzzy(&label.to_lowercase(), q)
-                        || fuzzy(&detail.to_lowercase(), q))
+            .filter(|(_, (_, label, detail))| {
+                q.is_empty() || fuzzy(&label.to_lowercase(), q) || fuzzy(&detail.to_lowercase(), q)
             })
             .map(|(i, _)| i)
             .collect();
+        // Rows that hold the typed text as written come before the scattered
+        // matches: "rescan" finds :rescan before "Re-send … on an interval".
+        v.sort_by_key(|i| {
+            let (_, label, detail) = &self.items[*i];
+            !(label.to_lowercase().contains(q) || detail.to_lowercase().contains(q))
+        });
         // The untouched palette highlights its first row, so that row must be
         // harmless: the key list, never an action that sends or deletes.
         if q.is_empty()
@@ -349,8 +411,21 @@ impl Palette {
     }
 }
 
+/// The config file the settings dialog and the OAuth and keymap editors
+/// write to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigScope {
+    /// `~/.config/sendito/config.toml`: every collection.
+    #[default]
+    Global,
+    /// `<collection>/.sendito/config.toml`: this collection; it wins over
+    /// the global file.
+    Project,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingId {
+    Scope,
     Vim,
     Theme,
     Icons,
@@ -358,20 +433,138 @@ pub enum SettingId {
     Mouse,
     ConfirmQuit,
     History,
+    HistoryMax,
     WatchInterval,
     Hints,
+    HttpTimeout,
+    GrpcDeadline,
+    WsTimeout,
+    McpTimeout,
+    MaxBody,
+    CookieJar,
+    Proxy,
+    TlsCa,
+    TlsCert,
+    TlsKey,
+    CollectionName,
+    CollectionIgnore,
+    OAuthIds,
+    KeyBindings,
+}
+
+impl SettingId {
+    /// Where the setting is saved: (dotted section, key). The scope is not
+    /// saved.
+    pub fn key(self) -> Option<(&'static str, &'static str)> {
+        use SettingId::*;
+        Some(match self {
+            Scope | OAuthIds | KeyBindings => return None,
+            Vim => ("ui", "vim_mode"),
+            Theme => ("ui", "theme"),
+            Icons => ("ui", "icons"),
+            Sidebar => ("ui", "sidebar"),
+            Mouse => ("ui", "mouse"),
+            ConfirmQuit => ("ui", "confirm_quit"),
+            History => ("history", "enabled"),
+            HistoryMax => ("history", "max_entries"),
+            WatchInterval => ("ui", "watch_interval_s"),
+            Hints => ("ui", "hints"),
+            HttpTimeout => ("http", "timeout_ms"),
+            GrpcDeadline => ("grpc", "deadline_ms"),
+            WsTimeout => ("websocket", "timeout_ms"),
+            McpTimeout => ("mcp", "timeout_ms"),
+            MaxBody => ("http", "max_body_mb"),
+            CookieJar => ("http", "cookie_jar"),
+            Proxy => ("http", "proxy"),
+            TlsCa => ("http.tls", "ca"),
+            TlsCert => ("http.tls", "client_cert"),
+            TlsKey => ("http.tls", "client_key"),
+            CollectionName => ("collection", "name"),
+            CollectionIgnore => ("collection", "ignore"),
+        })
+    }
+
+    /// The value is typed in a dialog (numbers, paths, text) instead of
+    /// changed with ← →.
+    pub fn typed(self) -> bool {
+        use SettingId::*;
+        matches!(
+            self,
+            HistoryMax
+                | WatchInterval
+                | HttpTimeout
+                | GrpcDeadline
+                | WsTimeout
+                | McpTimeout
+                | MaxBody
+                | Proxy
+                | TlsCa
+                | TlsCert
+                | TlsKey
+                | CollectionName
+                | CollectionIgnore
+        )
+    }
+
+    /// Enter opens an editor of its own (the value is a table).
+    pub fn opens(self) -> bool {
+        matches!(self, SettingId::OAuthIds | SettingId::KeyBindings)
+    }
+
+    /// The smallest number a numeric setting takes, `None` for text.
+    pub fn min(self) -> Option<u64> {
+        use SettingId::*;
+        match self {
+            GrpcDeadline | WsTimeout => Some(0),
+            HistoryMax | WatchInterval | HttpTimeout | McpTimeout | MaxBody => Some(1),
+            _ => None,
+        }
+    }
+
+    /// The heading drawn above this setting, for the first of a group.
+    pub fn heading(self) -> Option<&'static str> {
+        use SettingId::*;
+        match self {
+            Scope => Some("Saving"),
+            Theme => Some("Appearance"),
+            Vim => Some("Editing"),
+            Sidebar => Some("Layout"),
+            Mouse => Some("Behavior"),
+            HttpTimeout => Some("Timeouts"),
+            MaxBody => Some("HTTP"),
+            TlsCa => Some("TLS"),
+            CollectionName => Some("Collection"),
+            _ => None,
+        }
+    }
 }
 
 pub const SETTINGS: &[(SettingId, &str)] = &[
+    (SettingId::Scope, "Save changes to"),
     (SettingId::Theme, "Theme"),
     (SettingId::Icons, "Icons"),
     (SettingId::Hints, "Key hints"),
     (SettingId::Vim, "Vim mode"),
+    (SettingId::KeyBindings, "Key bindings"),
     (SettingId::Sidebar, "Sidebar position"),
     (SettingId::Mouse, "Mouse support"),
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),
     (SettingId::History, "Record history"),
+    (SettingId::HistoryMax, "History entries kept"),
     (SettingId::WatchInterval, "Watch interval"),
+    (SettingId::HttpTimeout, "HTTP request timeout"),
+    (SettingId::GrpcDeadline, "gRPC deadline"),
+    (SettingId::WsTimeout, "WebSocket handshake timeout"),
+    (SettingId::McpTimeout, "MCP call timeout"),
+    (SettingId::MaxBody, "Largest response body"),
+    (SettingId::CookieJar, "Cookie jar"),
+    (SettingId::Proxy, "Proxy"),
+    (SettingId::OAuthIds, "OAuth identities"),
+    (SettingId::TlsCa, "CA certificates (PEM)"),
+    (SettingId::TlsCert, "Client certificate (PEM)"),
+    (SettingId::TlsKey, "Client key (PEM)"),
+    (SettingId::CollectionName, "Collection name"),
+    (SettingId::CollectionIgnore, "Skipped directories"),
 ];
 
 /// Source labels in the editor, in the order of the file's `source` values
@@ -498,8 +691,9 @@ impl EnvEditor {
 }
 
 /// The MCP servers from `[mcp.servers]`, edited as a table: a name, the kind
-/// (stdio or http) and the command or URL. Extra settings (args, env, headers,
-/// auth) are kept as they are in the file and are edited there.
+/// (stdio or http), the command or URL, and the auth of an HTTP server (none,
+/// bearer token or OAuth). Extra settings (args, env, headers, OAuth fields)
+/// are kept as they are in the file and are edited there.
 pub struct McpEditor {
     pub table: Table,
     pub dirty: bool,
@@ -507,6 +701,18 @@ pub struct McpEditor {
 }
 
 pub const MCP_KINDS: &[&str] = &["http", "stdio"];
+pub const MCP_AUTHS: &[&str] = &["none", "bearer", "oauth"];
+
+/// One row of the MCP servers editor.
+pub struct McpRow {
+    pub name: String,
+    /// Index in `MCP_KINDS`.
+    pub kind: usize,
+    pub value: String,
+    /// Index in `MCP_AUTHS`.
+    pub auth: usize,
+    pub token: String,
+}
 
 impl McpEditor {
     pub fn table() -> Table {
@@ -527,6 +733,16 @@ impl McpEditor {
                     kind: ColKind::Text,
                     weight: 5,
                 },
+                Column {
+                    title: "Auth",
+                    kind: ColKind::Choice(MCP_AUTHS),
+                    weight: 1,
+                },
+                Column {
+                    title: "Token",
+                    kind: ColKind::Text,
+                    weight: 2,
+                },
             ],
             false,
         )
@@ -537,14 +753,23 @@ impl McpEditor {
         &mut self,
         servers: &std::collections::BTreeMap<String, sendito_store::config::McpServer>,
     ) {
-        use sendito_store::config::McpServer;
+        use sendito_store::config::{McpServer, McpServerAuth};
         let mut t = Self::table();
         for (name, s) in servers {
-            let (kind, value) = match s {
-                McpServer::Http(h) => (0, h.url.clone()),
+            let (kind, value, auth, token) = match s {
+                McpServer::Http(h) => {
+                    let (auth, token) = match &h.auth {
+                        None => (0, ""),
+                        Some(McpServerAuth::Bearer { token }) => (1, token.as_str()),
+                        Some(McpServerAuth::Oauth { .. }) => (2, ""),
+                    };
+                    (0, h.url.clone(), auth, token.to_string())
+                }
                 // stdio rows read as the command line they start: command and
-                // arguments together (env, headers and auth stay in the file).
-                McpServer::Stdio(s) => (1, stdio_command_line(&s.command, &s.args)),
+                // arguments together (env stays in the file).
+                McpServer::Stdio(s) => {
+                    (1, stdio_command_line(&s.command, &s.args), 0, String::new())
+                }
             };
             t.push(
                 true,
@@ -552,6 +777,8 @@ impl McpEditor {
                     Cell::Text(TextEditor::single(name)),
                     Cell::Choice(kind),
                     Cell::Text(TextEditor::single(&value)),
+                    Cell::Choice(auth),
+                    Cell::Text(TextEditor::single(&token)),
                 ],
             );
         }
@@ -560,19 +787,21 @@ impl McpEditor {
         self.error = None;
     }
 
-    /// The rows as (name, kind, value), skipping empty and duplicate names.
-    pub fn rows(&self) -> Vec<(String, usize, String)> {
-        let mut out = Vec::new();
+    /// The rows, skipping empty and duplicate names.
+    pub fn rows(&self) -> Vec<McpRow> {
+        let mut out: Vec<McpRow> = Vec::new();
         for r in self.table.values() {
             let name = r.cells[0].text().trim().to_string();
-            if name.is_empty() || out.iter().any(|(n, _, _)| *n == name) {
+            if name.is_empty() || out.iter().any(|row| row.name == name) {
                 continue;
             }
-            out.push((
+            out.push(McpRow {
                 name,
-                r.cells[1].choice(),
-                r.cells[2].text().trim().to_string(),
-            ));
+                kind: r.cells[1].choice(),
+                value: r.cells[2].text().trim().to_string(),
+                auth: r.cells[3].choice(),
+                token: r.cells[4].text().trim().to_string(),
+            });
         }
         out
     }
@@ -671,6 +900,7 @@ pub enum Overlay {
     Picker(Picker),
     Env(EnvEditor),
     Mcp(McpEditor),
+    Cfg(crate::config_editor::CfgEditor),
     Import(Import),
     Report(Report),
 }
@@ -781,5 +1011,43 @@ mod tests {
         };
         let v = p.visible();
         assert!(v.len() >= 2);
+    }
+
+    #[test]
+    fn commands_match_without_colon() {
+        let mut items: Vec<(PaletteItem, String, String)> = vec![(
+            PaletteItem::Action(crate::keymap::Action::Help),
+            "Show all keys and actions".into(),
+            "F1".into(),
+        )];
+        items.extend(
+            COMMANDS
+                .iter()
+                .map(|(c, d)| (PaletteItem::Command(c, d), c.to_string(), d.to_string())),
+        );
+        let mut p = Palette {
+            input: TextEditor::single("cookie"),
+            items,
+            sel: 0,
+            scroll: 0,
+            armed: true,
+        };
+        let v: Vec<&str> = p.visible().iter().map(|i| p.items[*i].1.as_str()).collect();
+        assert!(v.contains(&":cookies"), "{v:?}");
+        // The untouched palette still starts with the key list.
+        p.input = TextEditor::single("");
+        assert_eq!(p.visible().first(), Some(&0));
+    }
+
+    #[test]
+    fn command_words() {
+        assert_eq!(command_base(":saveas <name>"), ("saveas", true));
+        assert_eq!(command_base(":theme [name]"), ("theme", false));
+        assert_eq!(command_base(":auth login [name]"), ("auth login", false));
+        assert_eq!(
+            command_base(":cookies delete <number>"),
+            ("cookies delete", true)
+        );
+        assert_eq!(command_base(":send"), ("send", false));
     }
 }

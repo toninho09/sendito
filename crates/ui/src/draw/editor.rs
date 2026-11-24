@@ -1,6 +1,6 @@
 //! The configuration table editor: the shape the environment and MCP-server
 //! dialogs share (title, optional env tabs, legend, table, explanation, status
-//! and a three-button footer).
+//! and a row of buttons).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -30,7 +30,7 @@ pub(super) struct EditorDialog<'a> {
     pub explain: &'a str,
     pub error: Option<&'a str>,
     pub dirty: bool,
-    pub buttons: [&'a str; 3],
+    pub buttons: &'a [&'a str],
     /// Whether a `{{name}}` is defined (the table's cells show the answer).
     pub is_def: &'a dyn Fn(&str) -> bool,
 }
@@ -122,14 +122,6 @@ pub(super) fn render(
         app.hover,
     );
     dialog::status(buf, inner, d.error, d.dirty, &app.icons, theme);
-    dialog::buttons(
-        app,
-        buf,
-        inner,
-        &d.buttons,
-        None,
-        &|i| hits.button(i),
-        theme,
-    );
+    dialog::buttons(app, buf, inner, d.buttons, None, &|i| hits.button(i), theme);
     cursor
 }

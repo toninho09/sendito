@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+### MCP sign-in from the app
+
+* **Sign in when the server asks.** When an MCP call or the tool list gets a
+  `401` with a Bearer challenge, or the saved sign-in is missing or expired,
+  the app asks "Sign in now?". Sign in opens the browser, stores the tokens,
+  and runs the call (or the tool list) again. A server without an auth table
+  gets `type = "oauth"` written to its config file after the sign-in.
+* **`:auth login|logout <server>`** signs in to or out of an MCP server in the
+  app. An `[oauth]` identity with the same name wins.
+* **Auth and Token columns** in the MCP servers editor (`Ctrl+W S`): none,
+  bearer (with its token) or oauth. OAuth fields in the file stay as they are.
+  A token without `{{variable}}` gets a warning on save.
+* **`sendito mcp login <server> [--env <name>]`** renders `{{variables}}` in
+  the server URL and the OAuth settings. Tokens are bound to the rendered URL.
+* `sendito run` prints `sign in with sendito mcp login <server>` when an MCP
+  server asks for a sign-in.
+
+### Config fields in the interface
+
+* **Settings chooses the file.** A "Save changes to" row writes to the global
+  file or to the project file (`.sendito/config.toml`). A change saved to the
+  global file while the project file sets the same key gets a warning.
+* **Typed settings.** HTTP timeout, gRPC deadline, WebSocket and MCP timeouts,
+  largest response body, history entries kept, watch interval, proxy, the TLS
+  CA, client certificate and key, collection name and skipped directories.
+  Enter opens a dialog; the value is checked before it is saved (a proxy URL,
+  a PEM file that exists, a number in range). The watch interval is typed now
+  instead of chosen from 5 / 10 / 30 / 60. The cookie jar is an on/off row.
+* **Collection name warning.** It is always saved to the project file, and the
+  dialog and the status say that keychain secrets must be set again.
+* **MCP server details.** `Ctrl+O` in the servers table (`Ctrl+W S`) edits the
+  env of a stdio server, or the headers, `verify_tls` and OAuth overrides of an
+  HTTP server.
+* **`:oauth`** edits the `[oauth.<name>]` identities in a table. A plain client
+  secret is saved with a warning.
+* **`:keymap`** edits `[keymap.all]`, `[keymap.conventional]` and
+  `[keymap.vim]`. Saved keys apply at once.
+
+### Command palette
+
+* **Settings in the palette.** Every settings row is a "Setting: …" entry with
+  its current value. Enter opens the settings dialog on that row.
+* **Commands without `:`.** The search lists the `:commands` too. A command
+  that needs an argument puts `:<command> ` in the input and waits for it.
+  Rows that hold the typed text as written come first.
+* **Pickers.** `:theme` lists the themes, `:auth login` and `:auth logout`
+  list the OAuth identities and the MCP servers with OAuth, and `:mcpedit`
+  lists the MCP servers and opens the details editor of the one you choose.
+* **Cookie jar.** `:cookies` lists the cookies (values masked). Enter on a
+  cookie deletes it after a question; the last row clears all of them.
+* **New commands.** `:method`, `:bodytype`, `:authtype` and `:grpcmethod` open
+  the picker of the active request. `:rescan` reads the collection from disk
+  again. `:newenv` creates an environment.
+
 ## 0.2.0 — 2026-11-24
 
 ### Response query bar and body type chips

@@ -99,6 +99,7 @@ Tests: `tests/corpus.rs` (48 HTTP cases under
 | OAuth login/logout for HTTP, CLI | `src/main.rs` (`auth` command) | `crates/mcp/src/oauth.rs::login_http` |
 | OAuth login/logout in the UI | `crates/ui/src/app.rs::http_oauth_command` | `OAuthRunInfo` in `crates/pipeline/src/runner.rs` |
 | MCP OAuth 2.1 (discovery, PKCE, registration, refresh) | `crates/mcp/src/oauth.rs::login` | `pkce`, `RefreshingProvider`, `well_known`, `validate_oauth_url` |
+| MCP sign-in in the app (`:auth login <server>`, "Sign in now?" after `McpError::NeedsLogin`) | `crates/ui/src/app.rs` (`offer_mcp_login`, `mcp_oauth_command`, `after_mcp_login`) | `crates/pipeline/src/runner.rs::mcp_login`, `crates/store/src/config.rs::set_mcp_server_auth` |
 | Token storage keys | `crates/pipeline/src/runner.rs::oauth_token_account`, `mcp_token_account` | Keychain access in `crates/store/src/env.rs` |
 
 Tests: `crates/mcp/tests/oauth.rs`, corpus case `http/47-oauth-http.toml`,
@@ -143,6 +144,7 @@ Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 | JSON-RPC messages, protocol constants | `crates/mcp/src/protocol.rs` | `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS` |
 | Tool discovery and argument template | `crates/mcp/src/lib.rs::Tool` | `:mcptools`, F2 in the UI |
 | Server table editor (`Ctrl+W S`) | `crates/ui/src/app.rs::open_mcp_editor` | `crates/ui/src/overlay.rs::McpEditor`, save via `save_mcp_editor` |
+| Server details (`Ctrl+O` in the server table: env, headers, `verify_tls`, OAuth fields) | `crates/ui/src/config_editor.rs::open_mcp_server_editor` | `crates/ui/src/config_editor.rs::CfgEditor`, save via `save_cfg_editor` |
 
 Tests: `crates/mcp/tests/client.rs`, `tests/mcp_cli.rs`, corpus cases under
 `tests/corpus/collection/mcp/`.
@@ -201,6 +203,7 @@ the module for the surface you are changing.
 | Icon sets (`unicode`, `nerd`) | `crates/ui/src/icons.rs` |
 | Sidebar tree state: flatten, expand, filter, select | `crates/ui/src/tree.rs` |
 | Overlays: palette, help, settings, confirm, prompt, picker, env editor, MCP editor, import, report | `crates/ui/src/overlay.rs` |
+| Config editors: MCP server details, OAuth identities (`:oauth`), key bindings (`:keymap`) | `crates/ui/src/config_editor.rs` |
 | List arithmetic: scroll clamping, steps, page steps, wrap-around | `crates/ui/src/list.rs` |
 
 ### Drawing
@@ -215,7 +218,7 @@ Every clickable region is registered in `app.hits` while drawing.
 | Primitives and components: panes, chips, key caps, buttons, rules, list rows, spinner | `crates/ui/src/draw/kit.rs` |
 | Dialog chrome: the shell, popups, the input row, the button footer, the status line | `crates/ui/src/draw/dialog.rs` |
 | The editable table every form is made of | `crates/ui/src/draw/table.rs` |
-| The configuration table editor (environment and MCP servers) | `crates/ui/src/draw/editor.rs` |
+| The configuration table editor (environment, MCP servers and the config editors) | `crates/ui/src/draw/editor.rs` |
 | Request pane: URL strip, sub-tabs, fields, tables | `crates/ui/src/draw/request.rs` |
 | Response pane: tabs, borders, scrollbar | `crates/ui/src/draw/response.rs` |
 | Sidebar: request tree and history | `crates/ui/src/draw/sidebar.rs` |
@@ -229,7 +232,7 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
 | A new `:command` | `crates/ui/src/overlay.rs::COMMANDS` → dispatch in `crates/ui/src/app.rs` → `KEYMAP.md` via `make keymap` |
-| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay.rs::SettingId` → `crates/ui/src/app.rs` (apply and persist) → [FEATURES.md](FEATURES.md#settings) |
+| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay.rs::SettingId` (`key`, `typed`, `heading`) and `SETTINGS` → `crates/ui/src/app.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
 | A new dialog | `crates/ui/src/overlay.rs::Overlay` → `crates/ui/src/draw/overlay.rs` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app.rs` → snapshots |
 
 ## Headless CLI
@@ -245,7 +248,7 @@ Every clickable region is registered in `app.hits` while drawing.
 | `sendito run <folder>` (tree order, variables carried forward, JSON report) | `src/main.rs` (`RunFlags`, folder loop) |
 | `sendito curl` / `sendito http` | `crates/import/src/curl.rs::export`, `crates/import/src/http_file.rs::export` |
 | `sendito auth login/logout` | `src/main.rs` → `crates/mcp/src/oauth.rs::login_http` |
-| `sendito mcp login/logout` | `src/main.rs` → `crates/mcp/src/oauth.rs::login` |
+| `sendito mcp login/logout` | `src/main.rs` → `crates/pipeline/src/runner.rs::mcp_login` → `crates/mcp/src/oauth.rs::login` |
 | `sendito theme list/print` | `crates/ui/src/theme.rs`, `crates/store/src/themes.rs` |
 | `sendito import` | `crates/import/src/lib.rs::import_path` |
 

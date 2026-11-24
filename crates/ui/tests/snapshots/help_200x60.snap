@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/230 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/239 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
 │  G│ All keys, including any you changed in the config.                                           │   N                            New folder in the selected folder                              ┃   │
 │  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   r, F2                        Rename the selected item                                       ┃   │
@@ -25,7 +25,7 @@ expression: screen
 │   │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Ctrl+A                       Select all text                                                ┃   │
 │   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+C                       Copy selection (whole field if nothing selected)               ┃   │
 │   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+X                       Cut selection                                                  ┃   │
-│   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+V                       Paste                                                          ┃   │
+│   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+V                       Paste                                                          │   │
 │   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │                                                                                               │   │
 │   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │ ── Params / headers / form tables ──                                                          │   │
 │   │   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Enter                        Edit the next cell (name → value → next row)                   │   │

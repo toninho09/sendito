@@ -544,17 +544,20 @@ rather than reading a token from the keychain. HTTP OAuth is not available for g
 
 For MCP OAuth, replace the bearer auth table with `type = "oauth"`. Optional fields
 are `client_id`, `client_secret`, `authorize_url`, `token_url`,
-`registration_url` and `scopes` (an array). Run `sendito mcp login <server>`
-from the collection to authorize; `sendito mcp logout <server>` deletes its
-tokens. Tokens are stored in the OS keychain under `<collection>/mcp/<server>`.
+`registration_url` and `scopes` (an array). Sign in with `:auth login <server>`
+in the app or `sendito mcp login <server> [--env <name>]` from the collection;
+`:auth logout <server>` or `sendito mcp logout <server>` deletes its tokens.
+When a server asks for a sign-in (a `401` with a Bearer challenge) and has no
+auth table, the app offers the sign-in and then writes `type = "oauth"` for
+that server. Tokens are stored in the OS keychain under `<collection>/mcp/<server>`.
 Do not put client secrets directly in versioned config. Server command, arguments,
 environment values, URL, headers and bearer token are rendered when calling a
 tool. A `headers` entry named `Authorization` wins over the bearer or OAuth
-token, as in HTTP requests. OAuth login currently uses the configured URL and
-OAuth settings literally.
+token, as in HTTP requests. The URL and the OAuth settings may use
+`{{variables}}`; only `client_secret` may use a secret.
 
 Stored OAuth tokens (HTTP and MCP) record the server they were issued for: the
-MCP server URL as configured, or the HTTP token endpoint. When the config names
+MCP server URL after `{{variables}}` render, or the HTTP token endpoint. When the config names
 another server, the tokens are not sent and the request asks to sign in again.
 
 Settings changed in the UI write only the key they change, and the MCP server

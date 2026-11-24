@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod complete;
+pub mod config_editor;
 pub mod draw;
 pub mod editor;
 pub mod filter;
