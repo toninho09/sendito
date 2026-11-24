@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — response query bar and body type chips
+## 0.2.0 — 2026-11-24
+
+### Response query bar and body type chips
 
 * **Query bar instead of the jq and search dialogs.** `j` (vim `J`) and `/`
   open a bar on the first row of the response view. The body follows the text
@@ -26,7 +28,7 @@
   `Content-Type` the body adds on the right. A click on the `✗ JSON` error in
   the editor's border moves the cursor to it.
 
-## Unreleased — URL card
+### URL card
 
 * **The URL strip is a card.** A border in the colour of the request kind
   (the HTTP method, or gRPC, WebSocket, MCP) holds the endpoint; its title
@@ -44,7 +46,7 @@
   top border holds only the sub-tabs. A WebSocket request's empty URL shows
   `ws://host:port/path`.
 
-## Unreleased — footer and Ctrl+W menu
+### Footer and Ctrl+W menu
 
 * **One footer row.** The hint row and the status line are now one row: status
   segments on the left, key hints on the right. The panes get the row back.
@@ -57,7 +59,7 @@
 * **`[ui] hints`** (`full`, `short`, `off`; also in Settings) sets how many
   hints the footer shows. The default is `short`.
 
-## Unreleased — review fixes
+### Review fixes
 
 * **The MCP server editor and `:mcpadd` write only the project's servers.**
   They used to copy every server of the merged config, the global file's
@@ -146,7 +148,7 @@
     shows its "set" marker; picking another MCP tool replaces the previous
     tool's argument template.
 
-## Unreleased — hardening
+### Hardening
 
 * **Redirects to another origin no longer carry authentication.** A followed
   redirect that changes the scheme, host or port leaves `Authorization`,
@@ -185,7 +187,7 @@
   `docs/` no longer exists. `AGENTS.md` sends each kind of change to the files
   to open and the section to read.
 
-## Unreleased — WebSocket
+### WebSocket
 
 * **WebSocket requests** (`kind = "websocket"`): a session per request, like a
   gRPC call. The handshake carries the request's headers, subprotocols, auth and
@@ -203,7 +205,7 @@
   `:newws`; SOCKS proxies and `proxy = "env"` are refused for sessions
   (`docs/DEBT.md`).
 
-## Unreleased — jq response filter
+### jq response filter
 
 * **jq filtering of the response body**: `j` (conventional) / `J` (vim) or
   `:jq [expr]` filters the JSON body with a real jq expression (the `jaq`
@@ -218,7 +220,7 @@
   terminal). The new dependency raises the minimum Rust version to 1.89
   (README and DEBT updated). The wire is unchanged.
 
-## Unreleased — completion
+### Completion
 
 * **Autocomplete for gRPC and MCP.** The message editor (`Message` for gRPC, `Args`
   for MCP) suggests the object keys at the cursor — from the proto descriptors or
@@ -232,7 +234,7 @@
   is only retried when asked. `KEYMAP.md` gains the `complete` action; the wire is
   unchanged.
 
-## Unreleased — documentation
+### Documentation
 
 * **Rewritten documentation.** The README is now a showcase with the hero image,
   a gallery of the twelve flow recordings (previously never referenced) and
@@ -247,7 +249,7 @@
   note, the coverage figure, the crate descriptions, the settings table and the
   VHS note).
 
-## Unreleased — folder runs
+### Folder runs
 
 * **`sendito run <folder>`** (or `.` for the current folder, which at the
   collection root is the whole collection) sends every request below it in
@@ -258,7 +260,7 @@
   stdout) and aggregated exit codes (0/1/2/3) are new; sending a single request
   is unchanged. `docs/DEBT.md` notes the limits (no parallelism, no JUnit).
 
-## Unreleased — custom CA and mutual TLS
+### Custom CA and mutual TLS
 
 * **`[http.tls]`**: `ca` replaces the platform roots with your own PEM file
   (private CAs), and `client_cert` + `client_key` present a client certificate
@@ -268,7 +270,7 @@
   startup. Nothing changes for collections without the table, and a request's
   `verify_tls = false` still skips server verification entirely.
 
-## Unreleased — proxy
+### Proxy
 
 * **HTTP proxy (`[http] proxy`)**: HTTP requests and MCP servers over
   Streamable HTTP can go through a proxy — a URL such as
@@ -281,7 +283,7 @@
   (docs/DEBT.md). A failed `-x`/`--proxy` curl import now points at the setting
   instead of ignoring it silently.
 
-## Unreleased — response decoding and watch
+### Response decoding and watch
 
 * **Automatic response decompression**: responses with `Content-Encoding: gzip`,
   `deflate` (zlib and raw) or `br` are decoded for display, extraction,
@@ -315,7 +317,7 @@
   environments whose name is taken get a unique name, and existing collection
   variables are kept rather than overwritten; both are stated in the report.
 
-## Unreleased — MCP tools
+### MCP tools
 
 * **MCP requests**: a new `kind = "mcp"` request calls one tool on a server from
   `[mcp.servers]` in the collection config, over a child process (stdio) or
@@ -336,7 +338,7 @@
 * The wire-level corpus gained 5 MCP cases (JSON, SSE, bearer, empty arguments,
   `isError` and `tools/list` pagination) checked byte for byte.
 
-## 0.2.0 — visual redesign
+### Visual redesign
 
 The same features in a new layout, with more themes and room for your own.
 
