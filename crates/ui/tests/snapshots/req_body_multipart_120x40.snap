@@ -2,30 +2,15 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- DELETE delete user ● × │ +                                                                   env: local ▾  F1 all keys
-╭  Requests  History ────────╮┏ Request · Users/delete user.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│▸ Orders/                   │┃ DELETE ▾ {{base_url}}/users/42                                                    Send ┃
-│▾ Users/                    │┃ Params │ Headers │ Body• │ Auth │ Scripts │ Options                                    ┃
-││   POST  create user       │┃Body type      Multipart ▾  Enter or Space to change                                    ┃
-││   DEL   delete user       │┃    Name           Kind    Value / path   Filename              Content-Type            ┃
-││   GET   list users        │┃[x] avatar        │‹file› │files/me.png  │me.png (auto)        │image/png             │✕┃
-│  GRPC  echo unary          │┃ +  add name      │       │              │                     │                        ┃
-│  GET   health              │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃File not found: files/me.png (paths are relative to the collection folder)              ┃
-│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
-│                            ││ Body │ Headers │ Timing │ Results                                                      │
-│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
-│                            ││                                                                                        │
-│                            ││ The response appears here.                                                             │
+ sendito   DEL delete user ● ×    +                                                            ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                          ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts  Options ───────────────────────────────────────╮
+│├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File       → multipart/form-data │
+│└ GET   list users          ││     Name          Kind    Value / path  Filename             Content-Type              │
+│  GRPC  echo unary          ││ [✓] avatar       │‹file› │files/me.png │me.png (auto)       │image/png              │× │
+│  GET   health              ││  +  add name     │       │             │                    │                          │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -36,9 +21,24 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            ││ File not found: files/me.png (paths are relative to the collection folder)             │
+│                            │╰─ Users › delete user ──────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 all keys
- env: local │ ● 1 unsaved
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                            ││                                                                                        │
+│                            ││                               The response appears here.                               │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ demo   ● 1 unsaved                                          ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys

@@ -1,0 +1,12 @@
+{
+  "__export_format": 4,
+  "_type": "export",
+  "resources": [
+    {"_type":"workspace","_id":"wrk","name":"Insomnia demo"},
+    {"_type":"environment","_id":"base","parentId":"wrk","name":"Base","data":{"base":"http://example.test"}},
+    {"_type":"environment","_id":"dev","parentId":"base","name":"dev","data":{"base":"http://localhost:8787"}},
+    {"_type":"environment","_id":"priv","parentId":"base","name":"private","isPrivate":true,"data":{"token":"private-placeholder"}},
+    {"_type":"request_group","_id":"grp","parentId":"wrk","name":"Users","authentication":{"type":"bearer","token":"{{ _.token }}"}},
+    {"_type":"request","_id":"req","parentId":"grp","name":"Create","method":"POST","url":"{{ _.base }}/users","headers":[{"name":"X-Enabled","value":"yes"},{"name":"X-Disabled","value":"no","disabled":true}],"body":{"mimeType":"application/json","text":"{\"enabled\":true}"}}
+  ]
+}

@@ -19,6 +19,10 @@ pub struct Config {
     pub ui: UiConfig,
     pub http: HttpConfig,
     pub grpc: GrpcConfig,
+    pub websocket: WsConfig,
+    pub mcp: McpConfig,
+    /// Named OAuth identities for ordinary HTTP requests.
+    pub oauth: BTreeMap<String, OAuthIdentity>,
     pub history: HistoryConfig,
     pub collection: CollectionConfig,
     /// `[keymap.<mode>] <action> = "key"` or `["key1", "key2"]`.
@@ -46,13 +50,22 @@ impl KeySpec {
 pub struct UiConfig {
     /// Vim-style modal editing and navigation.
     pub vim_mode: bool,
-    /// `auto`, `ansi`, `dusk`, `daylight`, `contrast`.
+    /// A built-in theme (`auto`, `dusk`, `daylight`, `ember`, `linen`,
+    /// `contrast`, `ansi`) or a user theme from a `themes/` directory.
     pub theme: String,
+    /// `unicode` (works with any font) or `nerd` (Nerd Font icons).
+    pub icons: String,
     /// `left` or `right`.
     pub sidebar: String,
     pub mouse: bool,
     /// Ask before quitting with unsaved changes.
     pub confirm_quit: bool,
+    /// Default watch interval, in seconds (`:watch` re-sends the active
+    /// request on this interval until stopped).
+    pub watch_interval_s: u64,
+    /// Key hints in the footer: `full` (as many as fit), `short` (the three
+    /// most used) or `off` (only the menu and help keys).
+    pub hints: String,
 }
 
 impl Default for UiConfig {
@@ -60,9 +73,12 @@ impl Default for UiConfig {
         Self {
             vim_mode: false,
             theme: "auto".into(),
+            icons: "unicode".into(),
             sidebar: "left".into(),
             mouse: true,
             confirm_quit: true,
+            watch_interval_s: 5,
+            hints: "short".into(),
         }
     }
 }
@@ -74,6 +90,20 @@ pub struct HttpConfig {
     pub timeout_ms: u64,
     /// Response bodies larger than this are truncated.
     pub max_body_mb: u64,
+    /// Whether requests use the collection cookie jar when the request's
+    /// `[options] cookies` says nothing.
+    pub cookie_jar: bool,
+    /// Outbound proxy for HTTP requests and MCP Streamable HTTP servers:
+    /// `"http://host:port"` (also `https://` and `socks4://`, `socks4a://`,
+    /// `socks5://`, `socks5h://`), or `"env"` for `HTTPS_PROXY`,
+    /// `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` read at send time with curl's
+    /// precedence. Unset keeps the client's default discovery — the same
+    /// variables, `NO_PROXY` included; the OS proxy settings are not read.
+    /// gRPC does not use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// TLS material (`[http.tls]`): a custom CA and a client certificate.
+    pub tls: HttpTlsConfig,
 }
 
 impl Default for HttpConfig {
@@ -81,8 +111,28 @@ impl Default for HttpConfig {
         Self {
             timeout_ms: 30_000,
             max_body_mb: 100,
+            cookie_jar: false,
+            proxy: None,
+            tls: HttpTlsConfig::default(),
         }
     }
+}
+
+/// PEM files for TLS, used by HTTP, gRPC and MCP Streamable HTTP servers.
+/// Paths are relative to the collection root; `~/` expands to the home
+/// directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct HttpTlsConfig {
+    /// PEM file whose certificates replace the platform roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    /// PEM file with the client certificate chain (needs `client_key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_cert: Option<String>,
+    /// PEM file with the client private key (needs `client_cert`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -90,6 +140,104 @@ impl Default for HttpConfig {
 pub struct GrpcConfig {
     /// Default deadline when a request sets none (0 = none).
     pub deadline_ms: u64,
+}
+
+/// WebSocket settings (`[websocket]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct WsConfig {
+    /// Default handshake timeout when a request sets none (0 = none).
+    pub timeout_ms: u64,
+}
+
+/// Authorization-code + PKCE settings for `[oauth.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct OAuthIdentity {
+    pub authorize_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub scopes: Vec<String>,
+}
+
+/// MCP settings and the servers a request can call (`[mcp.servers.<name>]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpConfig {
+    /// Default call timeout when a request sets none (handshake included).
+    pub timeout_ms: u64,
+    pub servers: BTreeMap<String, McpServer>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,
+            servers: BTreeMap::new(),
+        }
+    }
+}
+
+/// One MCP server: a child process speaking stdio, or an HTTP endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum McpServer {
+    Stdio(McpStdioServer),
+    Http(McpHttpServer),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpStdioServer {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment entries added to the child; values may use `{{variables}}`.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpHttpServer {
+    pub url: String,
+    /// Extra headers sent with every POST; values may use `{{variables}}`.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default = "default_true")]
+    pub verify_tls: bool,
+    #[serde(default)]
+    pub auth: Option<McpServerAuth>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Authentication for an HTTP MCP server. OAuth tokens are kept in the OS
+/// keychain; a static bearer token may reference a secret variable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpServerAuth {
+    Bearer {
+        token: String,
+    },
+    Oauth {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_secret: Option<String>,
+        /// Overrides, for servers where discovery does not work.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authorize_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        registration_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scopes: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,20 +334,77 @@ pub fn load(global: Option<&Path>, project: Option<&Path>) -> (Config, Vec<Strin
     (cfg, warnings)
 }
 
-/// Sets `section.key = value` in a config file, keeping other content.
-pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
-    let mut t = read_table(path)
-        .map_err(StoreError::Invalid)?
-        .unwrap_or_default();
-    let sec = t
-        .entry(section.to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let toml::Value::Table(sec) = sec else {
-        return Err(StoreError::Invalid(format!("[{section}] is not a table")));
+/// Reads a config file for an edit that keeps its comments and layout.
+fn read_doc(path: &Path) -> Result<toml_edit::DocumentMut> {
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(StoreError::io(path, e)),
     };
-    sec.insert(key.to_string(), value);
-    let text = toml::to_string(&t).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    write_atomic(path, text.as_bytes())
+    text.parse()
+        .map_err(|e| StoreError::Invalid(format!("{}: {e}", path.display())))
+}
+
+/// The table `name` at the top of `doc`, created (without its own header
+/// line when it holds only sub-tables) if it is missing.
+fn doc_table<'a>(
+    doc: &'a mut toml_edit::DocumentMut,
+    name: &str,
+) -> Result<&'a mut dyn toml_edit::TableLike> {
+    let item = doc.entry(name).or_insert_with(|| {
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(true);
+        toml_edit::Item::Table(t)
+    });
+    item.as_table_like_mut()
+        .ok_or_else(|| StoreError::Invalid(format!("[{name}] is not a table")))
+}
+
+/// Replaces `[mcp.servers]` in a config file, keeping the rest of the file
+/// (comments too). An empty map removes the table.
+pub fn set_mcp_servers(path: &Path, servers: &BTreeMap<String, McpServer>) -> Result<()> {
+    let mut doc = read_doc(path)?;
+    let mcp = doc_table(&mut doc, "mcp")?;
+    if servers.is_empty() {
+        mcp.remove("servers");
+    } else {
+        let mut wrap = toml::Table::new();
+        let value = toml::Value::try_from(servers)
+            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
+        wrap.insert("servers".to_string(), value);
+        let text = toml::to_string(&wrap).map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let mut src: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|e| StoreError::Invalid(format!("cannot write [mcp.servers]: {e}")))?;
+        let item = src
+            .remove("servers")
+            .ok_or_else(|| StoreError::Invalid("cannot write [mcp.servers]".into()))?;
+        mcp.insert("servers", item);
+    }
+    write_atomic(path, doc.to_string().as_bytes())
+}
+
+/// Sets `section.key = value` in a config file, keeping other content
+/// (comments too).
+pub fn set_value(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
+    let mut doc = read_doc(path)?;
+    let v: toml_edit::Value = value
+        .to_string()
+        .parse()
+        .map_err(|e| StoreError::Invalid(format!("cannot write {section}.{key}: {e}")))?;
+    let sec = doc_table(&mut doc, section)?;
+    match sec.get_mut(key).and_then(toml_edit::Item::as_value_mut) {
+        // Keep the comment written after the old value on its line.
+        Some(old) => {
+            let decor = old.decor().clone();
+            *old = v;
+            *old.decor_mut() = decor;
+        }
+        None => {
+            sec.insert(key, toml_edit::Item::Value(v));
+        }
+    }
+    write_atomic(path, doc.to_string().as_bytes())
 }
 
 #[cfg(test)]
@@ -228,6 +433,80 @@ mod tests {
     }
 
     #[test]
+    fn mcp_servers_parse() {
+        let text = r#"
+[mcp]
+timeout_ms = 5000
+
+[mcp.servers.files]
+command = "npx"
+args = ["-y", "@mcp/server-fs", "."]
+env = { ROOT = "{{root}}" }
+
+[mcp.servers.remote]
+url = "https://api.example.com/mcp/"
+verify_tls = false
+
+[mcp.servers.remote.headers]
+X-Api-Version = "2"
+
+[mcp.servers.remote.auth]
+type = "oauth"
+scopes = ["read"]
+"#;
+        let c: Config = toml::from_str(text).unwrap();
+        assert_eq!(c.mcp.timeout_ms, 5000);
+        let Some(McpServer::Stdio(s)) = c.mcp.servers.get("files") else {
+            panic!("files must be stdio");
+        };
+        assert_eq!(s.command, "npx");
+        assert_eq!(s.args.len(), 3);
+        assert_eq!(s.env.get("ROOT").map(String::as_str), Some("{{root}}"));
+        let Some(McpServer::Http(h)) = c.mcp.servers.get("remote") else {
+            panic!("remote must be http");
+        };
+        assert!(!h.verify_tls);
+        assert_eq!(
+            h.headers.get("X-Api-Version").map(String::as_str),
+            Some("2")
+        );
+        assert!(matches!(
+            &h.auth,
+            Some(McpServerAuth::Oauth { scopes, .. }) if scopes == &vec!["read".to_string()]
+        ));
+        // Defaults: bearer auth, TLS on, no scopes.
+        let bearer = "[mcp.servers.b]\nurl = \"https://x\"\n[mcp.servers.b.auth]\ntype = \"bearer\"\ntoken = \"{{t}}\"\n";
+        let c: Config = toml::from_str(bearer).unwrap();
+        let Some(McpServer::Http(h)) = c.mcp.servers.get("b") else {
+            panic!();
+        };
+        assert!(h.verify_tls);
+        assert!(matches!(&h.auth, Some(McpServerAuth::Bearer { token }) if token == "{{t}}"));
+    }
+
+    #[test]
+    fn http_tls_parses() {
+        let c: Config = toml::from_str(
+            "[http.tls]\nca = \"certs/ca.pem\"\nclient_cert = \"c.pem\"\nclient_key = \"k.pem\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.http.tls.ca.as_deref(), Some("certs/ca.pem"));
+        assert_eq!(c.http.tls.client_cert.as_deref(), Some("c.pem"));
+        assert_eq!(c.http.tls.client_key.as_deref(), Some("k.pem"));
+        let c: Config = toml::from_str("[http]\ntimeout_ms = 1\n").unwrap();
+        assert_eq!(c.http.tls, Default::default());
+        assert!(toml::from_str::<HttpConfig>("[tls]\nbogus = 1\n").is_err());
+    }
+
+    #[test]
+    fn http_proxy_parses() {
+        let c: Config = toml::from_str("[http]\nproxy = \"socks5://127.0.0.1:1080\"\n").unwrap();
+        assert_eq!(c.http.proxy.as_deref(), Some("socks5://127.0.0.1:1080"));
+        let c: Config = toml::from_str("[http]\ntimeout_ms = 1\n").unwrap();
+        assert_eq!(c.http.proxy, None);
+    }
+
+    #[test]
     fn bad_layers_warn() {
         let d = tempfile::tempdir().unwrap();
         let g = d.path().join("g.toml");
@@ -240,6 +519,45 @@ mod tests {
         let (c, w) = load(None, Some(&d.path().join("missing.toml")));
         assert!(w.is_empty());
         assert_eq!(c, Config::default());
+    }
+
+    #[test]
+    fn set_mcp_servers_preserves_the_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        fs::write(
+            &p,
+            "[collection]\nname = \"x\"\n[mcp]\ntimeout_ms = 5\n\
+             [mcp.servers.old]\nurl = \"https://old\"\n[mcp.servers.old.headers]\na = \"b\"\n",
+        )
+        .unwrap();
+        let mut servers = BTreeMap::new();
+        servers.insert(
+            "new".to_string(),
+            McpServer::Http(McpHttpServer {
+                url: "https://new/mcp".into(),
+                headers: BTreeMap::new(),
+                verify_tls: false,
+                auth: Some(McpServerAuth::Bearer {
+                    token: "{{t}}".into(),
+                }),
+            }),
+        );
+        set_mcp_servers(&p, &servers).unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty());
+        // The other sections survive, and the old server is gone.
+        assert_eq!(c.collection.name.as_deref(), Some("x"));
+        assert_eq!(c.mcp.timeout_ms, 5);
+        assert_eq!(c.mcp.servers, servers);
+        // An empty map removes the table without touching [mcp] itself.
+        set_mcp_servers(&p, &BTreeMap::new()).unwrap();
+        let (c, w) = load(None, Some(&p));
+        assert!(w.is_empty());
+        assert!(c.mcp.servers.is_empty());
+        assert_eq!(c.mcp.timeout_ms, 5);
+        fs::write(&p, "mcp = 1").unwrap();
+        assert!(set_mcp_servers(&p, &BTreeMap::new()).is_err());
     }
 
     #[test]
@@ -259,6 +577,24 @@ mod tests {
             toml::Value::String("ansi".into()),
         )
         .unwrap();
+        // Comments and other lines survive an edit.
+        fs::write(
+            &p,
+            "# my settings\n[ui]\ntheme = \"dusk\" # mine\nmouse = false\n",
+        )
+        .unwrap();
+        set_value(&p, "ui", "theme", toml::Value::String("ansi".into())).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        assert_eq!(
+            text,
+            "# my settings\n[ui]\ntheme = \"ansi\" # mine\nmouse = false\n"
+        );
+        set_mcp_servers(&p, &BTreeMap::new()).unwrap();
+        assert!(
+            fs::read_to_string(&p)
+                .unwrap()
+                .starts_with("# my settings\n")
+        );
         fs::write(&p, "ui = 1").unwrap();
         assert!(set_value(&p, "ui", "x", toml::Value::Boolean(true)).is_err());
         assert!(global_path().is_some());

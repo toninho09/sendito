@@ -8,20 +8,26 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
+use sendito_core::complete::FieldNode;
 use sendito_core::model::*;
 use sendito_core::vars::{Scope, VarValue};
+use sendito_pipeline::human_size;
 use sendito_store::collection::{name_of, parent_rel};
 use sendito_store::env::COLLECTION_ENV;
 use sendito_store::history::HistoryEntry;
 use sendito_store::session::{Layout, Session, SessionTab};
 use tokio::sync::mpsc;
 
-use crate::editor::{Clipboard, Outcome, TextEditor, VimMode};
+use crate::complete::{CompleteKind, Completion};
+use crate::editor::{Clipboard, Outcome, Pos, TextEditor, VimMode};
 use crate::form::TableOutcome;
 use crate::keymap::{Action, Chord, Ctx, Keymap, Lookup};
 use crate::overlay::*;
-use crate::runner::{self, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache};
-use crate::tab::{Field, Kind, Response, Running, Summary, Tab};
+use crate::runner::{
+    self, Control, GrpcControl, GrpcUpdate, HttpOutcome, Project, RunCtx, SchemaCache, WsControl,
+    WsUpdate,
+};
+use crate::tab::{Field, Kind, QueryBar, QueryMode, Response, Running, Summary, Tab, Watch};
 use crate::theme::Theme;
 use crate::tree::{RowKind, TreeState};
 use crate::viewer::{Doc, ViewMode, Viewer};
@@ -36,6 +42,8 @@ pub enum Focus {
     ReqBody,
     RespTabs,
     RespBody,
+    /// The query bar (jq filter or search) above the response view.
+    RespQuery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,9 +73,21 @@ pub enum Hit {
     TreeRow(usize),
     TreeFilter,
     HistoryRow(usize),
+    /// A recent request on the start screen.
+    RecentRow(usize),
     Bar(usize),
     ReqTab(usize),
     ReqField(usize),
+    /// The JSON error in the body editor's status (0-based line and column).
+    JsonError {
+        line: usize,
+        col: usize,
+    },
+    /// One option of a choice field drawn as chips (the body type).
+    ChoiceOption {
+        field: usize,
+        index: usize,
+    },
     TableCell {
         field: usize,
         row: usize,
@@ -86,11 +106,19 @@ pub enum Hit {
     },
     RespTab(usize),
     RespView,
+    /// The query bar above the response view.
+    RespQuery,
+    /// A row of the stream message list.
+    StreamMsg(usize),
     ViewMode(ViewMode),
     RespAction(RespAction),
     SidebarBorder,
     SplitBorder,
     Overlay(OverlayHit),
+    /// A row of the completion popup.
+    CompleteItem(usize),
+    /// A key of the Ctrl+W menu, or (`None`) the rest of its box.
+    Menu(Option<crate::keymap::Action>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +139,27 @@ pub enum OverlayHit {
     Button(usize),
     Input,
     Choice(usize),
-    Close,
+    /// The value chip of a settings row (clicking it cycles the value).
+    Value(usize),
+    /// An entry of an open prompt option list, by its position in the list.
+    PromptOption(usize),
     EnvTab(usize),
-    EnvCell { row: usize, col: usize },
+    EnvCell {
+        row: usize,
+        col: usize,
+    },
+    EnvDelete(usize),
+    /// A cell of the MCP servers editor.
+    McpCell {
+        row: usize,
+        col: usize,
+    },
+    /// The ✕ of an MCP servers row.
+    McpDelete(usize),
+    /// A button of the MCP servers editor (0 = save, 1 = add, 2 = close).
+    McpButton(usize),
+    /// Dead space inside a dialog frame; clicking it does nothing.
+    Dialog,
     Outside,
 }
 
@@ -141,17 +187,57 @@ pub enum AppMsg {
         tab: u64,
         update: GrpcUpdate,
     },
+    Ws {
+        tab: u64,
+        update: runner::WsUpdate,
+    },
+    Mcp {
+        tab: u64,
+        update: runner::McpUpdate,
+    },
+    OAuthUrl {
+        job: u64,
+        url: String,
+    },
+    OAuthDone {
+        job: u64,
+        result: Result<String, String>,
+    },
+    Cookies {
+        job: u64,
+        result: Result<CookiesOutcome, String>,
+    },
+    McpTools {
+        job: u64,
+        tab: u64,
+        server: String,
+        /// Open the picker; a false value only fills the tab's tool list
+        /// (completion pulls it in the background).
+        open_picker: bool,
+        result: Result<Vec<sendito_mcp::Tool>, String>,
+    },
     Schema {
         tab: u64,
+        job: u64,
         result: Result<Vec<sendito_grpc::ServiceInfo>, String>,
         open_picker: bool,
         template: Option<String>,
     },
     History(Vec<HistoryEntry>),
     Scope {
-        result: Box<(Scope, Vec<String>)>,
+        /// The scope, its errors and the names whose value did not load.
+        result: Box<(Scope, Vec<String>, Vec<String>)>,
         then: ScopeThen,
+        /// "Send anyway" was chosen in the "Secrets not loaded" dialog.
+        secrets_ok: bool,
     },
+}
+
+/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
+/// guarded by a cross-process lock).
+pub enum CookiesOutcome {
+    List(Vec<String>),
+    Done(&'static str),
 }
 
 /// What to do once a full scope (with secrets) is ready.
@@ -161,6 +247,7 @@ pub enum ScopeThen {
         req: Box<HttpRequest>,
         name: String,
         path: Option<String>,
+        from_watch: bool,
     },
     Grpc {
         tab: u64,
@@ -168,6 +255,30 @@ pub enum ScopeThen {
         name: String,
         path: Option<String>,
     },
+    Ws {
+        tab: u64,
+        req: Box<WebSocketRequest>,
+        name: String,
+        path: Option<String>,
+    },
+    Mcp {
+        tab: u64,
+        req: Box<McpRequest>,
+        name: String,
+        path: Option<String>,
+    },
+}
+
+impl ScopeThen {
+    /// The tab and the request this send is for.
+    fn request(&self) -> (u64, Request) {
+        match self {
+            ScopeThen::Http { tab, req, .. } => (*tab, Request::Http((**req).clone())),
+            ScopeThen::Grpc { tab, req, .. } => (*tab, Request::Grpc((**req).clone())),
+            ScopeThen::Ws { tab, req, .. } => (*tab, Request::Ws((**req).clone())),
+            ScopeThen::Mcp { tab, req, .. } => (*tab, Request::Mcp((**req).clone())),
+        }
+    }
 }
 
 /// Rectangles from the last frame, used for mouse handling.
@@ -182,11 +293,20 @@ pub struct Areas {
     pub resp_body: Rect,
     pub field_rects: Vec<Rect>,
     pub bar_url: Rect,
+    /// Where the focused editor's cursor was drawn last frame.
+    pub caret: Option<(u16, u16)>,
 }
 
 pub struct App {
     pub project: Project,
     pub theme: Theme,
+    /// Built-in and user themes.
+    pub themes: crate::theme::Registry,
+    pub icons: crate::icons::Icons,
+    /// Advances while a request runs (spinners); stays 0 in tests.
+    pub anim_frame: u64,
+    /// Where the mouse pointer is, for hover highlights.
+    pub hover: Option<(u16, u16)>,
     pub keymap: Keymap,
     pub vim: bool,
     pub tree: TreeState,
@@ -194,6 +314,9 @@ pub struct App {
     pub history: Option<Vec<HistoryEntry>>,
     pub history_sel: usize,
     pub history_scroll: usize,
+    /// Whether the next draw should scroll `history_sel` into view; the wheel
+    /// disarms it to allow free browsing (same idea as `TreeState::follow`).
+    pub history_follow: bool,
     pub tabs: Vec<Tab>,
     pub active: usize,
     pub focus: Focus,
@@ -206,6 +329,8 @@ pub struct App {
     pub clipboard: Clipboard,
     pub pending: Vec<Chord>,
     pub overlay: Option<Overlay>,
+    /// Inline completion popup; not an overlay: it does not dim or block.
+    pub complete: Option<crate::complete::Completion>,
     pub status: Option<(String, StatusKind, Instant)>,
     /// Home directory, shown as `~` in paths.
     pub home: Option<PathBuf>,
@@ -224,13 +349,33 @@ pub struct App {
     pub last_session_save: Instant,
     pub next_id: u64,
     pub schemas: SchemaCache,
+    schema_job: Option<(u64, tokio::task::JoinHandle<()>)>,
+    schema_seq: u64,
+    mcp_discovery: Option<(u64, tokio::task::JoinHandle<()>)>,
+    mcp_discovery_seq: u64,
+    oauth_login: Option<(u64, tokio::task::JoinHandle<()>)>,
+    oauth_login_seq: u64,
+    cookies_job: Option<(u64, tokio::task::JoinHandle<()>)>,
+    cookies_job_seq: u64,
     pub filter: TextEditor,
     pub osc52: Vec<String>,
     pub size: (u16, u16),
     pub parked_env: Option<EnvEditor>,
+    /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
+    /// send only.
+    secrets_ok: bool,
+    /// The MCP servers editor parked behind its save/discard confirmation.
+    pub parked_mcp: Option<McpEditor>,
+    /// The prompt or import dialog parked behind its discard confirmation.
+    pub parked_dialog: Option<Overlay>,
     /// The last report dialog (title, text), reopened by :report.
     pub last_report: Option<(String, String)>,
     pub cursor: Option<(u16, u16)>,
+}
+
+/// `NO_COLOR` is set (and not empty): no colors at all.
+pub fn no_color() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
 }
 
 fn vim_label(e: &TextEditor) -> VimMode {
@@ -242,10 +387,22 @@ impl App {
         let mut warnings = project.warnings.clone();
         let (keymap, kw) = Keymap::defaults().with_overrides(&project.config.keymap);
         warnings.extend(kw);
-        let theme = if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        let (files, file_warnings) = sendito_store::themes::discover(&project.theme_dirs);
+        let themes = crate::theme::Registry::from_files(files, file_warnings);
+        warnings.extend(themes.warnings.iter().cloned());
+        let theme_name = &project.config.ui.theme;
+        if !themes.is_known(theme_name) {
+            warnings.push(format!("unknown theme \"{theme_name}\"; using auto"));
+        } else if !themes.notes(theme_name).is_empty() {
+            warnings.push(format!(
+                "theme {theme_name}: {}",
+                themes.notes(theme_name).join("; ")
+            ));
+        }
+        let theme = if no_color() {
             Theme::mono()
         } else {
-            Theme::by_name(&project.config.ui.theme)
+            themes.theme(theme_name)
         };
         let vim = project.config.ui.vim_mode;
         let root = project
@@ -267,9 +424,14 @@ impl App {
             .collect();
         let names = runner::names_scope(&project.envs, active_env.as_deref(), &runtime);
         let (tx, rx) = mpsc::unbounded_channel();
+        let icons = crate::icons::Icons::by_name(&project.config.ui.icons);
         let mut app = App {
             project,
             theme,
+            themes,
+            icons,
+            anim_frame: 0,
+            hover: None,
             keymap,
             vim,
             tree,
@@ -277,6 +439,7 @@ impl App {
             history: None,
             history_sel: 0,
             history_scroll: 0,
+            history_follow: true,
             tabs: Vec::new(),
             active: 0,
             focus: Focus::Sidebar,
@@ -305,16 +468,32 @@ impl App {
             last_session_save: Instant::now(),
             next_id: 1,
             schemas: SchemaCache::default(),
+            schema_job: None,
+            schema_seq: 0,
+            mcp_discovery: None,
+            mcp_discovery_seq: 0,
+            oauth_login: None,
+            oauth_login_seq: 0,
+            cookies_job: None,
+            cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
             osc52: Vec::new(),
             size: (80, 24),
             parked_env: None,
+            secrets_ok: false,
+            parked_mcp: None,
+            parked_dialog: None,
             last_report: None,
             cursor: None,
+            complete: None,
         };
         app.restore_tabs(&session);
         if app.tabs.is_empty() {
             app.focus = Focus::Sidebar;
+            // The start screen lists the most recent requests.
+            if app.project.config.history.enabled {
+                app.load_history();
+            }
         }
         if !warnings.is_empty() {
             app.set_status(warnings.join(" · "), StatusKind::Warn);
@@ -353,7 +532,7 @@ impl App {
         }
         self.active = s.active_tab.min(self.tabs.len().saturating_sub(1));
         if !self.tabs.is_empty() {
-            self.focus = Focus::Bar(1);
+            self.focus = self.top_bar_focus();
         }
     }
 
@@ -424,8 +603,10 @@ impl App {
         self.last_session_save = Instant::now();
     }
 
-    /// Periodic work: save the session a moment after changes.
-    pub fn tick(&mut self) {
+    /// Periodic work: save the session a moment after changes, expire status
+    /// messages and repeat a watched request. Returns whether anything changed
+    /// that needs a redraw.
+    pub fn tick(&mut self) -> bool {
         if self.session_dirty && self.last_session_save.elapsed() > Duration::from_secs(2) {
             self.save_session();
         }
@@ -435,10 +616,125 @@ impl App {
                 self.status = None;
             }
         }
+        // Skip missed intervals while a request is running. Each watched tab
+        // can continue in the background; dialogs pause automatic sends.
+        let now = Instant::now();
+        for tab in &mut self.tabs {
+            if tab.running.is_some()
+                && let Some(w) = &mut tab.watch
+                && now >= w.next
+            {
+                w.next = now + w.interval;
+            }
+        }
+        if self.overlay.is_some() {
+            return false;
+        }
+        let due: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, tab)| {
+                (tab.ed.kind == Kind::Http
+                    && tab.running.is_none()
+                    && tab.watch.as_ref().is_some_and(|w| now >= w.next))
+                .then_some(i)
+            })
+            .collect();
+        let active = self.active;
+        let mut changed = false;
+        for i in due {
+            self.tabs[i].refresh_model();
+            let request = &self.tabs[i].model;
+            let undefined = !runner::unresolved(request, &self.names).is_empty()
+                || !sendito_core::template::empty_placeholders(
+                    &sendito_store::request_file::to_toml(request),
+                )
+                .is_empty();
+            if undefined {
+                self.tabs[i].watch = None;
+                self.set_status(
+                    "watch stopped: request has unresolved variables",
+                    StatusKind::Warn,
+                );
+            } else {
+                // `send_opts` uses the active index for the duration of this
+                // synchronous setup only; restore focus before processing events.
+                self.active = i;
+                self.send_opts(false, true);
+                self.active = active;
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    /// Starts or stops re-sending the active request every `secs` seconds
+    /// (`:watch [s]`, the watch key).
+    fn toggle_watch(&mut self, secs: Option<u64>) {
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if tab.watch.take().is_some() {
+            self.set_status("watch off", StatusKind::Info);
+            return;
+        }
+        if tab.ed.kind != Kind::Http {
+            self.set_status(
+                "watch repeats HTTP requests; send gRPC and MCP calls yourself",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        let s = secs.unwrap_or_else(|| self.project.config.ui.watch_interval_s.max(1));
+        if !(1..=86_400).contains(&s) {
+            self.set_status(
+                "watch interval must be between 1 and 86400 seconds",
+                StatusKind::Error,
+            );
+            return;
+        }
+        tab.watch = Some(Watch::new(Duration::from_secs(s)));
+        let key = self.keymap.hint(Action::WatchToggle, self.vim);
+        self.set_status(
+            format!(
+                "watch on: sending every {s} s until {key}, cancel, close or change environment"
+            ),
+            StatusKind::Ok,
+        );
+    }
+
+    /// The vim mode of the editor that has the keyboard, if one does.
+    pub fn focused_vim_mode(&mut self) -> Option<VimMode> {
+        let focus = self.focus;
+        let tab = self.tabs.get_mut(self.active)?;
+        match focus {
+            Focus::Bar(p) => tab.ed.bar_text(p).map(|e| e.vim),
+            Focus::ReqBody => match tab.current_field() {
+                Some(f) if f.is_table() => tab
+                    .ed
+                    .table_mut(f)
+                    .and_then(|t| t.editor_mut().map(|e| e.vim)),
+                Some(f) => tab.ed.text_mut(f).map(|e| e.vim),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The terminal window title: the open request and the collection.
+    pub fn window_title(&self) -> String {
+        match self.tab() {
+            Some(t) => format!("sendito · {} · {}", t.title(), self.project.name),
+            None => format!("sendito · {}", self.project.name),
+        }
     }
 
     pub fn is_busy(&self) -> bool {
-        self.tabs.iter().any(|t| t.running.is_some())
+        self.mcp_discovery.is_some()
+            || self.schema_job.is_some()
+            || self.oauth_login.is_some()
+            || self.tabs.iter().any(|t| t.running.is_some())
     }
 
     // ----- events -------------------------------------------------------
@@ -464,7 +760,15 @@ impl App {
                     p.sel = 0;
                     p.armed = true;
                 }
-                Overlay::Env(e) => e.table.paste(s),
+                // A paste is an edit: Esc must ask before it is lost.
+                Overlay::Env(e) => {
+                    e.table.paste(s);
+                    e.dirty = true;
+                }
+                Overlay::Mcp(m) => {
+                    m.table.paste(s);
+                    m.dirty = true;
+                }
                 _ => {}
             }
             return;
@@ -505,8 +809,7 @@ impl App {
         let focus = self.focus;
         let tab = self.tabs.get_mut(self.active)?;
         match focus {
-            Focus::Bar(1) if tab.ed.kind == Kind::Http => Some(&mut tab.ed.url),
-            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => Some(&mut tab.ed.target),
+            Focus::Bar(p) => tab.ed.bar_text(p),
             Focus::ReqBody => {
                 let f = tab.current_field()?;
                 tab.ed.text_mut(f)
@@ -556,8 +859,7 @@ impl App {
         let tab = self.tabs.get_mut(self.active)?;
         let cb = &mut self.clipboard;
         let ed = match focus {
-            Focus::Bar(1) if tab.ed.kind == Kind::Http => &mut tab.ed.url,
-            Focus::Bar(0) if tab.ed.kind == Kind::Grpc => &mut tab.ed.target,
+            Focus::Bar(p) => tab.ed.bar_text(p)?,
             Focus::ReqBody => {
                 let fld = tab.current_field()?;
                 tab.ed.text_mut(fld)?
@@ -587,10 +889,29 @@ impl App {
         // errors stay until replaced.
         self.clear_transient_status();
         if self.overlay.is_some() {
+            self.complete = None;
             self.overlay_key(key);
             return;
         }
+        // The popup sees its own keys (and Enter/Tab acceptance) before the
+        // editor or the keymap does.
+        if self.complete.is_some() && self.complete_key(key) {
+            return;
+        }
         let chord = Chord::from_event(&key);
+        // The query bar closes with a new response or on another tab.
+        if self.focus == Focus::RespQuery && !self.query_shown() {
+            self.focus = Focus::RespBody;
+        }
+        // The query bar keeps Tab (completion) and Up/Down (history).
+        if self.focus == Focus::RespQuery
+            && self.pending.is_empty()
+            && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
+            && key.modifiers.is_empty()
+        {
+            self.query_key(key);
+            return;
+        }
         // Tab inside a multi-line editor indents (unless in vim normal mode).
         if chord == Chord::new(KeyCode::Tab, KeyModifiers::NONE)
             && self.pending.is_empty()
@@ -619,13 +940,18 @@ impl App {
         seq.push(chord);
         let ctxs = self.contexts();
         // Text widgets get plain keys first; only global bindings apply there.
-        let text_focus = matches!(self.focus, Focus::Filter) || self.focused_text().is_some();
+        let text_focus =
+            matches!(self.focus, Focus::Filter | Focus::RespQuery) || self.focused_text().is_some();
         let ctxs: Vec<Ctx> = if text_focus { vec![Ctx::Global] } else { ctxs };
         // In vim normal mode inside tables, `dd` deletes rows like lines.
         match self.keymap.lookup(&ctxs, self.vim, &seq) {
             Lookup::Action(a) => {
                 self.pending.clear();
                 self.dispatch(a);
+                // An overlay takes the screen; the popup does not outlive it.
+                if self.overlay.is_some() {
+                    self.complete = None;
+                }
             }
             Lookup::Prefix => {
                 self.pending = seq;
@@ -671,8 +997,8 @@ impl App {
                 KeyCode::Char('l') if vim => self.subtab(1),
                 KeyCode::Enter | KeyCode::Down => self.enter_req_body(0),
                 KeyCode::Char('j') if vim => self.enter_req_body(0),
-                KeyCode::Up => self.focus = Focus::Bar(1),
-                KeyCode::Char('k') if vim => self.focus = Focus::Bar(1),
+                KeyCode::Up => self.focus = self.top_bar_focus(),
+                KeyCode::Char('k') if vim => self.focus = self.top_bar_focus(),
                 _ => {}
             },
             Focus::ReqBody => self.req_body_key(key),
@@ -683,6 +1009,7 @@ impl App {
                 _ => {}
             },
             Focus::RespBody => {}
+            Focus::RespQuery => self.query_key(key),
         }
     }
 
@@ -700,33 +1027,65 @@ impl App {
         let Some(kind) = self.tab().map(|t| t.ed.kind) else {
             return;
         };
+        if kind == Kind::Mcp && key.code == KeyCode::F(2) {
+            // F2 on the server input lists the configured servers (a direct
+            // URL needs none); on the tool chip it discovers the tools.
+            if part == 1
+                && self
+                    .tab()
+                    .is_some_and(|t| t.ed.mcp_server.text().is_empty())
+            {
+                self.open_mcp_server_picker();
+            } else {
+                self.load_mcp_tools(true);
+            }
+            return;
+        }
         let vim = self.vim;
-        let is_text = (kind == Kind::Http && part == 1) || (kind == Kind::Grpc && part == 0);
+        // Part 1 is the endpoint input of every kind; the gRPC method and MCP
+        // tool chips (part 0) are editable inline.
+        let is_text = part == 1 || (matches!(kind, Kind::Grpc | Kind::Mcp) && part == 0);
         if is_text {
             let Some(out) = self.with_text(|e, cb| e.handle_key(&key, vim, cb)) else {
                 return;
             };
             match out {
-                Outcome::Changed => self.changed(),
-                Outcome::Submit => {
-                    if kind == Kind::Http {
-                        self.dispatch(Action::Send);
+                Outcome::Changed => {
+                    self.changed();
+                    if self.complete.is_some() {
+                        self.complete_typed();
                     } else {
-                        self.focus = Focus::Bar(1);
+                        self.refresh_complete();
                     }
                 }
-                Outcome::Leave => {}
+                Outcome::Submit => {
+                    self.complete = None;
+                    match (kind, part) {
+                        // Enter on any endpoint input sends.
+                        (Kind::Http | Kind::Ws | Kind::Grpc | Kind::Mcp, 1) => {
+                            self.dispatch(Action::Send)
+                        }
+                        // Enter on the method chip opens the full list.
+                        (Kind::Grpc, 0) => self.open_grpc_method_picker(),
+                        // Enter on the tool chip discovers and lists the tools.
+                        (Kind::Mcp, 0) => self.load_mcp_tools(true),
+                        _ => {}
+                    }
+                }
+                Outcome::Leave => self.complete = None,
                 Outcome::Ignored => {
                     if matches!(key.code, KeyCode::Down) {
                         self.focus = Focus::ReqTabs;
                     }
                 }
-                Outcome::Handled => {}
+                // A cursor move (Handled, not Changed) leaves the key
+                // position: the popup's span would be stale.
+                Outcome::Handled => self.complete = None,
             }
             return;
         }
         match (part, key.code) {
-            (2, KeyCode::Enter | KeyCode::Char(' ')) => self.dispatch(Action::Send),
+            (2, KeyCode::Enter | KeyCode::Char(' ')) => self.press_send_button(),
             (0, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Down) if kind == Kind::Http => {
                 self.open_method_picker(None)
             }
@@ -740,13 +1099,11 @@ impl App {
                         .iter()
                         .position(|m| *m == t.ed.method)
                         .unwrap_or(0) as isize;
-                    let n = HTTP_METHODS.len() as isize;
-                    t.ed.method = HTTP_METHODS[((i + dir).rem_euclid(n)) as usize].to_string();
+                    t.ed.method = HTTP_METHODS
+                        [crate::list::cycle(i as usize, dir, HTTP_METHODS.len())]
+                    .to_string();
                 }
                 self.changed();
-            }
-            (1, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Down) if kind == Kind::Grpc => {
-                self.open_grpc_method_picker()
             }
             (_, KeyCode::Down) => self.focus = Focus::ReqTabs,
             _ => {}
@@ -759,6 +1116,19 @@ impl App {
             self.focus = Focus::ReqTabs;
             return;
         };
+        if key.code == KeyCode::F(2) {
+            match field {
+                Field::McpServer => {
+                    self.open_mcp_server_picker();
+                    return;
+                }
+                Field::McpTool => {
+                    self.load_mcp_tools(true);
+                    return;
+                }
+                _ => {}
+            }
+        }
         if field.is_table() {
             let Some(out) = self.with_table(|t, cb| t.handle_key(&key, vim, cb)) else {
                 return;
@@ -825,11 +1195,22 @@ impl App {
             return;
         };
         match out {
-            Outcome::Changed => self.changed(),
+            Outcome::Changed => {
+                self.changed();
+                if self.complete.is_some() {
+                    self.complete_typed();
+                } else {
+                    self.refresh_complete();
+                }
+            }
             Outcome::Submit => {
+                self.complete = None;
                 self.next_field(false);
             }
-            Outcome::Leave => self.focus = Focus::ReqTabs,
+            Outcome::Leave => {
+                self.complete = None;
+                self.focus = Focus::ReqTabs;
+            }
             Outcome::Ignored => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => self.prev_field(),
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -837,11 +1218,14 @@ impl App {
                 }
                 _ => {}
             },
-            Outcome::Handled => {}
+            // A cursor move (Handled, not Changed) leaves the key position:
+            // the popup's span would be stale.
+            Outcome::Handled => self.complete = None,
         }
     }
 
     fn prev_field(&mut self) {
+        self.complete = None;
         if let Some(t) = self.tab_mut()
             && t.field > 0
         {
@@ -853,6 +1237,7 @@ impl App {
 
     /// Moves to the next field; at the end, to the response (when `wrap`).
     fn next_field(&mut self, wrap: bool) -> bool {
+        self.complete = None;
         if let Some(t) = self.tab_mut()
             && t.field + 1 < t.fields().len()
         {
@@ -870,27 +1255,411 @@ impl App {
         false
     }
 
+    // ----- completion ---------------------------------------------------
+
+    /// Which completion belongs to the focused widget, if any.
+    fn complete_kind(&self) -> Option<CompleteKind> {
+        let t = self.tab()?;
+        match (self.focus, t.ed.kind) {
+            // The gRPC method chip completes from the schema; the MCP tool
+            // input completes from the discovered tool list.
+            (Focus::Bar(0), Kind::Grpc) => return Some(CompleteKind::GrpcMethod),
+            (Focus::Bar(1), Kind::Mcp) => return Some(CompleteKind::McpServer),
+            (Focus::Bar(0), Kind::Mcp) => return Some(CompleteKind::McpTool),
+            _ => {}
+        }
+        if self.focus != Focus::ReqBody {
+            return None;
+        }
+        match t.current_field()? {
+            Field::Message if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp) => {
+                Some(CompleteKind::Fields)
+            }
+            Field::McpServer => Some(CompleteKind::McpServer),
+            Field::McpTool => Some(CompleteKind::McpTool),
+            _ => None,
+        }
+    }
+
+    /// The input tree of the message/tool being edited.
+    fn complete_tree(&self) -> Option<FieldNode> {
+        let t = self.tab()?;
+        match t.ed.kind {
+            Kind::Grpc => {
+                let svcs = t.services.as_ref()?;
+                let (svc, m) = (t.ed.service(), t.ed.method());
+                svcs.iter()
+                    .find(|s| s.name == svc)
+                    .and_then(|s| s.methods.iter().find(|mi| mi.name == m))
+                    .map(|mi| mi.input_fields.clone())
+            }
+            Kind::Ws => None,
+            Kind::Mcp => {
+                let tools = self.mcp_tools(t);
+                tools
+                    .iter()
+                    .find(|tool| tool.name == t.ed.mcp_tool.text())
+                    .map(|tool| crate::complete::schema_node(&tool.input_schema, &tool.name))
+            }
+            Kind::Http => None,
+        }
+    }
+
+    /// The tool list of a tab, when it belongs to the server it was loaded from.
+    fn mcp_tools(&self, t: &Tab) -> Vec<sendito_mcp::Tool> {
+        if t.mcp_tools_server == t.ed.mcp_server.text() {
+            t.mcp_tools.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The list of names a popup kind offers, with a detail column.
+    fn complete_pool(&self, kind: CompleteKind, t: &Tab) -> Option<Vec<(String, String)>> {
+        match kind {
+            CompleteKind::GrpcMethod => t.services.as_ref().map(|svcs| {
+                svcs.iter()
+                    .flat_map(|s| {
+                        s.methods.iter().map(|m| {
+                            (
+                                format!("{}/{}", s.name, m.name),
+                                format!("{} · {} → {}", m.kind.label(), m.input, m.output),
+                            )
+                        })
+                    })
+                    .collect()
+            }),
+            CompleteKind::McpServer => Some(
+                self.project
+                    .config
+                    .mcp
+                    .servers
+                    .iter()
+                    .map(|(name, cfg)| match cfg {
+                        sendito_store::config::McpServer::Stdio(s) => {
+                            (name.clone(), s.command.clone())
+                        }
+                        sendito_store::config::McpServer::Http(h) => (name.clone(), h.url.clone()),
+                    })
+                    .collect(),
+            ),
+            CompleteKind::McpTool => {
+                let tools = self.mcp_tools(t);
+                if tools.is_empty() {
+                    None
+                } else {
+                    Some(
+                        tools
+                            .iter()
+                            .map(|tool| {
+                                (
+                                    tool.name.clone(),
+                                    tool.description.clone().unwrap_or_default(),
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+            }
+            CompleteKind::Fields | CompleteKind::JqKey => None,
+        }
+    }
+
+    /// Rebuilds the popup from the cursor position, or closes it when the cursor
+    /// is not on a key. Starts the missing schema/tools load in the background.
+    fn refresh_complete(&mut self) {
+        // A load already in flight keeps its row: the list fills when it lands;
+        // a failed one keeps its message instead of being retried.
+        let (loading, failed) = self
+            .complete
+            .as_ref()
+            .map_or((None, None), |c| (c.loading, c.failed));
+        self.complete = None;
+        let Some(kind) = self.complete_kind() else {
+            return;
+        };
+        let Some(t) = self.tab() else {
+            return;
+        };
+        let (id, field) = (t.id, t.current_field());
+        if kind == CompleteKind::Fields {
+            let Some(ctx) =
+                crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
+            else {
+                return;
+            };
+            let Some(tree) = self.complete_tree() else {
+                let mut c = Completion::new(kind, id, field);
+                c.loading = loading;
+                c.failed = failed;
+                self.complete = Some(c);
+                self.start_complete_fetch(kind);
+                return;
+            };
+            let mut c = Completion::new(kind, id, field);
+            c.start = ctx.start;
+            c.quoted = ctx.quoted;
+            c.set_pool(
+                crate::complete::field_candidates(&tree, &ctx, ""),
+                ctx.prefix,
+            );
+            self.complete = Some(c);
+            return;
+        }
+        let query = match kind {
+            CompleteKind::GrpcMethod => t.ed.grpc_method_text.text(),
+            CompleteKind::McpServer => t.ed.mcp_server.text(),
+            _ => t.ed.mcp_tool.text(),
+        };
+        let Some(pool) = self.complete_pool(kind, t) else {
+            let mut c = Completion::new(kind, id, field);
+            c.loading = loading;
+            c.failed = failed;
+            self.complete = Some(c);
+            self.start_complete_fetch(kind);
+            return;
+        };
+        let mut c = Completion::new(kind, id, field);
+        c.set_pool(crate::complete::plain_candidates(pool, ""), query);
+        self.complete = Some(c);
+    }
+
+    /// Loads the schema or tools a missing completion needs, without opening a
+    /// picker when they arrive. While one is in flight, typing does not start
+    /// another, and a load that already failed is not retried here (Enter on
+    /// the method chip or F2 on the tool field asks again).
+    fn start_complete_fetch(&mut self, kind: CompleteKind) {
+        let Some(t) = self.tab() else {
+            return;
+        };
+        // (what it waits for, a load is in flight, a load already failed)
+        let wait: Option<(&'static str, bool, bool)> = match kind {
+            CompleteKind::Fields | CompleteKind::GrpcMethod
+                if t.ed.kind == Kind::Grpc && t.services.is_none() =>
+            {
+                Some((
+                    "schema",
+                    self.schema_job.is_some(),
+                    t.schema_error.is_some(),
+                ))
+            }
+            CompleteKind::Fields | CompleteKind::McpTool
+                if t.ed.kind == Kind::Mcp
+                    && self.mcp_tools(t).is_empty()
+                    && !t.ed.mcp_server.text().trim().is_empty() =>
+            {
+                Some((
+                    "tools",
+                    self.mcp_discovery.is_some(),
+                    t.mcp_tools_error.is_some() && t.mcp_tools_server == t.ed.mcp_server.text(),
+                ))
+            }
+            _ => None,
+        };
+        let Some((what, busy, failed)) = wait else {
+            return;
+        };
+        if busy || failed {
+            if let Some(c) = &mut self.complete {
+                if busy {
+                    c.loading = Some(what);
+                } else {
+                    c.loading = None;
+                    c.failed = Some(what);
+                }
+            }
+            return;
+        }
+        if let Some(c) = &mut self.complete {
+            c.loading = Some(what);
+        }
+        match what {
+            "schema" => self.load_schema(false, false, false),
+            _ => self.load_mcp_tools(false),
+        }
+    }
+
+    /// Handles the keys the popup owns. Returns `false` for anything else, so
+    /// typing keeps filtering and global chords (Ctrl+P palette, Ctrl+N new
+    /// tab) still work while it is open.
+    fn complete_key(&mut self, key: KeyEvent) -> bool {
+        let Some(c) = self.complete.as_mut() else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => self.complete = None,
+            KeyCode::Up => c.up(),
+            KeyCode::Down => c.down(),
+            KeyCode::PageUp => c.page_up(),
+            KeyCode::PageDown => c.page_down(),
+            KeyCode::Enter | KeyCode::Tab => {
+                if !self.complete_accept() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// While the popup is open, typing narrows the list; a key that leaves the
+    /// key position closes it.
+    fn complete_typed(&mut self) {
+        let Some(c) = self.complete.as_ref() else {
+            return;
+        };
+        let (kind, tab) = (c.kind, c.tab);
+        let Some(t) = self.tab() else {
+            self.complete = None;
+            return;
+        };
+        if t.id != tab {
+            self.complete = None;
+            return;
+        }
+        if kind == CompleteKind::JqKey {
+            match self.jq_complete_context() {
+                Some((_, prefix, start)) => {
+                    if let Some(c) = &mut self.complete {
+                        if c.start.col != start {
+                            self.complete = None;
+                            return;
+                        }
+                        c.filter(prefix);
+                    }
+                }
+                None => self.complete = None,
+            }
+            return;
+        }
+        if kind == CompleteKind::Fields {
+            let Some(ctx) =
+                crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
+            else {
+                self.complete = None;
+                return;
+            };
+            if let Some(c) = &mut self.complete {
+                if c.start != ctx.start {
+                    self.complete = None;
+                    return;
+                }
+                c.filter(ctx.prefix);
+            }
+            return;
+        }
+        let query = match kind {
+            CompleteKind::GrpcMethod => t.ed.grpc_method_text.text(),
+            CompleteKind::McpServer => t.ed.mcp_server.text(),
+            _ => t.ed.mcp_tool.text(),
+        };
+        if let Some(c) = &mut self.complete {
+            c.filter(query);
+        }
+    }
+
+    /// Inserts the selected candidate over the key typed so far.
+    fn complete_accept(&mut self) -> bool {
+        let Some(c) = self.complete.take() else {
+            return false;
+        };
+        let Some(cand) = c.selected().cloned() else {
+            return false;
+        };
+        if c.kind == CompleteKind::JqKey {
+            return self.jq_complete_insert(c.start, &cand.name);
+        }
+        let Some(t) = self.tab_mut() else {
+            return false;
+        };
+        if t.id != c.tab {
+            return false;
+        }
+        let ed = match c.kind {
+            CompleteKind::JqKey => None,
+            CompleteKind::Fields => t.ed.text_mut(Field::Message),
+            CompleteKind::GrpcMethod => Some(&mut t.ed.grpc_method_text),
+            CompleteKind::McpServer => Some(&mut t.ed.mcp_server),
+            CompleteKind::McpTool => Some(&mut t.ed.mcp_tool),
+        };
+        let Some(ed) = ed else {
+            return false;
+        };
+        match c.kind {
+            // The key is replaced in place; the rest of the JSON stays.
+            CompleteKind::Fields => {
+                // The rest of the key after the cursor is replaced too, and an
+                // existing `: value` is kept: only the name changes then.
+                let line: Vec<char> = ed
+                    .lines()
+                    .get(ed.cursor.row)
+                    .map(|l| l.chars().collect())
+                    .unwrap_or_default();
+                let mut end = ed.cursor.col;
+                while line.get(end).is_some_and(|ch| {
+                    !matches!(ch, '"' | ':' | ',' | '{' | '}') && !ch.is_whitespace()
+                }) {
+                    end += 1;
+                }
+                let closed = c.quoted && line.get(end) == Some(&'"');
+                if closed {
+                    end += 1;
+                }
+                let mut after = end;
+                while line.get(after).is_some_and(|ch| ch.is_whitespace()) {
+                    after += 1;
+                }
+                let has_value = line.get(after) == Some(&':');
+                let span_end = Pos {
+                    row: ed.cursor.row,
+                    col: end,
+                };
+                if has_value {
+                    let name = if c.quoted {
+                        format!("{}\"", cand.name)
+                    } else {
+                        format!("\"{}\"", cand.name)
+                    };
+                    ed.replace_span(c.start, span_end, &name);
+                } else {
+                    let insert = cand.insert(c.quoted);
+                    ed.replace_span(c.start, span_end, &insert);
+                    if cand.cursor_back > 0 {
+                        let back = cand.cursor_back as usize;
+                        ed.cursor.col = ed.cursor.col.saturating_sub(back);
+                    }
+                }
+            }
+            // Single-line name fields take the whole suggestion.
+            _ => {
+                ed.set_text(&cand.name);
+                ed.move_to_end();
+            }
+        }
+        self.changed();
+        true
+    }
+
     fn sidebar_key(&mut self, key: KeyEvent) {
         if self.sidebar_mode == SidebarMode::History {
             let n = self.history.as_ref().map(|h| h.len()).unwrap_or(0);
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.history_sel = self.history_sel.saturating_sub(1)
+                    self.history_sel = crate::list::step(self.history_sel, -1, n)
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    self.history_sel = (self.history_sel + 1).min(n.saturating_sub(1))
+                    self.history_sel = crate::list::step(self.history_sel, 1, n)
                 }
                 KeyCode::Home => self.history_sel = 0,
                 KeyCode::End => self.history_sel = n.saturating_sub(1),
-                KeyCode::PageUp => self.history_sel = self.history_sel.saturating_sub(10),
-                KeyCode::PageDown => {
-                    self.history_sel = (self.history_sel + 10).min(n.saturating_sub(1))
-                }
+                KeyCode::PageUp => self.history_sel = crate::list::step(self.history_sel, -10, n),
+                KeyCode::PageDown => self.history_sel = crate::list::step(self.history_sel, 10, n),
                 KeyCode::Enter => self.open_history(self.history_sel, false),
                 KeyCode::Char('s') => self.save_history_prompt(self.history_sel),
                 KeyCode::Esc => self.toggle_history(),
                 _ => {}
             }
+            self.history_follow = true;
         }
     }
 
@@ -906,11 +1675,13 @@ impl App {
                 }
             }
             Action::Cancel => self.cancel(),
+            Action::WatchToggle => self.toggle_watch(None),
             Action::EndStream => self.end_stream(),
             Action::Save => self.save(),
             Action::Quit => self.request_quit(),
             Action::NewRequest => self.new_tab(Request::new_http()),
             Action::NewGrpcRequest => self.new_tab(Request::new_grpc()),
+            Action::NewWsRequest => self.new_tab(Request::new_ws()),
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
             Action::PrevTab => self.switch_tab(-1),
@@ -939,17 +1710,19 @@ impl App {
                 self.set_subtab(i);
             }
             Action::Palette => self.open_palette(""),
+            Action::Complete => self.refresh_complete(),
             Action::Help => self.open_help(),
             Action::Settings => self.overlay = Some(Overlay::Settings { sel: 0 }),
             Action::SelectEnv => self.open_env_picker(),
             Action::ManageEnvs => self.open_env_editor(),
+            Action::ManageMcpServers => self.open_mcp_editor(),
             Action::History => self.toggle_history(),
             Action::ToggleSidebar => {
                 self.layout.sidebar_visible = !self.layout.sidebar_visible;
                 if !self.layout.sidebar_visible
                     && matches!(self.focus, Focus::Sidebar | Focus::Filter)
                 {
-                    self.focus = Focus::Bar(1);
+                    self.focus = self.top_bar_focus();
                 }
                 self.session_dirty = true;
             }
@@ -994,6 +1767,11 @@ impl App {
             Action::ViewRaw => self.set_view(ViewMode::Raw),
             Action::ViewHex => self.set_view(ViewMode::Hex),
             Action::Search => self.open_search(),
+            Action::Filter => self.open_filter(),
+            Action::FilterHere => self.filter_here(),
+            Action::CopyPath => self.copy_path(),
+            Action::PrevMessage => self.step_message(-1),
+            Action::NextMessage => self.step_message(1),
             Action::SearchNext => self.with_viewer(|v| {
                 v.next_match(1);
             }),
@@ -1093,15 +1871,43 @@ impl App {
         self.session_dirty = true;
     }
 
+    /// The top bar part to focus for the active tab: every kind draws the
+    /// same `[picker chip][endpoint input]` strip, and the input is part 1.
+    /// Focus for an opened request: the URL for HTTP and WebSocket (whose
+    /// part 0 is a static badge), the method or tool chip for gRPC and MCP.
+    fn open_focus(kind: Kind) -> Focus {
+        match kind {
+            Kind::Http | Kind::Ws => Focus::Bar(1),
+            _ => Focus::Bar(0),
+        }
+    }
+
+    fn top_bar_focus(&self) -> Focus {
+        Focus::Bar(1)
+    }
+
     fn focus_order(&self) -> Vec<Focus> {
         let mut v = Vec::new();
         if self.layout.sidebar_visible {
             v.push(Focus::Sidebar);
         }
         if !self.tabs.is_empty() {
+            // Every kind has the chip (part 0) except WebSocket, whose chip is
+            // a static badge; the endpoint input (part 1) follows. gRPC and MCP
+            // draw [input][chip], so their cycle reads left to right: the
+            // input first, then the chip.
+            match self.tab().map(|t| t.ed.kind) {
+                Some(Kind::Grpc | Kind::Mcp) => {
+                    v.push(Focus::Bar(1));
+                    v.push(Focus::Bar(0));
+                }
+                Some(Kind::Ws) => v.push(Focus::Bar(1)),
+                _ => {
+                    v.push(Focus::Bar(0));
+                    v.push(Focus::Bar(1));
+                }
+            }
             v.extend([
-                Focus::Bar(0),
-                Focus::Bar(1),
                 Focus::Bar(2),
                 Focus::ReqTabs,
                 Focus::ReqBody,
@@ -1113,6 +1919,7 @@ impl App {
     }
 
     pub fn focus_cycle(&mut self, dir: isize) {
+        self.complete = None;
         // Inside the request body, Tab walks through the fields first.
         if self.focus == Focus::ReqBody {
             if dir > 0 && self.next_field(false) {
@@ -1135,8 +1942,7 @@ impl App {
             f => f,
         };
         let i = order.iter().position(|f| *f == cur).unwrap_or(0) as isize;
-        let n = order.len() as isize;
-        let next = order[((i + dir).rem_euclid(n)) as usize];
+        let next = order[crate::list::cycle(i as usize, dir, order.len())];
         if next == Focus::ReqBody {
             let count = self.tab().map(|t| t.fields().len()).unwrap_or(0);
             if count == 0 {
@@ -1155,6 +1961,7 @@ impl App {
     }
 
     fn focus_dir(&mut self, dx: i32, dy: i32) {
+        self.complete = None;
         let right_sidebar = self.project.config.ui.sidebar == "right";
         let in_sidebar = matches!(self.focus, Focus::Sidebar | Focus::Filter);
         if dx != 0 {
@@ -1164,7 +1971,13 @@ impl App {
             } else if !toward_sidebar && in_sidebar && !self.tabs.is_empty() {
                 self.focus = Focus::Bar(1);
             } else if let Focus::Bar(p) = self.focus {
-                self.focus = Focus::Bar((p as i32 + dx).clamp(0, 2) as usize);
+                // WebSocket has no chip to focus; its strip starts at the URL.
+                let min = if self.tab().is_some_and(|t| t.ed.kind == Kind::Ws) {
+                    1
+                } else {
+                    0
+                };
+                self.focus = Focus::Bar(((p as i32 + dx).clamp(min, 2)) as usize);
             }
             return;
         }
@@ -1175,20 +1988,22 @@ impl App {
         if dy > 0 && in_request {
             self.focus = Focus::RespBody;
         } else if dy < 0 && !in_request {
-            let grpc = self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc);
-            self.focus = Focus::Bar(if grpc { 0 } else { 1 });
+            self.focus = Focus::Bar(1);
         }
     }
 
     fn subtab(&mut self, dir: isize) {
-        let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
+        self.complete = None;
+        let resp = matches!(
+            self.focus,
+            Focus::RespTabs | Focus::RespBody | Focus::RespQuery
+        );
         let Some(t) = self.tab_mut() else { return };
         if resp {
-            let n = crate::tab::RESP_TABS.len() as isize;
-            t.resp_tab = ((t.resp_tab as isize + dir).rem_euclid(n)) as usize;
+            t.resp_tab = crate::list::cycle(t.resp_tab, dir, crate::tab::RESP_TABS.len());
         } else {
-            let n = t.ed.tab_names().len() as isize;
-            t.req_tab = ((t.req_tab as isize + dir).rem_euclid(n)) as usize;
+            let n = t.ed.tab_names().len();
+            t.req_tab = crate::list::cycle(t.req_tab, dir, n);
             t.field = 0;
             let empty = t.fields().is_empty();
             if self.focus == Focus::ReqBody && empty {
@@ -1198,7 +2013,11 @@ impl App {
     }
 
     fn set_subtab(&mut self, i: usize) {
-        let resp = matches!(self.focus, Focus::RespTabs | Focus::RespBody);
+        self.complete = None;
+        let resp = matches!(
+            self.focus,
+            Focus::RespTabs | Focus::RespBody | Focus::RespQuery
+        );
         let Some(t) = self.tab_mut() else { return };
         if resp {
             if i < crate::tab::RESP_TABS.len() {
@@ -1217,24 +2036,34 @@ impl App {
     }
 
     fn switch_tab(&mut self, dir: isize) {
+        self.complete = None;
         if self.tabs.is_empty() {
             return;
         }
-        let n = self.tabs.len() as isize;
-        self.active = ((self.active as isize + dir).rem_euclid(n)) as usize;
+        self.active = crate::list::cycle(self.active, dir, self.tabs.len());
         self.session_dirty = true;
     }
 
     pub fn new_tab(&mut self, req: Request) {
+        self.complete = None;
         self.clear_transient_status();
         let id = self.alloc_id();
-        let n = self.tabs.iter().filter(|t| t.path.is_none()).count() + 1;
-        let name = if n == 1 {
-            "untitled".to_string()
-        } else {
-            format!("untitled {n}")
+        // The lowest free name: two open tabs never share one.
+        let label = |n: usize| {
+            if n == 1 {
+                "untitled".to_string()
+            } else {
+                format!("untitled {n}")
+            }
         };
-        let blank = req == Request::new_http() || req == Request::new_grpc();
+        let name = (1..)
+            .map(label)
+            .find(|l| !self.tabs.iter().any(|t| t.path.is_none() && t.name == *l))
+            .unwrap_or_default();
+        let blank = req == Request::new_http()
+            || req == Request::new_grpc()
+            || req == Request::new_ws()
+            || req == Request::new_mcp();
         let mut tab = Tab::new(id, None, name, &req, None);
         tab.ed.set_vim(self.vim);
         tab.refresh_model();
@@ -1245,15 +2074,12 @@ impl App {
         }
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
-        self.focus = if matches!(req, Request::Grpc(_)) {
-            Focus::Bar(0)
-        } else {
-            Focus::Bar(1)
-        };
+        self.focus = self.top_bar_focus();
         self.session_dirty = true;
     }
 
     pub fn open_request(&mut self, rel: &str) {
+        self.complete = None;
         self.clear_transient_status();
         if let Some(i) = self
             .tabs
@@ -1261,7 +2087,7 @@ impl App {
             .position(|t| t.path.as_deref() == Some(rel))
         {
             self.active = i;
-            self.focus = Focus::Bar(1);
+            self.focus = Self::open_focus(self.tabs[i].ed.kind);
             return;
         }
         match self.project.coll.load(rel) {
@@ -1276,14 +2102,10 @@ impl App {
                 );
                 tab.ed.set_vim(self.vim);
                 tab.refresh_model();
-                let is_grpc = tab.ed.kind == Kind::Grpc;
+                let kind = tab.ed.kind;
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
-                self.focus = if is_grpc {
-                    Focus::Bar(0)
-                } else {
-                    Focus::Bar(1)
-                };
+                self.focus = Self::open_focus(kind);
                 self.session_dirty = true;
             }
             Err(e) => self.set_status(format!("cannot open: {e}"), StatusKind::Error),
@@ -1291,22 +2113,27 @@ impl App {
     }
 
     fn close_tab(&mut self, force: bool) {
+        self.complete = None;
         let Some(t) = self.tab() else { return };
-        if t.dirty() && !force {
+        if !force && t.running.is_some() {
             let id = t.id;
             let name = t.title();
-            let message = if t.path.is_none() {
-                format!("\"{name}\" has no file yet. Save it? (Save asks for a name and a folder.)")
+            let what = if t.running.as_ref().is_some_and(|r| r.streaming_input) {
+                "an open session"
             } else {
-                format!("\"{name}\" has unsaved changes.")
+                "a request in flight"
             };
             self.overlay = Some(Overlay::Confirm(Confirm {
-                title: "Unsaved changes".into(),
-                message,
-                buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                title: "Still running".into(),
+                message: format!("\"{name}\" has {what}. Close the tab anyway?"),
+                buttons: vec!["Close".into(), "Cancel".into()],
                 sel: 0,
-                action: ConfirmAction::CloseTab(id),
+                action: ConfirmAction::CloseTabRunning(id),
             }));
+            return;
+        }
+        if t.dirty() && !force {
+            self.prompt_close_dirty();
             return;
         }
         if let Some(mut t) = (self.active < self.tabs.len()).then(|| self.tabs.remove(self.active))
@@ -1318,24 +2145,60 @@ impl App {
             self.active = self.tabs.len().saturating_sub(1);
         }
         if self.tabs.is_empty() {
+            // With no tab left, the tree is the only place for focus: show it.
+            self.layout.sidebar_visible = true;
             self.focus = Focus::Sidebar;
         }
         self.session_dirty = true;
     }
 
+    /// The Save/Discard/Cancel prompt for closing the active dirty tab.
+    fn prompt_close_dirty(&mut self) {
+        let Some(t) = self.tab() else { return };
+        let id = t.id;
+        let name = t.title();
+        let message = if t.path.is_none() {
+            format!("\"{name}\" has no file yet. Save it? (Save asks for a name and a folder.)")
+        } else {
+            format!("\"{name}\" has unsaved changes.")
+        };
+        self.overlay = Some(Overlay::Confirm(Confirm {
+            title: "Unsaved changes".into(),
+            message,
+            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+            sel: 0,
+            action: ConfirmAction::CloseTab(id),
+        }));
+    }
+
     fn request_quit(&mut self) {
         let dirty = self.tabs.iter().filter(|t| t.dirty()).count();
-        if dirty > 0 && self.project.config.ui.confirm_quit {
-            self.overlay = Some(Overlay::Confirm(Confirm {
-                title: "Quit Sendito?".into(),
-                message: format!(
-                    "{} unsaved changes. They are kept as drafts and restored next time.",
+        let live = self.tabs.iter().filter(|t| t.running.is_some()).count();
+        if (dirty > 0 || live > 0) && self.project.config.ui.confirm_quit {
+            let mut message = String::new();
+            if dirty > 0 {
+                message.push_str(&format!(
+                    "{} unsaved changes, kept as drafts and restored next time.",
                     if dirty == 1 {
                         "1 tab has".to_string()
                     } else {
                         format!("{dirty} tabs have")
                     }
-                ),
+                ));
+            }
+            if live > 0 {
+                message.push_str(&format!(
+                    " {} a request or session still running.",
+                    if live == 1 {
+                        "1 tab has".to_string()
+                    } else {
+                        format!("{live} tabs have")
+                    }
+                ));
+            }
+            self.overlay = Some(Overlay::Confirm(Confirm {
+                title: "Quit Sendito?".into(),
+                message: format!("{} Quit anyway?", message.trim()),
                 buttons: vec!["Quit".into(), "Cancel".into()],
                 sel: 0,
                 action: ConfirmAction::Quit,
@@ -1394,17 +2257,13 @@ impl App {
             name
         });
         input.move_to_end();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save request".into(),
-            label: "Name".into(),
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "Save request",
+            "Name",
             input,
-            choices: vec![("In folder".into(), labels, idx)],
-            focus: 0,
-            action: PromptAction::SaveAs { tab },
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![("In folder".into(), labels, idx)],
+            PromptAction::SaveAs { tab },
+        )));
     }
 
     pub fn rescan(&mut self) {
@@ -1417,25 +2276,55 @@ impl App {
     // ----- sending ------------------------------------------------------
 
     pub fn send(&mut self, confirmed: bool) {
+        self.send_opts(confirmed, false);
+    }
+
+    /// The action button of the URL card: Cancel while a call runs that takes
+    /// no more input, otherwise Send (an open stream sends one more message).
+    fn press_send_button(&mut self) {
+        let cancels = self
+            .tab()
+            .and_then(|t| t.running.as_ref())
+            .is_some_and(|r| !r.streaming_input);
+        self.dispatch(if cancels {
+            Action::Cancel
+        } else {
+            Action::Send
+        });
+    }
+
+    /// Sends the active tab's request. `from_watch` marks an automatic repeat:
+    /// no note about unsaved edits, and the watch cycle restarts.
+    fn send_opts(&mut self, confirmed: bool, from_watch: bool) {
         let Some(tab) = self.tabs.get_mut(self.active) else {
             self.set_status("open or create a request first (Ctrl+N)", StatusKind::Warn);
             return;
         };
         tab.refresh_model();
-        // On an open client/bidi stream, Send pushes the editor content as more messages.
+        // On an open client/bidi stream or WebSocket session, Send pushes the
+        // editor content as more input.
         if let Some(r) = &tab.running {
             if r.streaming_input {
+                let ws = tab.ed.kind == Kind::Ws;
                 let json = tab.ed.message.text();
-                let compact = serde_json::from_str::<serde_json::Value>(&json)
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|_| json.split_whitespace().collect::<Vec<_>>().join(" "));
+                let compact = if ws {
+                    json.clone()
+                } else {
+                    serde_json::from_str::<serde_json::Value>(&json)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| json.split_whitespace().collect::<Vec<_>>().join(" "))
+                };
                 let shown: String = if compact.chars().count() > 32 {
                     compact.chars().take(31).chain(['…']).collect()
                 } else {
                     compact
                 };
                 if let Some(c) = &r.control {
-                    let _ = c.send(GrpcControl::Send(json));
+                    let _ = c.send(if ws {
+                        Control::Ws(WsControl::Text(json))
+                    } else {
+                        Control::Grpc(GrpcControl::Send(json))
+                    });
                 }
                 // Select the sent text so the next message can be typed over it.
                 tab.ed.message.select_all();
@@ -1443,16 +2332,24 @@ impl App {
                     .response
                     .as_ref()
                     .map(|r| {
-                        r.grpc_events
-                            .iter()
-                            .filter(|e| matches!(e, sendito_grpc::Event::Sent { .. }))
-                            .count()
+                        if ws {
+                            r.ws_events
+                                .iter()
+                                .filter(|e| matches!(e, sendito_ws::Event::Sent { .. }))
+                                .count()
+                        } else {
+                            r.grpc_events
+                                .iter()
+                                .filter(|e| matches!(e, sendito_grpc::Event::Sent { .. }))
+                                .count()
+                        }
                     })
                     .unwrap_or(0)
                     + 1;
                 let end = self.keymap.hint(Action::EndStream, self.vim);
+                let noun = if ws { "frame" } else { "message" };
                 self.set_status(
-                    format!("message {sent} sent: {shown} · {end} ends the stream"),
+                    format!("{noun} {sent} sent: {shown} · {end} ends the stream"),
                     StatusKind::Ok,
                 );
                 return;
@@ -1467,9 +2364,26 @@ impl App {
         if let Request::Grpc(g) = &req
             && (g.service.is_empty() || g.method.is_empty())
         {
-            self.focus = Focus::Bar(1);
+            self.focus = Focus::Bar(0);
             self.set_status(
-                "choose a method first: Enter on the method field lists the services",
+                "choose a method first: Enter on the method chip lists the services",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        if let Request::Ws(w) = &req
+            && w.url.trim().is_empty()
+        {
+            self.focus = Focus::Bar(1);
+            self.set_status("enter a ws:// or wss:// URL first", StatusKind::Warn);
+            return;
+        }
+        if let Request::Mcp(m) = &req
+            && (m.server.trim().is_empty() || m.tool.trim().is_empty())
+        {
+            self.focus = Focus::ReqTabs;
+            self.set_status(
+                "choose a server and a tool first: F2 lists servers, Enter on the tool chip lists tools",
                 StatusKind::Warn,
             );
             return;
@@ -1518,12 +2432,16 @@ impl App {
         // A history copy is recorded under the request it came from.
         let path = tab.path.clone().or_else(|| tab.origin_path.clone());
         let edited = tab.path.is_some() && tab.dirty();
-        let mut resp = Response::new();
-        resp.summary.status = String::new();
-        tab.response = Some(resp);
+        // A watch repeat keeps the last response on screen until the new
+        // one arrives and takes over its view.
+        if !(from_watch && tab.response.is_some()) {
+            let mut resp = Response::new();
+            resp.summary.status = String::new();
+            tab.response = Some(resp);
+        }
         // A new request makes earlier messages stale.
         self.status = None;
-        if edited {
+        if edited && !from_watch {
             let save = self.keymap.hint(Action::Save, self.vim);
             self.set_status(
                 format!("sent with your unsaved edits ({save} saves them to the file)"),
@@ -1540,6 +2458,7 @@ impl App {
                 req: Box::new(h),
                 name,
                 path,
+                from_watch,
             },
             Request::Grpc(g) => ScopeThen::Grpc {
                 tab: id,
@@ -1547,16 +2466,30 @@ impl App {
                 name,
                 path,
             },
+            Request::Ws(w) => ScopeThen::Ws {
+                tab: id,
+                req: Box::new(w),
+                name,
+                path,
+            },
+            Request::Mcp(m) => ScopeThen::Mcp {
+                tab: id,
+                req: Box::new(m),
+                name,
+                path,
+            },
         };
+        let secrets_ok = std::mem::take(&mut self.secrets_ok);
         let task = self.rt.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                runner::build_scope(&envs, active.as_deref(), &runtime)
+                runner::build_scope_checked(&envs, active.as_deref(), &runtime)
             })
             .await
-            .unwrap_or_else(|e| (Scope::new(), vec![e.to_string()]));
+            .unwrap_or_else(|e| (Scope::new(), vec![e.to_string()], Vec::new()));
             let _ = tx.send(AppMsg::Scope {
                 result: Box::new(result),
                 then,
+                secrets_ok,
             });
         });
         let tab = &mut self.tabs[self.active];
@@ -1566,6 +2499,53 @@ impl App {
             started: Instant::now(),
             streaming_input: false,
         });
+        // The watched request was just sent: the next repeat is a full interval
+        // away, also after a manual send.
+        if let Some(w) = &mut tab.watch {
+            w.next = Instant::now() + w.interval;
+        }
+    }
+
+    /// Stops a send whose secrets did not load, and asks before sending
+    /// the placeholders as typed (a watch stops: it would repeat this).
+    fn secrets_missing(&mut self, tab: u64, un: &[String], errors: &[String]) {
+        let active = self.tab().is_some_and(|t| t.id == tab);
+        if let Some(t) = self.tab_by_id(tab) {
+            t.running = None;
+            t.watch = None;
+            if t.response
+                .as_ref()
+                .is_some_and(|r| r.summary.status.is_empty())
+            {
+                t.response = None;
+            }
+        }
+        let list = un
+            .iter()
+            .map(|u| format!("{{{{{u}}}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Another tab, or a dialog the user is working in (which must not
+        // be replaced): the status line says it instead.
+        if !active || self.overlay.is_some() {
+            self.set_status(
+                format!("not sent: {list} could not be loaded or checked"),
+                StatusKind::Error,
+            );
+            return;
+        }
+        self.overlay = Some(Overlay::Confirm(Confirm {
+            title: "Secrets not loaded".into(),
+            message: format!(
+                "{list}: a secret did not load, or the environment file cannot be read so \
+                 its values cannot be checked ({}). Send anyway sends the request as it \
+                 resolves now: as typed, braces included, or with a value from another layer.",
+                errors.join("; ")
+            ),
+            buttons: vec!["Send anyway".into(), "Cancel".into()],
+            sel: 1,
+            action: ConfirmAction::SendMissingSecrets,
+        }));
     }
 
     fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {
@@ -1585,7 +2565,10 @@ impl App {
             env: self.active_env.clone(),
             schemas: self.schemas.clone(),
             grpc_deadline_ms: self.project.config.grpc.deadline_ms,
+            ws_timeout_ms: self.project.config.websocket.timeout_ms,
             mask_echoed_secrets: true,
+            cookie_jar: self.project.config.http.cookie_jar,
+            oauth: Some(runner::OAuthRunInfo::of(&self.project)),
         }
     }
 
@@ -1597,11 +2580,15 @@ impl App {
                 req,
                 name,
                 path,
+                from_watch,
             } => {
                 if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
                     return; // cancelled meanwhile
                 }
-                let ctx = self.run_ctx(name, path);
+                let mut ctx = self.run_ctx(name, path);
+                if from_watch {
+                    ctx.history = None;
+                }
                 let task = self.rt.spawn(async move {
                     let outcome = runner::exec_http(&ctx, &req, scope, errors).await;
                     let _ = tx.send(AppMsg::Http {
@@ -1626,7 +2613,7 @@ impl App {
                 }
                 let ctx = self.run_ctx(name, path);
                 let (utx, mut urx) = mpsc::unbounded_channel::<GrpcUpdate>();
-                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<GrpcControl>();
+                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<Control>();
                 let fwd = tx.clone();
                 let task = self.rt.spawn(async move {
                     let run = runner::exec_grpc(&ctx, &req, scope, errors, utx, ctx_rx);
@@ -1644,60 +2631,471 @@ impl App {
                     r.control = Some(ctx_tx);
                 }
             }
+            ScopeThen::Ws {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let (utx, mut urx) = mpsc::unbounded_channel::<runner::WsUpdate>();
+                let (ctx_tx, ctx_rx) = mpsc::unbounded_channel::<Control>();
+                let fwd = tx.clone();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_ws(&ctx, &req, scope, errors, utx, ctx_rx);
+                    let forward = async {
+                        while let Some(u) = urx.recv().await {
+                            let _ = fwd.send(AppMsg::Ws { tab, update: u });
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                    r.control = Some(ctx_tx);
+                    r.streaming_input = true;
+                }
+            }
+            ScopeThen::Mcp {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let info = runner::McpRunInfo::of(&self.project);
+                let (utx, mut urx) = mpsc::unbounded_channel::<runner::McpUpdate>();
+                let fwd = tx.clone();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_mcp(&ctx, &req, scope, errors, &info, utx);
+                    let forward = async {
+                        while let Some(u) = urx.recv().await {
+                            let _ = fwd.send(AppMsg::Mcp { tab, update: u });
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                }
+            }
         }
     }
 
     fn cancel(&mut self) {
+        // The request in view comes first; background jobs are cancelled
+        // when it is not running.
+        if !self.tab().is_some_and(|t| t.running.is_some()) {
+            if let Some((_, task)) = self.cookies_job.take() {
+                task.abort();
+                self.set_status("cookie command cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.oauth_login.take() {
+                task.abort();
+                self.set_status("OAuth login cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.mcp_discovery.take() {
+                task.abort();
+                self.set_status("MCP tool discovery cancelled", StatusKind::Info);
+                return;
+            }
+            if let Some((_, task)) = self.schema_job.take() {
+                task.abort();
+                self.set_status("schema load cancelled", StatusKind::Info);
+                return;
+            }
+        }
         let Some(t) = self.tab_mut() else { return };
         let Some(r) = &t.running else {
-            self.set_status("nothing is running", StatusKind::Info);
+            let watched = t.watch.take().is_some();
+            self.set_status(
+                if watched {
+                    "watch off"
+                } else {
+                    "nothing is running"
+                },
+                StatusKind::Info,
+            );
             return;
         };
+        let kind = t.ed.kind;
         if let Some(c) = &r.control {
-            let _ = c.send(GrpcControl::Cancel);
+            let _ = c.send(match kind {
+                Kind::Ws => Control::Ws(WsControl::Cancel),
+                _ => Control::Grpc(GrpcControl::Cancel),
+            });
             return;
         }
         if let Some(r) = t.running.take() {
             r.task.abort();
         }
+        // Cancelling also stops the watch: it would just re-send what was
+        // cancelled.
+        let watch_off = t.watch.take().is_some();
         let resp = t.response.get_or_insert_with(Response::new);
         resp.summary.error = Some("cancelled".into());
         resp.summary.status = "Cancelled".into();
         // "Cancelled" in the response border and status line says it all.
         self.clear_transient_status();
+        if watch_off {
+            self.set_status("cancelled · watch off", StatusKind::Info);
+        }
     }
 
     fn end_stream(&mut self) {
         let Some(t) = self.tab_mut() else { return };
         match t.running.as_mut() {
             Some(r) if r.streaming_input => {
+                let ws = t.ed.kind == Kind::Ws;
                 if let Some(c) = &r.control {
-                    let _ = c.send(GrpcControl::EndStream);
+                    let _ = c.send(if ws {
+                        Control::Ws(WsControl::EndStream)
+                    } else {
+                        Control::Grpc(GrpcControl::EndStream)
+                    });
                 }
                 r.streaming_input = false;
                 // Nothing more can be sent: drop the "type over it" selection.
                 t.ed.message.anchor = None;
             }
-            _ => self.set_status("no open client stream", StatusKind::Info),
+            _ => self.set_status("no open stream or session", StatusKind::Info),
+        }
+    }
+
+    /// WebSocket session progress: same shape as the gRPC log.
+    fn on_ws(&mut self, tab_id: u64, u: WsUpdate) {
+        let mut status: Option<(String, StatusKind)> = None;
+        let mut updates = Vec::new();
+        let Some(t) = self.tab_by_id(tab_id) else {
+            return;
+        };
+        let resp = t.response.get_or_insert_with(Response::new);
+        // Follow the log while the cursor is at its end.
+        let before = resp.messages.row_count();
+        let follow = resp.messages.cursor + 2 >= before;
+        match u {
+            WsUpdate::Started { resolved } => {
+                resp.summary.status = String::new();
+                // The resolved URL can carry an API key in its query string.
+                resp.messages
+                    .doc
+                    .append_text(&format!("connecting to {}\n", resolved.url));
+            }
+            WsUpdate::Event(ev) => {
+                resp.messages.doc.append_text(&ws_event_text(&ev));
+                match &ev {
+                    sendito_ws::Event::Handshake {
+                        status,
+                        headers,
+                        subprotocol,
+                        ..
+                    } => {
+                        if *status == 101 {
+                            let sub = subprotocol
+                                .as_ref()
+                                .map(|s| format!(" · subprotocol {s}"))
+                                .unwrap_or_default();
+                            resp.summary.status = format!("101 Switching Protocols{sub}");
+                            resp.summary.ok = true;
+                        } else {
+                            resp.summary.status = format!("handshake answered {status}");
+                            resp.summary.ok = false;
+                        }
+                        resp.headers = crate::tab::wrapped(Doc::text(&ws_headers_text(headers)));
+                    }
+                    sendito_ws::Event::Finished {
+                        code, reason, at, ..
+                    } => {
+                        let label = format!(
+                            "close {code}{}",
+                            if reason.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {reason}")
+                            }
+                        );
+                        resp.summary.status = if *code == 1000 && reason.is_empty() {
+                            "closed cleanly (1000)".into()
+                        } else {
+                            label.clone()
+                        };
+                        resp.summary.ok = *code == 1000;
+                        resp.summary.time_ms = Some(at.as_secs_f64() * 1000.0);
+                        if *code != 1000 {
+                            resp.summary.error = Some(label);
+                        }
+                    }
+                    _ => {}
+                }
+                let message = matches!(
+                    ev,
+                    sendito_ws::Event::Received {
+                        kind: sendito_ws::FrameKind::Text | sendito_ws::FrameKind::Binary,
+                        ..
+                    }
+                );
+                resp.ws_events.push(ev);
+                if message {
+                    resp.message_arrived();
+                }
+                let size: usize = resp
+                    .ws_events
+                    .iter()
+                    .filter_map(|e| match e {
+                        sendito_ws::Event::Received { size, .. } => Some(*size),
+                        _ => None,
+                    })
+                    .sum();
+                resp.summary.size = Some(size as u64);
+                resp.timing = crate::tab::wrapped(Doc::text(&ws_timing_text(&resp.ws_events)));
+            }
+            WsUpdate::Error(e) => {
+                resp.messages.doc.append_text(&format!("error: {e}\n"));
+                if resp.ws_events.is_empty() {
+                    resp.summary.status = "Error".into();
+                    resp.summary.error = Some(e.clone());
+                    resp.set_body_wrapped(format!("Session failed:\n\n{e}\n"));
+                }
+                status = Some((e, StatusKind::Error));
+            }
+            WsUpdate::Done {
+                scripts,
+                scope_errors,
+            } => {
+                t.running = None;
+                let text = messages_text(&scripts, &scope_errors, &[]);
+                if !text.trim().is_empty() {
+                    resp.messages.doc.append_text(&format!("\n{text}"));
+                }
+                updates = scripts.updates();
+                let fails = scripts.failed_asserts();
+                let result = if resp.summary.status.is_empty() {
+                    "session finished".to_string()
+                } else {
+                    format!("session finished: {}", resp.summary.status)
+                };
+                let ok = resp.summary.ok;
+                status = Some(if scripts.asserts.is_empty() {
+                    (
+                        result,
+                        if ok {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else if fails == 0 {
+                    (
+                        format!("{result} · {} passed", assertions(scripts.asserts.len())),
+                        if ok {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else {
+                    (
+                        format!(
+                            "{result} · {fails} of {} failed (see Log)",
+                            assertions(scripts.asserts.len())
+                        ),
+                        StatusKind::Error,
+                    )
+                });
+            }
+        }
+        if follow {
+            resp.messages.bottom();
+        }
+        self.apply_updates(updates);
+        if let Some((s, k)) = status {
+            self.set_status(s, k);
         }
     }
 
     pub fn on_msg(&mut self, msg: AppMsg) {
         match msg {
-            AppMsg::Scope { result, then } => {
-                let (scope, errors) = *result;
+            AppMsg::Scope {
+                result,
+                then,
+                secrets_ok,
+            } => {
+                let (scope, errors, failed) = *result;
+                // A secret that did not load (no keychain entry, no
+                // secrets.toml value) passed the names check: check the
+                // loaded values before `{{name}}` (or a lower layer's value)
+                // goes out. "Send anyway" for undefined names does not cover it.
+                if !secrets_ok && !failed.is_empty() {
+                    let (tab, req) = then.request();
+                    let un = runner::unresolved_send(
+                        &req,
+                        &scope,
+                        &failed,
+                        &self.project.config.mcp.servers,
+                    );
+                    if !un.is_empty() {
+                        self.secrets_missing(tab, &un, &errors);
+                        return;
+                    }
+                }
                 self.start_with_scope(scope, errors, then);
             }
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
+            AppMsg::Ws { tab, update } => self.on_ws(tab, update),
+            AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
+            AppMsg::OAuthUrl { job, url } => {
+                if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
+                    let text = format!(
+                        "Open this URL in a browser if it did not open automatically:\n\n{url}\n\nWaiting for the callback. Close this dialog and use Ctrl+W x to cancel.\n"
+                    );
+                    if self.overlay.is_none() {
+                        self.show_report("HTTP OAuth login", &text);
+                    } else {
+                        self.last_report = Some(("HTTP OAuth login".into(), text));
+                        self.set_status("OAuth URL available with :report", StatusKind::Info);
+                    }
+                }
+            }
+            AppMsg::OAuthDone { job, result } => {
+                if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
+                    self.oauth_login = None;
+                    if matches!(&self.overlay, Some(Overlay::Report(r)) if r.title == "HTTP OAuth login")
+                    {
+                        self.overlay = None;
+                    }
+                    match result {
+                        Ok(message) => self.set_status(message, StatusKind::Ok),
+                        Err(e) => self.set_status(e, StatusKind::Error),
+                    }
+                }
+            }
+            AppMsg::Cookies { job, result } => {
+                if self.cookies_job.as_ref().is_some_and(|(id, _)| *id == job) {
+                    self.cookies_job = None;
+                    self.status = None;
+                    match result {
+                        Ok(CookiesOutcome::List(rows)) => {
+                            let text = if rows.is_empty() {
+                                "No cookies in this environment.\n".to_string()
+                            } else {
+                                format!(
+                                    "{}\n\n:cookies delete <number> removes one; :cookies clear removes all.\n",
+                                    rows.join("\n")
+                                )
+                            };
+                            if self.overlay.is_none() {
+                                self.overlay = Some(Overlay::Report(Report {
+                                    title: "Cookie jar".into(),
+                                    viewer: Viewer::new(Doc::text(&text)),
+                                    copy_text: text,
+                                    copied: false,
+                                    close_status: None,
+                                }));
+                            } else {
+                                self.last_report = Some(("Cookie jar".into(), text));
+                                self.set_status("cookies listed with :report", StatusKind::Info);
+                            }
+                        }
+                        Ok(CookiesOutcome::Done(m)) => self.set_status(m, StatusKind::Ok),
+                        Err(e) => self.set_status(format!("cookie jar: {e}"), StatusKind::Error),
+                    }
+                }
+            }
+            AppMsg::McpTools {
+                job,
+                tab,
+                server,
+                open_picker,
+                result,
+            } => {
+                if !self
+                    .mcp_discovery
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == job)
+                {
+                    return;
+                }
+                self.mcp_discovery = None;
+                let active = self.tab().is_some_and(|t| {
+                    t.id == tab && t.ed.kind == Kind::Mcp && t.ed.mcp_server.text() == server
+                });
+                if active {
+                    match result {
+                        Ok(tools) => {
+                            if let Some(t) = self.tab_mut() {
+                                t.mcp_tools = tools;
+                                t.mcp_tools_server = server.clone();
+                                t.mcp_tools_error = None;
+                            }
+                            if self.complete.is_some() {
+                                self.refresh_complete();
+                            } else if open_picker {
+                                let empty = self.tab().is_some_and(|t| t.mcp_tools.is_empty());
+                                if empty {
+                                    self.set_status("the server has no tools", StatusKind::Info);
+                                } else if let Some(t) = self.tab() {
+                                    let items: Vec<_> =
+                                        t.mcp_tools.iter().map(|t| t.name.clone()).collect();
+                                    let details: Vec<_> = t
+                                        .mcp_tools
+                                        .iter()
+                                        .map(|tool| tool.description.clone().unwrap_or_default())
+                                        .collect();
+                                    let current =
+                                        items.iter().position(|name| *name == t.ed.mcp_tool.text());
+                                    self.overlay = Some(Overlay::Picker(Picker::new(
+                                        "Choose an MCP tool",
+                                        items,
+                                        details,
+                                        PickAction::McpTool,
+                                        current,
+                                    )));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(t) = self.tab_mut() {
+                                t.mcp_tools_error = Some(e.clone());
+                                t.mcp_tools_server = server.clone();
+                            }
+                            if let Some(c) = &mut self.complete {
+                                // The popup reports the failure; it is not
+                                // retried until asked.
+                                c.loading = None;
+                                c.failed = Some("tools");
+                            }
+                            self.set_status(format!("tools: {e}"), StatusKind::Error);
+                        }
+                    }
+                }
+            }
             AppMsg::Schema {
                 tab,
+                job,
                 result,
                 open_picker,
                 template,
             } => {
+                if !self.schema_job.as_ref().is_some_and(|(id, _)| *id == job) {
+                    return;
+                }
+                self.schema_job = None;
                 let mut status = None;
                 let mut status_ok: Option<String> = None;
+                let mut failed = false;
                 if let Some(t) = self.tab_by_id(tab) {
                     match result {
                         Ok(svcs) => {
@@ -1728,8 +3126,16 @@ impl App {
                         Err(e) => {
                             status = Some(format!("schema: {e}"));
                             t.schema_error = Some(e);
+                            failed = true;
                         }
                     }
+                }
+                if failed && let Some(c) = &mut self.complete {
+                    // The popup reports the failure; it is not retried until asked.
+                    c.loading = None;
+                    c.failed = Some("schema");
+                } else if self.complete.is_some() {
+                    self.refresh_complete();
                 }
                 if let Some(s) = status {
                     self.set_status(s, StatusKind::Error);
@@ -1743,10 +3149,19 @@ impl App {
                 }
             }
             AppMsg::History(h) => {
-                self.history_sel = h.len().saturating_sub(1).min(self.history_sel);
-                self.history_sel = 0;
+                // Keep the selection on the same entry: new ones arrive on top.
+                let key = |e: &sendito_store::history::HistoryEntry| (e.ts.clone(), e.name.clone());
+                let selected = self
+                    .history
+                    .as_ref()
+                    .and_then(|old| old.get(self.history_sel))
+                    .map(key);
                 let mut h = h;
                 h.reverse();
+                self.history_sel = selected
+                    .and_then(|k| h.iter().position(|e| key(e) == k))
+                    .unwrap_or(0);
+                self.history_follow = true;
                 self.history = Some(h);
             }
         }
@@ -1775,6 +3190,10 @@ impl App {
         let updates = o.scripts.updates();
         let mut status: Option<(String, StatusKind)> = None;
         if let Some(t) = self.tab_by_id(tab_id) {
+            let elapsed_ms = t
+                .running
+                .as_ref()
+                .map(|r| r.started.elapsed().as_secs_f64() * 1000.0);
             t.running = None;
             let mut resp = Response::new();
             match &o.response {
@@ -1785,11 +3204,22 @@ impl App {
                         ok: r.status < 400,
                         time_ms: Some(r.timing.total.as_secs_f64() * 1000.0),
                         size: Some(o.body_size),
+                        decoded: r
+                            .decoded
+                            .as_ref()
+                            .map(|d| format!("{} {}", d.encoding, human_size(d.raw_len))),
                         error: None,
                     };
-                    resp.body = Viewer::new(std::mem::take(&mut o.doc));
+                    resp.set_body(std::mem::take(&mut o.doc));
                     resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, &o)));
-                    resp.timing = crate::tab::wrapped(Doc::text(&timing_text(r, o.body_size)));
+                    let mut timing = timing_text(r, o.body_size);
+                    if let Some(w) = &mut t.watch {
+                        w.record(r.status < 400, r.timing.total.as_secs_f64() * 1000.0);
+                        if !w.samples.is_empty() {
+                            timing.push_str(&watch_text(&w.samples));
+                        }
+                    }
+                    resp.timing = crate::tab::wrapped(Doc::text(&timing));
                     let fails = o.scripts.failed_asserts();
                     if !o.scripts.asserts.is_empty() {
                         status = Some(if fails == 0 {
@@ -1815,15 +3245,19 @@ impl App {
                     }
                 }
                 Err(e) => {
+                    if let Some(w) = &mut t.watch {
+                        w.record(false, elapsed_ms.unwrap_or(0.0));
+                        resp.timing = crate::tab::wrapped(Doc::text(&watch_text(&w.samples)));
+                    }
                     resp.summary = Summary {
                         status: "Error".into(),
                         error: Some(e.clone()),
                         ..Default::default()
                     };
-                    resp.body = crate::tab::wrapped(Doc::text(&format!(
+                    resp.set_body_wrapped(format!(
                         "Request failed: {}\n\nDetails:\n{e}\n",
                         explain_error(e)
-                    )));
+                    ));
                     resp.headers = crate::tab::wrapped(Doc::text(&request_headers_text(&o)));
                     // The reason is in the response pane; the status line names the
                     // outcome only (it would be cut short anyway).
@@ -1846,6 +3280,12 @@ impl App {
                 &o.scope_errors,
                 &o.resolved.notes,
             )));
+            if t.watch.is_some()
+                && o.response.is_ok()
+                && let Some(old) = &t.response
+            {
+                resp.keep_view_of(old);
+            }
             t.response = Some(resp);
         }
         self.apply_updates(updates);
@@ -1901,33 +3341,28 @@ impl App {
             }
             GrpcUpdate::Event(ev) => {
                 resp.messages.doc.append_text(&event_text(&ev));
-                match &ev {
-                    sendito_grpc::Event::Received { json, .. } => {
-                        resp.body = Viewer::new(Doc::from_bytes(
-                            json.as_bytes().to_vec(),
-                            Some("application/json"),
-                        ));
+                if let sendito_grpc::Event::Finished {
+                    code, message, at, ..
+                } = &ev
+                {
+                    let name = sendito_grpc::code_name(*code);
+                    resp.summary.status = if message.is_empty() {
+                        format!("{name} ({code})")
+                    } else {
+                        format!("{name} ({code}): {message}")
+                    };
+                    resp.summary.ok = *code == 0;
+                    resp.summary.code = None;
+                    resp.summary.time_ms = Some(at.as_secs_f64() * 1000.0);
+                    if *code != 0 {
+                        resp.summary.error = Some(format!("{name}: {message}"));
                     }
-                    sendito_grpc::Event::Finished { code, message, .. } => {
-                        let name = sendito_grpc::code_name(*code);
-                        resp.summary.status = if message.is_empty() {
-                            format!("{name} ({code})")
-                        } else {
-                            format!("{name} ({code}): {message}")
-                        };
-                        resp.summary.ok = *code == 0;
-                        resp.summary.code = None;
-                        resp.summary.time_ms = Some(match &ev {
-                            sendito_grpc::Event::Finished { at, .. } => at.as_secs_f64() * 1000.0,
-                            _ => 0.0,
-                        });
-                        if *code != 0 {
-                            resp.summary.error = Some(format!("{name}: {message}"));
-                        }
-                    }
-                    _ => {}
                 }
+                let message = matches!(ev, sendito_grpc::Event::Received { .. });
                 resp.grpc_events.push(ev);
+                if message {
+                    resp.message_arrived();
+                }
                 let size: usize = resp
                     .grpc_events
                     .iter()
@@ -1949,7 +3384,7 @@ impl App {
                 if resp.grpc_events.is_empty() {
                     resp.summary.status = "Error".into();
                     resp.summary.error = Some(e.clone());
-                    resp.body = crate::tab::wrapped(Doc::text(&format!("Call failed:\n\n{e}\n")));
+                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n"));
                 }
                 status = Some((e, StatusKind::Error));
             }
@@ -2009,6 +3444,211 @@ impl App {
         }
     }
 
+    fn on_mcp(&mut self, tab_id: u64, u: runner::McpUpdate) {
+        let mut status: Option<(String, StatusKind)> = None;
+        let mut updates = Vec::new();
+        let Some(t) = self.tab_by_id(tab_id) else {
+            return;
+        };
+        let resp = t.response.get_or_insert_with(Response::new);
+        match u {
+            runner::McpUpdate::Event(ev) => {
+                if let Some(json) = mcp_sent_line(&ev) {
+                    resp.headers.doc.append_text(&format!("{json}\n"));
+                }
+                let line = mcp_event_text(&ev);
+                resp.messages.doc.append_text(&line);
+                resp.messages.bottom();
+            }
+            runner::McpUpdate::Done {
+                error,
+                is_error,
+                result,
+                scripts,
+                scope_errors,
+            } => {
+                let time_ms = t
+                    .running
+                    .as_ref()
+                    .map(|r| r.started.elapsed().as_secs_f64() * 1000.0);
+                t.running = None;
+                let size = result.as_ref().map(|b| b.len() as u64);
+                if let Some(ms) = time_ms {
+                    resp.timing = crate::tab::wrapped(Doc::text(&format!(
+                        "Total: {:.1} ms\nIncludes scope preparation, handshake and tool call.\n",
+                        ms
+                    )));
+                }
+                // MCP has no HTTP status: `code` stays `None` so the border and
+                // the chrome colour by `ok`/`error` instead of a status class.
+                resp.summary = match (&error, is_error) {
+                    (Some(e), _) => Summary {
+                        status: "error".into(),
+                        code: None,
+                        ok: false,
+                        time_ms,
+                        size,
+                        decoded: None,
+                        error: Some(e.clone()),
+                    },
+                    (None, true) => Summary {
+                        status: "TOOL ERROR".into(),
+                        code: None,
+                        ok: false,
+                        time_ms,
+                        size,
+                        decoded: None,
+                        error: None,
+                    },
+                    (None, false) => Summary {
+                        status: "OK".into(),
+                        code: None,
+                        ok: true,
+                        time_ms,
+                        size,
+                        decoded: None,
+                        error: None,
+                    },
+                };
+                if let Some(body) = result {
+                    resp.set_body(Doc::from_bytes(body, Some("application/json")));
+                } else if let Some(e) = &error {
+                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n"));
+                }
+                let text = messages_text(&scripts, &scope_errors, &[]);
+                if !text.trim().is_empty() {
+                    resp.messages.doc.append_text(&format!("\n{text}"));
+                }
+                updates = scripts.updates();
+                let fails = scripts.failed_asserts();
+                let result_line = if let Some(e) = &error {
+                    format!("call failed: {e}")
+                } else if is_error {
+                    "tool reported an error (isError)".to_string()
+                } else {
+                    "call finished".to_string()
+                };
+                status = Some(if scripts.asserts.is_empty() {
+                    (
+                        result_line,
+                        if error.is_none() && !is_error {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else if fails == 0 {
+                    (
+                        format!(
+                            "{result_line} · {} passed",
+                            assertions(scripts.asserts.len())
+                        ),
+                        if error.is_none() && !is_error {
+                            StatusKind::Ok
+                        } else {
+                            StatusKind::Error
+                        },
+                    )
+                } else {
+                    (
+                        format!(
+                            "{result_line} · {fails} of {} failed (see Log)",
+                            assertions(scripts.asserts.len())
+                        ),
+                        StatusKind::Error,
+                    )
+                });
+            }
+        }
+        self.apply_updates(updates);
+        if let Some((s, k)) = status {
+            self.set_status(s, k);
+        }
+    }
+
+    // ----- MCP discovery ------------------------------------------------
+
+    fn open_mcp_server_picker(&mut self) {
+        let Some(t) = self.tab().filter(|t| t.ed.kind == Kind::Mcp) else {
+            return;
+        };
+        let current = t.ed.mcp_server.text();
+        let items: Vec<String> = self.project.config.mcp.servers.keys().cloned().collect();
+        if items.is_empty() {
+            self.set_status("no servers configured in [mcp.servers]", StatusKind::Warn);
+            return;
+        }
+        let selected = items.iter().position(|name| *name == current);
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "Choose an MCP server",
+            items,
+            vec![],
+            PickAction::McpServer,
+            selected,
+        )));
+    }
+
+    /// Lists a server's tools. `open_picker` also shows the choose dialog;
+    /// completion passes `false` and only fills the tab's list.
+    fn load_mcp_tools(&mut self, open_picker: bool) {
+        let Some(t) = self.tab().filter(|t| t.ed.kind == Kind::Mcp) else {
+            return;
+        };
+        let tab = t.id;
+        let server = t.ed.mcp_server.text();
+        if server.trim().is_empty() {
+            self.set_status(
+                "set the MCP server first: a name from [mcp.servers] or an http(s):// URL",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        let info = runner::McpRunInfo::of(&self.project);
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let tx = self.tx.clone();
+        let server2 = server.clone();
+        if let Some((_, task)) = self.mcp_discovery.take() {
+            task.abort();
+        }
+        self.mcp_discovery_seq = self.mcp_discovery_seq.wrapping_add(1);
+        let job = self.mcp_discovery_seq;
+        if open_picker || self.complete.is_none() {
+            self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
+        }
+        let task = self.rt.spawn(async move {
+            let result = async {
+                let (scope, errors) = tokio::task::spawn_blocking(move || {
+                    runner::build_scope(&envs, env.as_deref(), &runtime)
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                if !errors.is_empty() {
+                    return Err(errors.join("; "));
+                }
+                let name = scope.render(&server2).text;
+                let transport = runner::mcp_transport(&info, &name, &scope)?;
+                let opts = sendito_mcp::Options {
+                    timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
+                };
+                let (events, _rx) = mpsc::unbounded_channel();
+                sendito_mcp::list_tools(&transport, &opts, events)
+                    .await
+                    .map_err(|e| sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()))
+            }
+            .await;
+            let _ = tx.send(AppMsg::McpTools {
+                job,
+                tab,
+                server,
+                open_picker,
+                result,
+            });
+        });
+        self.mcp_discovery = Some((job, task));
+    }
+
     // ----- gRPC schema --------------------------------------------------
 
     pub fn load_schema(&mut self, open_picker: bool, template: bool, refresh: bool) {
@@ -2023,34 +3663,44 @@ impl App {
         let id = t.id;
         let resolved = sendito_core::resolve::resolve_grpc(&g, &self.names);
         let root = self.project.root.clone();
+        let tls = self.project.tls.clone();
         let cache = self.schemas.clone();
         let tx = self.tx.clone();
         let svc = g.service.clone();
         let method = g.method.clone();
-        self.set_status(
-            format!(
-                "loading schema from {}…",
-                if matches!(g.schema, SchemaSource::Reflection) {
-                    resolved.uri.clone()
-                } else {
-                    "proto files".into()
-                }
-            ),
-            StatusKind::Info,
-        );
-        self.rt.spawn(async move {
-            let r = runner::load_schema(&root, &resolved, &g.schema, &cache, refresh).await;
+        if open_picker || self.complete.is_none() {
+            self.set_status(
+                format!(
+                    "loading schema from {}…",
+                    if matches!(g.schema, SchemaSource::Reflection) {
+                        resolved.uri.clone()
+                    } else {
+                        "proto files".into()
+                    }
+                ),
+                StatusKind::Info,
+            );
+        }
+        if let Some((_, task)) = self.schema_job.take() {
+            task.abort();
+        }
+        self.schema_seq = self.schema_seq.wrapping_add(1);
+        let job = self.schema_seq;
+        let task = self.rt.spawn(async move {
+            let r = runner::load_schema(&root, &resolved, &g.schema, &cache, refresh, &tls).await;
             let template = match (&r, template) {
                 (Ok(s), true) => s.template(&svc, &method).ok(),
                 _ => None,
             };
             let _ = tx.send(AppMsg::Schema {
                 tab: id,
+                job,
                 result: r.map(|s| s.services()),
                 open_picker,
                 template,
             });
         });
+        self.schema_job = Some((job, task));
     }
 
     fn open_grpc_method_picker(&mut self) {
@@ -2059,7 +3709,7 @@ impl App {
             self.load_schema(true, false, false);
             return;
         };
-        let current = format!("{}/{}", t.ed.service, t.ed.grpc_method);
+        let current = format!("{}/{}", t.ed.service(), t.ed.method());
         let mut items = Vec::new();
         let mut details = Vec::new();
         for s in &svcs {
@@ -2104,11 +3754,17 @@ impl App {
 
     pub fn set_env(&mut self, env: Option<String>) {
         self.active_env = env;
+        // A watch re-resolves variables at every send; a new environment makes
+        // that a different request, so watches stop.
+        let watched = self.tabs.iter_mut().filter_map(|t| t.watch.take()).count();
         self.refresh_names();
         self.session_dirty = true;
         // The status line and the tab bar show the new environment; an older
         // confirmation would now be stale.
         self.clear_transient_status();
+        if watched > 0 {
+            self.set_status("watch off (environment changed)", StatusKind::Info);
+        }
     }
 
     pub fn open_env_editor(&mut self) {
@@ -2136,12 +3792,38 @@ impl App {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
         match self.project.envs.load(&name) {
             Ok(env) => ed.load(&env, |v| self.project.envs.is_set(&name, v)),
-            Err(e) => ed.error = Some(e.to_string()),
+            Err(e) => {
+                // Never show (and so never save) another environment's rows.
+                ed.table = EnvEditor::table();
+                ed.dirty = false;
+                ed.error = Some(e.to_string());
+            }
         }
     }
 
     fn save_env_editor(&mut self, ed: &mut EnvEditor) -> bool {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
+        // A file that does not parse was never loaded: saving would replace
+        // it with what the editor shows.
+        match self.project.envs.load(&name) {
+            Ok(_) => {}
+            // A deleted file is written again.
+            Err(sendito_store::StoreError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                ed.error = Some(format!("not saved: fix the file first ({e})"));
+                return false;
+            }
+        }
+        // `to_env` keeps the last of two rows with one name: say so instead.
+        let mut seen = std::collections::HashSet::new();
+        for r in ed.table.values() {
+            let var = r.cells[0].text().trim().to_string();
+            if !var.is_empty() && !seen.insert(var.clone()) {
+                ed.error = Some(format!("{var}: two variables have this name"));
+                return false;
+            }
+        }
         let (env, secrets) = ed.to_env(&name);
         if let Err(e) = self.project.envs.save(&env) {
             ed.error = Some(e.to_string());
@@ -2164,6 +3846,157 @@ impl App {
         };
         self.set_status(format!("saved {label}"), StatusKind::Ok);
         true
+    }
+
+    // ----- MCP servers --------------------------------------------------
+
+    /// The project config file (`<root>/.sendito/config.toml`), where servers
+    /// added from the interface are written.
+    fn project_config_path(&self) -> std::path::PathBuf {
+        sendito_store::config::project_path(&self.project.root)
+    }
+
+    /// The project file's own `[mcp.servers]`. The editors work on these
+    /// only: the merged config also holds the global file's servers, whose
+    /// literal values (tokens) must never be copied into the project file,
+    /// which is versioned.
+    ///
+    /// A project file that does not load cleanly is an error: its servers
+    /// would read as none, and a write would delete them.
+    fn project_mcp_servers(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, sendito_store::config::McpServer>, String> {
+        let (cfg, warnings) = sendito_store::config::load(None, Some(&self.project_config_path()));
+        if warnings.is_empty() {
+            Ok(cfg.mcp.servers)
+        } else {
+            Err(format!("fix the config first: {}", warnings.join("; ")))
+        }
+    }
+
+    /// Reloads the merged servers (global and project) after a write.
+    fn reload_mcp_servers(&mut self) {
+        let path = self.project_config_path();
+        self.project.config.mcp.servers =
+            sendito_store::config::load(self.project.global_config.as_deref(), Some(&path))
+                .0
+                .mcp
+                .servers;
+    }
+
+    pub fn open_mcp_editor(&mut self) {
+        self.clear_transient_status();
+        let mut ed = McpEditor {
+            table: McpEditor::table(),
+            dirty: false,
+            error: None,
+        };
+        match self.project_mcp_servers() {
+            Ok(servers) => ed.load(&servers),
+            Err(e) => ed.error = Some(e),
+        }
+        self.overlay = Some(Overlay::Mcp(ed));
+    }
+
+    /// `:mcpadd <name>`: asks for the URL or command and writes it at once (the
+    /// editor is for reviewing and fixing what is already there).
+    fn prompt_mcp_add(&mut self, name: &str) {
+        self.clear_transient_status();
+        if name.trim().is_empty() {
+            self.set_status(
+                "usage: :mcpadd <name> (then the URL or command, and the kind)",
+                StatusKind::Warn,
+            );
+            return;
+        }
+        let mut prompt = Prompt::new(
+            &format!("Add the MCP server \"{}\"", name.trim()),
+            "URL or command",
+            TextEditor::single(""),
+            vec![("Kind".into(), vec!["http".into(), "stdio".into()], 0)],
+            PromptAction::McpServer {
+                name: name.trim().to_string(),
+            },
+        );
+        prompt.note = Some(
+            "http takes a URL (https://host/mcp); stdio a command line, split on spaces.".into(),
+        );
+        self.overlay = Some(Overlay::Prompt(prompt));
+    }
+
+    /// Replaces `[mcp.servers]` in the project config with the editor's rows,
+    /// keeping what the table does not show (env, headers, auth) for a row
+    /// whose name and command/URL did not change.
+    fn save_mcp_editor(&mut self, ed: &mut McpEditor) -> bool {
+        // `rows` keeps the first of two rows with one name: say so instead of
+        // dropping the other one on save.
+        let mut seen = std::collections::HashSet::new();
+        for r in ed.table.values() {
+            let name = r.cells[0].text().trim().to_string();
+            if !name.is_empty() && !seen.insert(name.clone()) {
+                ed.error = Some(format!("{name}: two servers have this name"));
+                return false;
+            }
+        }
+        let own = match self.project_mcp_servers() {
+            Ok(own) => own,
+            Err(e) => {
+                ed.error = Some(e);
+                return false;
+            }
+        };
+        let mut servers = std::collections::BTreeMap::new();
+        for (name, kind, value) in ed.rows() {
+            if value.is_empty() {
+                ed.error = Some(format!("{name}: set a URL or a command"));
+                return false;
+            }
+            let old = own.get(&name).cloned();
+            servers.insert(name, mcp_server_entry(kind, &value, old));
+        }
+        let path = self.project_config_path();
+        if let Err(e) = sendito_store::config::set_mcp_servers(&path, &servers) {
+            ed.error = Some(e.to_string());
+            return false;
+        }
+        let n = servers.len();
+        self.reload_mcp_servers();
+        ed.load(&servers);
+        self.set_status(
+            format!("saved {n} MCP server(s) to {}", path.display()),
+            StatusKind::Ok,
+        );
+        true
+    }
+
+    /// `:mcpadd` confirm: one server added to the project config.
+    fn add_mcp_server(&mut self, name: &str, kind: usize, value: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a server needs a name".into());
+        }
+        if name.contains(char::is_whitespace) {
+            return Err("a server name has no spaces (it is the [mcp.servers.<name>] key)".into());
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(if kind == 1 {
+                "a stdio server needs a command".into()
+            } else {
+                "an http server needs a URL".into()
+            });
+        }
+        let mut servers = self.project_mcp_servers()?;
+        let old = servers.get(name).cloned();
+        servers.insert(name.to_string(), mcp_server_entry(kind, value, old));
+        let path = self.project_config_path();
+        sendito_store::config::set_mcp_servers(&path, &servers).map_err(|e| e.to_string())?;
+        self.reload_mcp_servers();
+        self.set_status(
+            format!("added MCP server {name} to {}", path.display()),
+            StatusKind::Ok,
+        );
+        Ok(())
     }
 
     // ----- history ------------------------------------------------------
@@ -2287,17 +4120,15 @@ impl App {
             // A suggested name: selected, so typing replaces it.
             input.select_all();
         }
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save request (from history)".into(),
-            label: "Name".into(),
+        let mut prompt = Prompt::new(
+            "Save request (from history)",
+            "Name",
             input,
-            choices: vec![("In folder".into(), labels, idx)],
-            focus: 0,
-            action: PromptAction::SaveHistory(i),
-            error: None,
-            note,
-            open: None,
-        }));
+            vec![("In folder".into(), labels, idx)],
+            PromptAction::SaveHistory(Box::new(e)),
+        );
+        prompt.note = note;
+        self.overlay = Some(Overlay::Prompt(prompt));
     }
 
     // ----- tree operations ----------------------------------------------
@@ -2337,35 +4168,36 @@ impl App {
 
     fn prompt_new_request(&mut self) {
         let folder = self.tree.target_folder();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "New request".into(),
-            label: "Name".into(),
-            input: TextEditor::single(""),
-            choices: vec![
-                ("Type".into(), vec!["HTTP".into(), "gRPC".into()], 0),
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "New request",
+            "Name",
+            TextEditor::single(""),
+            vec![
+                (
+                    "Type".into(),
+                    vec![
+                        "HTTP".into(),
+                        "gRPC".into(),
+                        "WebSocket".into(),
+                        "MCP".into(),
+                    ],
+                    0,
+                ),
                 self.folder_choice(),
             ],
-            focus: 0,
-            action: PromptAction::NewRequest { folder },
-            error: None,
-            note: None,
-            open: None,
-        }));
+            PromptAction::NewRequest { folder },
+        )));
     }
 
     fn prompt_new_folder(&mut self) {
         let folder = self.tree.target_folder();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "New folder".into(),
-            label: "Name".into(),
-            input: TextEditor::single(""),
-            choices: vec![self.folder_choice()],
-            focus: 0,
-            action: PromptAction::NewFolder { folder },
-            error: None,
-            note: None,
-            open: None,
-        }));
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "New folder",
+            "Name",
+            TextEditor::single(""),
+            vec![self.folder_choice()],
+            PromptAction::NewFolder { folder },
+        )));
     }
 
     fn prompt_rename(&mut self) {
@@ -2374,20 +4206,16 @@ impl App {
         };
         let mut input = TextEditor::single(&row.name);
         input.select_all();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: format!(
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            &format!(
                 "Rename {}",
                 if row.is_folder() { "folder" } else { "request" }
             ),
-            label: "New name".into(),
+            "New name",
             input,
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::Rename(row.rel),
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![],
+            PromptAction::Rename(row.rel),
+        )));
     }
 
     fn tree_duplicate(&mut self) {
@@ -2602,28 +4430,289 @@ impl App {
     }
 
     fn open_search(&mut self) {
+        self.open_query(QueryMode::Find);
+    }
+
+    fn open_filter(&mut self) {
+        self.open_query(QueryMode::Jq);
+    }
+
+    /// Opens the query bar above the response view (jq: above the body), or
+    /// focuses it when it is open in that mode.
+    fn open_query(&mut self, mode: QueryMode) {
         if self.tab().and_then(|t| t.response.as_ref()).is_none() {
-            self.set_status("no response to search yet", StatusKind::Info);
+            let msg = match mode {
+                QueryMode::Jq => "no response to filter yet",
+                QueryMode::Find => "no response to search yet",
+            };
+            self.set_status(msg, StatusKind::Info);
             return;
         }
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Search response".into(),
-            label: "Find".into(),
-            input: TextEditor::single(""),
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::Search,
-            error: None,
-            note: None,
-            open: None,
-        }));
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if mode == QueryMode::Jq {
+            t.resp_tab = 0;
+        }
+        let tab = t.resp_tab;
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let open = resp
+            .query
+            .as_ref()
+            .is_some_and(|q| q.mode == mode && q.tab == tab);
+        if !open {
+            let text = match mode {
+                QueryMode::Jq => resp.jq.clone().unwrap_or_default(),
+                QueryMode::Find => resp
+                    .viewer_mut(tab)
+                    .search
+                    .as_ref()
+                    .map(|s| s.query.clone())
+                    .unwrap_or_default(),
+            };
+            resp.query = Some(QueryBar::new(mode, &text, tab));
+        }
+        self.focus = Focus::RespQuery;
+    }
+
+    /// Whether the active tab shows a query bar on its current response tab.
+    pub(crate) fn query_shown(&self) -> bool {
+        self.tab().is_some_and(|t| {
+            t.response
+                .as_ref()
+                .and_then(|r| r.query.as_ref())
+                .is_some_and(|q| q.tab == t.resp_tab)
+        })
+    }
+
+    /// A key typed in the query bar: the text applies at each change (a jq
+    /// filter on a large body waits for Enter).
+    fn query_key(&mut self, key: KeyEvent) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let history = t.jq_history.clone();
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        let mode = q.mode;
+        if key.code == KeyCode::Tab {
+            if mode == QueryMode::Jq {
+                self.jq_complete();
+            }
+            return;
+        }
+        if mode == QueryMode::Jq && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            let pos = match (key.code, q.history_pos) {
+                (_, _) if history.is_empty() => return,
+                (KeyCode::Up, None) => Some(history.len() - 1),
+                (KeyCode::Up, Some(i)) => Some(i.saturating_sub(1)),
+                (_, Some(i)) if i + 1 < history.len() => Some(i + 1),
+                _ => None,
+            };
+            q.history_pos = pos;
+            q.input.set_text(pos.map_or("", |i| history[i].as_str()));
+            q.input.move_to_end();
+            if live {
+                resp.run_query();
+            }
+            return;
+        }
+        match q.input.handle_key(&key, false, &mut self.clipboard) {
+            Outcome::Changed => {
+                q.history_pos = None;
+                if live || mode == QueryMode::Find {
+                    resp.run_query();
+                } else {
+                    q.error = None;
+                }
+                self.complete_typed();
+            }
+            Outcome::Submit => {
+                if !live || mode == QueryMode::Find {
+                    resp.run_query();
+                }
+                self.query_submit();
+            }
+            Outcome::Leave => self.query_leave(),
+            _ => {}
+        }
+    }
+
+    /// Enter in the query bar: keep the result and go back to the view. An
+    /// empty bar closes; a jq error keeps the bar focused.
+    fn query_submit(&mut self) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let Some(resp) = t.response.as_mut() else {
+            return;
+        };
+        let Some(q) = resp.query.as_ref() else {
+            return;
+        };
+        let (mode, text) = (q.mode, q.input.text());
+        // The bar shows the error; the text stays for editing.
+        if q.error.is_some() {
+            return;
+        }
+        match resp.query.as_mut() {
+            Some(_) if text.trim().is_empty() => resp.query = None,
+            Some(q) => q.committed = text.clone(),
+            None => {}
+        }
+        self.focus = Focus::RespBody;
+        match mode {
+            QueryMode::Jq => {
+                t.remember_jq(&text);
+                let msg = if text.trim().is_empty() {
+                    "jq filter cleared"
+                } else {
+                    "jq filter applied"
+                };
+                self.set_status(msg, StatusKind::Ok);
+            }
+            QueryMode::Find => {
+                let n = resp.query.as_ref().map(|q| q.tab).map_or(0, |tab| {
+                    resp.viewer_mut(tab)
+                        .search
+                        .as_ref()
+                        .map_or(0, |s| s.matches.len())
+                });
+                if n == 0 && !text.is_empty() {
+                    self.set_status(format!("no match for \"{text}\""), StatusKind::Warn);
+                } else if n > 0 {
+                    self.set_status(
+                        format!("{n} match(es) · n/N next/previous"),
+                        StatusKind::Info,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The jq key context at the query bar's cursor.
+    fn jq_complete_context(&self) -> Option<(String, String, usize)> {
+        let q = self.tab()?.response.as_ref()?.query.as_ref()?;
+        if q.mode != QueryMode::Jq {
+            return None;
+        }
+        crate::complete::jq_context(&q.input.text(), q.input.cursor.col)
+    }
+
+    /// Tab in the jq bar: completes the object key at the cursor. One match
+    /// is inserted at once; more open the popup.
+    fn jq_complete(&mut self) {
+        let Some((base, prefix, start)) = self.jq_complete_context() else {
+            self.set_status("Tab completes a key after a \".\"", StatusKind::Info);
+            return;
+        };
+        let Some(t) = self.tab() else {
+            return;
+        };
+        let Some(r) = t.response.as_ref() else {
+            return;
+        };
+        let src = r.jq_src.as_deref().unwrap_or(r.body.doc.bytes());
+        let mut c = Completion::new(CompleteKind::JqKey, t.id, None);
+        c.start = Pos { row: 0, col: start };
+        c.set_pool(crate::complete::jq_keys(&base, src), prefix);
+        match c.items.len() {
+            0 => self.set_status("no keys to complete here", StatusKind::Info),
+            1 => {
+                let name = c.items[0].name.clone();
+                self.jq_complete_insert(c.start, &name);
+            }
+            _ => self.complete = Some(c),
+        }
+    }
+
+    /// Puts a key over the one typed in the jq bar and runs the filter.
+    fn jq_complete_insert(&mut self, start: Pos, name: &str) -> bool {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return false;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return false;
+        };
+        let line: Vec<char> = q.input.text().chars().collect();
+        let mut end = q.input.cursor.col;
+        while line
+            .get(end)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+        {
+            end += 1;
+        }
+        let span_end = Pos { row: 0, col: end };
+        q.input
+            .replace_span(start, span_end, &crate::complete::jq_key_text(name));
+        if live {
+            resp.run_query();
+        }
+        true
+    }
+
+    /// Esc in the query bar: back to the view with the text the last Enter
+    /// kept; the bar closes when that text is empty.
+    fn query_leave(&mut self) {
+        self.focus = Focus::RespBody;
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        q.history_pos = None;
+        let committed = q.committed.clone();
+        if q.input.text() != committed || q.error.is_some() {
+            q.input.set_text(&committed);
+            q.input.move_to_end();
+            resp.run_query();
+        }
+        if committed.trim().is_empty() {
+            resp.query = None;
+        }
+    }
+
+    /// Applies (or clears) the jq filter on the active tab's response body and
+    /// shows the body tab, where the result is drawn (`:jq <expression>`).
+    fn apply_filter(&mut self, expr: &str) -> Result<bool, String> {
+        let t = self
+            .tab_mut()
+            .ok_or_else(|| "no open request".to_string())?;
+        let resp = t
+            .response
+            .as_mut()
+            .ok_or_else(|| "no response to filter yet".to_string())?;
+        let applied = resp.apply_jq(expr)?;
+        // The query bar shows the filter that applies.
+        resp.query = applied.then(|| QueryBar::new(QueryMode::Jq, expr.trim(), 0));
+        t.resp_tab = 0;
+        t.remember_jq(expr);
+        self.focus = Focus::RespBody;
+        Ok(applied)
     }
 
     pub fn open_import(&mut self, prefill: &str) {
         let mut input = TextEditor::multi(prefill)
-            .with_placeholder("curl https://…   or   path/to/collection.postman_collection.json");
+            .with_placeholder("curl https://…   or   path/to/collection.json or Bruno directory");
         input.move_to_end();
-        self.overlay = Some(Overlay::Import(Import { input, error: None }));
+        self.overlay = Some(Overlay::Import(Import::new(input)));
     }
 
     fn import_curl(&mut self, text: &str) {
@@ -2684,12 +4773,14 @@ impl App {
             return Err("paste a curl command or enter a file path".into());
         }
         if t.starts_with("curl ") || t == "curl" {
+            // Check first: on an error the dialog stays open with the text.
+            sendito_import::curl::import(t).map_err(|e| format!("curl: {e}"))?;
             self.overlay = None;
             self.import_curl(t);
             return Ok(());
         }
-        let json = if t.starts_with('{') {
-            t.to_string()
+        let (format, result) = if t.starts_with('{') {
+            sendito_import::import_json(t)?
         } else {
             // A relative path is looked up in the working directory, then in
             // the collection folder.
@@ -2701,9 +4792,8 @@ impl App {
                     p = in_root;
                 }
             }
-            std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?
+            sendito_import::import_path(&p)?
         };
-        let result = sendito_import::postman::import(&json).map_err(|e| e.to_string())?;
         let rep = sendito_import::write(&result, &self.project.coll, Some(&self.project.envs), "")
             .map_err(|e| e.to_string())?;
         self.overlay = None;
@@ -2712,10 +4802,31 @@ impl App {
         self.refresh_names();
         let here = self.project.name.clone();
         let mut text = format!(
-            "Postman collection \"{}\" imported as the folder {}/ in this collection ({here}).\n\n  requests:  {}\n  folders:   {}\n  variables: {} (collection variables)\n",
-            result.root.name, rep.folder, rep.requests, rep.folders, rep.variables
+            "{} collection \"{}\" imported as the folder {}/ in this collection ({here}).\n\n  requests:  {}\n  folders:   {}\n  variables: {} (collection variables)\n",
+            format.label(),
+            result.root.name,
+            rep.folder,
+            rep.requests,
+            rep.folders,
+            rep.variables
         );
-        if result.skipped.is_empty() {
+        if rep.environments > 0 {
+            text.push_str(&format!("  environments: {}\n", rep.environments));
+        }
+        for name in &rep.variable_conflicts {
+            text.push_str(&format!(
+                "  kept the existing collection variable {name:?}\n"
+            ));
+        }
+        for (original, renamed) in &rep.renamed_environments {
+            text.push_str(&format!(
+                "  environment {original:?} imported as {renamed:?}\n"
+            ));
+        }
+        if result.skipped.is_empty()
+            && rep.variable_conflicts.is_empty()
+            && rep.renamed_environments.is_empty()
+        {
             text.push_str("\nEverything was imported as it was.\n");
         } else {
             // Three kinds of note, each with what to do about it.
@@ -2767,7 +4878,7 @@ impl App {
                 }
             }
         }
-        self.show_report("Postman import", &text);
+        self.show_report(&format!("{} import", format.label()), &text);
         let notes = result.skipped.len();
         if let Some(Overlay::Report(r)) = &mut self.overlay {
             r.close_status = Some(format!(
@@ -2795,6 +4906,28 @@ impl App {
         }));
     }
 
+    /// The scope an export renders with, and a warning naming the secrets
+    /// that did not load (they stay `{{placeholders}}` in the output).
+    fn export_scope(&self, include_secrets: bool) -> (Scope, String) {
+        if !include_secrets {
+            return (self.names.clone(), String::new());
+        }
+        let (scope, errors) = runner::build_scope(
+            &self.project.envs,
+            self.active_env.as_deref(),
+            &self.runtime,
+        );
+        let warning = if errors.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "NOT LOADED (left as typed, or a value from another layer): {}\n\n",
+                errors.join("; ")
+            )
+        };
+        (scope, warning)
+    }
+
     pub fn export_curl(&mut self, include_secrets: bool) {
         let Some(t) = self.tab() else { return };
         let Request::Http(h) = &t.model else {
@@ -2802,16 +4935,7 @@ impl App {
             return;
         };
         let h = h.clone();
-        let scope = if include_secrets {
-            runner::build_scope(
-                &self.project.envs,
-                self.active_env.as_deref(),
-                &self.runtime,
-            )
-            .0
-        } else {
-            self.names.clone()
-        };
+        let (scope, warning) = self.export_scope(include_secrets);
         let cmd = sendito_import::curl::export(&h, &scope, include_secrets, &self.project.root);
         self.clipboard.set(cmd.clone(), false);
         self.osc52.push(cmd.clone());
@@ -2842,21 +4966,72 @@ impl App {
         self.overlay = Some(Overlay::Report(Report {
             title: "Copy as curl".into(),
             viewer: Viewer::new(Doc::text(&format!(
-                "{cmd}\n\n── notes (not part of the command) ──\n{flags}{note}\n"
+                "{cmd}\n\n── notes (not part of the command) ──\n{warning}{flags}{note}\n"
             ))),
             copy_text: cmd,
             copied: true,
             close_status: Some("the curl command was sent to the terminal clipboard".into()),
         }));
-        self.set_status(
-            "curl command sent to the terminal clipboard",
-            StatusKind::Ok,
+        if warning.is_empty() {
+            self.set_status(
+                "curl command sent to the terminal clipboard",
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                "curl command sent to the terminal clipboard; some secrets did not load",
+                StatusKind::Warn,
+            );
+        }
+    }
+
+    /// Copies the active request as an .http file (JetBrains HTTP client /
+    /// VS Code REST Client).
+    fn export_http_file(&mut self, include_secrets: bool) {
+        let Some(t) = self.tab() else { return };
+        let Request::Http(h) = &t.model else {
+            self.set_status(".http export is for HTTP requests", StatusKind::Warn);
+            return;
+        };
+        let name = t.name.clone();
+        let h = h.clone();
+        let (scope, warning) = self.export_scope(include_secrets);
+        let file = sendito_import::http_file::export(
+            &name,
+            &h,
+            &scope,
+            include_secrets,
+            &self.project.root,
         );
+        self.clipboard.set(file.clone(), false);
+        self.osc52.push(file.clone());
+        let note = if include_secrets {
+            "Sent to the terminal clipboard (OSC 52); some terminals block it. It CONTAINS SECRET VALUES."
+        } else {
+            "Copied to the terminal clipboard (OSC 52); some terminals block it. Secret variables stay \u{7b}\u{7b}placeholders\u{7d}\u{7d}; :httpfile! includes their values."
+        };
+        self.overlay = Some(Overlay::Report(Report {
+            title: "Copy as .http".into(),
+            viewer: Viewer::new(Doc::text(&format!(
+                "{file}\n\n── notes (not part of the file) ──\n{warning}{note}\n"
+            ))),
+            copy_text: file,
+            copied: true,
+            close_status: Some("the .http file was sent to the terminal clipboard".into()),
+        }));
+        if warning.is_empty() {
+            self.set_status(".http file sent to the terminal clipboard", StatusKind::Ok);
+        } else {
+            self.set_status(
+                ".http file sent to the terminal clipboard; some secrets did not load",
+                StatusKind::Warn,
+            );
+        }
     }
 
     fn format_body(&mut self) {
         let Some(t) = self.tab_mut() else { return };
-        let ed = if t.ed.kind == Kind::Grpc {
+        let ed = if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp | Kind::Ws) {
             &mut t.ed.message
         } else {
             &mut t.ed.body_text
@@ -2908,6 +5083,65 @@ impl App {
         );
     }
 
+    /// The jq path of the JSON value at the body cursor (pretty view).
+    fn body_path(&mut self) -> Option<String> {
+        let t = self.tabs.get_mut(self.active)?;
+        if t.resp_tab != 0 {
+            return None;
+        }
+        t.response.as_mut()?.body.json_path()
+    }
+
+    /// Narrows the jq filter to the JSON value at the cursor.
+    fn filter_here(&mut self) {
+        let Some(path) = self.body_path() else {
+            self.set_status(
+                "no JSON value at the cursor (Pretty view)",
+                StatusKind::Info,
+            );
+            return;
+        };
+        let current = self
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .and_then(|r| r.jq.clone());
+        // A filtered body is the filter's output: the path continues it.
+        let expr = match current {
+            Some(j) if path == "." => j,
+            Some(j) => format!("{j} | {path}"),
+            None => path,
+        };
+        match self.apply_filter(&expr) {
+            Ok(_) => self.set_status("jq filter applied", StatusKind::Ok),
+            Err(e) => self.set_status(e, StatusKind::Error),
+        }
+    }
+
+    /// Shows the previous or next message of a stream in the body.
+    fn step_message(&mut self, step: isize) {
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        t.resp_tab = 0;
+        let moved = t.response.as_mut().is_some_and(|r| r.select_message(step));
+        if !moved {
+            self.set_status("no other message", StatusKind::Info);
+        }
+    }
+
+    fn copy_path(&mut self) {
+        let Some(path) = self.body_path() else {
+            self.set_status(
+                "no JSON value at the cursor (Pretty view)",
+                StatusKind::Info,
+            );
+            return;
+        };
+        self.clipboard.set(path.clone(), false);
+        self.osc52.push(path.clone());
+        self.set_status(format!("copied {path}"), StatusKind::Ok);
+    }
+
     fn prompt_save_body(&mut self) {
         if self.tab().and_then(|t| t.response.as_ref()).is_none() {
             self.set_status("no response yet", StatusKind::Info);
@@ -2919,17 +5153,13 @@ impl App {
             .unwrap_or_default();
         let mut input = TextEditor::single(&suggestion);
         input.move_to_end();
-        self.overlay = Some(Overlay::Prompt(Prompt {
-            title: "Save response body".into(),
-            label: "File".into(),
+        self.overlay = Some(Overlay::Prompt(Prompt::new(
+            "Save response body",
+            "File",
             input,
-            choices: vec![],
-            focus: 0,
-            action: PromptAction::SaveBody,
-            error: None,
-            note: None,
-            open: None,
-        }));
+            vec![],
+            PromptAction::SaveBody,
+        )));
     }
 
     pub fn save_body(&mut self, path: &str) -> Result<String, String> {
@@ -2937,15 +5167,184 @@ impl App {
         let r = t.response.as_ref().ok_or("no response")?;
         let p =
             sendito_store::env::expand(&std::env::current_dir().unwrap_or_default(), path.trim());
-        std::fs::write(&p, r.body.doc.bytes()).map_err(|e| format!("{}: {e}", p.display()))?;
+        // The jq filter is display-only: save the body as received.
+        let bytes = r.jq_src.as_deref().unwrap_or(r.body.doc.bytes());
+        std::fs::write(&p, bytes).map_err(|e| format!("{}: {e}", p.display()))?;
         Ok(format!(
             "saved {} to {}",
-            human_size(r.body.doc.len() as u64),
+            human_size(bytes.len() as u64),
             p.display()
         ))
     }
 
     // ----- palette commands ---------------------------------------------
+
+    /// `:cookies [clear | delete <number>]`. The jar is guarded by a
+    /// cross-process lock, so the work runs off the UI thread and the result
+    /// arrives as an [`AppMsg::Cookies`] message.
+    fn cookies_command(&mut self, arg: &str) {
+        enum Op {
+            List,
+            Clear,
+            Delete(usize),
+        }
+        let op = if arg == "clear" {
+            Ok(Op::Clear)
+        } else if let Some(number) = arg.strip_prefix("delete ") {
+            number
+                .trim()
+                .parse::<usize>()
+                .map(Op::Delete)
+                .map_err(|_| ())
+        } else if arg.is_empty() {
+            Ok(Op::List)
+        } else {
+            Err(())
+        };
+        let Ok(op) = op else {
+            self.set_status(
+                "usage: :cookies [clear | delete <number>]",
+                StatusKind::Error,
+            );
+            return;
+        };
+        if self.cookies_job.is_some() {
+            self.set_status("a cookie command is already running", StatusKind::Warn);
+            return;
+        }
+        let root = self.project.root.clone();
+        let env = self
+            .active_env
+            .clone()
+            .unwrap_or_else(|| COLLECTION_ENV.into());
+        self.cookies_job_seq = self.cookies_job_seq.wrapping_add(1);
+        let job = self.cookies_job_seq;
+        let tx = self.tx.clone();
+        let task = self.rt.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let r = match op {
+                    Op::List => {
+                        sendito_store::cookies::describe(&root, &env).map(CookiesOutcome::List)
+                    }
+                    Op::Clear => sendito_store::cookies::clear(&root, &env).map(|()| {
+                        CookiesOutcome::Done("cookies cleared for the active environment")
+                    }),
+                    Op::Delete(n) => sendito_store::cookies::delete(&root, &env, n)
+                        .map(|()| CookiesOutcome::Done("cookie deleted")),
+                };
+                r.map_err(|e| e.to_string())
+            })
+            .await
+            .map_err(|_| "cookie jar task failed".to_string())
+            .and_then(|r| r);
+            let _ = tx.send(AppMsg::Cookies { job, result });
+        });
+        self.cookies_job = Some((job, task));
+        self.set_status("working on the cookie jar…", StatusKind::Info);
+    }
+
+    fn http_oauth_command(&mut self, arg: &str) {
+        let Some((action, name)) = arg.split_once(char::is_whitespace) else {
+            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            return;
+        };
+        let name = name.trim();
+        if name.is_empty() || !matches!(action, "login" | "logout") {
+            self.set_status("usage: :auth login|logout <identity>", StatusKind::Error);
+            return;
+        }
+        if self.oauth_login.is_some() {
+            self.set_status("an OAuth operation is already running", StatusKind::Warn);
+            return;
+        }
+        let identity = self.project.config.oauth.get(name).cloned();
+        if action == "login" && identity.is_none() {
+            self.set_status(
+                "OAuth identity is not defined in [oauth]",
+                StatusKind::Error,
+            );
+            return;
+        }
+        let account =
+            runner::oauth_token_account(&self.project.name, self.active_env.as_deref(), name);
+        let keychain = self.project.envs.keychain.clone();
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let login = action == "login";
+        self.oauth_login_seq = self.oauth_login_seq.wrapping_add(1);
+        let job = self.oauth_login_seq;
+        let tx = self.tx.clone();
+        let task = self.rt.spawn(async move {
+            let result: Result<String, String> = async {
+                if !login {
+                    tokio::task::spawn_blocking(move || keychain.delete(&account))
+                        .await
+                        .map_err(|_| "keychain task failed".to_string())?
+                        .map_err(|_| "could not delete OAuth tokens".to_string())?;
+                    return Ok("HTTP OAuth tokens removed".into());
+                }
+                let (scope, errors) = tokio::task::spawn_blocking(move || {
+                    runner::build_scope(&envs, env.as_deref(), &runtime)
+                })
+                .await
+                .map_err(|_| "environment resolution failed".to_string())?;
+                if !errors.is_empty() {
+                    return Err("cannot resolve environment secrets".into());
+                }
+                let identity = identity.ok_or("OAuth identity is not defined")?;
+                let settings = runner::oauth_settings(&identity, &scope)?;
+                let opener = |url: &str| {
+                    let program = if cfg!(target_os = "macos") {
+                        "open"
+                    } else {
+                        "xdg-open"
+                    };
+                    std::process::Command::new(program)
+                        .arg(url)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .is_ok()
+                };
+                let note = |text: String| {
+                    if let Some(url) = text.strip_prefix("authorization URL:\n  ") {
+                        let _ = tx.send(AppMsg::OAuthUrl {
+                            job,
+                            url: url.into(),
+                        });
+                    }
+                };
+                let tokens = sendito_mcp::oauth::login_http(
+                    &settings,
+                    Duration::from_secs(300),
+                    &opener,
+                    &note,
+                )
+                .await
+                .map_err(|_| {
+                    "OAuth login failed; check the endpoints and authorization response".to_string()
+                })?;
+                tokio::task::spawn_blocking(move || keychain.set(&account, &tokens.to_json()))
+                    .await
+                    .map_err(|_| "keychain task failed".to_string())?
+                    .map_err(|_| "could not store OAuth tokens".to_string())?;
+                Ok("HTTP OAuth login complete".into())
+            }
+            .await;
+            let _ = tx.send(AppMsg::OAuthDone { job, result });
+        });
+        self.oauth_login = Some((job, task));
+        self.set_status(
+            if login {
+                "starting HTTP OAuth login"
+            } else {
+                "removing OAuth tokens"
+            },
+            StatusKind::Info,
+        );
+    }
 
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
@@ -2956,6 +5355,20 @@ impl App {
         match word {
             "send" => self.send(false),
             "cancel" => self.cancel(),
+            "auth" => self.http_oauth_command(arg),
+            "watch" => {
+                let secs = if arg.is_empty() {
+                    Ok(None)
+                } else {
+                    arg.parse::<u64>().map(Some)
+                };
+                match secs {
+                    Ok(s) => self.toggle_watch(s),
+                    Err(_) => {
+                        self.set_status("usage: :watch [seconds]".to_string(), StatusKind::Error)
+                    }
+                }
+            }
             "end" => self.end_stream(),
             "env" => {
                 let list = self.project.envs.list();
@@ -2977,6 +5390,7 @@ impl App {
                 }
             }
             "envs" => self.open_env_editor(),
+            "theme" => self.theme_command(arg),
             "w" | "write" | "save" => self.save(),
             "saveas" => {
                 if let Some(t) = self.tab() {
@@ -2986,12 +5400,22 @@ impl App {
             }
             "wq" | "x" => {
                 self.save();
-                self.request_quit();
+                // An unnamed request opens the name prompt: let it stay up
+                // instead of hiding it under the quit dialog.
+                if self.overlay.is_none() {
+                    self.request_quit();
+                }
             }
             "q" | "quit" => self.request_quit(),
             "q!" | "quit!" => self.quit = true,
             "new" => self.new_tab(Request::new_http()),
             "newgrpc" => self.new_tab(Request::new_grpc()),
+            "newws" => self.new_tab(Request::new_ws()),
+            "newmcp" => self.new_tab(Request::new_mcp()),
+            "mcpservers" if arg == "edit" => self.open_mcp_editor(),
+            "mcpservers" => self.open_mcp_server_picker(),
+            "mcpadd" => self.prompt_mcp_add(arg),
+            "mcptools" => self.load_mcp_tools(true),
             "import" => {
                 if arg.is_empty() {
                     self.open_import("");
@@ -3001,7 +5425,10 @@ impl App {
             }
             "curl" => self.export_curl(false),
             "curl!" => self.export_curl(true),
+            "httpfile" => self.export_http_file(false),
+            "httpfile!" => self.export_http_file(true),
             "history" => self.toggle_history(),
+            "cookies" => self.cookies_command(arg),
             "clearhistory" => {
                 self.overlay = Some(Overlay::Confirm(Confirm {
                     title: "Clear history".into(),
@@ -3012,6 +5439,17 @@ impl App {
                 }))
             }
             "format" => self.format_body(),
+            "jq" => {
+                if arg.is_empty() {
+                    self.open_filter();
+                } else {
+                    match self.apply_filter(arg) {
+                        Ok(true) => self.set_status("jq filter applied", StatusKind::Ok),
+                        Ok(false) => self.set_status("jq filter cleared", StatusKind::Ok),
+                        Err(e) => self.set_status(e, StatusKind::Error),
+                    }
+                }
+            }
             "template" => self.load_schema(false, true, false),
             "reload" => self.load_schema(false, false, true),
             "settings" => self.overlay = Some(Overlay::Settings { sel: 0 }),
@@ -3051,6 +5489,7 @@ impl App {
                 }
             }
             SettingId::Theme => ui.theme.clone(),
+            SettingId::Icons => ui.icons.clone(),
             SettingId::Sidebar => ui.sidebar.clone(),
             SettingId::Mouse => {
                 if ui.mouse {
@@ -3073,6 +5512,79 @@ impl App {
                     "Off".into()
                 }
             }
+            SettingId::WatchInterval => format!("{} s", self.project.config.ui.watch_interval_s),
+            SettingId::Hints => ui.hints.clone(),
+        }
+    }
+
+    /// Switches to theme `name` (not saved to the config).
+    pub fn apply_theme(&mut self, name: &str) {
+        self.project.config.ui.theme = name.to_string();
+        if !no_color() {
+            self.theme = self.themes.theme(name);
+        }
+    }
+
+    /// Reads the theme files again (`:theme reload`).
+    pub fn reload_themes(&mut self) {
+        let (files, warnings) = sendito_store::themes::discover(&self.project.theme_dirs);
+        self.themes = crate::theme::Registry::from_files(files, warnings);
+        let name = self.project.config.ui.theme.clone();
+        self.apply_theme(&name);
+        let mut problems: Vec<String> = self.themes.warnings.clone();
+        problems.extend(self.themes.notes(&name).iter().cloned());
+        let n = self.themes.names().len() - crate::theme::BUILTIN.len();
+        if problems.is_empty() {
+            self.set_status(
+                format!("themes reloaded: {n} of your own, using {name}"),
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                format!("themes reloaded: {}", problems.join("; ")),
+                StatusKind::Warn,
+            );
+        }
+    }
+
+    /// `:theme [name|reload]`.
+    fn theme_command(&mut self, arg: &str) {
+        let names = self.themes.names();
+        if arg.is_empty() {
+            self.set_status(
+                format!(
+                    "theme: {} (available: {})",
+                    self.project.config.ui.theme,
+                    names.join(", ")
+                ),
+                StatusKind::Info,
+            );
+        } else if arg == "reload" {
+            self.reload_themes();
+        } else if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(arg)).cloned() {
+            self.apply_theme(&n);
+            if let Some(p) = self.project.global_config.clone()
+                && let Err(e) = sendito_store::config::set_value(
+                    &p,
+                    "ui",
+                    "theme",
+                    toml::Value::String(n.clone()),
+                )
+            {
+                self.set_status(format!("could not write settings: {e}"), StatusKind::Error);
+                return;
+            }
+            let notes = self.themes.notes(&n);
+            if notes.is_empty() {
+                self.set_status(format!("theme: {n}"), StatusKind::Ok);
+            } else {
+                self.set_status(format!("theme {n}: {}", notes.join("; ")), StatusKind::Warn);
+            }
+        } else {
+            self.set_status(
+                format!("no theme named \"{arg}\" (available: {})", names.join(", ")),
+                StatusKind::Error,
+            );
         }
     }
 
@@ -3088,17 +5600,20 @@ impl App {
                 ("ui", "vim_mode", toml::Value::Boolean(self.vim))
             }
             SettingId::Theme => {
-                let names = crate::theme::THEME_NAMES;
+                let names = self.themes.names();
                 let i = names
                     .iter()
                     .position(|n| *n == self.project.config.ui.theme)
                     .unwrap_or(0) as isize;
-                let next = names[((i + dir).rem_euclid(names.len() as isize)) as usize];
-                self.project.config.ui.theme = next.to_string();
-                if std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) {
-                    self.theme = Theme::by_name(next);
-                }
-                ("ui", "theme", toml::Value::String(next.into()))
+                let next = names[crate::list::cycle(i as usize, dir, names.len())].clone();
+                self.apply_theme(&next);
+                ("ui", "theme", toml::Value::String(next))
+            }
+            SettingId::Icons => {
+                let v = if self.icons.nerd { "unicode" } else { "nerd" };
+                self.project.config.ui.icons = v.into();
+                self.icons = crate::icons::Icons::by_name(v);
+                ("ui", "icons", toml::Value::String(v.into()))
             }
             SettingId::Sidebar => {
                 let v = if self.project.config.ui.sidebar == "right" {
@@ -3133,6 +5648,26 @@ impl App {
                     toml::Value::Boolean(self.project.config.history.enabled),
                 )
             }
+            SettingId::WatchInterval => {
+                const STEPS: [u64; 4] = [5, 10, 30, 60];
+                let i = STEPS
+                    .iter()
+                    .position(|s| *s == self.project.config.ui.watch_interval_s)
+                    .unwrap_or(0) as isize;
+                let next = STEPS[crate::list::cycle(i as usize, dir, STEPS.len())];
+                self.project.config.ui.watch_interval_s = next;
+                ("ui", "watch_interval_s", toml::Value::Integer(next as i64))
+            }
+            SettingId::Hints => {
+                const LEVELS: [&str; 3] = ["full", "short", "off"];
+                let i = LEVELS
+                    .iter()
+                    .position(|l| *l == self.project.config.ui.hints)
+                    .unwrap_or(1);
+                let next = LEVELS[crate::list::cycle(i, dir, LEVELS.len())];
+                self.project.config.ui.hints = next.into();
+                ("ui", "hints", toml::Value::String(next.into()))
+            }
         };
         if let Some(p) = self.project.global_config.clone()
             && let Err(e) = sendito_store::config::set_value(&p, section, key, value)
@@ -3164,6 +5699,17 @@ impl App {
     pub fn hints(&mut self) -> Vec<(String, String)> {
         let k = |s: &Self, a: Action| s.keymap.hint(a, s.vim);
         let mut v: Vec<(String, String)> = Vec::new();
+        if self.complete.is_some() && self.overlay.is_none() {
+            v.extend([
+                ("type".into(), "filter".into()),
+                ("↑↓".into(), "move".into()),
+                ("Enter/Tab".into(), "insert".into()),
+                ("Esc".into(), "close".into()),
+            ]);
+            v.push((k(self, Action::Palette), "commands".into()));
+            v.push((k(self, Action::Help), "all keys".into()));
+            return v;
+        }
         if let Some(ov) = &self.overlay {
             match ov {
                 Overlay::Palette(_) => v.extend([
@@ -3237,6 +5783,26 @@ impl App {
                         .into(),
                     ),
                 ]),
+                Overlay::Mcp(m) => v.extend([
+                    ("Ctrl+S".into(), "save".into()),
+                    ("Ctrl+N".into(), "add row".into()),
+                    ("Ctrl+D".into(), "delete row".into()),
+                    ("Space".into(), "kind".into()),
+                    if m.table.sel_row >= m.table.rows.len() {
+                        ("type".into(), "add server".into())
+                    } else {
+                        ("Enter".into(), "next cell".into())
+                    },
+                    (
+                        "Esc".into(),
+                        if m.dirty {
+                            "close (asks to save)"
+                        } else {
+                            "close"
+                        }
+                        .into(),
+                    ),
+                ]),
                 Overlay::Import(_) => v.extend([
                     ("F5 / Ctrl+S".into(), "import".into()),
                     ("Esc".into(), "cancel".into()),
@@ -3284,11 +5850,7 @@ impl App {
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            v.push((
-                format!("{p} …"),
-                "h/j/k/l focus · n/p tab · e send · x cancel · s save · c close · q quit · ? help"
-                    .into(),
-            ));
+            v.push((format!("{p} …"), "next key".into()));
             return v;
         }
         let running = self.tab().is_some_and(|t| t.running.is_some());
@@ -3370,6 +5932,18 @@ impl App {
                         ("Enter/↓".into(), "edit".into()),
                         ("←→".into(), "switch tab".into()),
                     ]),
+                    (Focus::ReqBody, Some(Field::McpServer)) => {
+                        v.push(("F2".into(), "choose server".into()))
+                    }
+                    (Focus::ReqBody, Some(Field::McpTool)) => {
+                        v.push(("F2".into(), "choose tool".into()))
+                    }
+                    (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
+                        v.push(("F2".into(), "choose server".into()))
+                    }
+                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
+                        v.push(("Enter".into(), "choose tool".into()))
+                    }
                     (Focus::ReqBody, Some(f)) if f.is_table() => {
                         // A choice column (e.g. a multipart part's kind).
                         let choice = self
@@ -3388,6 +5962,10 @@ impl App {
                             (k(self, Action::ToggleRow), "enable/disable".into()),
                         ]);
                     }
+                    (Focus::ReqBody, Some(Field::BodyKind)) => v.extend([
+                        ("←→".into(), "change type".into()),
+                        ("Enter".into(), "choose".into()),
+                    ]),
                     (Focus::ReqBody, Some(f)) if f.is_choice() => {
                         v.push(("Enter/Space".into(), "choose".into()))
                     }
@@ -3407,23 +5985,45 @@ impl App {
                         }
                         v.push((k(self, Action::FormatBody), "format JSON".into()));
                     }
-                    (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Http) => {
-                        v.push(("Enter".into(), "choose method".into()))
-                    }
-                    (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Grpc) => {
+                    (Focus::Bar(0), _)
+                        if self
+                            .tab()
+                            .is_some_and(|t| matches!(t.ed.kind, Kind::Http | Kind::Grpc)) =>
+                    {
                         v.push(("Enter".into(), "choose method".into()))
                     }
                     _ => {}
+                }
+            }
+            Focus::RespQuery => {
+                v.push(("Enter".into(), "keep".into()));
+                v.push(("Esc".into(), "close".into()));
+                let jq = self
+                    .tab()
+                    .and_then(|t| t.response.as_ref())
+                    .and_then(|r| r.query.as_ref())
+                    .is_some_and(|q| q.mode == QueryMode::Jq);
+                if jq {
+                    v.push(("Tab".into(), "complete".into()));
+                    v.push(("↑↓".into(), "history".into()));
                 }
             }
             Focus::RespTabs | Focus::RespBody => {
                 v.push(("Alt+1-4".into(), "tabs".into()));
                 // View modes, folding and saving only apply to the body.
                 if self.tab().is_some_and(|t| t.resp_tab == 0) {
+                    let stream = self
+                        .tab()
+                        .and_then(|t| t.response.as_ref())
+                        .is_some_and(|r| r.stream_messages().len() > 1);
+                    if stream {
+                        v.push(("[ ]".into(), "message".into()));
+                    }
                     v.extend([
                         ("y".into(), "copy".into()),
                         ("p/r/x".into(), "view".into()),
                         ("/".into(), "search".into()),
+                        (k(self, Action::Filter), "jq".into()),
                         ("s".into(), "save body".into()),
                         ("Enter".into(), "fold".into()),
                         ("w".into(), "wrap".into()),
@@ -3439,8 +6039,43 @@ impl App {
             }
         }
         v.push((k(self, Action::Palette), "commands".into()));
+        // The footer always keeps the last two: the Ctrl+W menu and F1.
+        v.push((crate::keymap::MENU_PREFIX.into(), "menu".into()));
         v.push((k(self, Action::Help), "all keys".into()));
         v
+    }
+}
+
+/// The server config for one editor row. A row that keeps its name and its
+/// command line/URL keeps everything else it had (env, headers, auth), which
+/// the table does not show; changing either rebuilds the entry from scratch.
+fn mcp_server_entry(
+    kind: usize,
+    value: &str,
+    old: Option<sendito_store::config::McpServer>,
+) -> sendito_store::config::McpServer {
+    use sendito_store::config::{McpHttpServer, McpServer, McpStdioServer};
+    match (kind, old) {
+        (0, Some(McpServer::Http(old))) if old.url == value => McpServer::Http(old),
+        (1, Some(McpServer::Stdio(old)))
+            if stdio_command_line(&old.command, &old.args) == value =>
+        {
+            McpServer::Stdio(old)
+        }
+        (1, _) => {
+            let (command, args) = split_command_line(value);
+            McpServer::Stdio(McpStdioServer {
+                command,
+                args,
+                env: Default::default(),
+            })
+        }
+        _ => McpServer::Http(McpHttpServer {
+            url: value.to_string(),
+            headers: Default::default(),
+            verify_tls: true,
+            auth: None,
+        }),
     }
 }
 
@@ -3454,8 +6089,8 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
             "create"
         }
         PromptAction::Rename(_) => "rename",
-        PromptAction::Search => "search",
         PromptAction::CustomMethod => "use",
+        PromptAction::McpServer { .. } => "add",
     }
 }
 
@@ -3532,36 +6167,59 @@ pub fn display_path(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-pub fn human_size(n: u64) -> String {
-    if n < 1024 {
-        format!("{n} B")
-    } else if n < 1024 * 1024 {
-        format!("{:.1} KB", n as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
-    }
-}
-
 fn ms(d: Option<Duration>) -> String {
     d.map(|d| format!("{:.1} ms", d.as_secs_f64() * 1000.0))
         .unwrap_or_else(|| "—".into())
 }
 
-fn bar(d: Option<Duration>, total: Duration, width: usize) -> String {
-    let Some(d) = d else { return String::new() };
-    let frac = if total.is_zero() {
-        0.0
-    } else {
-        d.as_secs_f64() / total.as_secs_f64()
-    };
-    let n = ((frac * width as f64).round() as usize).max(if d.is_zero() { 0 } else { 1 });
-    "█".repeat(n.min(width))
+/// Width of the timing waterfall, in cells.
+const TRACK: usize = 32;
+
+/// One phase on the waterfall: dots for the timeline, blocks from `start`
+/// for `len`, with eighth-of-a-cell precision at the end.
+fn waterfall(start: Duration, len: Duration, total: Duration) -> String {
+    let t = total.as_secs_f64();
+    if t <= 0.0 {
+        return "·".repeat(TRACK);
+    }
+    let scale = (TRACK * 8) as f64 / t;
+    let s8 = ((start.as_secs_f64() * scale).round() as usize).min(TRACK * 8 - 1);
+    let mut e8 = (((start + len).as_secs_f64() * scale).round() as usize).min(TRACK * 8);
+    if !len.is_zero() && e8 <= s8 {
+        e8 = s8 + 1;
+    }
+    const LEFT: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+    (0..TRACK)
+        .map(|cell| {
+            let (c0, c1) = (cell * 8, cell * 8 + 8);
+            let (from, to) = (s8.max(c0), e8.min(c1));
+            if to <= from {
+                '·'
+            } else if from == c0 && to == c1 {
+                '█'
+            } else if from == c0 {
+                LEFT[to - c0 - 1]
+            } else if to == c1 {
+                // Starts inside the cell: right-aligned blocks only come in halves.
+                if c1 - from >= 6 {
+                    '█'
+                } else if c1 - from >= 3 {
+                    '▐'
+                } else {
+                    '▕'
+                }
+            } else {
+                '▎'
+            }
+        })
+        .collect()
 }
 
 pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
     let t = r.timing;
     let total = t.total;
-    // A phase that did not happen says why, on its own row.
+    // A phase that did not happen says why, on its own row. Phases follow
+    // each other, so each starts where the previous one ended.
     let rows = [
         ("DNS lookup", t.dns, "skipped (IP address)"),
         ("TCP connect", t.connect, "skipped (connection reused)"),
@@ -3569,22 +6227,28 @@ pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
         ("Waiting for first byte", Some(t.ttfb), ""),
         ("Download", Some(t.download), ""),
     ];
-    let mut s = String::new();
+    let total_label = ms(Some(total));
+    let scale = format!(
+        "0{}{}",
+        " ".repeat(TRACK.saturating_sub(1 + total_label.trim().len())),
+        total_label.trim()
+    );
+    let mut s = format!("{:<22} {:>9}  {scale}\n", "Phase", "Time");
+    let mut at = Duration::ZERO;
     for (label, d, why) in rows {
         match d {
-            Some(_) => s.push_str(&format!(
-                "{label:<22} {:>9}  {}\n",
-                ms(d),
-                bar(d, total, 20)
-            )),
+            Some(d) => {
+                s.push_str(&format!(
+                    "{label:<22} {:>9}  {}\n",
+                    ms(Some(d)),
+                    waterfall(at, d, total)
+                ));
+                at += d;
+            }
             None => s.push_str(&format!("{label:<22} {:>9}  {why}\n", "—")),
         }
     }
-    s.push_str(&format!(
-        "{:<22} {:>9}  (bars: each phase's share of the total)\n\n",
-        "Total",
-        ms(Some(total))
-    ));
+    s.push_str(&format!("{:<22} {:>9}\n\n", "Total", total_label));
     s.push_str(&format!("Protocol        {}\n", r.version));
     if let Some(a) = r.remote_addr {
         s.push_str(&format!("Remote address  {a}\n"));
@@ -3599,20 +6263,46 @@ pub fn timing_text(r: &sendito_http::HttpResponse, body_size: u64) -> String {
     s
 }
 
+/// The watch section of the Timing tab: one mark per send while watching
+/// (✗ failed, blocks show duration, tallest = slowest).
+fn watch_text(samples: &[(bool, f64)]) -> String {
+    const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let max = samples.iter().map(|(_, ms)| *ms).fold(0.0_f64, f64::max);
+    let marks: String = samples
+        .iter()
+        .map(|&(ok, ms)| {
+            if !ok {
+                '✗'
+            } else if max <= 0.0 {
+                BLOCKS[0]
+            } else {
+                BLOCKS[(((ms / max) * 7.0).clamp(0.0, 7.0)) as usize]
+            }
+        })
+        .collect();
+    let fails = samples.iter().filter(|(ok, _)| !ok).count();
+    let last = samples
+        .last()
+        .map(|&(ok, ms)| {
+            if ok {
+                format!("{:.0} ms", ms)
+            } else {
+                "failed".into()
+            }
+        })
+        .unwrap_or_else(|| "-".into());
+    format!(
+        "\nWatch\n\n  {marks}\n\n  {} sends · {fails} failed · last {last}\n  ✗ failed send (error or status 400+) · blocks show duration\n",
+        samples.len()
+    )
+}
+
 fn request_headers_text(o: &HttpOutcome) -> String {
-    let mut s = format!(
-        "Request sent\n{} {}\n",
-        o.resolved.method,
-        mask_url(&o.resolved.url)
-    );
+    let mut s = format!("Request sent\n{} {}\n", o.resolved.method, o.resolved.url);
     for (n, v) in &o.resolved.headers {
         s.push_str(&format!("{n}: {}\n", mask_header(n, v)));
     }
     s
-}
-
-fn mask_url(u: &str) -> String {
-    u.to_string()
 }
 
 /// Authorization values are shown masked in the UI.
@@ -3716,6 +6406,80 @@ fn clock(t: std::time::SystemTime) -> String {
         dt.second(),
         dt.millisecond()
     )
+}
+
+fn mcp_argument_template(schema: &serde_json::Value) -> String {
+    fn sample(schema: &serde_json::Value, depth: usize) -> serde_json::Value {
+        if let Some(value) = schema.get("default").or_else(|| {
+            schema
+                .get("enum")
+                .and_then(|v| v.as_array())
+                .and_then(|v| v.first())
+        }) {
+            return value.clone();
+        }
+        if depth >= 8 {
+            return serde_json::Value::Null;
+        }
+        match schema.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {
+                let mut out = serde_json::Map::new();
+                if let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) {
+                    for (name, value) in properties {
+                        out.insert(name.clone(), sample(value, depth + 1));
+                    }
+                }
+                serde_json::Value::Object(out)
+            }
+            Some("array") => serde_json::json!([]),
+            Some("string") => serde_json::json!(""),
+            Some("integer" | "number") => serde_json::json!(0),
+            Some("boolean") => serde_json::json!(false),
+            _ => serde_json::Value::Null,
+        }
+    }
+    let value = sample(schema, 0);
+    if value.is_object() {
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+    } else {
+        "{}".into()
+    }
+}
+
+/// One MCP event's log line (the Response "Log" tab).
+pub fn mcp_event_text(e: &runner::McpEvent) -> String {
+    use runner::McpEvent::*;
+    match e {
+        Sent { json, at, wall } => format!(
+            "{} +{:>8.3}s  \u{2192} sent      {json}\n",
+            clock(*wall),
+            at.as_secs_f64()
+        ),
+        Received { json, at, wall } => format!(
+            "{} +{:>8.3}s  \u{2190} received  {json}\n",
+            clock(*wall),
+            at.as_secs_f64()
+        ),
+        Log { line, at } => format!("{:12} +{:>8.3}s  \u{2502} {line}\n", "", at.as_secs_f64()),
+        Finished { ok, message, at } => {
+            let tail = if *ok {
+                String::new()
+            } else if message.is_empty() {
+                "failed".into()
+            } else {
+                format!("failed: {message}")
+            };
+            format!("{:12} +{:>8.3}s  \u{25a0} {tail}\n", "", at.as_secs_f64())
+        }
+    }
+}
+
+/// The JSON-RPC line `on_mcp` keeps on the "Request" tab, if this event sent one.
+pub fn mcp_sent_line(e: &runner::McpEvent) -> Option<&str> {
+    match e {
+        runner::McpEvent::Sent { json, .. } => Some(json),
+        _ => None,
+    }
 }
 
 pub fn event_text(e: &sendito_grpc::Event) -> String {
@@ -3837,6 +6601,108 @@ fn grpc_timing_text(events: &[sendito_grpc::Event]) -> String {
     s
 }
 
+fn ws_event_text(e: &sendito_ws::Event) -> String {
+    use sendito_ws::Event::*;
+    match e {
+        Handshake {
+            status,
+            subprotocol,
+            at,
+            ..
+        } => format!(
+            "{:12} +{:>8.3}s  ← handshake  {status}{}\n",
+            "",
+            at.as_secs_f64(),
+            subprotocol
+                .as_ref()
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default()
+        ),
+        Sent {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => format!(
+            "{} +{:>8.3}s  → sent {}     ({size} B) {}\n",
+            clock(*wall),
+            at.as_secs_f64(),
+            kind.as_str(),
+            preview
+        ),
+        Received {
+            kind,
+            preview,
+            size,
+            at,
+            wall,
+        } => format!(
+            "{} +{:>8.3}s  ← received {} ({size} B) {}\n",
+            clock(*wall),
+            at.as_secs_f64(),
+            kind.as_str(),
+            preview
+        ),
+        Finished { code, reason, at } => format!(
+            "{:12} +{:>8.3}s  ■ close      {code}{}{reason}\n",
+            "",
+            at.as_secs_f64(),
+            if reason.is_empty() { "" } else { ": " }
+        ),
+    }
+}
+
+fn ws_headers_text(headers: &[(String, String)]) -> String {
+    let mut s = String::from("Handshake response\n");
+    for (k, v) in headers {
+        s.push_str(&format!("{k}: {v}\n"));
+    }
+    s
+}
+
+fn ws_timing_text(events: &[sendito_ws::Event]) -> String {
+    use sendito_ws::Event;
+    let mut s = String::new();
+    let mut first = None;
+    let (mut sent, mut received) = (0usize, 0usize);
+    for e in events {
+        match e {
+            Event::Handshake { at, .. } => s.push_str(&format!(
+                "Handshake answered {:>7.1} ms\n",
+                at.as_secs_f64() * 1000.0
+            )),
+            Event::Received { kind, at, .. } => {
+                if kind.has_payload() {
+                    received += 1;
+                    if first.is_none() {
+                        first = Some(*at);
+                    }
+                }
+            }
+            Event::Sent { kind, .. } => {
+                if kind.has_payload() {
+                    sent += 1;
+                }
+            }
+            Event::Finished { at, .. } => s.push_str(&format!(
+                "Closed            {:>10.1} ms\n",
+                at.as_secs_f64() * 1000.0
+            )),
+        }
+    }
+    if let Some(f) = first {
+        s.push_str(&format!(
+            "First frame       {:>10.1} ms\n",
+            f.as_secs_f64() * 1000.0
+        ));
+    }
+    s.push_str(&format!(
+        "\nFrames sent       {sent}\nFrames received  {received}\n"
+    ));
+    s
+}
+
 fn help_text(km: &Keymap, vim: bool) -> String {
     let mut s = String::from("All keys, including any you changed in the config.\n");
     s.push_str(&format!(
@@ -3856,9 +6722,20 @@ fn help_text(km: &Keymap, vim: bool) -> String {
         }
         s.push_str(&format!("  {:<28} {}\n", keys, a.description()));
     }
-    s.push_str("\n── Fixed keys ──\n");
+    // Fixed keys, one section per place they work in.
+    let mut place = "";
+    let kw = crate::keymap::FIXED_KEYS
+        .iter()
+        .map(|(_, k, _)| k.chars().count())
+        .max()
+        .unwrap_or(28)
+        .max(28);
     for (w, k, d) in crate::keymap::FIXED_KEYS {
-        s.push_str(&format!("  {:<16} {:<44} {d}\n", w, k));
+        if *w != place {
+            place = w;
+            s.push_str(&format!("\n── Fixed keys · {w} ──\n"));
+        }
+        s.push_str(&format!("  {k:<kw$}  {d}\n"));
     }
     s.push_str("\n── Symbols ──\n");
     for (sym, what) in crate::keymap::SYMBOLS {
@@ -3888,410 +6765,398 @@ impl App {
     fn overlay_key_inner(&mut self, ov: &mut Overlay, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match ov {
-            Overlay::Report(r) => match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
-                    if let Some(m) = r.close_status.clone() {
-                        self.set_status(m, StatusKind::Ok);
-                    }
-                    false
+            Overlay::Report(r) => self.report_key(r, key),
+            Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
+            Overlay::Settings { sel } => self.settings_key(sel, key),
+            Overlay::Confirm(c) => self.confirm_key(c, key),
+            Overlay::Picker(p) => self.picker_key(p, key),
+            Overlay::Palette(p) => self.palette_key(p, key),
+            Overlay::Prompt(p) => self.prompt_key(p, key, ctrl),
+            Overlay::Import(i) => self.import_key(i, key, ctrl),
+            Overlay::Env(e) => self.env_key(e, key, ctrl),
+            Overlay::Mcp(m) => self.mcp_key(m, key, ctrl),
+        }
+    }
+
+    fn report_key(&mut self, r: &mut Report, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                if let Some(m) = r.close_status.clone() {
+                    self.set_status(m, StatusKind::Ok);
                 }
-                KeyCode::Char('y') => {
-                    self.clipboard.set(r.copy_text.clone(), false);
-                    self.osc52.push(r.copy_text.clone());
-                    self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
-                    true
+                false
+            }
+            KeyCode::Char('y') => {
+                self.clipboard.set(r.copy_text.clone(), false);
+                self.osc52.push(r.copy_text.clone());
+                r.copied = true;
+                self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                r.viewer.move_cursor(-1);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                r.viewer.move_cursor(1);
+                true
+            }
+            KeyCode::PageUp => {
+                r.viewer.page(-1);
+                true
+            }
+            KeyCode::PageDown => {
+                r.viewer.page(1);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn help_key(&mut self, viewer: &mut Viewer, filter: &mut TextEditor, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => false,
+            KeyCode::Up => {
+                viewer.move_cursor(-1);
+                true
+            }
+            KeyCode::Down => {
+                viewer.move_cursor(1);
+                true
+            }
+            KeyCode::PageUp => {
+                viewer.page(-1);
+                true
+            }
+            KeyCode::PageDown => {
+                viewer.page(1);
+                true
+            }
+            KeyCode::F(1) => false,
+            _ => {
+                if filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
+                    let q = filter.text();
+                    viewer.search(&q);
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    r.viewer.move_cursor(-1);
-                    true
+                if key.code == KeyCode::Enter {
+                    viewer.next_match(1);
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    r.viewer.move_cursor(1);
-                    true
-                }
-                KeyCode::PageUp => {
-                    r.viewer.page(-1);
-                    true
-                }
-                KeyCode::PageDown => {
-                    r.viewer.page(1);
-                    true
-                }
-                _ => true,
-            },
-            Overlay::Help { viewer, filter } => match key.code {
+                true
+            }
+        }
+    }
+
+    fn settings_key(&mut self, sel: &mut usize, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                *sel = crate::list::step(*sel, -1, SETTINGS.len());
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                *sel = crate::list::step(*sel, 1, SETTINGS.len());
+                true
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.change_setting(SETTINGS[*sel].0, -1);
+                true
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+                self.change_setting(SETTINGS[*sel].0, 1);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn confirm_key(&mut self, c: &mut Confirm, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                // Cancelling is an answer too: it is the last button, and
+                // it restores whatever the dialog was guarding (an editor,
+                // a tab).
+                let action = c.action.clone();
+                let cancel = c.buttons.len().saturating_sub(1);
+                self.confirm(action, cancel);
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
+                c.sel = crate::list::step(c.sel, -1, c.buttons.len());
+                true
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+                c.sel = crate::list::step(c.sel, 1, c.buttons.len());
+                true
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let (action, sel) = (c.action.clone(), c.sel);
+                self.confirm(action, sel);
+                false
+            }
+            KeyCode::Char('y') if c.buttons.len() == 2 => {
+                let action = c.action.clone();
+                self.confirm(action, 0);
+                false
+            }
+            KeyCode::Char('s') if c.buttons.len() == 3 => {
+                let action = c.action.clone();
+                self.confirm(action, 0);
+                false
+            }
+            KeyCode::Char('d') if c.buttons.len() == 3 => {
+                let action = c.action.clone();
+                self.confirm(action, 1);
+                false
+            }
+            KeyCode::Char('n') if c.buttons.len() == 2 => {
+                let action = c.action.clone();
+                self.confirm(action, 1);
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn picker_key(&mut self, p: &mut Picker, key: KeyEvent) -> bool {
+        {
+            let vis = p.visible();
+            match key.code {
                 KeyCode::Esc => false,
                 KeyCode::Up => {
-                    viewer.move_cursor(-1);
+                    p.sel = crate::list::step(p.sel, -1, vis.len());
                     true
                 }
                 KeyCode::Down => {
-                    viewer.move_cursor(1);
+                    p.sel = crate::list::step(p.sel, 1, vis.len());
                     true
                 }
                 KeyCode::PageUp => {
-                    viewer.page(-1);
+                    p.sel = crate::list::page(p.sel, -1, 10, vis.len());
                     true
                 }
                 KeyCode::PageDown => {
-                    viewer.page(1);
+                    p.sel = crate::list::page(p.sel, 1, 10, vis.len());
                     true
                 }
-                KeyCode::F(1) => false,
+                KeyCode::Enter => {
+                    if let Some(i) = p.selected() {
+                        let action = p.action.clone();
+                        let item = p.items[i].clone();
+                        let detail = p.details.get(i).cloned();
+                        self.pick(action, i, &item, detail);
+                    }
+                    false
+                }
                 _ => {
-                    if filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
-                        let q = filter.text();
-                        viewer.search(&q);
-                    }
-                    if key.code == KeyCode::Enter {
-                        viewer.next_match(1);
+                    if p.filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
+                        p.sel = 0;
                     }
                     true
-                }
-            },
-            Overlay::Settings { sel } => match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => false,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    *sel = sel.saturating_sub(1);
-                    true
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    *sel = (*sel + 1).min(SETTINGS.len() - 1);
-                    true
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    self.change_setting(SETTINGS[*sel].0, -1);
-                    true
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-                    self.change_setting(SETTINGS[*sel].0, 1);
-                    true
-                }
-                _ => true,
-            },
-            Overlay::Confirm(c) => match key.code {
-                KeyCode::Esc => {
-                    // Cancelling is an answer too: say what was kept.
-                    let action = c.action.clone();
-                    let cancel = c.buttons.len() - 1;
-                    if matches!(action, ConfirmAction::Delete(_)) {
-                        self.confirm(action, cancel);
-                    }
-                    false
-                }
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::BackTab => {
-                    c.sel = c.sel.saturating_sub(1);
-                    true
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
-                    c.sel = (c.sel + 1).min(c.buttons.len() - 1);
-                    true
-                }
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    let (action, sel) = (c.action.clone(), c.sel);
-                    self.confirm(action, sel);
-                    false
-                }
-                KeyCode::Char('y') if c.buttons.len() == 2 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 0);
-                    false
-                }
-                KeyCode::Char('s') if c.buttons.len() == 3 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 0);
-                    false
-                }
-                KeyCode::Char('d') if c.buttons.len() == 3 => {
-                    let action = c.action.clone();
-                    self.confirm(action, 1);
-                    false
-                }
-                KeyCode::Char('n') if c.buttons.len() == 2 => {
-                    let action = c.action.clone();
-                    if matches!(action, ConfirmAction::Delete(_)) {
-                        self.confirm(action, 1);
-                    }
-                    false
-                }
-                _ => true,
-            },
-            Overlay::Picker(p) => {
-                let vis = p.visible();
-                match key.code {
-                    KeyCode::Esc => false,
-                    KeyCode::Up => {
-                        p.sel = p.sel.saturating_sub(1);
-                        true
-                    }
-                    KeyCode::Down => {
-                        p.sel = (p.sel + 1).min(vis.len().saturating_sub(1));
-                        true
-                    }
-                    KeyCode::PageUp => {
-                        p.sel = p.sel.saturating_sub(10);
-                        true
-                    }
-                    KeyCode::PageDown => {
-                        p.sel = (p.sel + 10).min(vis.len().saturating_sub(1));
-                        true
-                    }
-                    KeyCode::Enter => {
-                        if let Some(i) = p.selected() {
-                            let action = p.action.clone();
-                            let item = p.items[i].clone();
-                            let detail = p.details.get(i).cloned();
-                            self.pick(action, i, &item, detail);
-                        }
-                        false
-                    }
-                    _ => {
-                        if p.filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed
-                        {
-                            p.sel = 0;
-                        }
-                        true
-                    }
                 }
             }
-            Overlay::Palette(p) => {
-                let vis = p.visible();
-                match key.code {
-                    KeyCode::Esc => false,
-                    KeyCode::Up => {
-                        p.sel = p.sel.saturating_sub(1);
-                        p.armed = true;
-                        true
-                    }
-                    KeyCode::Down | KeyCode::Tab => {
-                        // The first move highlights the first row.
-                        if p.armed {
-                            p.sel = (p.sel + 1).min(vis.len().saturating_sub(1));
-                        }
-                        p.armed = true;
-                        true
-                    }
-                    KeyCode::Enter if !p.armed => true,
-                    KeyCode::Enter => {
-                        let text = p.input.text();
-                        let t = text.trim();
-                        if t.starts_with(':')
-                            && let Some(i) = vis.get(p.sel)
-                            && let PaletteItem::Env(e) = &p.items[*i].0
-                        {
-                            let e = e.clone();
-                            self.set_env(e);
-                            return false;
-                        }
-                        if t.starts_with(':') {
-                            // A full command with arguments runs as typed; otherwise the selection.
-                            let typed_word = t
-                                .trim_start_matches(':')
-                                .split_whitespace()
-                                .next()
-                                .unwrap_or("");
-                            let exact = COMMANDS.iter().any(|(c, _)| {
-                                c.trim_start_matches(':').split_whitespace().next()
-                                    == Some(typed_word)
-                            });
-                            if exact || vis.is_empty() {
-                                self.run_command(t);
-                            } else if let Some(i) = vis.get(p.sel)
-                                && let PaletteItem::Command(c, _) = p.items[*i].0
-                            {
-                                let word = c.split_whitespace().next().unwrap_or(c);
-                                if c.contains('<') || c.contains('[') {
-                                    let mut input = TextEditor::single(&format!("{word} "));
-                                    input.move_to_end();
-                                    p.input = input;
-                                    return true;
-                                }
-                                self.run_command(word);
-                            }
-                            return false;
-                        }
-                        if let Some(i) = vis.get(p.sel) {
-                            let item = p.items[*i].0.clone();
-                            match item {
-                                PaletteItem::Action(a) => self.dispatch(a),
-                                PaletteItem::Open(rel) => {
-                                    self.tree.select_rel(&rel);
-                                    self.open_request(&rel);
-                                }
-                                PaletteItem::Env(e) => self.set_env(e),
-                                PaletteItem::Command(c, _) => self.run_command(c),
-                            }
-                        }
-                        false
-                    }
-                    _ => {
-                        let out = p.input.handle_key(&key, false, &mut self.clipboard);
-                        if out == Outcome::Changed {
-                            p.sel = 0;
-                            p.armed = !p.input.text().trim().is_empty();
-                        }
-                        // Backspace on an empty input closes the palette.
-                        !(out == Outcome::Handled
-                            && key.code == KeyCode::Backspace
-                            && p.input.text().is_empty())
-                    }
+        }
+    }
+
+    fn palette_key(&mut self, p: &mut Palette, key: KeyEvent) -> bool {
+        {
+            let vis = p.visible();
+            match key.code {
+                KeyCode::Esc => false,
+                KeyCode::Up => {
+                    p.sel = crate::list::step(p.sel, -1, vis.len());
+                    p.armed = true;
+                    true
                 }
-            }
-            Overlay::Prompt(p) => {
-                let search = p.action == PromptAction::Search;
-                // The open option list of a choice row takes the keys first.
-                if let Some(hl) = p.open {
-                    let n = p
-                        .choices
-                        .get(p.focus.wrapping_sub(1))
-                        .map_or(0, |c| c.1.len());
-                    match key.code {
-                        KeyCode::Up => p.open = Some((hl + n.max(1) - 1) % n.max(1)),
-                        KeyCode::Down | KeyCode::Tab => p.open = Some((hl + 1) % n.max(1)),
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            if let Some(c) = p.choices.get_mut(p.focus - 1) {
-                                c.2 = hl.min(n.saturating_sub(1));
-                            }
-                            p.open = None;
-                            // Back to the name, so the next Enter confirms.
-                            p.focus = 0;
-                        }
-                        KeyCode::Esc => p.open = None,
-                        _ => {}
+                KeyCode::Down | KeyCode::Tab => {
+                    // The first move highlights the first row.
+                    if p.armed {
+                        p.sel = crate::list::step(p.sel, 1, vis.len());
                     }
-                    return true;
+                    p.armed = true;
+                    true
                 }
-                // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
-                let confirm_any =
-                    matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
-                if confirm_any && !search {
-                    return match self.prompt_ok(p) {
-                        Ok(()) => false,
-                        Err(e) => {
-                            p.error = Some(e);
-                            true
-                        }
-                    };
-                }
-                match key.code {
-                    KeyCode::Esc => false,
-                    // Space opens a choice row's list; Enter always confirms.
-                    KeyCode::Char(' ') if p.focus > 0 => {
-                        p.open = p.choices.get(p.focus - 1).map(|c| c.2);
-                        true
-                    }
-                    KeyCode::Tab | KeyCode::Down if !p.choices.is_empty() => {
-                        p.focus = (p.focus + 1) % (p.choices.len() + 1);
-                        true
-                    }
-                    KeyCode::BackTab | KeyCode::Up if !p.choices.is_empty() => {
-                        p.focus = (p.focus + p.choices.len()) % (p.choices.len() + 1);
-                        true
-                    }
-                    KeyCode::Left | KeyCode::Right if p.focus > 0 => {
-                        if let Some((_, opts, i)) = p.choices.get_mut(p.focus - 1) {
-                            let dir: isize = if key.code == KeyCode::Left { -1 } else { 1 };
-                            *i = ((*i as isize + dir).rem_euclid(opts.len().max(1) as isize))
-                                as usize;
-                        }
-                        true
-                    }
-                    KeyCode::Enter => {
-                        if search {
-                            let q = p.input.text();
-                            let mut n = 0;
-                            self.with_viewer(|v| n = v.search(&q));
-                            self.focus = Focus::RespBody;
-                            if n == 0 && !q.is_empty() {
-                                self.set_status(format!("no match for \"{q}\""), StatusKind::Warn);
-                            } else if n > 0 {
-                                self.set_status(
-                                    format!("{n} match(es) · n/N next/previous"),
-                                    StatusKind::Info,
-                                );
-                            }
-                            return false;
-                        }
-                        match self.prompt_ok(p) {
-                            Ok(()) => false,
-                            Err(e) => {
-                                p.error = Some(e);
-                                true
-                            }
-                        }
-                    }
-                    _ => {
-                        if p.focus == 0 {
-                            p.input.handle_key(&key, false, &mut self.clipboard);
-                            p.error = None;
-                            p.note = None;
-                        }
-                        true
-                    }
-                }
-            }
-            Overlay::Import(i) => {
-                let submit = matches!(key.code, KeyCode::F(5))
-                    || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
-                if key.code == KeyCode::Esc {
-                    return false;
-                }
-                if submit {
-                    let text = i.input.text();
-                    return match self.do_import(&text) {
-                        Ok(()) => false,
-                        Err(e) => {
-                            i.error = Some(e);
-                            true
-                        }
-                    };
-                }
-                i.input.handle_key(&key, false, &mut self.clipboard);
-                i.error = None;
-                true
-            }
-            Overlay::Env(e) => {
-                if key.code == KeyCode::Esc {
-                    if e.dirty {
-                        // Keep the editor open behind the confirm dialog.
-                        let ed = std::mem::replace(
-                            e,
-                            EnvEditor {
-                                envs: vec![],
-                                current: 0,
-                                table: EnvEditor::table(),
-                                dirty: false,
-                                error: None,
-                            },
-                        );
-                        self.parked_env = Some(ed);
-                        self.overlay = Some(Overlay::Confirm(Confirm {
-                            title: "Unsaved environment changes".into(),
-                            message: "Save the changes to this environment?".into(),
-                            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
-                            sel: 0,
-                            action: ConfirmAction::EnvClose,
-                        }));
+                KeyCode::Enter if !p.armed => true,
+                KeyCode::Enter => {
+                    let text = p.input.text();
+                    let t = text.trim();
+                    if t.starts_with(':')
+                        && let Some(i) = vis.get(p.sel)
+                        && let PaletteItem::Env(e) = &p.items[*i].0
+                    {
+                        let e = e.clone();
+                        self.set_env(e);
                         return false;
                     }
-                    return false;
+                    if t.starts_with(':') {
+                        // A full command with arguments runs as typed; otherwise the selection.
+                        let typed_word = t
+                            .trim_start_matches(':')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("");
+                        let exact = COMMANDS.iter().any(|(c, _)| {
+                            c.trim_start_matches(':').split_whitespace().next() == Some(typed_word)
+                        });
+                        if exact || vis.is_empty() {
+                            self.run_command(t);
+                        } else if let Some(i) = vis.get(p.sel)
+                            && let PaletteItem::Command(c, _) = p.items[*i].0
+                        {
+                            let word = c.split_whitespace().next().unwrap_or(c);
+                            if c.contains('<') || c.contains('[') {
+                                let mut input = TextEditor::single(&format!("{word} "));
+                                input.move_to_end();
+                                p.input = input;
+                                return true;
+                            }
+                            self.run_command(word);
+                        }
+                        return false;
+                    }
+                    if let Some(i) = vis.get(p.sel) {
+                        let item = p.items[*i].0.clone();
+                        match item {
+                            PaletteItem::Action(a) => self.dispatch(a),
+                            PaletteItem::Open(rel) => {
+                                self.tree.select_rel(&rel);
+                                self.open_request(&rel);
+                            }
+                            PaletteItem::Env(e) => self.set_env(e),
+                            PaletteItem::Command(c, _) => self.run_command(c),
+                        }
+                    }
+                    false
                 }
-                if ctrl && key.code == KeyCode::Char('s') {
-                    let mut ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
-                    self.save_env_editor(&mut ed);
-                    *e = ed;
-                    return true;
+                _ => {
+                    let out = p.input.handle_key(&key, false, &mut self.clipboard);
+                    if out == Outcome::Changed {
+                        p.sel = 0;
+                        p.armed = !p.input.text().trim().is_empty();
+                    }
+                    // Backspace on an empty input closes the palette.
+                    !(out == Outcome::Handled
+                        && key.code == KeyCode::Backspace
+                        && p.input.text().is_empty())
                 }
-                if ctrl && key.code == KeyCode::Char('n') {
+            }
+        }
+    }
+
+    fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            // The open option list of a choice row takes the keys first.
+            if let Some(hl) = p.open {
+                let n = p
+                    .choices
+                    .get(p.focus.wrapping_sub(1))
+                    .map_or(0, |c| c.1.len());
+                match key.code {
+                    KeyCode::Up => p.open = Some((hl + n.max(1) - 1) % n.max(1)),
+                    KeyCode::Down | KeyCode::Tab => p.open = Some((hl + 1) % n.max(1)),
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(c) = p.choices.get_mut(p.focus - 1) {
+                            c.2 = hl.min(n.saturating_sub(1));
+                        }
+                        p.open = None;
+                        // Back to the name, so the next Enter confirms.
+                        p.focus = 0;
+                    }
+                    KeyCode::Esc => p.open = None,
+                    _ => {}
+                }
+                return true;
+            }
+            // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
+            let confirm_any =
+                matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
+            if confirm_any {
+                return match self.prompt_ok(p) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        p.error = Some(e);
+                        true
+                    }
+                };
+            }
+            match key.code {
+                // A "new environment" prompt was opened from the env
+                // editor, which is parked behind it: cancelling returns
+                // to the editor with its changes intact.
+                KeyCode::Esc => {
+                    if matches!(p.action, PromptAction::NewEnv)
+                        && let Some(ed) = self.parked_env.take()
+                    {
+                        self.overlay = Some(Overlay::Env(ed));
+                    }
+                    false
+                }
+                // Space opens a choice row's list; Enter always confirms.
+                KeyCode::Char(' ') if p.focus > 0 => {
+                    p.open = p.choices.get(p.focus - 1).map(|c| c.2);
+                    true
+                }
+                KeyCode::Tab | KeyCode::Down if !p.choices.is_empty() => {
+                    p.focus = (p.focus + 1) % (p.choices.len() + 1);
+                    true
+                }
+                KeyCode::BackTab | KeyCode::Up if !p.choices.is_empty() => {
+                    p.focus = (p.focus + p.choices.len()) % (p.choices.len() + 1);
+                    true
+                }
+                KeyCode::Left | KeyCode::Right if p.focus > 0 => {
+                    if let Some((_, opts, i)) = p.choices.get_mut(p.focus - 1) {
+                        let dir: isize = if key.code == KeyCode::Left { -1 } else { 1 };
+                        *i = crate::list::cycle(*i, dir, opts.len().max(1));
+                    }
+                    true
+                }
+                KeyCode::Enter => match self.prompt_ok(p) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        p.error = Some(e);
+                        true
+                    }
+                },
+                _ => {
+                    if p.focus == 0 {
+                        p.input.handle_key(&key, false, &mut self.clipboard);
+                        p.error = None;
+                        p.note = None;
+                    }
+                    true
+                }
+            }
+        }
+    }
+
+    fn import_key(&mut self, i: &mut Import, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            let submit = matches!(key.code, KeyCode::F(5))
+                || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
+            if key.code == KeyCode::Esc {
+                return false;
+            }
+            if submit {
+                let text = i.input.text();
+                return match self.do_import(&text) {
+                    Ok(()) => false,
+                    Err(e) => {
+                        i.error = Some(e);
+                        true
+                    }
+                };
+            }
+            i.input.handle_key(&key, false, &mut self.clipboard);
+            i.error = None;
+            true
+        }
+    }
+
+    fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            if key.code == KeyCode::Esc {
+                if e.dirty {
+                    // Keep the editor open behind the confirm dialog.
                     let ed = std::mem::replace(
                         e,
                         EnvEditor {
@@ -4303,57 +7168,160 @@ impl App {
                         },
                     );
                     self.parked_env = Some(ed);
-                    self.overlay = Some(Overlay::Prompt(Prompt {
-                        title: "New environment".into(),
-                        label: "Name".into(),
-                        input: TextEditor::single(""),
-                        choices: vec![],
-                        focus: 0,
-                        action: PromptAction::NewEnv,
-                        error: None,
-                        note: None,
-                        open: None,
+                    self.overlay = Some(Overlay::Confirm(Confirm {
+                        title: "Unsaved environment changes".into(),
+                        message: "Save the changes to this environment?".into(),
+                        buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                        sel: 0,
+                        action: ConfirmAction::EnvClose,
                     }));
                     return false;
                 }
-                if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
-                    if e.dirty {
-                        e.error = Some("save (Ctrl+S) or discard changes before switching".into());
-                        return true;
-                    }
-                    let n = e.envs.len() as isize;
-                    let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
-                    e.current = ((e.current as isize + d).rem_euclid(n)) as usize;
-                    let mut ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
+                return false;
+            }
+            if ctrl && key.code == KeyCode::Char('s') {
+                let mut ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.save_env_editor(&mut ed);
+                *e = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('n') {
+                // Creating an environment loads it into the editor: unsaved
+                // edits would be lost, as when switching.
+                if e.dirty {
+                    e.error = Some("save (Ctrl+S) or discard changes before creating one".into());
+                    return true;
+                }
+                let ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.parked_env = Some(ed);
+                self.overlay = Some(Overlay::Prompt(Prompt::new(
+                    "New environment",
+                    "Name",
+                    TextEditor::single(""),
+                    vec![],
+                    PromptAction::NewEnv,
+                )));
+                return false;
+            }
+            if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                if e.dirty {
+                    e.error = Some("save (Ctrl+S) or discard changes before switching".into());
+                    return true;
+                }
+                let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
+                e.current = crate::list::cycle(e.current, d, e.envs.len());
+                let mut ed = std::mem::replace(
+                    e,
+                    EnvEditor {
+                        envs: vec![],
+                        current: 0,
+                        table: EnvEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.load_env_into(&mut ed);
+                *e = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('d') {
+                if e.table.delete_row() {
+                    e.dirty = true;
+                }
+                return true;
+            }
+            if key.code == KeyCode::Enter {
+                e.table.next_cell();
+                return true;
+            }
+            match e.table.handle_key(&key, false, &mut self.clipboard) {
+                TableOutcome::Changed => e.dirty = true,
+                TableOutcome::Leave => return false,
+                _ => {}
+            }
+            true
+        }
+    }
+
+    fn mcp_key(&mut self, m: &mut McpEditor, key: KeyEvent, ctrl: bool) -> bool {
+        {
+            if key.code == KeyCode::Esc {
+                if m.dirty {
+                    // Keep the editor open behind the confirm dialog.
+                    let ed = std::mem::replace(
+                        m,
+                        McpEditor {
+                            table: McpEditor::table(),
                             dirty: false,
                             error: None,
                         },
                     );
-                    self.load_env_into(&mut ed);
-                    *e = ed;
-                    return true;
+                    self.parked_mcp = Some(ed);
+                    self.overlay = Some(Overlay::Confirm(Confirm {
+                        title: "Unsaved MCP server changes".into(),
+                        message: "Save the changes to the project config?".into(),
+                        buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+                        sel: 0,
+                        action: ConfirmAction::McpClose,
+                    }));
+                    return false;
                 }
-                if ctrl && key.code == KeyCode::Char('d') {
-                    e.table.delete_row();
-                    e.dirty = true;
-                    return true;
-                }
-                if key.code == KeyCode::Enter {
-                    e.table.next_cell();
-                    return true;
-                }
-                match e.table.handle_key(&key, false, &mut self.clipboard) {
-                    TableOutcome::Changed => e.dirty = true,
-                    TableOutcome::Leave => return false,
-                    _ => {}
-                }
-                true
+                return false;
             }
+            if ctrl && key.code == KeyCode::Char('s') {
+                let mut ed = std::mem::replace(
+                    m,
+                    McpEditor {
+                        table: McpEditor::table(),
+                        dirty: false,
+                        error: None,
+                    },
+                );
+                self.save_mcp_editor(&mut ed);
+                *m = ed;
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('d') {
+                if m.table.delete_row() {
+                    m.dirty = true;
+                }
+                return true;
+            }
+            if ctrl && key.code == KeyCode::Char('n') {
+                // The trailing row is the one typed into to add a server.
+                m.table.sel_row = m.table.rows.len();
+                m.table.sel_col = 0;
+                m.table.ensure_row();
+                return true;
+            }
+            if key.code == KeyCode::Enter || key.code == KeyCode::Tab {
+                m.table.next_cell();
+                return true;
+            }
+            match m.table.handle_key(&key, false, &mut self.clipboard) {
+                TableOutcome::Changed => m.dirty = true,
+                TableOutcome::Leave => return false,
+                _ => {}
+            }
+            true
         }
     }
 
@@ -4361,6 +7329,12 @@ impl App {
         match action {
             ConfirmAction::SendAnyway => {
                 if sel == 0 {
+                    self.send(true);
+                }
+            }
+            ConfirmAction::SendMissingSecrets => {
+                if sel == 0 {
+                    self.secrets_ok = true;
                     self.send(true);
                 }
             }
@@ -4391,7 +7365,7 @@ impl App {
                 if sel == 0 {
                     self.quit = true;
                 } else {
-                    self.set_status("staying: the unsaved tabs are still open", StatusKind::Info);
+                    self.set_status("staying: the tabs are still open", StatusKind::Info);
                 }
             }
             ConfirmAction::CloseTab(id) => {
@@ -4417,6 +7391,32 @@ impl App {
                     }
                 }
             }
+            ConfirmAction::CloseTabRunning(id) => {
+                let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
+                    return;
+                };
+                self.active = i;
+                if sel != 0 {
+                    let what = if self.tabs[i]
+                        .running
+                        .as_ref()
+                        .is_some_and(|r| r.streaming_input)
+                    {
+                        "session"
+                    } else {
+                        "request"
+                    };
+                    self.set_status(
+                        format!("kept open: the {what} is still running"),
+                        StatusKind::Info,
+                    );
+                } else if self.tabs[i].dirty() {
+                    // Unsaved edits still get their Save/Discard/Cancel.
+                    self.prompt_close_dirty();
+                } else {
+                    self.close_tab(true);
+                }
+            }
             ConfirmAction::EnvClose => {
                 let Some(mut ed) = self.parked_env.take() else {
                     return;
@@ -4429,6 +7429,31 @@ impl App {
                     }
                     1 => {}
                     _ => self.overlay = Some(Overlay::Env(ed)),
+                }
+            }
+            ConfirmAction::McpClose => {
+                let Some(mut ed) = self.parked_mcp.take() else {
+                    return;
+                };
+                match sel {
+                    0 => {
+                        if !self.save_mcp_editor(&mut ed) {
+                            self.overlay = Some(Overlay::Mcp(ed));
+                        }
+                    }
+                    1 => {}
+                    _ => self.overlay = Some(Overlay::Mcp(ed)),
+                }
+            }
+            ConfirmAction::DialogClose => {
+                let Some(dialog) = self.parked_dialog.take() else {
+                    return;
+                };
+                self.overlay = Some(dialog);
+                // Discarding goes through Esc: it closes the dialog and
+                // restores whatever was parked behind it (the env editor).
+                if sel == 0 {
+                    self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 }
             }
             ConfirmAction::ClearHistory => {
@@ -4457,17 +7482,13 @@ impl App {
             }
             PickAction::Method => {
                 if item == "Custom…" {
-                    self.overlay = Some(Overlay::Prompt(Prompt {
-                        title: "Custom HTTP method".into(),
-                        label: "Method".into(),
-                        input: TextEditor::single(""),
-                        choices: vec![],
-                        focus: 0,
-                        action: PromptAction::CustomMethod,
-                        error: None,
-                        note: None,
-                        open: None,
-                    }));
+                    self.overlay = Some(Overlay::Prompt(Prompt::new(
+                        "Custom HTTP method",
+                        "Method",
+                        TextEditor::single(""),
+                        vec![],
+                        PromptAction::CustomMethod,
+                    )));
                     return;
                 }
                 if let Some(t) = self.tab_mut() {
@@ -4479,9 +7500,10 @@ impl App {
                 if let Some((svc, m)) = item.rsplit_once('/') {
                     let mut fill = false;
                     if let Some(t) = self.tab_mut() {
-                        let changed = t.ed.service != svc || t.ed.grpc_method != m;
-                        t.ed.service = svc.to_string();
-                        t.ed.grpc_method = m.to_string();
+                        let label = format!("{svc}/{m}");
+                        let changed = t.ed.grpc_method_text.text() != label;
+                        t.ed.grpc_method_text.set_text(&label);
+                        t.ed.grpc_method_text.move_to_end();
                         let msg = t.ed.message.text();
                         fill = changed && (msg.trim().is_empty() || msg.trim() == "{}");
                     }
@@ -4490,6 +7512,34 @@ impl App {
                         self.load_schema(false, true, false);
                     }
                 }
+            }
+            PickAction::McpServer => {
+                if let Some(t) = self.tab_mut() {
+                    t.ed.mcp_server.set_text(item);
+                }
+                self.changed();
+            }
+            PickAction::McpTool => {
+                if let Some(t) = self.tab_mut() {
+                    t.ed.mcp_tool.set_text(item);
+                    let args = t.ed.message.text();
+                    let unchanged =
+                        matches!(&t.saved, Some(Request::Mcp(saved)) if saved.arguments == args);
+                    // Arguments that are still another tool's template are
+                    // replaced too: they were not typed by the user.
+                    let a_template = t
+                        .mcp_tools
+                        .iter()
+                        .any(|tl| mcp_argument_template(&tl.input_schema) == args);
+                    if ((unchanged && (args.trim().is_empty() || args.trim() == "{}"))
+                        || a_template)
+                        && let Some(tool) = t.mcp_tools.get(index)
+                    {
+                        let template = mcp_argument_template(&tool.input_schema);
+                        t.ed.message.replace_all(&template);
+                    }
+                }
+                self.changed();
             }
             PickAction::MoveTo(rel) => {
                 let folder = detail.unwrap_or_default();
@@ -4520,10 +7570,11 @@ impl App {
                 let folder = folder_choice
                     .and_then(|i| self.tree.all_folders().get(i).cloned())
                     .unwrap_or(folder);
-                let req = if choice == 1 {
-                    Request::new_grpc()
-                } else {
-                    Request::new_http()
+                let req = match choice {
+                    1 => Request::new_grpc(),
+                    2 => Request::new_ws(),
+                    3 => Request::new_mcp(),
+                    _ => Request::new_http(),
                 };
                 let rel = self
                     .project
@@ -4591,15 +7642,9 @@ impl App {
                 self.set_status(format!("saved {rel}"), StatusKind::Ok);
                 self.session_dirty = true;
             }
-            PromptAction::SaveHistory(i) => {
+            PromptAction::SaveHistory(e) => {
                 let folders = self.tree.all_folders();
                 let folder = folders.get(choice).cloned().unwrap_or_default();
-                let e = self
-                    .history
-                    .as_ref()
-                    .and_then(|h| h.get(i))
-                    .cloned()
-                    .ok_or("entry gone")?;
                 let req = sendito_store::request_file::parse(&e.request)?;
                 let rel = self
                     .project
@@ -4643,7 +7688,6 @@ impl App {
                 self.load_env_into(&mut ed);
                 self.overlay = Some(Overlay::Env(ed));
             }
-            PromptAction::Search => {}
             PromptAction::CustomMethod => {
                 let m = value.trim().to_ascii_uppercase();
                 if m.is_empty()
@@ -4657,6 +7701,9 @@ impl App {
                     t.ed.method = m;
                 }
                 self.changed();
+            }
+            PromptAction::McpServer { name } => {
+                self.add_mcp_server(&name, choice, &value)?;
             }
         }
         Ok(())
@@ -4674,6 +7721,7 @@ impl App {
 
     pub fn on_mouse(&mut self, m: MouseEvent) {
         let (x, y) = (m.column, m.row);
+        self.hover = Some((x, y));
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // A click starts a new action: an old message no longer applies.
@@ -4691,18 +7739,15 @@ impl App {
                         double,
                         m.modifiers.contains(KeyModifiers::SHIFT),
                     );
-                } else if self.overlay.is_some() {
-                    // Click outside a dialog closes it (except confirmations).
-                    if !matches!(
-                        self.overlay,
-                        Some(Overlay::Confirm(_)) | Some(Overlay::Env(_))
-                    ) {
-                        self.overlay = None;
-                    }
+                } else {
+                    // A click on nothing still closes the Ctrl+W menu.
+                    self.pending.clear();
                 }
             }
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some((_, Hit::Tab(i))) = self.hit_at(x, y) {
+                if self.overlay.is_none()
+                    && let Some((_, Hit::Tab(i))) = self.hit_at(x, y)
+                {
                     self.active = i;
                     self.close_tab(false);
                 }
@@ -4734,22 +7779,46 @@ impl App {
 
     fn scroll_at(&mut self, x: u16, y: u16, d: isize) {
         let inside = |r: Rect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        if let Some(ov) = &mut self.overlay {
-            match ov {
-                Overlay::Report(r) => r.viewer.scroll_by(d),
-                Overlay::Help { viewer, .. } => viewer.scroll_by(d),
-                Overlay::Picker(p) => {
-                    let n = p.visible().len();
-                    p.sel = ((p.sel as isize + d.signum()).clamp(0, n.saturating_sub(1) as isize))
-                        as usize;
+        if self.overlay.is_some() {
+            // Only the wheel over the dialog acts; the screen behind is modal.
+            let over_dialog = matches!(
+                self.hit_at(x, y),
+                Some((_, Hit::Overlay(h))) if h != OverlayHit::Outside
+            );
+            if !over_dialog {
+                return;
+            }
+            if let Some(ov) = &mut self.overlay {
+                match ov {
+                    Overlay::Report(r) => r.viewer.scroll_by(d),
+                    Overlay::Help { viewer, .. } => viewer.scroll_by(d),
+                    Overlay::Picker(p) => {
+                        let n = p.visible().len();
+                        p.sel = crate::list::step(p.sel, d.signum(), n);
+                    }
+                    Overlay::Palette(p) => {
+                        p.armed = true;
+                        let n = p.visible().len();
+                        p.sel = crate::list::step(p.sel, d.signum(), n);
+                    }
+                    Overlay::Settings { sel } => {
+                        *sel = crate::list::step(*sel, d.signum(), SETTINGS.len());
+                    }
+                    Overlay::Env(e) => e.table.move_selection(d.signum()),
+                    Overlay::Mcp(m) => m.table.move_selection(d.signum()),
+                    Overlay::Prompt(p) => {
+                        if let Some(hl) = p.open {
+                            let n = p
+                                .choices
+                                .get(p.focus.wrapping_sub(1))
+                                .map_or(0, |c| c.1.len());
+                            if n > 0 {
+                                p.open = Some(crate::list::cycle(hl, d.signum(), n));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                Overlay::Palette(p) => {
-                    p.armed = true;
-                    let n = p.visible().len();
-                    p.sel = ((p.sel as isize + d.signum()).clamp(0, n.saturating_sub(1) as isize))
-                        as usize;
-                }
-                _ => {}
             }
             return;
         }
@@ -4857,6 +7926,26 @@ impl App {
             }
             return;
         }
+        // A click on the Ctrl+W menu runs that entry; a click elsewhere
+        // closes the menu and acts as usual.
+        if !self.pending.is_empty() {
+            self.pending.clear();
+            if let Hit::Menu(a) = hit {
+                if let Some(a) = a {
+                    self.dispatch(a);
+                }
+                return;
+            }
+        }
+        if let Hit::CompleteItem(i) = hit {
+            if let Some(c) = &mut self.complete {
+                // The list may have re-filtered since the frame was drawn.
+                c.sel = i.min(c.items.len().saturating_sub(1));
+            }
+            self.complete_accept();
+            return;
+        }
+        self.complete = None;
         match hit {
             Hit::Tab(i) => {
                 self.active = i;
@@ -4907,14 +7996,43 @@ impl App {
                     self.open_history(i, false);
                 }
             }
+            Hit::RecentRow(i) => self.open_history(i, false),
             Hit::Bar(p) => {
-                self.focus = Focus::Bar(p);
+                // The stop button (3) of an open stream is mouse-only: it stays
+                // out of the keyboard focus cycle (ctrl+w x cancels).
+                if p != 3 {
+                    self.focus = Focus::Bar(p);
+                }
                 let kind = self.tab().map(|t| t.ed.kind);
                 match (kind, p) {
-                    (Some(_), 2) => self.dispatch(Action::Send),
+                    (Some(_), 2) => self.press_send_button(),
+                    (Some(_), 3) => {
+                        // Disabled does nothing: cancel() would also stop
+                        // background jobs that do not belong to this tab.
+                        if self.tab().is_some_and(|t| t.running.is_some()) {
+                            self.dispatch(Action::Cancel);
+                        }
+                    }
                     (Some(Kind::Http), 0) => self.open_method_picker(None),
-                    (Some(Kind::Grpc), 1) => self.open_grpc_method_picker(),
-                    (Some(Kind::Http), 1) | (Some(Kind::Grpc), 0) => {
+                    (Some(Kind::Grpc), 0) => self.open_grpc_method_picker(),
+                    // The tool chip: a click places the caret (part 1 does the
+                    // same for the server input); the ▾ area opens the list.
+                    (Some(Kind::Mcp), 0) => {
+                        let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
+                        if rx + 3 >= rect.width {
+                            self.load_mcp_tools(true);
+                        } else {
+                            if let Some(e) = self.focused_text() {
+                                e.click(rx, ry, shift);
+                            }
+                            self.drag = Some(Drag::Text {
+                                field: None,
+                                bar: true,
+                            });
+                        }
+                    }
+                    // The endpoint input of every kind: place the caret.
+                    (Some(_), 1) => {
                         let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
                         if let Some(e) = self.focused_text() {
                             e.click(rx, ry, shift);
@@ -4949,6 +8067,29 @@ impl App {
                 }
                 self.changed();
             }
+            Hit::JsonError { line, col } => {
+                if let Some(t) = self.tab_mut()
+                    && let Some(i) = t.fields().iter().position(|f| f.is_multiline())
+                {
+                    t.field = i;
+                    if let Some(f) = t.current_field()
+                        && let Some(e) = t.ed.text_mut(f)
+                    {
+                        e.move_to(Pos { row: line, col });
+                    }
+                    self.focus = Focus::ReqBody;
+                }
+            }
+            Hit::ChoiceOption { field, index } => {
+                self.focus = Focus::ReqBody;
+                if let Some(t) = self.tab_mut() {
+                    t.field = field;
+                    if let Some(f) = t.current_field() {
+                        t.ed.set_choice(f, index);
+                    }
+                }
+                self.changed();
+            }
             Hit::TextArea { field } => {
                 self.focus = Focus::ReqBody;
                 let (rx, ry) = (x.saturating_sub(rect.x), y.saturating_sub(rect.y));
@@ -4975,10 +8116,14 @@ impl App {
                         && let Some(tb) = t.ed.table_mut(f)
                     {
                         tb.select(row, col);
-                        if !tb.editing_text() {
+                        if tb.editing_text() {
+                            // Clicking the trailing "add" row creates it.
+                            tb.ensure_row();
+                            if let Some(e) = tb.editor_mut() {
+                                e.click(rx, ry, false);
+                            }
+                        } else {
                             changed = tb.activate(1);
-                        } else if let Some(e) = tb.editor_mut() {
-                            e.click(rx, ry, false);
                         }
                     }
                 }
@@ -5029,6 +8174,13 @@ impl App {
                     }
                 });
             }
+            Hit::RespQuery => self.focus = Focus::RespQuery,
+            Hit::StreamMsg(i) => {
+                self.focus = Focus::RespBody;
+                if let Some(r) = self.tab_mut().and_then(|t| t.response.as_mut()) {
+                    r.set_message(i);
+                }
+            }
             Hit::ViewMode(m) => {
                 self.focus = Focus::RespBody;
                 self.set_view(m);
@@ -5046,6 +8198,8 @@ impl App {
             Hit::SidebarBorder => self.drag = Some(Drag::Sidebar),
             Hit::SplitBorder => self.drag = Some(Drag::Split),
             Hit::Overlay(_) => {}
+            // Handled at the top of `click`, before the panes.
+            Hit::CompleteItem(_) | Hit::Menu(_) => {}
         }
     }
 
@@ -5055,8 +8209,55 @@ impl App {
         };
         let mut keep = true;
         match (&mut ov, oh) {
-            (_, OverlayHit::Close) | (_, OverlayHit::Outside) => {
-                keep = matches!(ov, Overlay::Confirm(_))
+            // The env and MCP editors route outside clicks through Esc so a
+            // dirty editor still asks to save instead of dropping changes.
+            (Overlay::Env(_), OverlayHit::Outside) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::Outside) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            // A "new environment" prompt returns to the env editor parked
+            // behind it, as Esc does, so the editor's changes are kept.
+            (Overlay::Prompt(p), OverlayHit::Outside)
+                if !p.pending() && matches!(p.action, PromptAction::NewEnv) =>
+            {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            // A prompt or import dialog drops what was typed in it: ask first.
+            (Overlay::Prompt(p), OverlayHit::Outside) if p.pending() => {
+                let title = p.title.clone();
+                self.parked_dialog = Some(ov);
+                self.overlay = Some(Overlay::Confirm(Confirm {
+                    title: "Unsaved text".into(),
+                    message: format!("Discard the text typed into \"{title}\"?"),
+                    buttons: vec!["Discard".into(), "Keep editing".into()],
+                    sel: 1,
+                    action: ConfirmAction::DialogClose,
+                }));
+                return;
+            }
+            (Overlay::Import(i), OverlayHit::Outside) if i.pending() => {
+                self.parked_dialog = Some(ov);
+                self.overlay = Some(Overlay::Confirm(Confirm {
+                    title: "Unsaved text".into(),
+                    message: "Discard the text typed into \"Import\"?".into(),
+                    buttons: vec!["Discard".into(), "Keep editing".into()],
+                    sel: 1,
+                    action: ConfirmAction::DialogClose,
+                }));
+                return;
+            }
+            (Overlay::Import(_), OverlayHit::Outside) => keep = false,
+            (_, OverlayHit::Outside) => keep = matches!(ov, Overlay::Confirm(_)),
+            (Overlay::Picker(p), OverlayHit::Input) => {
+                p.filter.click(x.saturating_sub(rect.x), 0, false);
             }
             (Overlay::Picker(p), OverlayHit::Item(i)) => {
                 p.sel = i;
@@ -5070,8 +8271,13 @@ impl App {
                 }
                 keep = false;
             }
+            (Overlay::Palette(p), OverlayHit::Input) => {
+                p.input.click(x.saturating_sub(rect.x), 0, false);
+            }
             (Overlay::Palette(p), OverlayHit::Item(i)) => {
                 p.sel = i;
+                // Running the row is what Enter would do: it needs `armed`.
+                p.armed = true;
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;
@@ -5081,15 +8287,28 @@ impl App {
                 self.confirm(action, i);
                 keep = false;
             }
+            // A click selects a setting; the value chip (or a double click)
+            // changes it, matching the keyboard's ←/→.
             (Overlay::Settings { sel }, OverlayHit::Item(i)) => {
+                *sel = i;
+                if double {
+                    self.change_setting(SETTINGS[i].0, 1);
+                }
+            }
+            (Overlay::Settings { sel }, OverlayHit::Value(i)) => {
                 *sel = i;
                 self.change_setting(SETTINGS[i].0, 1);
             }
             (Overlay::Prompt(p), OverlayHit::Choice(k)) => {
                 p.focus = k + 1;
-                if let Some((_, opts, i)) = p.choices.get_mut(k) {
-                    *i = (*i + 1) % opts.len().max(1);
+                p.open = p.choices.get(k).map(|c| c.2);
+            }
+            (Overlay::Prompt(p), OverlayHit::PromptOption(j)) => {
+                if let Some(c) = p.choices.get_mut(p.focus.wrapping_sub(1)) {
+                    c.2 = j.min(c.1.len().saturating_sub(1));
                 }
+                p.open = None;
+                p.focus = 0;
             }
             (Overlay::Prompt(p), OverlayHit::Input) => {
                 p.focus = 0;
@@ -5100,7 +8319,11 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;
             }
-            (Overlay::Prompt(_), OverlayHit::Button(_)) => keep = false,
+            (Overlay::Prompt(_), OverlayHit::Button(_)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
             (Overlay::Import(i), OverlayHit::Input) => {
                 i.input
                     .click(x.saturating_sub(rect.x), y.saturating_sub(rect.y), false)
@@ -5111,6 +8334,13 @@ impl App {
                 return;
             }
             (Overlay::Import(_), OverlayHit::Button(_)) => keep = false,
+            (Overlay::Env(e), OverlayHit::EnvDelete(row)) => {
+                // The row's ✕, same as Ctrl+D.
+                e.table.sel_row = row.min(e.table.rows.len());
+                if e.table.delete_row() {
+                    e.dirty = true;
+                }
+            }
             (Overlay::Env(e), OverlayHit::EnvTab(i)) => {
                 if e.dirty {
                     e.error = Some("save (Ctrl+S) or discard changes before switching".into());
@@ -5132,10 +8362,13 @@ impl App {
             }
             (Overlay::Env(e), OverlayHit::EnvCell { row, col }) => {
                 e.table.select(row, col);
-                if !e.table.editing_text() && e.table.activate(1) {
+                if e.table.editing_text() {
+                    e.table.ensure_row();
+                    if let Some(ed) = e.table.editor_mut() {
+                        ed.click(x.saturating_sub(rect.x), 0, false);
+                    }
+                } else if e.table.activate(1) {
                     e.dirty = true;
-                } else if let Some(ed) = e.table.editor_mut() {
-                    ed.click(x.saturating_sub(rect.x), 0, false);
                 }
             }
             (Overlay::Env(_), OverlayHit::Button(0)) => {
@@ -5153,9 +8386,42 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
+            (Overlay::Mcp(m), OverlayHit::McpDelete(row)) => {
+                m.table.sel_row = row.min(m.table.rows.len());
+                if m.table.delete_row() {
+                    m.dirty = true;
+                }
+            }
+            (Overlay::Mcp(m), OverlayHit::McpCell { row, col }) => {
+                m.table.select(row, col);
+                if m.table.editing_text() {
+                    m.table.ensure_row();
+                    if let Some(ed) = m.table.editor_mut() {
+                        ed.click(x.saturating_sub(rect.x), 0, false);
+                    }
+                } else if m.table.activate(1) {
+                    m.dirty = true;
+                }
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(0)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(1)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+                return;
+            }
+            (Overlay::Mcp(_), OverlayHit::McpButton(_)) => {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
             (Overlay::Report(r), OverlayHit::Button(0)) => {
                 self.clipboard.set(r.copy_text.clone(), false);
                 self.osc52.push(r.copy_text.clone());
+                r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
             }
             (Overlay::Report(r), OverlayHit::Button(_)) => {
@@ -5164,9 +8430,12 @@ impl App {
                 }
                 keep = false;
             }
-            (Overlay::Help { viewer, .. }, OverlayHit::Item(_)) => {
-                viewer.click(y.saturating_sub(rect.y))
+            (Overlay::Help { filter, .. }, OverlayHit::Input) => {
+                filter.click(x.saturating_sub(rect.x), 0, false);
             }
+            // The right column of a two-column Help continues the left one.
+            (Overlay::Help { viewer, .. }, OverlayHit::Item(off)) => viewer
+                .click((y.saturating_sub(rect.y) as usize + off).min(u16::MAX as usize) as u16),
             _ => {
                 let _ = double;
             }

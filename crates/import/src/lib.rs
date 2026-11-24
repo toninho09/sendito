@@ -1,6 +1,9 @@
 //! Import from Postman Collection v2.1 and curl; export to curl.
 
+pub mod bruno;
 pub mod curl;
+pub mod http_file;
+pub mod insomnia;
 pub mod postman;
 
 use sendito_core::Request;
@@ -39,7 +42,141 @@ pub struct ImportResult {
     pub root: ImportFolder,
     /// Collection-level variables (written to the collection environment).
     pub variables: Vec<(String, String)>,
+    /// Selectable environments imported alongside the collection.
+    pub environments: Vec<ImportEnvironment>,
     pub skipped: Vec<Skipped>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportEnvironment {
+    pub name: String,
+    pub variables: Vec<(String, String)>,
+}
+
+/// Recognized collection formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportFormat {
+    Postman,
+    Insomnia,
+    Bruno,
+}
+
+impl ImportFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Postman => "Postman",
+            Self::Insomnia => "Insomnia",
+            Self::Bruno => "Bruno",
+        }
+    }
+}
+
+/// Detect a JSON export without falling back after a recognized format fails.
+pub fn import_json(text: &str) -> Result<(ImportFormat, ImportResult), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
+    if value.get("__export_format").is_some() {
+        insomnia::import(text).map(|result| (ImportFormat::Insomnia, result))
+    } else {
+        postman::import(text)
+            .map(|result| (ImportFormat::Postman, result))
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Detect a Bruno directory or a Postman/Insomnia JSON file.
+pub fn import_path(path: &std::path::Path) -> Result<(ImportFormat, ImportResult), String> {
+    if path.is_dir() {
+        return bruno::import(path).map(|result| (ImportFormat::Bruno, result));
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    import_json(&text)
+}
+
+/// Render URL query and form fields while keeping unresolved placeholders
+/// readable instead of percent-encoding their braces in exported commands.
+pub(crate) fn preserve_export_templates(
+    req: &sendito_core::HttpRequest,
+    scope: &sendito_core::Scope,
+    resolved: &mut sendito_core::resolve::ResolvedHttp,
+) {
+    use sendito_core::model::{ApiKeyLocation, Auth, Body};
+    use sendito_core::resolve::{ResolvedBody, form_urlencode, normalize_url, query_encode};
+    use sendito_core::template::Segment;
+    fn encode(text: &str, f: fn(&str) -> String) -> String {
+        let mut out = String::new();
+        for part in sendito_core::template::parse(text) {
+            match part {
+                Segment::Text(s) => out.push_str(&f(s)),
+                Segment::Var { span, .. } => out.push_str(&text[span]),
+            }
+        }
+        out
+    }
+    let mut pairs: Vec<(String, String)> = req
+        .params
+        .iter()
+        .filter(|p| p.enabled && !p.name.is_empty())
+        .map(|p| (scope.render(&p.name).text, scope.render(&p.value).text))
+        .collect();
+    if let Auth::ApiKey {
+        key,
+        value,
+        location: ApiKeyLocation::Query,
+    } = &req.auth
+    {
+        pairs.push((scope.render(key).text, scope.render(value).text));
+    }
+    if !pairs.is_empty() {
+        let base = normalize_url(&scope.render(&req.url).text);
+        let (before, fragment) = base
+            .find('#')
+            .map(|i| base.split_at(i))
+            .unwrap_or((&base, ""));
+        let mut url = before.to_string();
+        if !url.contains('?') {
+            url.push('?');
+        } else if !url.ends_with('?') && !url.ends_with('&') {
+            url.push('&');
+        }
+        url.push_str(
+            &pairs
+                .iter()
+                .map(|(k, v)| format!("{}={}", encode(k, query_encode), encode(v, query_encode)))
+                .collect::<Vec<_>>()
+                .join("&"),
+        );
+        url.push_str(fragment);
+        resolved.url = url;
+    }
+    if let Body::Form { fields } = &req.body {
+        let body = fields
+            .iter()
+            .filter(|f| f.enabled && !f.name.is_empty())
+            .map(|f| {
+                format!(
+                    "{}={}",
+                    encode(&scope.render(&f.name).text, form_urlencode),
+                    encode(&scope.render(&f.value).text, form_urlencode)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        resolved.body = ResolvedBody::Bytes(body.into_bytes());
+    }
+}
+
+/// Placeholder for an OAuth token in formats that cannot access the keychain.
+pub(crate) fn oauth_placeholder(identity: &str) -> String {
+    if identity.is_empty()
+        || !identity
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        "{{oauth_token}}".into()
+    } else {
+        format!("{{{{oauth.{identity}}}}}")
+    }
 }
 
 /// Makes a file-system-safe, unique name.
@@ -92,6 +229,9 @@ pub struct WriteReport {
     pub requests: usize,
     pub folders: usize,
     pub variables: usize,
+    pub environments: usize,
+    pub variable_conflicts: Vec<String>,
+    pub renamed_environments: Vec<(String, String)>,
 }
 
 /// Writes an import under `parent` in a new folder named after the root.
@@ -123,9 +263,38 @@ pub fn write(
                     source: VarSource::Plain(v.clone()),
                 });
                 rep.variables += 1;
+            } else {
+                rep.variable_conflicts.push(k.clone());
             }
         }
         envs.save(&env)?;
+    }
+    if let Some(envs) = envs {
+        let mut taken = envs.list();
+        for imported in &result.environments {
+            // `_…` names and `runtime` are reserved in a collection.
+            let raw_name = if imported.name.starts_with('_')
+                || imported.name == sendito_core::script::RUNTIME_LAYER
+            {
+                format!("env-{}", imported.name)
+            } else {
+                imported.name.clone()
+            };
+            let name = safe_name(&raw_name, &mut taken);
+            if name != imported.name {
+                rep.renamed_environments
+                    .push((imported.name.clone(), name.clone()));
+            }
+            let mut env = sendito_store::env::EnvFile::new(&name);
+            for (name, value) in &imported.variables {
+                env.set(EnvVar {
+                    name: name.clone(),
+                    source: VarSource::Plain(value.clone()),
+                });
+            }
+            envs.save(&env)?;
+            rep.environments += 1;
+        }
     }
     Ok(rep)
 }
@@ -180,6 +349,7 @@ mod tests {
                 requests: vec![("ping".into(), Request::new_http())],
             },
             variables: vec![("base".into(), "http://x".into())],
+            environments: vec![],
             skipped: vec![],
         };
         let rep = write(&result, &coll, Some(&envs), "").unwrap();
@@ -191,6 +361,44 @@ mod tests {
         assert_eq!(rep2.folder, "API-v1 (2)");
         assert_eq!(rep2.variables, 0);
         assert_eq!(result.root.count_requests(), 3);
+    }
+
+    #[test]
+    fn exports_keep_secret_placeholders_in_query_and_form() {
+        use sendito_core::model::{ApiKeyLocation, Auth, Body, HttpRequest, KeyValue};
+        use sendito_core::vars::{Scope, VarValue};
+        let mut scope = Scope::new();
+        scope.set("env", "token", VarValue::secret("value & secret"));
+        let req = HttpRequest {
+            method: "POST".into(),
+            url: "http://example.test/a?literal=%7B%7Bx%7D%7D#fragment".into(),
+            params: vec![KeyValue::new("q", "prefix {{token}}")],
+            auth: Auth::ApiKey {
+                key: "api_key".into(),
+                value: "{{token}}".into(),
+                location: ApiKeyLocation::Query,
+            },
+            body: Body::Form {
+                fields: vec![KeyValue::new("value", "{{token}}")],
+            },
+            ..Default::default()
+        };
+        let curl = super::curl::export(&req, &scope, false, std::path::Path::new("."));
+        let file = super::http_file::export("test", &req, &scope, false, std::path::Path::new("."));
+        for output in [&curl, &file] {
+            assert!(
+                output.contains(
+                    "literal=%7B%7Bx%7D%7D&q=prefix%20{{token}}&api_key={{token}}#fragment"
+                ),
+                "{output}"
+            );
+            assert!(output.contains("value={{token}}"), "{output}");
+            assert!(!output.contains("value & secret"));
+        }
+        let with_secret =
+            super::http_file::export("test", &req, &scope, true, std::path::Path::new("."));
+        assert!(with_secret.contains("api_key=value%20%26%20secret"));
+        assert!(with_secret.ends_with("value=value+%26+secret"));
     }
 
     #[test]

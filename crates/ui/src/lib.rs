@@ -1,12 +1,16 @@
 //! Sendito terminal UI.
 
 pub mod app;
+pub mod complete;
 pub mod draw;
 pub mod editor;
+pub mod filter;
 pub mod form;
+pub mod icons;
 pub mod keymap;
+pub mod list;
 pub mod overlay;
-pub mod runner;
+pub use sendito_pipeline::runner;
 pub mod tab;
 pub mod theme;
 pub mod tree;
@@ -14,6 +18,7 @@ pub mod viewer;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -47,9 +52,7 @@ pub struct RunOptions {
     pub started: Option<Instant>,
 }
 
-struct TermGuard {
-    mouse: bool,
-}
+struct TermGuard;
 
 impl TermGuard {
     fn enter(mouse: bool) -> io::Result<Self> {
@@ -59,29 +62,76 @@ impl TermGuard {
         if mouse {
             execute!(out, EnableMouseCapture)?;
         }
+        // Keep the window title to restore it on exit (xterm title stack).
+        let _ = out.write_all(b"\x1b[22;0t");
+        let _ = out.flush();
         // Terminals without the kitty keyboard protocol ignore this.
         let _ = execute!(
             out,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         );
-        Ok(Self { mouse })
+        Ok(Self)
     }
+}
+
+fn leave_terminal(out: &mut impl Write) {
+    let _ = execute!(out, PopKeyboardEnhancementFlags);
+    // Always: the Mouse setting can turn capture on while the UI runs.
+    let _ = execute!(out, DisableMouseCapture);
+    let _ = execute!(
+        out,
+        crossterm::cursor::SetCursorStyle::DefaultUserShape,
+        DisableBracketedPaste,
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    let _ = out.write_all(b"\x1b[23;0t");
+    let _ = out.flush();
 }
 
 impl Drop for TermGuard {
     fn drop(&mut self) {
-        let mut out = io::stdout();
-        let _ = execute!(out, PopKeyboardEnhancementFlags);
-        if self.mouse {
-            let _ = execute!(out, DisableMouseCapture);
-        }
-        let _ = execute!(
-            out,
-            DisableBracketedPaste,
-            LeaveAlternateScreen,
-            crossterm::cursor::Show
-        );
+        leave_terminal(&mut io::stdout());
         let _ = disable_raw_mode();
+    }
+}
+
+type PanicHook = Arc<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+/// Leaves the terminal when the thread that runs the UI panics, so the message
+/// is readable, and hands the panic on to the hook that was there before. A
+/// panic in a background task leaves the screen alone; dropping the guard
+/// restores the previous hook.
+struct PanicGuard {
+    previous: PanicHook,
+}
+
+impl PanicGuard {
+    fn enter() -> Self {
+        Self::install(move || {
+            leave_terminal(&mut io::stdout());
+            let _ = disable_raw_mode();
+        })
+    }
+
+    fn install(restore: impl Fn() + Send + Sync + 'static) -> Self {
+        let ui_thread = std::thread::current().id();
+        let previous: PanicHook = Arc::from(std::panic::take_hook());
+        let chained = Arc::clone(&previous);
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().id() == ui_thread {
+                restore();
+            }
+            chained(info);
+        }));
+        Self { previous }
+    }
+}
+
+impl Drop for PanicGuard {
+    fn drop(&mut self) {
+        let previous = Arc::clone(&self.previous);
+        std::panic::set_hook(Box::new(move |info| previous(info)));
     }
 }
 
@@ -107,6 +157,7 @@ pub fn run(
         None => None,
     };
     let guard = TermGuard::enter(mouse)?;
+    let hook = PanicGuard::enter();
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     // The alternate screen starts empty; ratatui's `clear()` would also query the
@@ -123,6 +174,7 @@ pub fn run(
     app.save_session();
     drop(terminal);
     drop(guard);
+    drop(hook);
     if let Some(l) = &mut log {
         let _ = l.flush();
     }
@@ -138,10 +190,41 @@ fn event_loop(
 ) -> io::Result<()> {
     let mut dirty = true;
     let mut last_anim = Instant::now();
+    let mut shape: Option<bool> = None;
+    let mut title = String::new();
+    let mut mouse = app.project.config.ui.mouse;
     loop {
+        // The Mouse setting takes effect at once, not at the next start.
+        if app.project.config.ui.mouse != mouse {
+            mouse = app.project.config.ui.mouse;
+            let _ = if mouse {
+                execute!(io::stdout(), EnableMouseCapture)
+            } else {
+                execute!(io::stdout(), DisableMouseCapture)
+            };
+        }
         if dirty {
             let t0 = Instant::now();
             terminal.draw(|f| draw::draw(app, f))?;
+            // A bar cursor while typing; a block in vim normal mode.
+            if app.last_cursor.is_some() {
+                let bar = !app.vim
+                    || matches!(app.focused_vim_mode(), Some(editor::VimMode::Insert) | None);
+                if shape != Some(bar) {
+                    let st = if bar {
+                        crossterm::cursor::SetCursorStyle::SteadyBar
+                    } else {
+                        crossterm::cursor::SetCursorStyle::SteadyBlock
+                    };
+                    let _ = execute!(io::stdout(), st);
+                    shape = Some(bar);
+                }
+            }
+            let t = app.window_title();
+            if t != title {
+                let _ = execute!(io::stdout(), crossterm::terminal::SetTitle(&t));
+                title = t;
+            }
             if let Some(l) = log {
                 let _ = writeln!(l, "frame {}", t0.elapsed().as_micros());
             }
@@ -164,7 +247,7 @@ fn event_loop(
         }
         let busy = app.is_busy();
         let timeout = if busy {
-            Duration::from_millis(50)
+            Duration::from_millis(40)
         } else {
             Duration::from_millis(250)
         };
@@ -200,14 +283,14 @@ fn event_loop(
             }
             dirty = true;
         }
-        // Elapsed-time counters while a request runs.
-        if busy && last_anim.elapsed() > Duration::from_millis(200) {
+        // Elapsed-time counters and spinners while a request runs.
+        if busy && last_anim.elapsed() > Duration::from_millis(100) {
             last_anim = Instant::now();
+            app.anim_frame = app.anim_frame.wrapping_add(1);
             dirty = true;
         }
         let before = app.status.is_some();
-        app.tick();
-        if before != app.status.is_some() {
+        if app.tick() || before != app.status.is_some() {
             dirty = true;
         }
     }
@@ -307,5 +390,72 @@ pub mod bench {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leave_terminal_restores_the_screen() {
+        let mut out = Vec::new();
+        leave_terminal(&mut out);
+        let text = String::from_utf8(out).unwrap();
+        for code in [
+            "\x1b[?1006l",
+            "\x1b[?1000l",
+            "\x1b[?1049l",
+            "\x1b[?2004l",
+            "\x1b[23;0t",
+        ] {
+            assert!(text.contains(code), "{code:?} missing from {text:?}");
+        }
+        assert!(text.ends_with("\x1b[23;0t"), "{text:?}");
+    }
+
+    #[test]
+    fn panic_hook_leaves_the_terminal_for_the_ui_thread_only() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        fn probe() {
+            let _ = std::panic::catch_unwind(|| panic!("probe"));
+        }
+
+        let original = std::panic::take_hook();
+        let chained = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&chained);
+        std::panic::set_hook(Box::new(move |_| {
+            seen.store(true, Ordering::SeqCst);
+        }));
+
+        let restored = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&restored);
+        let guard = PanicGuard::install(move || flag.store(true, Ordering::SeqCst));
+
+        std::thread::spawn(probe).join().unwrap();
+        let other_thread = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+        probe();
+        let ui_thread = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+
+        drop(guard);
+        restored.store(false, Ordering::SeqCst);
+        chained.store(false, Ordering::SeqCst);
+        probe();
+        let after_drop = (
+            restored.load(Ordering::SeqCst),
+            chained.load(Ordering::SeqCst),
+        );
+
+        std::panic::set_hook(original);
+        assert_eq!(other_thread, (false, true));
+        assert_eq!(ui_thread, (true, true));
+        assert_eq!(after_drop, (false, true));
     }
 }

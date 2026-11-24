@@ -2,63 +2,63 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                                                    ┏ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                                                                    ┃                                                              ┃
-                                                                    ┃  Vim mode                                           ‹ Off ›  ┃
-                                                                    ┃  Theme                                    ‹ auto › (1 of 5)  ┃
-                                                                    ┃  Sidebar position                                  ‹ left ›  ┃
-                                                                    ┃  Mouse support                                       ‹ On ›  ┃
-                                                                    ┃  Confirm quit with unsaved changes                   ‹ On ›  ┃
-                                                                    ┃  Record history                                      ‹ On ›  ┃
-                                                                    ┃                                                              ┃
-                                                                    ┃ Vim keys in editors and lists (normal / insert modes).       ┃
-                                                                    ┃ Vim mode: On / Off  (← → / Space)                            ┃
-                                                                    ┃                                                              ┃
-                                                                    ┃ Changes apply at once and are saved to                       ┃
-                                                                    ┃ ~/.config/sendito/config.toml                                ┃
-                                                                    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- ↑↓ move  ←→ Space change  Esc close
- env: local
+ sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                                                                                                        │
+│▸ Users/                    ││                                                                                                                                                                        │
+│  GRPC  echo unary          ││                                                                                                                                                                        │
+│  GET   health              ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                  ╭─ Settings ─────────────────────────────────────────────────────────╮                                                                │
+│                            ││                                  │                                                                    │                                                                │
+│                            ││                                  │  Appearance                                                        │                                                                │
+│                            ││                                  │    Theme                              ███████  ‹ auto › (1 of 7)   │                                                                │
+│                            ││                                  │    Icons                                             ‹ unicode ›   │                                                                │
+│                            ││                                  │    Key hints                                           ‹ short ›   │                                                                │
+│                            ││                                  │  Editing                                                           │                                                                │
+│                            ││                                  │    Vim mode                                              ‹ Off ›   │                                                                │
+│                            ││                                  │  Layout                                                            │                                                                │
+│                            ││                            Start │    Sidebar position                                     ‹ left ›   │ t                                                              │
+│                            ││                             Ctrl+│  Behavior                                                          │ sts you send appear here.                                      │
+│                            ││                             n / N│    Mouse support                                          ‹ On ›   │                                                                │
+│                            ││                             Enter│    Confirm quit with unsaved changes                      ‹ On ›   │ all history                                                    │
+│                            ││                             Ctrl+│    Record history                                         ‹ On ›   │                                                                │
+│                            ││                             Ctrl+│    Watch interval                                        ‹ 5 s ›   │                                                                │
+│                            ││                             F4   │ ────────────────────────────────────────────────────────────────── │                                                                │
+│                            ││                             m    │  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
+│                            ││                             Ctrl+│  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
+│                            ││                             F1   │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
+│                            ││                             Ctrl+│                                                                    │                                                                │
+│                            ││                                  │  Changes apply at once and are saved to                            │                                                                │
+│                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
+│                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                                                                                                                             ↑↓ move · ←→ Space change · Esc close

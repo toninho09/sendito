@@ -1,7 +1,7 @@
 //! Correctness corpus: every request in `tests/corpus/collection` is sent through
 //! the same pipeline as the app against the echo servers. The exact bytes the
-//! HTTP server received (and the messages the gRPC server decoded) are compared
-//! with the reviewed captures in `tests/corpus/expected`.
+//! HTTP and MCP servers received (and the messages the gRPC server decoded) are
+//! compared with the reviewed captures in `tests/corpus/expected`.
 //!
 //! Secret values are random per run: they never appear in tracked files. In the
 //! captures they are shown as `<secret:NAME>`; the raw value is checked in memory.
@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sendito_core::Request;
+use sendito_pipeline::runner::{self, GrpcUpdate, Project, RunCtx};
 use sendito_store::env::{Keychain, MemoryKeychain};
-use sendito_testkit::{grpc_echo, http_echo};
-use sendito_ui::runner::{self, GrpcUpdate, Project, RunCtx};
+use sendito_testkit::{grpc_echo, http_echo, mcp_echo};
 
 /// `unwrap` for test helpers (the workspace denies `unwrap_used`).
 pub trait Must<T> {
@@ -73,6 +73,9 @@ struct Env {
     secrets: BTreeMap<String, String>,
     http: http_echo::HttpEcho,
     grpc: grpc_echo::GrpcEcho,
+    mcp: mcp_echo::McpEcho,
+    ws: sendito_testkit::ws_echo::WsEcho,
+    ws_tls: sendito_testkit::ws_echo::WsEcho,
     keychain: Arc<MemoryKeychain>,
 }
 
@@ -82,6 +85,10 @@ async fn setup() -> Env {
     copy_dir(&src, dir.path());
     let http = http_echo::start().await.must();
     let grpc = grpc_echo::start().await.must();
+    let mcp = mcp_echo::start().await.must();
+    let ws = sendito_testkit::ws_echo::start().await.must();
+    let certs = sendito_testkit::tls::generate().must();
+    let ws_tls = sendito_testkit::ws_echo::start_tls(&certs).await.must();
     let env_path = dir.path().join(".sendito/environments/corpus.toml");
     let text = std::fs::read_to_string(&env_path)
         .must()
@@ -94,6 +101,12 @@ async fn setup() -> Env {
             "grpc_target = \"127.0.0.1:0\"",
             &format!("grpc_target = \"{}\"", grpc.target()),
         );
+    let text = format!(
+        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\n",
+        mcp.url(),
+        ws.url("").trim_end_matches('/'),
+        ws_tls.url("").trim_end_matches('/')
+    );
     std::fs::write(&env_path, text).must();
     let mut secrets = BTreeMap::new();
     secrets.insert("local_token".to_string(), random_secret("lt"));
@@ -130,6 +143,9 @@ async fn setup() -> Env {
         secrets,
         http,
         grpc,
+        mcp,
+        ws,
+        ws_tls,
         keychain,
     }
 }
@@ -148,7 +164,10 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         env: Some("corpus".into()),
         schemas: Default::default(),
         grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
         mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
     }
 }
 
@@ -210,7 +229,9 @@ fn normalize_http(
         }
         body_text = body_text.replace(&b, "<boundary>");
     }
-    let s = format!("{head}{body_text}").replace(&format!("127.0.0.1:{port}"), "127.0.0.1:<port>");
+    let s = format!("{head}{body_text}")
+        .replace(&format!("127.0.0.1:{port}"), "127.0.0.1:<port>")
+        .replace(&format!("localhost:{port}"), "localhost:<port>");
     mask_secrets(s, secrets)
 }
 
@@ -374,17 +395,221 @@ fn oracle_http(
                 | "authorization"
                 // reqwest adds `Accept: */*` to every request (see docs/DEBT.md).
                 | "accept"
-        ) || (matches!(&req.auth, sendito_core::Auth::ApiKey { key, location: sendito_core::ApiKeyLocation::Header, .. } if key.eq_ignore_ascii_case(&n)));
+        ) || (matches!(&req.auth, sendito_core::Auth::ApiKey { key, location: sendito_core::ApiKeyLocation::Header, .. } if key.eq_ignore_ascii_case(&n)))
+            || (n == "cookie" && req.options.cookies == Some(true));
         if !derived && !defined.contains(&n) {
             failures.push(format!("{case}: header {n} was sent but not defined"));
         }
     }
 }
 
+/// One WebSocket case: the exact handshake head and every frame both ways.
+async fn run_ws_case(e: &Env, p: &Project, file: &str, failures: &mut Vec<String>) {
+    let case = file.trim_end_matches(".toml");
+    let rel = format!("ws/{file}");
+    let Request::Ws(req) = p.coll.load(&rel).must() else {
+        panic!("{rel} is not a WebSocket request")
+    };
+    let (scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+    assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
+    e.ws.take();
+    e.ws_tls.take();
+    let run = ctx(e, p, &rel);
+    let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+    let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(ctl_tx);
+    let exec = runner::exec_ws(&run, &req, scope.clone(), vec![], utx, ctl_rx);
+    let mut close = (0u16, String::new());
+    let mut failure = None;
+    let collect = async {
+        while let Some(u) = urx.recv().await {
+            match u {
+                runner::WsUpdate::Event(sendito_ws::Event::Finished { code, reason, .. }) => {
+                    close = (code, reason);
+                }
+                runner::WsUpdate::Error(err) => failure = Some(err),
+                _ => {}
+            }
+        }
+    };
+    tokio::join!(exec, collect);
+    if let Some(err) = failure {
+        failures.push(format!("{case}: session failed: {err}"));
+        return;
+    }
+    let resolved_url = sendito_core::resolve::resolve_ws(&req, &scope).url;
+    let secure = resolved_url.starts_with("wss");
+    let caps = if secure { e.ws_tls.take() } else { e.ws.take() };
+    let Some(cap) = caps.first() else {
+        failures.push(format!("{case}: the server saw no session"));
+        return;
+    };
+    // The handshake request the request file defines.
+    let head = cap.head();
+    let request_line = head.lines().next().unwrap_or_default().to_string();
+    let first = request_line.split(' ').nth(1).unwrap_or("");
+    if !first.starts_with('/') {
+        failures.push(format!("{case}: odd request target {first:?}"));
+    }
+    for h in req.headers.iter().filter(|h| h.enabled) {
+        let name = scope.render(&h.name).text;
+        let want = scope.render(&h.value).text;
+        // Dynamic values ({{$uuid}}, {{$timestamp}}) differ per send.
+        let dynamic = want.len() > 16 && !want.starts_with("https://");
+        let got: Vec<String> = cap
+            .head()
+            .lines()
+            .filter_map(|l| l.split_once(':'))
+            .filter(|(n, _)| n.trim().eq_ignore_ascii_case(&name))
+            .map(|(_, v)| v.trim().to_string())
+            .collect();
+        if !got.is_empty() && dynamic {
+            continue;
+        }
+        if !got.contains(&want) {
+            failures.push(format!(
+                "{case}: header {name}: {want:?} missing (got {got:?})"
+            ));
+        }
+    }
+    if let sendito_core::Auth::Bearer { token } = &req.auth {
+        let want = format!("Bearer {}", scope.render(token).text);
+        if !head.contains(&want) {
+            failures.push(format!("{case}: missing {want:?} in the handshake"));
+        }
+    }
+    if let sendito_core::Auth::Basic { username, password } = &req.auth {
+        let raw = format!(
+            "{}:{}",
+            scope.render(username).text,
+            scope.render(password).text
+        );
+        let want = format!("Basic {}", base64_std(&raw));
+        if !head.contains(&want) {
+            failures.push(format!("{case}: missing Basic auth in the handshake"));
+        }
+    }
+    if !req.subprotocols.is_empty() {
+        let want = req.subprotocols.join(", ");
+        if !head.contains(&format!("Sec-WebSocket-Protocol: {want}")) {
+            failures.push(format!("{case}: subprotocols {want:?} not offered"));
+        }
+    }
+    // The frames the request defines were sent, in order.
+    let sent: Vec<(String, Vec<u8>)> = cap
+        .frames
+        .iter()
+        .filter(|(out, _, _)| !out)
+        .map(|(_, k, p)| (k.clone(), p.clone()))
+        .collect();
+    let frames = sendito_ws::parse_messages(&scope.render(&req.messages).text).unwrap_or_default();
+    let expected: Vec<(String, Vec<u8>)> = frames
+        .iter()
+        .map(|f| match f {
+            sendito_ws::Frame::Text(t) => ("text".to_string(), t.clone().into_bytes()),
+            sendito_ws::Frame::Binary(b) => ("binary".to_string(), b.clone()),
+        })
+        .collect();
+    // The client closes with 1000, so the last received frame is that close.
+    let body: Vec<(String, Vec<u8>)> = sent.iter().filter(|(k, _)| k != "close").cloned().collect();
+    if body != expected {
+        failures.push(format!(
+            "{case}: frames differ: sent {body:?}, expected {expected:?}"
+        ));
+    }
+    // A clean close is 1000; the server may also close first (08-server-close).
+    if close.0 != 1000 && case != "08-server-close" {
+        failures.push(format!("{case}: closed with {close:?}"));
+    }
+    // The deadline case must show the deadline actually fired: the close reason
+    // names it, so the case cannot pass with an ordinary close.
+    if case == "10-deadline" && !close.1.contains("deadline") {
+        failures.push(format!(
+            "{case}: expected the deadline to end the session, got {close:?}"
+        ));
+    }
+    let dump = format!(
+        "### close: {} {}\n{}",
+        close.0,
+        close.1,
+        cap.dump()
+            .replace(
+                &format!("127.0.0.1:{}", e.ws.addr.port()),
+                "127.0.0.1:<port>"
+            )
+            .replace(
+                &format!("127.0.0.1:{}", e.ws_tls.addr.port()),
+                "127.0.0.1:<port>"
+            )
+    );
+    let dump = mask_ws_dynamic(dump, &e.secrets);
+    check("ws", case, &dump, failures);
+}
+
+/// Random per run: the handshake key and the generated request id.
+fn mask_ws_dynamic(mut s: String, secrets: &BTreeMap<String, String>) -> String {
+    for line in s.clone().lines() {
+        if let Some((n, v)) = line.split_once(':') {
+            let n = n.trim().to_ascii_lowercase();
+            if n == "sec-websocket-key" || n == "x-request-id" {
+                s = s.replace(v.trim(), &format!("<{n}>"));
+            }
+        }
+    }
+    mask_secrets(s, secrets)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn http_corpus() {
+async fn ws_corpus() {
     let e = setup().await;
     let p = project(&e);
+    let root = e.dir.path().to_path_buf();
+    let mut failures = Vec::new();
+    let names = cases(&root, "ws");
+    assert!(names.len() >= 12, "only {} WebSocket cases", names.len());
+    let mut passed = 0;
+    for file in &names {
+        let before = failures.len();
+        run_ws_case(&e, &p, file, &mut failures).await;
+        if failures.len() == before {
+            passed += 1;
+        }
+    }
+    write_summary("ws", names.len(), passed, &failures);
+    if !failures.is_empty() {
+        panic!(
+            "{} WebSocket failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http_corpus() {
+    let mut e = setup().await;
+    let mut p = project(&e);
+    let access = random_secret("oauth");
+    let tokens = sendito_mcp::oauth::Tokens {
+        access: access.clone(),
+        refresh: None,
+        expires_at: None,
+        client_id: "client".into(),
+        client_secret: None,
+        bound_to: None,
+    };
+    let account = runner::oauth_token_account(&p.name, Some("corpus"), "sample");
+    e.keychain.set(&account, &tokens.to_json()).must();
+    e.secrets.insert("http_oauth".into(), access);
+    p.config.oauth.insert(
+        "sample".into(),
+        sendito_store::config::OAuthIdentity {
+            authorize_url: "http://127.0.0.1:9/authorize".into(),
+            token_url: "http://127.0.0.1:9/token".into(),
+            client_id: "client".into(),
+            ..Default::default()
+        },
+    );
     let root = e.dir.path().to_path_buf();
     let mut failures = Vec::new();
     let names = cases(&root, "http");
@@ -400,7 +625,9 @@ async fn http_corpus() {
         assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
         let before = failures.len();
         e.http.take();
-        let o = runner::exec_http(&ctx(&e, &p, &rel), &req, scope.clone(), vec![]).await;
+        let mut run = ctx(&e, &p, &rel);
+        run.oauth = Some(runner::OAuthRunInfo::of(&p));
+        let o = runner::exec_http(&run, &req, scope.clone(), vec![]).await;
         if let Err(err) = &o.response {
             failures.push(format!("{case}: request failed: {err}"));
             continue;
@@ -585,6 +812,133 @@ async fn grpc_corpus() {
         names.len(),
         failures.join("\n\n")
     );
+}
+
+fn normalize_mcp(caps: &[mcp_echo::Captured], url: &str) -> String {
+    let sid = caps
+        .get(1)
+        .and_then(|c| c.header("mcp-session-id"))
+        .unwrap_or_default();
+    let mut dump = String::new();
+    for (i, c) in caps.iter().enumerate() {
+        dump.push_str(&format!("### request {}\n{}\r\n", i + 1, c.request_line));
+        for (name, value) in &c.headers {
+            dump.push_str(&format!("{name}: {value}\r\n"));
+        }
+        dump.push_str("\r\n");
+        dump.push_str(&c.body);
+        dump.push('\n');
+    }
+    let host = url.trim_start_matches("http://");
+    let dump = dump.replace(host, "127.0.0.1:<port>");
+    if sid.is_empty() {
+        dump
+    } else {
+        dump.replace(&sid, "<session>")
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_list_corpus() {
+    let echo = mcp_echo::start().await.must();
+    let transport = sendito_mcp::Transport::Http {
+        url: format!("{}/mcp?paginate=1", echo.url()),
+        headers: Vec::new(),
+        verify_tls: true,
+        proxy: None,
+        tls: Default::default(),
+        auth: None,
+    };
+    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let tools = sendito_mcp::list_tools(&transport, &sendito_mcp::Options::default(), tx)
+        .await
+        .must();
+    assert_eq!(
+        tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["add", "greet"]
+    );
+    let caps = echo.captured();
+    assert_eq!(caps.len(), 4);
+    let mut failures = Vec::new();
+    check(
+        "mcp",
+        "list",
+        &normalize_mcp(&caps, &echo.url()),
+        &mut failures,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_corpus() {
+    let e = setup().await;
+    let p = project(&e);
+    let names = cases(e.dir.path(), "mcp");
+    assert!(names.len() >= 3);
+    let mut failures = Vec::new();
+    let mut passed = 0;
+    for file in &names {
+        let case = file.trim_end_matches(".toml");
+        let rel = format!("mcp/{file}");
+        let Request::Mcp(req) = p.coll.load(&rel).must() else {
+            panic!("{rel} is not MCP");
+        };
+        let (scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+        assert!(errors.is_empty(), "{errors:?}");
+        let start = e.mcp.captured().len();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        runner::exec_mcp(
+            &ctx(&e, &p, &rel),
+            &req,
+            scope,
+            vec![],
+            &runner::McpRunInfo::of(&p),
+            tx,
+        )
+        .await;
+        let mut outcome = None;
+        while let Ok(update) = rx.try_recv() {
+            if let runner::McpUpdate::Done {
+                error, is_error, ..
+            } = update
+            {
+                outcome = Some((error, is_error));
+            }
+        }
+        let before = failures.len();
+        let (error, is_error) = outcome.must();
+        if error.is_some() || is_error != (case == "tool-error") {
+            failures.push(format!("{case}: error={error:?}, is_error={is_error}"));
+        }
+        let caps = e.mcp.captured();
+        let caps = &caps[start..];
+        if caps.len() != 3 {
+            failures.push(format!("{case}: expected three POSTs, got {}", caps.len()));
+        }
+        if case == "bearer" {
+            let expected = format!("Bearer {}", e.secrets["local_token"]);
+            if caps
+                .iter()
+                .any(|c| c.header("authorization").as_deref() != Some(expected.as_str()))
+            {
+                failures.push(format!("{case}: bearer header missing or incorrect"));
+            }
+        }
+        let dump = normalize_mcp(caps, &e.mcp.url());
+        check("mcp", case, &mask_secrets(dump, &e.secrets), &mut failures);
+        if failures.len() == before {
+            passed += 1;
+        }
+    }
+    let history = std::fs::read_to_string(e.dir.path().join(".sendito/history.jsonl")).must();
+    for (name, value) in &e.secrets {
+        assert!(
+            !history.contains(value.as_str()),
+            "secret {name} leaked into MCP history"
+        );
+    }
+    write_summary("mcp", names.len(), passed, &failures);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 /// JSON with object keys sorted (map fields have no defined order).

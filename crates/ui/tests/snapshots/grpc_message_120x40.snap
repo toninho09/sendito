@@ -2,30 +2,15 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- GRPC echo unary × │ +                                                                        env: local ▾  F1 all keys
-╭  Requests  History ────────╮┏ Request · echo unary.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│▸ Orders/                   │┃ target {{grpc}}                                           method  Echo/Unary ▾    Send ┃
-│▸ Users/                    │┃ Message │ Metadata │ Auth │ Scripts │ Options                                          ┃
-│  GRPC  echo unary          │┃{                                                                                       ┃
-│  GET   health              │┃  "text": "hello"                                                                       ┃
-│                            │┃}                                                                                       ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
-│                            ││ Body │ Metadata │ Timing │ Log                                                         │
-│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
-│                            ││                                                                                        │
-│                            ││ The response appears here.                                                             │
+ sendito   GRPC echo unary ×    +                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ GRPC ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││ ▍{{grpc}}                                                 Echo/Unary    ▾  ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Message  Metadata  Auth  Scripts  Options ────────────────────────────────────────────╮
+│  GET   health              ││   1 {                                                                                  │
+│                            ││   2   "text": "hello"                                                                  │
+│                            ││   3 }                                                                                  │
+│                            ││   4                                                                                    │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -37,8 +22,23 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            │╰─ echo unary ────────────────────────────────────────────────────────────────── ✓ JSON ─╯
+│                            │╭─ Body  Metadata  Timing  Log ──────────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 all keys
- env: local
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                            ││                                                                                        │
+│                            ││                               The response appears here.                               │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                        ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys

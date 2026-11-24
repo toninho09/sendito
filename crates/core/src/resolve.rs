@@ -200,11 +200,32 @@ fn auth_header(ctx: &mut Ctx<'_>, auth: &Auth) -> Option<(String, String)> {
             value,
             location: ApiKeyLocation::Header,
         } => Some((ctx.r(key), ctx.r(value))),
-        Auth::ApiKey { .. } => None,
+        Auth::ApiKey { .. } | Auth::OAuth { .. } => None,
     }
 }
 
 /// Resolves an HTTP request. `base_dir` anchors relative file paths (the collection root).
+/// The auth header, and whether it is added: `taken` says that the request
+/// already defines a header with that name, which then wins. The variables of
+/// an auth header that is not added do not count as unresolved: it is never
+/// sent.
+fn auth_unless(
+    ctx: &mut Ctx,
+    auth: &Auth,
+    taken: impl Fn(&str) -> bool,
+) -> Option<(String, String, bool)> {
+    let mut own = Ctx {
+        scope: ctx.scope,
+        unresolved: Vec::new(),
+    };
+    let (name, value) = auth_header(&mut own, auth)?;
+    let added = !taken(&name);
+    if added {
+        ctx.unresolved.extend(own.unresolved);
+    }
+    Some((name, value, added))
+}
+
 pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> ResolvedHttp {
     let mut ctx = Ctx {
         scope,
@@ -257,14 +278,18 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
             ResolvedBody::Bytes(ctx.r(text).into_bytes())
         }
         Body::Json { text } => {
-            auto_ct(&mut headers, &mut origins, "application/json");
+            auto_ct(
+                &mut headers,
+                &mut origins,
+                BodyKind::Json.content_type().unwrap_or_default(),
+            );
             ResolvedBody::Bytes(ctx.r(text).into_bytes())
         }
         Body::Form { fields } => {
             auto_ct(
                 &mut headers,
                 &mut origins,
-                "application/x-www-form-urlencoded",
+                BodyKind::Form.content_type().unwrap_or_default(),
             );
             let enc: Vec<String> = fields
                 .iter()
@@ -290,7 +315,7 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
             ResolvedBody::File(resolve_path(base_dir, &ctx.r(path)))
         }
         Body::Multipart { parts } => {
-            if let Some(i) = headers
+            while let Some(i) = headers
                 .iter()
                 .position(|(n, _)| n.eq_ignore_ascii_case("content-type"))
             {
@@ -330,14 +355,16 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
         }
     };
 
-    if let Some((name, value)) = auth_header(&mut ctx, &req.auth) {
-        if has_header(&headers, &name) {
+    if let Some((name, value, added)) =
+        auth_unless(&mut ctx, &req.auth, |n| has_header(&headers, n))
+    {
+        if added {
+            headers.push((name, value));
+            origins.push(HeaderOrigin::Auth);
+        } else {
             notes.push(format!(
                 "auth header '{name}' not added: the request already defines it"
             ));
-        } else {
-            headers.push((name, value));
-            origins.push(HeaderOrigin::Auth);
         }
     }
 
@@ -369,6 +396,55 @@ pub struct ResolvedGrpc {
     pub unresolved: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedMcp {
+    pub server: String,
+    pub tool: String,
+    /// Argument JSON text as written, variables rendered.
+    pub arguments: String,
+    pub timeout_ms: Option<u64>,
+    pub unresolved: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWs {
+    /// Handshake URL with scheme (`ws://` or `wss://`).
+    pub url: String,
+    pub tls: bool,
+    pub verify_tls: bool,
+    pub headers: Vec<(String, String)>,
+    pub subprotocols: Vec<String>,
+    /// Messages sent right after the handshake, as a JSON document as written.
+    pub messages: String,
+    pub timeout_ms: Option<u64>,
+    pub deadline_ms: Option<u64>,
+    pub cookies: Option<bool>,
+    pub unresolved: Vec<String>,
+}
+
+/// Resolves an MCP request. The server name must match a `[mcp.servers]`
+/// entry of the collection config (checked by the sender).
+pub fn resolve_mcp(req: &McpRequest, scope: &Scope) -> ResolvedMcp {
+    let mut ctx = Ctx {
+        scope,
+        unresolved: Vec::new(),
+    };
+    ResolvedMcp {
+        server: ctx.r(req.server.trim()),
+        tool: ctx.r(req.tool.trim()),
+        arguments: ctx.r(&req.arguments),
+        timeout_ms: req.timeout_ms,
+        unresolved: ctx.unresolved,
+    }
+}
+
+/// Strips a URL scheme prefix such as `https://`, ignoring ASCII case.
+fn strip_scheme<'a>(s: &'a str, scheme: &str) -> Option<&'a str> {
+    let head = s.get(..scheme.len())?;
+    head.eq_ignore_ascii_case(scheme)
+        .then(|| &s[scheme.len()..])
+}
+
 /// Resolves a gRPC request. A target scheme (`https://`/`http://`) overrides `tls`.
 pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
     let mut ctx = Ctx {
@@ -376,13 +452,13 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
         unresolved: Vec::new(),
     };
     let target = ctx.r(req.target.trim());
-    let (tls, host) = if let Some(rest) = target.strip_prefix("https://") {
+    let (tls, host) = if let Some(rest) = strip_scheme(&target, "https://") {
         (true, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("http://") {
+    } else if let Some(rest) = strip_scheme(&target, "http://") {
         (false, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("grpcs://") {
+    } else if let Some(rest) = strip_scheme(&target, "grpcs://") {
         (true, rest.to_string())
-    } else if let Some(rest) = target.strip_prefix("grpc://") {
+    } else if let Some(rest) = strip_scheme(&target, "grpc://") {
         (false, rest.to_string())
     } else {
         (req.tls, target.clone())
@@ -395,11 +471,10 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
         .filter(|m| m.enabled && !m.name.trim().is_empty())
         .map(|m| (ctx.r(m.name.trim()).to_ascii_lowercase(), ctx.r(&m.value)))
         .collect();
-    if let Some((n, v)) = auth_header(&mut ctx, &req.auth) {
-        let n = n.to_ascii_lowercase();
-        if !metadata.iter().any(|(k, _)| *k == n) {
-            metadata.push((n, v));
-        }
+    if let Some((n, v, true)) = auth_unless(&mut ctx, &req.auth, |n| {
+        metadata.iter().any(|(k, _)| k.eq_ignore_ascii_case(n))
+    }) {
+        metadata.push((n.to_ascii_lowercase(), v));
     }
     if let Auth::ApiKey {
         key,
@@ -426,11 +501,74 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
     }
 }
 
+/// Resolves a WebSocket request. A URL scheme (`wss://`/`https://`/`ws://`/
+/// `http://`) overrides the `tls` option.
+pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
+    let mut ctx = Ctx {
+        scope,
+        unresolved: Vec::new(),
+    };
+    let raw = ctx.r(req.url.trim());
+    let (tls, rest) = if let Some(rest) =
+        strip_scheme(&raw, "wss://").or_else(|| strip_scheme(&raw, "https://"))
+    {
+        (true, rest)
+    } else if let Some(rest) = strip_scheme(&raw, "ws://").or_else(|| strip_scheme(&raw, "http://"))
+    {
+        (false, rest)
+    } else {
+        (req.options.tls, raw.as_str())
+    };
+    let mut url = format!(
+        "{}://{}",
+        if tls { "wss" } else { "ws" },
+        rest.trim_start_matches('/')
+    );
+    if let Auth::ApiKey {
+        key,
+        value,
+        location: ApiKeyLocation::Query,
+    } = &req.auth
+    {
+        url = append_query(&url, &[(ctx.r(key), ctx.r(value))]);
+    }
+    let mut headers: Vec<(String, String)> = req
+        .headers
+        .iter()
+        .filter(|h| h.enabled && !h.name.trim().is_empty())
+        .map(|h| (ctx.r(h.name.trim()), ctx.r(&h.value)))
+        .collect();
+    if let Some((n, v, true)) = auth_unless(&mut ctx, &req.auth, |n| {
+        headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(n))
+    }) {
+        headers.push((n, v));
+    }
+    ResolvedWs {
+        url,
+        tls,
+        verify_tls: req.options.verify_tls,
+        headers,
+        subprotocols: req
+            .subprotocols
+            .iter()
+            .map(|p| ctx.r(p.trim()))
+            .filter(|p| !p.is_empty())
+            .collect(),
+        messages: ctx.r(&req.messages),
+        timeout_ms: req.options.timeout_ms,
+        deadline_ms: req.options.deadline_ms,
+        cookies: req.options.cookies,
+        unresolved: ctx.unresolved,
+    }
+}
+
 /// Unresolved variables of any request (for highlighting before send).
 pub fn unresolved_vars(req: &Request, scope: &Scope) -> Vec<String> {
     match req {
         Request::Http(h) => resolve_http(h, scope, Path::new(".")).unresolved,
         Request::Grpc(g) => resolve_grpc(g, scope).unresolved,
+        Request::Ws(w) => resolve_ws(w, scope).unresolved,
+        Request::Mcp(m) => resolve_mcp(m, scope).unresolved,
     }
 }
 
@@ -462,6 +600,9 @@ fn mask_auth(a: &Auth, s: &Scope) -> Auth {
             key: s.render_masked(key),
             value: s.render_masked(value),
             location: *location,
+        },
+        Auth::OAuth { name } => Auth::OAuth {
+            name: s.render_masked(name),
         },
     }
 }
@@ -531,12 +672,48 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             schema: g.schema.clone(),
             scripts: g.scripts.clone(),
         }),
+        Request::Ws(w) => Request::Ws(WebSocketRequest {
+            url: s.render_masked(&w.url),
+            headers: mask_kv(&w.headers, s),
+            subprotocols: w.subprotocols.iter().map(|p| s.render_masked(p)).collect(),
+            messages: s.render_masked(&w.messages),
+            auth: mask_auth(&w.auth, s),
+            options: w.options.clone(),
+            scripts: w.scripts.clone(),
+        }),
+        Request::Mcp(m) => Request::Mcp(McpRequest {
+            server: s.render_masked(&m.server),
+            tool: m.tool.clone(),
+            arguments: s.render_masked(&m.arguments),
+            timeout_ms: m.timeout_ms,
+            scripts: m.scripts.clone(),
+        }),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_auth_header_does_not_count_as_unresolved() {
+        let req = HttpRequest {
+            url: "http://h/".into(),
+            headers: vec![KeyValue::new("Authorization", "Bearer fixed")],
+            auth: Auth::Bearer {
+                token: "{{missing}}".into(),
+            },
+            ..Default::default()
+        };
+        let r = resolve_http(&req, &Scope::new(), Path::new("."));
+        assert!(r.unresolved.is_empty(), "{:?}", r.unresolved);
+        let req = HttpRequest {
+            headers: vec![],
+            ..req
+        };
+        let r = resolve_http(&req, &Scope::new(), Path::new("."));
+        assert_eq!(r.unresolved, vec!["missing".to_string()]);
+    }
     use crate::vars::VarValue;
     use std::collections::BTreeMap;
 
@@ -781,6 +958,72 @@ mod tests {
             assert_eq!(resolve_grpc(&g2, &s).tls, tls);
         }
         assert!(unresolved_vars(&Request::Grpc(g2), &s).is_empty());
+    }
+
+    #[test]
+    fn ws_resolution() {
+        let s = scope();
+        let w = WebSocketRequest {
+            url: "wss://{{user}}.example/chat".into(),
+            headers: vec![
+                KeyValue::new("origin", "https://app"),
+                KeyValue::new("off", "1").disabled(),
+            ],
+            subprotocols: vec!["chat.v2".into(), " chat.v1 ".into(), "  ".into()],
+            messages: r#"["{{user}}", {"binary": "AAEC"}]"#.into(),
+            auth: Auth::Bearer {
+                token: "{{tok}}".into(),
+            },
+            options: WsOptions {
+                tls: false,
+                deadline_ms: Some(50),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let r = resolve_ws(&w, &s);
+        assert_eq!(r.url, "wss://ana.example/chat");
+        assert!(r.tls);
+        assert_eq!(
+            r.headers,
+            vec![
+                ("origin".to_string(), "https://app".to_string()),
+                ("Authorization".to_string(), "Bearer abc".to_string()),
+            ]
+        );
+        assert_eq!(r.subprotocols, vec!["chat.v2", "chat.v1"]);
+        // The opening messages render their variables, like the gRPC message.
+        assert_eq!(r.messages, r#"["ana", {"binary": "AAEC"}]"#);
+        assert!(r.unresolved.is_empty());
+        // An undefined variable in a message is reported before sending.
+        let mut w2 = w.clone();
+        w2.messages = r#"["{{missing}}"]"#.into();
+        assert_eq!(
+            unresolved_vars(&Request::Ws(w2.clone()), &s),
+            vec!["missing"]
+        );
+        // A URL without a scheme follows `tls`; http/https mean ws/wss.
+        let mut w3 = w2.clone();
+        w3.url = "host/x".into();
+        w3.options.tls = true;
+        assert_eq!(resolve_ws(&w3, &s).url, "wss://host/x");
+        for (raw, tls) in [
+            ("https://h/p", true),
+            ("http://h/p", false),
+            ("wss://h/p", true),
+            ("ws://h/p", false),
+        ] {
+            w3.url = raw.into();
+            assert_eq!(resolve_ws(&w3, &s).tls, tls, "{raw}");
+        }
+        // An API key in the query is appended to the resolved URL.
+        let mut w4 = w.clone();
+        w4.auth = Auth::ApiKey {
+            key: "k".into(),
+            value: "{{tok}}".into(),
+            location: ApiKeyLocation::Query,
+        };
+        assert!(resolve_ws(&w4, &s).url.ends_with("/chat?k=abc"));
     }
 
     #[test]

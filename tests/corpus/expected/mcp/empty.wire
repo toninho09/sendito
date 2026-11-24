@@ -1,0 +1,28 @@
+### request 1
+POST /mcp HTTP/1.1
+content-type: application/json
+accept: application/json, text/event-stream
+host: 127.0.0.1:<port>
+content-length: 156
+
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"sendito","version":"0.2.0"}}}
+### request 2
+POST /mcp HTTP/1.1
+content-type: application/json
+accept: application/json, text/event-stream
+mcp-session-id: <session>
+mcp-protocol-version: 2025-06-18
+host: 127.0.0.1:<port>
+content-length: 54
+
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+### request 3
+POST /mcp HTTP/1.1
+content-type: application/json
+accept: application/json, text/event-stream
+mcp-session-id: <session>
+mcp-protocol-version: 2025-06-18
+host: 127.0.0.1:<port>
+content-length: 72
+
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"greet"}}

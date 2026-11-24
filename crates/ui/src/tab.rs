@@ -10,14 +10,18 @@ use crate::viewer::{Doc, Viewer};
 
 pub const HTTP_TABS: &[&str] = &["Params", "Headers", "Body", "Auth", "Scripts", "Options"];
 pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options"];
+pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options"];
+pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
 pub const RESP_TABS: &[&str] = &["Body", "Headers", "Timing", "Results"];
 
 /// Response tab names: the fourth holds assertions, extracted variables and
-/// notes ("Results"); for gRPC it also holds the message log ("Log").
+/// notes ("Results"); for gRPC and MCP it also holds the message log ("Log").
 pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     match kind {
         Kind::Http => ["Body", "Headers", "Timing", "Results"],
         Kind::Grpc => ["Body", "Metadata", "Timing", "Log"],
+        Kind::Ws => ["Body", "Handshake", "Timing", "Log"],
+        Kind::Mcp => ["Body", "Request", "Timing", "Log"],
     }
 }
 
@@ -54,6 +58,7 @@ pub enum Field {
     AuthUser,
     AuthPass,
     AuthToken,
+    AuthOAuthName,
     AuthKey,
     AuthValue,
     AuthIn,
@@ -64,6 +69,7 @@ pub enum Field {
     Timeout,
     FollowRedirects,
     VerifyTls,
+    Cookies,
     Message,
     Metadata,
     SchemaSource,
@@ -72,6 +78,10 @@ pub enum Field {
     Tls,
     GrpcVerify,
     Deadline,
+    McpServer,
+    McpTool,
+    WsSubprotocols,
+    WsMessages,
 }
 
 impl Field {
@@ -90,6 +100,7 @@ impl Field {
             Field::AuthUser => "Username",
             Field::AuthPass => "Password",
             Field::AuthToken => "Token",
+            Field::AuthOAuthName => "OAuth identity",
             Field::AuthKey => "Key name",
             Field::AuthValue => "Key value",
             Field::AuthIn => "Send in",
@@ -100,6 +111,7 @@ impl Field {
             Field::Timeout => "Timeout (ms, empty = default)",
             Field::FollowRedirects => "Follow redirects",
             Field::VerifyTls => "Verify TLS certificates",
+            Field::Cookies => "Cookie jar",
             Field::Message => {
                 "Request message (JSON; an array sends several on client/bidi streams)"
             }
@@ -110,6 +122,12 @@ impl Field {
             Field::Tls => "Use TLS",
             Field::GrpcVerify => "Verify TLS certificates",
             Field::Deadline => "Deadline (ms, empty = none)",
+            Field::McpServer => "Server (a [mcp.servers] entry of the config)",
+            Field::McpTool => "Tool",
+            Field::WsSubprotocols => "Subprotocols (comma-separated, offered in order)",
+            Field::WsMessages => {
+                "Messages sent after connecting (JSON: strings, or {\"binary\": \"base64\"})"
+            }
         }
     }
 
@@ -128,7 +146,7 @@ impl Field {
     }
 
     pub fn is_multiline(self) -> bool {
-        matches!(self, Field::BodyText | Field::Message)
+        matches!(self, Field::BodyText | Field::Message | Field::WsMessages)
     }
 
     pub fn is_text(self) -> bool {
@@ -141,6 +159,7 @@ impl Field {
                 | Field::AuthUser
                 | Field::AuthPass
                 | Field::AuthToken
+                | Field::AuthOAuthName
                 | Field::AuthKey
                 | Field::AuthValue
                 | Field::Timeout
@@ -148,6 +167,10 @@ impl Field {
                 | Field::ProtoFiles
                 | Field::ImportPaths
                 | Field::Deadline
+                | Field::McpServer
+                | Field::McpTool
+                | Field::WsSubprotocols
+                | Field::WsMessages
         )
     }
 
@@ -160,6 +183,7 @@ impl Field {
                 | Field::AuthIn
                 | Field::SchemaSource
                 | Field::ScriptSection
+                | Field::Cookies
         )
     }
 
@@ -175,6 +199,8 @@ impl Field {
 pub enum Kind {
     Http,
     Grpc,
+    Ws,
+    Mcp,
 }
 
 /// Editor widgets for every field of a request.
@@ -196,6 +222,7 @@ pub struct Editors {
     pub auth_user: TextEditor,
     pub auth_pass: TextEditor,
     pub auth_token: TextEditor,
+    pub auth_oauth_name: TextEditor,
     pub auth_key: TextEditor,
     pub auth_value: TextEditor,
     pub auth_in: ApiKeyLocation,
@@ -205,9 +232,11 @@ pub struct Editors {
     pub timeout: TextEditor,
     pub follow: bool,
     pub verify: bool,
+    /// `[options] cookies`: `None` follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
     pub target: TextEditor,
-    pub service: String,
-    pub grpc_method: String,
+    /// `Service/Method`, typed or picked from the schema.
+    pub grpc_method_text: TextEditor,
     pub message: TextEditor,
     pub metadata: Table,
     pub tls: bool,
@@ -216,6 +245,9 @@ pub struct Editors {
     pub schema_files: bool,
     pub proto_files: TextEditor,
     pub import_paths: TextEditor,
+    pub mcp_server: TextEditor,
+    pub mcp_tool: TextEditor,
+    pub ws_subprotocols: TextEditor,
     /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
     pub script_section: usize,
 }
@@ -237,6 +269,28 @@ fn parse_list(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
+}
+
+/// `Service/Method` as shown in the method field.
+fn grpc_method_label(service: &str, method: &str) -> String {
+    if service.is_empty() && method.is_empty() {
+        String::new()
+    } else if method.is_empty() {
+        service.to_string()
+    } else {
+        format!("{service}/{method}")
+    }
+}
+
+/// Splits the method field into (service, method). A value without a slash is
+/// the service only: the last dot-separated segment may also be a method, but
+/// guessing there would turn a half-typed service into a wrong call.
+fn split_method(text: &str) -> (String, String) {
+    let text = text.trim();
+    match text.rsplit_once('/') {
+        Some((s, m)) => (s.trim().to_string(), m.trim().to_string()),
+        None => (text.to_string(), String::new()),
+    }
 }
 
 fn kv_table(name: &'static str, value: &'static str, rows: &[KeyValue]) -> Table {
@@ -263,11 +317,27 @@ fn t(s: &str) -> Cell {
 }
 
 impl Editors {
+    /// The request bar's text editor. Every kind draws the same strip
+    /// `[picker chip][endpoint input]` (gRPC and MCP draw `[input][chip]`):
+    /// part 1 is the endpoint input (URL, target or server), part 0 the
+    /// inline-editable chip (gRPC method, MCP tool).
+    pub fn bar_text(&mut self, part: usize) -> Option<&mut TextEditor> {
+        match (self.kind, part) {
+            (Kind::Http, 1) | (Kind::Ws, 1) => Some(&mut self.url),
+            (Kind::Grpc, 1) => Some(&mut self.target),
+            (Kind::Mcp, 1) => Some(&mut self.mcp_server),
+            (Kind::Grpc, 0) => Some(&mut self.grpc_method_text),
+            (Kind::Mcp, 0) => Some(&mut self.mcp_tool),
+            _ => None,
+        }
+    }
     pub fn from_request(req: &Request) -> Self {
         let mut e = Editors {
             kind: Kind::Http,
             method: "GET".into(),
-            url: TextEditor::single("").with_placeholder("https://…  or paste a curl command"),
+            url: TextEditor::single("")
+                .with_placeholder("https://…  or paste a curl command")
+                .with_highlight(Highlight::Url),
             params: Table::kv("Name", "Value"),
             headers: Table::kv("Header", "Value"),
             body_kind: BodyKind::None,
@@ -311,6 +381,7 @@ impl Editors {
             auth_user: TextEditor::single(""),
             auth_pass: TextEditor::single(""),
             auth_token: TextEditor::single("").with_placeholder("{{token}}"),
+            auth_oauth_name: TextEditor::single("").with_placeholder("name from [oauth]"),
             auth_key: TextEditor::single("X-API-Key"),
             auth_value: TextEditor::single(""),
             auth_in: ApiKeyLocation::Header,
@@ -382,9 +453,10 @@ impl Editors {
             timeout: TextEditor::single("").with_placeholder("default"),
             follow: true,
             verify: true,
+            cookies: None,
             target: TextEditor::single("").with_placeholder("localhost:50051  (https:// for TLS)"),
-            service: String::new(),
-            grpc_method: String::new(),
+            grpc_method_text: TextEditor::single("")
+                .with_placeholder("Service/Method  (Enter lists the schema)"),
             message: TextEditor::multi("{}").with_highlight(Highlight::Json),
             metadata: Table::kv("Key", "Value"),
             tls: false,
@@ -393,6 +465,10 @@ impl Editors {
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
+            mcp_server: TextEditor::single("")
+                .with_placeholder("server name from [mcp.servers] or http(s):// URL"),
+            mcp_tool: TextEditor::single("").with_placeholder("tool name"),
+            ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
             script_section: 0,
         };
         let scripts = req.scripts();
@@ -474,12 +550,13 @@ impl Editors {
                 e.timeout.set_text(&ms_text(h.options.timeout_ms));
                 e.follow = h.options.follow_redirects;
                 e.verify = h.options.verify_tls;
+                e.cookies = h.options.cookies;
             }
             Request::Grpc(g) => {
                 e.kind = Kind::Grpc;
                 e.target.set_text(&g.target);
-                e.service = g.service.clone();
-                e.grpc_method = g.method.clone();
+                e.grpc_method_text
+                    .set_text(&grpc_method_label(&g.service, &g.method));
                 e.message.set_text(&g.message);
                 e.metadata = kv_table("Key", "Value", &g.metadata);
                 e.tls = g.tls;
@@ -495,6 +572,26 @@ impl Editors {
                     e.import_paths.set_text(&list_text(import_paths));
                 }
             }
+            Request::Ws(w) => {
+                e.kind = Kind::Ws;
+                e.url.placeholder = "ws://host:port/path  (wss:// for TLS)".into();
+                e.url.set_text(&w.url);
+                e.headers = kv_table("Header", "Value", &w.headers);
+                e.ws_subprotocols.set_text(&list_text(&w.subprotocols));
+                e.message.set_text(&w.messages);
+                e.timeout.set_text(&ms_text(w.options.timeout_ms));
+                e.deadline.set_text(&ms_text(w.options.deadline_ms));
+                e.tls = w.options.tls;
+                e.grpc_verify = w.options.verify_tls;
+                e.cookies = w.options.cookies;
+            }
+            Request::Mcp(m) => {
+                e.kind = Kind::Mcp;
+                e.mcp_server.set_text(&m.server);
+                e.mcp_tool.set_text(&m.tool);
+                e.message.set_text(&m.arguments);
+                e.timeout.set_text(&ms_text(m.timeout_ms));
+            }
         }
         e
     }
@@ -508,6 +605,7 @@ impl Editors {
                 self.auth_pass.set_text(password);
             }
             Auth::Bearer { token } => self.auth_token.set_text(token),
+            Auth::OAuth { name } => self.auth_oauth_name.set_text(name),
             Auth::ApiKey {
                 key,
                 value,
@@ -529,6 +627,9 @@ impl Editors {
             },
             AuthKind::Bearer => Auth::Bearer {
                 token: self.auth_token.text(),
+            },
+            AuthKind::OAuth => Auth::OAuth {
+                name: self.auth_oauth_name.text(),
             },
             AuthKind::ApiKey => Auth::ApiKey {
                 key: self.auth_key.text(),
@@ -572,6 +673,18 @@ impl Editors {
                 })
                 .collect(),
         }
+    }
+
+    /// The gRPC service part of `Service/Method`.
+    pub fn service(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).0
+    }
+
+    /// The gRPC method part of `Service/Method`.
+    pub fn method(&self) -> String {
+        let text = self.grpc_method_text.text();
+        split_method(&text).1
     }
 
     pub fn to_request(&self) -> Request {
@@ -633,14 +746,15 @@ impl Editors {
                         timeout_ms: parse_ms(&self.timeout.text()),
                         follow_redirects: self.follow,
                         verify_tls: self.verify,
+                        cookies: self.cookies,
                     },
                     scripts: self.scripts(),
                 })
             }
             Kind::Grpc => Request::Grpc(GrpcRequest {
                 target: self.target.text(),
-                service: self.service.clone(),
-                method: self.grpc_method.clone(),
+                service: self.service(),
+                method: self.method(),
                 message: self.message.text(),
                 metadata: kv_rows(&self.metadata),
                 auth: self.auth(),
@@ -657,6 +771,28 @@ impl Editors {
                 },
                 scripts: self.scripts(),
             }),
+            Kind::Ws => Request::Ws(WebSocketRequest {
+                url: self.url.text(),
+                headers: kv_rows(&self.headers),
+                subprotocols: parse_list(&self.ws_subprotocols.text()),
+                messages: self.message.text(),
+                auth: self.auth(),
+                options: WsOptions {
+                    timeout_ms: parse_ms(&self.timeout.text()),
+                    deadline_ms: parse_ms(&self.deadline.text()),
+                    verify_tls: self.grpc_verify,
+                    tls: self.tls,
+                    cookies: self.cookies,
+                },
+                scripts: self.scripts(),
+            }),
+            Kind::Mcp => Request::Mcp(McpRequest {
+                server: self.mcp_server.text(),
+                tool: self.mcp_tool.text(),
+                arguments: self.message.text(),
+                timeout_ms: parse_ms(&self.timeout.text()),
+                scripts: self.scripts(),
+            }),
         }
     }
 
@@ -668,6 +804,7 @@ impl Editors {
                 AuthKind::None => {}
                 AuthKind::Basic => out.extend([Field::AuthUser, Field::AuthPass]),
                 AuthKind::Bearer => out.push(Field::AuthToken),
+                AuthKind::OAuth => out.push(Field::AuthOAuthName),
                 AuthKind::ApiKey => out.extend([Field::AuthKey, Field::AuthValue, Field::AuthIn]),
             }
         };
@@ -689,7 +826,12 @@ impl Editors {
                 }
                 3 => auth_fields(&mut v),
                 4 => v.extend([Field::ScriptSection, self.script_table()]),
-                _ => v.extend([Field::Timeout, Field::FollowRedirects, Field::VerifyTls]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::FollowRedirects,
+                    Field::VerifyTls,
+                    Field::Cookies,
+                ]),
             },
             Kind::Grpc => match tab {
                 0 => v.push(Field::Message),
@@ -703,6 +845,26 @@ impl Editors {
                     }
                     v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
                 }
+            },
+            Kind::Ws => match tab {
+                0 => v.push(Field::Headers),
+                1 => v.push(Field::WsMessages),
+                2 => auth_fields(&mut v),
+                3 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::Deadline,
+                    Field::WsSubprotocols,
+                    Field::Tls,
+                    Field::GrpcVerify,
+                    Field::Cookies,
+                ]),
+            },
+            Kind::Mcp => match tab {
+                0 => v.extend([Field::McpServer, Field::McpTool]),
+                1 => v.push(Field::Message),
+                2 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.push(Field::Timeout),
             },
         }
         v
@@ -731,6 +893,8 @@ impl Editors {
         match self.kind {
             Kind::Http => HTTP_TABS,
             Kind::Grpc => GRPC_TABS,
+            Kind::Ws => WS_TABS,
+            Kind::Mcp => MCP_TABS,
         }
     }
 
@@ -743,6 +907,7 @@ impl Editors {
             Field::AuthUser => &mut self.auth_user,
             Field::AuthPass => &mut self.auth_pass,
             Field::AuthToken => &mut self.auth_token,
+            Field::AuthOAuthName => &mut self.auth_oauth_name,
             Field::AuthKey => &mut self.auth_key,
             Field::AuthValue => &mut self.auth_value,
             Field::Timeout => &mut self.timeout,
@@ -750,6 +915,10 @@ impl Editors {
             Field::ProtoFiles => &mut self.proto_files,
             Field::ImportPaths => &mut self.import_paths,
             Field::Deadline => &mut self.deadline,
+            Field::McpServer => &mut self.mcp_server,
+            Field::McpTool => &mut self.mcp_tool,
+            Field::WsSubprotocols => &mut self.ws_subprotocols,
+            Field::WsMessages => &mut self.message,
             _ => return None,
         })
     }
@@ -791,6 +960,11 @@ impl Editors {
                 .unwrap_or_default(),
             Field::FollowRedirects => onoff(self.follow),
             Field::VerifyTls => onoff(self.verify),
+            Field::Cookies => match self.cookies {
+                None => "Config default".into(),
+                Some(true) => "On".into(),
+                Some(false) => "Off".into(),
+            },
             Field::Tls => onoff(self.tls),
             Field::GrpcVerify => onoff(self.grpc_verify),
             _ => String::new(),
@@ -805,18 +979,20 @@ impl Editors {
                 .collect(),
             Field::AuthKind => AuthKind::ALL
                 .iter()
+                .filter(|k| self.kind == Kind::Http || **k != AuthKind::OAuth)
                 .map(|k| k.label().to_string())
                 .collect(),
             Field::AuthIn => vec!["Header".into(), "Query parameter".into()],
             Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
             Field::ScriptSection => self.script_options(),
+            Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
             _ => vec![],
         }
     }
 
     /// Cycles a choice (dir = ±1) or flips a toggle. Returns true if changed.
     pub fn cycle(&mut self, f: Field, dir: isize) -> bool {
-        let step = |i: usize, n: usize| ((i as isize + dir).rem_euclid(n as isize)) as usize;
+        let step = |i: usize, n: usize| crate::list::cycle(i, dir, n);
         match f {
             Field::BodyKind => {
                 let i = BodyKind::ALL
@@ -830,7 +1006,12 @@ impl Editors {
                     .iter()
                     .position(|k| *k == self.auth_kind)
                     .unwrap_or(0);
-                self.auth_kind = AuthKind::ALL[step(i, AuthKind::ALL.len())];
+                let len = if self.kind == Kind::Http {
+                    AuthKind::ALL.len()
+                } else {
+                    AuthKind::ALL.len() - 1
+                };
+                self.auth_kind = AuthKind::ALL[step(i, len)];
             }
             Field::AuthIn => {
                 self.auth_in = match self.auth_in {
@@ -842,6 +1023,18 @@ impl Editors {
             Field::ScriptSection => self.script_section = step(self.script_section, 3),
             Field::FollowRedirects => self.follow = !self.follow,
             Field::VerifyTls => self.verify = !self.verify,
+            Field::Cookies => {
+                let index = match self.cookies {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                };
+                self.cookies = match step(index, 3) {
+                    0 => None,
+                    1 => Some(true),
+                    _ => Some(false),
+                };
+            }
             Field::Tls => self.tls = !self.tls,
             Field::GrpcVerify => self.grpc_verify = !self.grpc_verify,
             _ => return false,
@@ -870,6 +1063,13 @@ impl Editors {
             }
             Field::SchemaSource => self.schema_files = index == 1,
             Field::ScriptSection => self.script_section = index.min(2),
+            Field::Cookies => {
+                self.cookies = match index {
+                    1 => Some(true),
+                    2 => Some(false),
+                    _ => None,
+                }
+            }
             _ => {}
         }
     }
@@ -917,6 +1117,10 @@ impl Editors {
                 "Authorization".into(),
                 format!("Bearer {}", self.auth_token.text()),
             )),
+            AuthKind::OAuth if !has("authorization") => v.push((
+                "Authorization".into(),
+                "Bearer •••••• (OAuth keychain)".into(),
+            )),
             AuthKind::ApiKey
                 if self.auth_in == ApiKeyLocation::Header && !has(&self.auth_key.text()) =>
             {
@@ -943,6 +1147,7 @@ impl Editors {
             &mut self.auth_user,
             &mut self.auth_pass,
             &mut self.auth_token,
+            &mut self.auth_oauth_name,
             &mut self.auth_key,
             &mut self.auth_value,
             &mut self.timeout,
@@ -951,6 +1156,7 @@ impl Editors {
             &mut self.deadline,
             &mut self.proto_files,
             &mut self.import_paths,
+            &mut self.ws_subprotocols,
         ] {
             e.vim = mode;
         }
@@ -988,7 +1194,78 @@ pub struct Summary {
     pub ok: bool,
     pub time_ms: Option<f64>,
     pub size: Option<u64>,
+    /// e.g. `gzip 1.2 KB`: the body arrived with this Content-Encoding and was
+    /// decoded; `size` is the decoded size.
+    pub decoded: Option<String>,
     pub error: Option<String>,
+}
+
+/// What the query bar above the response view does with its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryMode {
+    /// A jq expression filters the body.
+    Jq,
+    /// Plain text is searched in the view.
+    Find,
+}
+
+/// The query bar drawn above the response view while a jq filter or a
+/// search is typed or active.
+#[derive(Debug, Clone)]
+pub struct QueryBar {
+    pub mode: QueryMode,
+    pub input: TextEditor,
+    /// The response tab the bar belongs to (jq: always the body).
+    pub tab: usize,
+    /// Why the typed text does not apply; the view keeps the last valid result.
+    pub error: Option<String>,
+    /// The jq history entry shown while Up/Down walk it (`None`: typed text).
+    pub history_pos: Option<usize>,
+    /// The text kept by the last Enter (or the bar's first text): Esc goes
+    /// back to it.
+    pub committed: String,
+}
+
+impl QueryBar {
+    pub fn new(mode: QueryMode, text: &str, tab: usize) -> Self {
+        let placeholder = match mode {
+            QueryMode::Jq => ".items[] | select(.active)",
+            QueryMode::Find => "text to find",
+        };
+        let mut input = TextEditor::single(text).with_placeholder(placeholder);
+        input.move_to_end();
+        Self {
+            mode,
+            input,
+            tab,
+            error: None,
+            history_pos: None,
+            committed: text.to_string(),
+        }
+    }
+}
+
+/// One message of a stream: a gRPC response message or a WebSocket data
+/// frame (text, or binary as base64).
+#[derive(Debug, Clone, Copy)]
+pub struct StreamMsg<'a> {
+    /// Time since the call started.
+    pub at: std::time::Duration,
+    pub size: usize,
+    /// The whole message.
+    pub text: &'a str,
+    /// The message on one line, for the list.
+    pub preview: &'a str,
+    pub json: bool,
+}
+
+impl StreamMsg<'_> {
+    pub fn doc(&self) -> Doc {
+        Doc::from_bytes(
+            self.text.as_bytes().to_vec(),
+            self.json.then_some("application/json"),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1000,8 +1277,19 @@ pub struct Response {
     pub messages: Viewer,
     pub grpc_events: Vec<sendito_grpc::Event>,
     pub grpc_kind: Option<sendito_grpc::CallKind>,
+    pub ws_events: Vec<sendito_ws::Event>,
     /// Short outcome of the assertions, shown on the Results tab: "2/3 ✗", "3/3 ✓".
     pub results_badge: Option<String>,
+    /// The jq expression filtering the body for display, if any.
+    pub jq: Option<String>,
+    /// The unfiltered body bytes, captured when the first filter is applied.
+    pub jq_src: Option<Vec<u8>>,
+    /// How many values the jq filter gave.
+    pub jq_outputs: usize,
+    /// The query bar above the view, if open.
+    pub query: Option<QueryBar>,
+    /// The stream message the body shows; `None` follows the last one (live).
+    pub stream_sel: Option<usize>,
 }
 
 impl Response {
@@ -1014,8 +1302,232 @@ impl Response {
             messages: wrapped(Doc::text("")),
             grpc_events: Vec::new(),
             grpc_kind: None,
+            ws_events: Vec::new(),
             results_badge: None,
+            jq: None,
+            jq_src: None,
+            jq_outputs: 0,
+            query: None,
+            stream_sel: None,
         }
+    }
+
+    /// Replaces the body document (a response, message or call result); any
+    /// jq filter no longer applies to the new document.
+    pub fn set_body(&mut self, doc: Doc) {
+        self.jq = None;
+        self.jq_src = None;
+        self.query = None;
+        self.stream_sel = None;
+        self.body = Viewer::new(doc);
+    }
+
+    /// Replaces the body with wrapped text (a failure report); any jq filter
+    /// no longer applies to it.
+    pub fn set_body_wrapped(&mut self, text: String) {
+        self.set_body(Doc::text(&text));
+        self.body.wrap = true;
+    }
+
+    /// Applies (or, with an empty expression, removes) the jq filter over the
+    /// body and rebuilds the viewer. The original bytes are captured when the
+    /// first filter succeeds, so a new expression re-filters the original
+    /// body and clearing restores it.
+    ///
+    /// Returns whether a filter is active afterwards.
+    pub fn apply_jq(&mut self, expr: &str) -> Result<bool, String> {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            self.jq = None;
+            if let Some(src) = self.jq_src.take() {
+                self.swap_body(Doc::from_bytes(src, Some("application/json")));
+            }
+            return Ok(false);
+        }
+        let outs = match self.jq_src.as_deref() {
+            Some(src) => crate::filter::apply(expr, src),
+            None => {
+                // Capture the original bytes only when the filter succeeds,
+                // so a failed first filter leaves no half-state behind.
+                let src = self.body.doc.bytes().to_vec();
+                let outs = crate::filter::apply(expr, &src);
+                if outs.is_ok() {
+                    self.jq_src = Some(src);
+                }
+                outs
+            }
+        };
+        let outs = outs?;
+        self.jq = Some(expr.to_string());
+        self.jq_outputs = outs.len();
+        let doc = match outs.as_slice() {
+            [] => Doc::text("(no output)\n"),
+            [one] => Doc::from_bytes(one.clone(), Some("application/json")),
+            many => Doc::json_stream(many),
+        };
+        self.swap_body(doc);
+        Ok(true)
+    }
+
+    /// The messages a stream received, in order.
+    pub fn stream_messages(&self) -> Vec<StreamMsg<'_>> {
+        let grpc = self.grpc_events.iter().filter_map(|e| match e {
+            sendito_grpc::Event::Received {
+                json,
+                compact,
+                size,
+                at,
+                ..
+            } => Some(StreamMsg {
+                at: *at,
+                size: *size,
+                text: json,
+                preview: compact,
+                json: true,
+            }),
+            _ => None,
+        });
+        let ws = self.ws_events.iter().filter_map(|e| match e {
+            sendito_ws::Event::Received {
+                kind: sendito_ws::FrameKind::Text | sendito_ws::FrameKind::Binary,
+                preview,
+                size,
+                at,
+                ..
+            } => Some(StreamMsg {
+                at: *at,
+                size: *size,
+                text: preview,
+                preview,
+                json: false,
+            }),
+            _ => None,
+        });
+        grpc.chain(ws).collect()
+    }
+
+    /// A new stream message arrived: the body shows it in live mode.
+    pub fn message_arrived(&mut self) {
+        if self.stream_sel.is_none() {
+            self.set_message(usize::MAX);
+        }
+    }
+
+    /// Shows stream message `i` (the last one for a larger index); the last
+    /// message turns live mode on.
+    pub fn set_message(&mut self, i: usize) {
+        let msgs = self.stream_messages();
+        let Some(last) = msgs.len().checked_sub(1) else {
+            return;
+        };
+        let i = i.min(last);
+        let doc = msgs[i].doc();
+        self.stream_sel = (i < last).then_some(i);
+        self.show_message(doc);
+    }
+
+    /// Moves to the previous (`-1`) or next (`1`) stream message. Returns
+    /// false when there is none.
+    pub fn select_message(&mut self, step: isize) -> bool {
+        let n = self.stream_messages().len();
+        let cur = self.stream_sel.unwrap_or(n.saturating_sub(1)) as isize;
+        let next = cur + step;
+        if n < 2 || next < 0 || next >= n as isize {
+            return false;
+        }
+        self.set_message(next as usize);
+        true
+    }
+
+    /// Puts a stream message in the body. The view mode, the jq filter, the
+    /// search and the query bar stay; a jq error goes to the bar and the body
+    /// shows the message unfiltered.
+    fn show_message(&mut self, doc: Doc) {
+        let expr = self.jq.take();
+        self.jq_src = None;
+        // The first message opens in its own default view (pretty for JSON).
+        if self.body.doc.is_empty() {
+            self.body = Viewer::new(doc);
+        } else {
+            self.swap_body(doc);
+        }
+        if let Some(e) = expr {
+            let err = self.apply_jq(&e).err();
+            if err.is_some() {
+                self.jq = Some(e);
+            }
+            if let Some(q) = self.query.as_mut().filter(|q| q.mode == QueryMode::Jq) {
+                q.error = err;
+            }
+        }
+        if let Some(q) = self
+            .query
+            .as_ref()
+            .filter(|q| q.mode == QueryMode::Find && q.tab == 0)
+        {
+            let text = q.input.text();
+            self.body.search(&text);
+        }
+    }
+
+    /// Whether the body is small enough to filter on every key press; a
+    /// larger body is filtered when Enter is pressed.
+    pub fn live_jq(&self) -> bool {
+        self.jq_src.as_ref().map_or(self.body.doc.len(), Vec::len) <= LIVE_JQ_MAX
+    }
+
+    /// Runs the query bar's text: a jq filter over the body, or a search in
+    /// the view. A jq error is kept on the bar and the body keeps the last
+    /// valid result.
+    pub fn run_query(&mut self) {
+        let Some(q) = &self.query else {
+            return;
+        };
+        let (text, mode, tab) = (q.input.text(), q.mode, q.tab);
+        let error = match mode {
+            QueryMode::Jq => self.apply_jq(&text).err(),
+            QueryMode::Find => {
+                self.viewer_mut(tab).search(&text);
+                None
+            }
+        };
+        if let Some(q) = &mut self.query {
+            q.error = error;
+        }
+    }
+
+    /// Takes over how `old` showed its body: view mode, wrap, line numbers,
+    /// the jq filter and the position. A watch repeat uses it so the view
+    /// does not jump back to the raw body at line 1 on every send.
+    pub fn keep_view_of(&mut self, old: &Response) {
+        // A blank response (a send in progress) has no view to keep.
+        if old.summary.status.is_empty() {
+            return;
+        }
+        self.body.mode = old.body.mode;
+        self.body.wrap = old.body.wrap;
+        self.body.numbers = old.body.numbers;
+        if let Some(expr) = &old.jq {
+            let _ = self.apply_jq(expr);
+        }
+        self.query = old.query.clone();
+        self.stream_sel = old.stream_sel;
+        // Rows differ when the old view wraps: carry the line. The new viewer
+        // has no rows yet, so its cursor is a line until it renders.
+        let line = old.body.cursor_line();
+        self.body.cursor = line;
+        self.body.scroll = line.saturating_sub(old.body.cursor.saturating_sub(old.body.scroll));
+        self.body.hscroll = old.body.hscroll;
+    }
+
+    /// Swaps the body viewer's document, keeping the view mode, wrap and line
+    /// numbers.
+    fn swap_body(&mut self, doc: Doc) {
+        let mut v = Viewer::new(doc);
+        v.mode = self.body.mode;
+        v.wrap = self.body.wrap;
+        v.numbers = self.body.numbers;
+        self.body = v;
     }
 
     pub fn viewer_mut(&mut self, tab: usize) -> &mut Viewer {
@@ -1070,10 +1582,43 @@ impl Default for Response {
 /// An in-flight request.
 pub struct Running {
     pub task: tokio::task::JoinHandle<()>,
-    pub control: Option<tokio::sync::mpsc::UnboundedSender<crate::runner::GrpcControl>>,
+    pub control: Option<tokio::sync::mpsc::UnboundedSender<crate::runner::Control>>,
     pub started: std::time::Instant,
-    /// The call accepts more request messages (client/bidi streaming).
+    /// The call/session accepts more input (client/bidi streaming, open WS).
     pub streaming_input: bool,
+}
+
+/// Watch (repeat) state of a tab: the request is sent again on this interval
+/// while the tab is active and idle. Stopped by the watch key again, cancelling,
+/// closing the tab or changing the environment.
+#[derive(Debug, Clone)]
+pub struct Watch {
+    pub interval: std::time::Duration,
+    /// When the next repeat is due.
+    pub next: std::time::Instant,
+    /// One `(ok, ms)` per send while watching, oldest first.
+    pub samples: Vec<(bool, f64)>,
+}
+
+/// How many watch samples are kept for the sparkline.
+pub const WATCH_SAMPLES: usize = 120;
+
+impl Watch {
+    pub fn new(interval: std::time::Duration) -> Self {
+        Self {
+            interval,
+            next: std::time::Instant::now() + interval,
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn record(&mut self, ok: bool, ms: f64) {
+        self.samples.push((ok, ms));
+        let n = self.samples.len();
+        if n > WATCH_SAMPLES {
+            self.samples.drain(..n - WATCH_SAMPLES);
+        }
+    }
 }
 
 pub struct Tab {
@@ -1087,7 +1632,14 @@ pub struct Tab {
     pub field: usize,
     pub response: Option<Response>,
     pub running: Option<Running>,
+    pub watch: Option<Watch>,
     pub services: Option<Vec<ServiceInfo>>,
+    pub mcp_tools: Vec<sendito_mcp::Tool>,
+    /// The server `mcp_tools` was loaded from; the list is stale for any other.
+    pub mcp_tools_server: String,
+    /// Why listing `mcp_tools_server`'s tools failed; completion does not
+    /// retry a dead server by itself.
+    pub mcp_tools_error: Option<String>,
     pub schema_error: Option<String>,
     /// Cached model built from the editors (refreshed after each change).
     pub model: Request,
@@ -1097,7 +1649,15 @@ pub struct Tab {
     /// The saved request a history copy came from; its history entries and
     /// "save to tree" default to that folder.
     pub origin_path: Option<String>,
+    /// jq expressions applied in this tab, oldest first (kept in memory only).
+    pub jq_history: Vec<String>,
 }
+
+/// The largest body (in bytes) that the jq filter runs on at each key press.
+pub const LIVE_JQ_MAX: usize = 1024 * 1024;
+
+/// How many jq expressions a tab remembers.
+pub const JQ_HISTORY_MAX: usize = 50;
 
 impl Tab {
     pub fn new(
@@ -1119,11 +1679,28 @@ impl Tab {
             field: 0,
             response: None,
             running: None,
+            watch: None,
             services: None,
+            mcp_tools: Vec::new(),
+            mcp_tools_server: String::new(),
+            mcp_tools_error: None,
             schema_error: None,
             model: req.clone(),
             origin: None,
             origin_path: None,
+            jq_history: Vec::new(),
+        }
+    }
+
+    /// Adds a jq expression to the tab's history (not twice in a row).
+    pub fn remember_jq(&mut self, expr: &str) {
+        let expr = expr.trim();
+        if expr.is_empty() || self.jq_history.last().is_some_and(|l| l == expr) {
+            return;
+        }
+        self.jq_history.push(expr.to_string());
+        if self.jq_history.len() > JQ_HISTORY_MAX {
+            self.jq_history.remove(0);
         }
     }
 
@@ -1160,6 +1737,89 @@ impl Tab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viewer::ViewMode;
+
+    fn grpc_msg(json: &str) -> sendito_grpc::Event {
+        sendito_grpc::Event::Received {
+            json: json.into(),
+            full: json.into(),
+            compact: json.into(),
+            size: json.len(),
+            at: std::time::Duration::from_millis(5),
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn stream_messages_follow_live_and_keep_the_filter() {
+        let mut r = Response::new();
+        for text in ["one", "two", "three"] {
+            r.grpc_events
+                .push(grpc_msg(&format!("{{\"text\":\"{text}\"}}")));
+            r.message_arrived();
+        }
+        r.ws_events.push(sendito_ws::Event::Received {
+            kind: sendito_ws::FrameKind::Ping,
+            preview: String::new(),
+            size: 0,
+            at: std::time::Duration::ZERO,
+            wall: std::time::SystemTime::UNIX_EPOCH,
+        });
+        assert_eq!(r.stream_messages().len(), 3);
+        assert!(r.body.doc.raw.text.contains("three"));
+        assert_eq!(r.body.mode, ViewMode::Pretty);
+        assert_eq!(r.stream_sel, None);
+        // A filter and its bar stay on the message the body shows.
+        r.query = Some(QueryBar::new(QueryMode::Jq, ".text", 0));
+        assert!(r.apply_jq(".text").is_ok());
+        assert!(r.select_message(-1));
+        assert_eq!(r.stream_sel, Some(1));
+        assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
+        assert!(r.query.is_some());
+        // A new message does not move a paused view.
+        r.grpc_events.push(grpc_msg("{\"text\":\"four\"}"));
+        r.message_arrived();
+        assert_eq!(r.body.doc.raw.text.trim(), "\"two\"");
+        // Going to the last message turns live mode on again.
+        assert!(r.select_message(1));
+        assert!(r.select_message(1));
+        assert_eq!(r.stream_sel, None);
+        assert!(!r.select_message(1));
+        assert_eq!(r.body.doc.raw.text.trim(), "\"four\"");
+        // A message the filter fails on shows unfiltered, the error on the bar.
+        r.grpc_events.push(grpc_msg("[1]"));
+        r.message_arrived();
+        assert_eq!(r.body.doc.raw.text, "[1]");
+        assert!(r.query.as_ref().is_some_and(|q| q.error.is_some()));
+        assert_eq!(r.jq.as_deref(), Some(".text"));
+    }
+
+    #[test]
+    fn jq_filter_state() {
+        let body = br#"{"items":[{"id":1},{"id":2}],"count":2}"#;
+        let mut r = Response::new();
+        r.set_body(Doc::from_bytes(body.to_vec(), Some("application/json")));
+        // A filter replaces the shown document and remembers the expression.
+        assert!(r.apply_jq(".count").unwrap());
+        assert_eq!(r.jq.as_deref(), Some(".count"));
+        assert_eq!(r.body.doc.line(ViewMode::Pretty, 0), "2");
+        // A new expression re-filters the original body, not the output.
+        assert!(r.apply_jq(".items[0].id").unwrap());
+        assert_eq!(r.body.doc.line(ViewMode::Pretty, 0), "1");
+        // Clearing restores the original bytes and drops the state.
+        assert!(!r.apply_jq("").unwrap());
+        assert!(r.jq.is_none() && r.jq_src.is_none());
+        assert_eq!(r.body.doc.bytes(), &body[..]);
+        // An empty filter with none applied is a no-op.
+        assert!(!r.apply_jq("").unwrap());
+        // A replaced body drops a pending filter.
+        assert!(r.apply_jq(".count").unwrap());
+        r.set_body(Doc::text("x"));
+        assert!(r.jq.is_none() && r.jq_src.is_none());
+        // A bad expression changes nothing.
+        assert!(r.apply_jq("nope").is_err());
+        assert!(r.jq.is_none());
+    }
 
     fn full() -> Request {
         Request::Http(HttpRequest {
@@ -1195,6 +1855,7 @@ mod tests {
                 timeout_ms: Some(10),
                 follow_redirects: false,
                 verify_tls: false,
+                cookies: None,
             },
             scripts: Scripts {
                 pre: vec![SetVar {
@@ -1245,6 +1906,9 @@ mod tests {
                     password: "p".into(),
                 },
                 Auth::Bearer { token: "t".into() },
+                Auth::OAuth {
+                    name: "identity".into(),
+                },
             ] {
                 reqs.push(Request::Http(HttpRequest {
                     body: b.clone(),
@@ -1269,6 +1933,24 @@ mod tests {
             ..Default::default()
         }));
         reqs.push(Request::new_grpc());
+        reqs.push(Request::Ws(WebSocketRequest {
+            url: "wss://{{h}}/chat".into(),
+            headers: vec![KeyValue::new("origin", "https://x")],
+            subprotocols: vec!["chat.v2".into()],
+            messages: "[\"a\", {\"binary\": \"AAEC\"}]".into(),
+            auth: Auth::Bearer {
+                token: "{{t}}".into(),
+            },
+            options: WsOptions {
+                timeout_ms: Some(5),
+                deadline_ms: Some(50),
+                verify_tls: false,
+                tls: true,
+                cookies: Some(false),
+            },
+            ..Default::default()
+        }));
+        reqs.push(Request::new_ws());
         for r in reqs {
             let e = Editors::from_request(&r);
             assert_eq!(e.to_request(), r);
@@ -1293,7 +1975,7 @@ mod tests {
         e.set_choice(Field::BodyKind, 1);
         assert_eq!(e.body_kind, BodyKind::Json);
         assert_eq!(e.choice_label(Field::BodyKind), "JSON");
-        assert_eq!(e.choice_options(Field::AuthKind).len(), 4);
+        assert_eq!(e.choice_options(Field::AuthKind).len(), 5);
         assert!(e.cycle(Field::FollowRedirects, 1));
         assert_eq!(e.choice_label(Field::FollowRedirects), "On");
         assert!(!e.cycle(Field::Params, 1));
@@ -1305,9 +1987,28 @@ mod tests {
         assert!(e.text_mut(Field::BodyText).is_some());
         assert!(e.table_mut(Field::Params).is_some());
         assert!(e.text_mut(Field::Params).is_none());
-        for f in [Field::Params, Field::BodyText, Field::BodyKind, Field::Tls] {
+        for f in [
+            Field::Params,
+            Field::BodyText,
+            Field::BodyKind,
+            Field::Tls,
+            Field::Cookies,
+        ] {
             assert!(!f.label().is_empty());
         }
+        // The cookie jar option cycles: default → on → off → default.
+        assert_eq!(e.choice_label(Field::Cookies), "Config default");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "On");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "Off");
+        assert!(e.cycle(Field::Cookies, 1));
+        assert_eq!(e.choice_label(Field::Cookies), "Config default");
+        e.cookies = Some(true);
+        let Request::Http(h) = e.to_request() else {
+            panic!("not http")
+        };
+        assert_eq!(h.options.cookies, Some(true));
         let mut tab = Tab::new(1, None, "x".into(), &full(), Some(full()));
         tab.refresh_model();
         assert!(!tab.dirty());

@@ -54,10 +54,12 @@ actions! {
     Send => "send", "Send the request (or start the gRPC call)";
     Cancel => "cancel", "Cancel the running request or stream";
     EndStream => "end_stream", "Finish sending on a client/bidi stream (half-close)";
+    WatchToggle => "watch", "Re-send the active request on an interval (watch)";
     Save => "save", "Save the request to its file (asks for a name if new)";
     Quit => "quit", "Quit Sendito";
     NewRequest => "new_request", "Open a new unsaved HTTP request tab";
     NewGrpcRequest => "new_grpc_request", "Open a new unsaved gRPC request tab";
+    NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
@@ -80,9 +82,10 @@ actions! {
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
+    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the project config";
     History => "history", "Show request history in the sidebar (toggle)";
     ToggleSidebar => "toggle_sidebar", "Show or hide the sidebar";
-    Import => "import", "Import a Postman collection or a curl command";
+    Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
     Zoom => "zoom", "Maximize or restore the focused pane";
@@ -110,6 +113,11 @@ actions! {
     ViewRaw => "view_raw", "Body view: raw text";
     ViewHex => "view_hex", "Body view: hex dump";
     Search => "search", "Search in the response";
+    Filter => "filter", "Filter the response body with a jq expression";
+    FilterHere => "filter_here", "Filter the body to the JSON value at the cursor";
+    CopyPath => "copy_path", "Copy the jq path of the JSON value at the cursor";
+    PrevMessage => "prev_message", "Show the previous message of a stream";
+    NextMessage => "next_message", "Show the next message of a stream (the last one follows new ones)";
     SearchNext => "search_next", "Next search match";
     SearchPrev => "search_prev", "Previous search match";
     FoldToggle => "fold_toggle", "Fold or unfold the JSON block at the cursor";
@@ -129,6 +137,7 @@ actions! {
     Copy => "copy", "Copy selection (whole field if nothing selected)";
     Cut => "cut", "Cut selection";
     Paste => "paste", "Paste";
+    Complete => "complete", "Show completion suggestions at the cursor";
 }
 
 /// One key press: a key and modifiers.
@@ -313,10 +322,12 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Send, Global, Both, &["ctrl+enter", "f5", "ctrl+w e"]),
         (Cancel, Global, Both, &["ctrl+w x"]),
         (EndStream, Global, Both, &["ctrl+w d"]),
+        (WatchToggle, Global, Both, &["ctrl+w m"]),
         (Save, Global, Both, &["ctrl+s", "ctrl+w s"]),
         (Quit, Global, Both, &["ctrl+w q", "ctrl+q"]),
         (NewRequest, Global, Both, &["ctrl+n", "ctrl+w t"]),
         (NewGrpcRequest, Global, Both, &["ctrl+w g"]),
+        (NewWsRequest, Global, Both, &["ctrl+w y"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
@@ -339,6 +350,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Settings, Global, Both, &["ctrl+w ,"]),
         (SelectEnv, Global, Both, &["f4", "ctrl+w v"]),
         (ManageEnvs, Global, Both, &["ctrl+w V"]),
+        (ManageMcpServers, Global, Both, &["ctrl+w S"]),
         (History, Global, Both, &["f7", "ctrl+w r"]),
         (ToggleSidebar, Global, Both, &["ctrl+b", "ctrl+w b"]),
         (Import, Global, Both, &["ctrl+w i"]),
@@ -391,6 +403,12 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (ViewRaw, Response, Both, &["r"]),
         (ViewHex, Response, Both, &["x"]),
         (Search, Response, Both, &["/", "ctrl+f"]),
+        (Filter, Response, Conventional, &["j"]),
+        (Filter, Response, Vim, &["J"]),
+        (FilterHere, Response, Both, &["f"]),
+        (CopyPath, Response, Both, &["Y"]),
+        (PrevMessage, Response, Both, &["["]),
+        (NextMessage, Response, Both, &["]"]),
         (SearchNext, Response, Both, &["n", "f3"]),
         (SearchPrev, Response, Both, &["N", "shift+f3"]),
         (FoldToggle, Response, Conventional, &["enter", "space"]),
@@ -412,6 +430,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Copy, Editor, Conventional, &["ctrl+c"]),
         (Cut, Editor, Conventional, &["ctrl+x"]),
         (Paste, Editor, Conventional, &["ctrl+v"]),
+        (Complete, Global, Both, &["ctrl+space"]),
     ]
 };
 
@@ -549,6 +568,33 @@ impl Keymap {
             .unwrap_or_else(|| "(unbound)".into())
     }
 
+    /// The bindings of `ctxs` that complete `pending` with one more key, in
+    /// table order: what the Ctrl+W menu lists. User overrides are included.
+    pub fn continuations(
+        &self,
+        ctxs: &[Ctx],
+        vim: bool,
+        pending: &[Chord],
+    ) -> Vec<(Chord, Action)> {
+        let mut out: Vec<(Chord, Action)> = Vec::new();
+        for b in self
+            .bindings
+            .iter()
+            .filter(|b| ctxs.contains(&b.ctx) && Self::applies(b, vim))
+        {
+            for k in &b.keys {
+                if k.0.len() == pending.len() + 1
+                    && k.0[..pending.len()] == *pending
+                    && let Some(last) = k.0.last()
+                    && !out.iter().any(|(c, _)| c == last)
+                {
+                    out.push((*last, b.action));
+                }
+            }
+        }
+        out
+    }
+
     /// Rows for the help screen and KEYMAP.md: (context, action, conventional keys, vim keys).
     pub fn rows(&self) -> Vec<(Ctx, Action, String, String)> {
         let mut seen: Vec<(Ctx, Action)> = Vec::new();
@@ -571,6 +617,87 @@ impl Keymap {
                 (c, a, keys(false), keys(true))
             })
             .collect()
+    }
+}
+
+/// Short key names for the footer and the Ctrl+W menu: `Ctrl+S` → `^S`,
+/// `Enter` → `⏎`, `Shift+Tab` → `⇧Tab`, `PageDown` → `PgDn`.
+pub fn short_keys(s: &str) -> String {
+    s.replace("Ctrl+", "^")
+        .replace("Shift+", "⇧")
+        .replace("Enter", "⏎")
+        .replace("PageDown", "PgDn")
+        .replace("PageUp", "PgUp")
+}
+
+/// The prefix key of the window menu, as the footer shows it.
+pub const MENU_PREFIX: &str = "Ctrl+W";
+
+/// A column of the Ctrl+W menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MenuGroup {
+    Request,
+    Tabs,
+    Layout,
+    Open,
+    App,
+}
+
+impl MenuGroup {
+    pub const ALL: [MenuGroup; 5] = [
+        MenuGroup::Request,
+        MenuGroup::Tabs,
+        MenuGroup::Layout,
+        MenuGroup::Open,
+        MenuGroup::App,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            MenuGroup::Request => "Request",
+            MenuGroup::Tabs => "Tabs",
+            MenuGroup::Layout => "Focus & layout",
+            MenuGroup::Open => "Open",
+            MenuGroup::App => "App",
+        }
+    }
+}
+
+/// The Ctrl+W menu group and short label of an action. Actions with the same
+/// label share one row ("h j k l  focus"). Actions without an entry go to
+/// App with their description.
+pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
+    use Action::*;
+    use MenuGroup as G;
+    match a {
+        Send => (G::Request, "send"),
+        Cancel => (G::Request, "cancel"),
+        EndStream => (G::Request, "end stream"),
+        WatchToggle => (G::Request, "watch"),
+        Save => (G::Request, "save"),
+        FormatBody => (G::Request, "format body"),
+        ExportCurl => (G::Request, "copy as curl"),
+        NewRequest => (G::Tabs, "new HTTP"),
+        NewGrpcRequest => (G::Tabs, "new gRPC"),
+        NewWsRequest => (G::Tabs, "new WebSocket"),
+        NextTab | PrevTab => (G::Tabs, "next / previous"),
+        CloseTab => (G::Tabs, "close"),
+        FocusLeft | FocusDown | FocusUp | FocusRight => (G::Layout, "focus"),
+        FocusNext | FocusPrev => (G::Layout, "next / previous pane"),
+        NextSubTab | PrevSubTab => (G::Layout, "pane tab"),
+        Zoom => (G::Layout, "zoom"),
+        ToggleSidebar => (G::Layout, "sidebar"),
+        GrowSidebar | ShrinkSidebar => (G::Layout, "sidebar width"),
+        GrowRequest | ShrinkRequest => (G::Layout, "split height"),
+        SelectEnv => (G::Open, "environment"),
+        ManageEnvs => (G::Open, "edit environments"),
+        ManageMcpServers => (G::Open, "MCP servers"),
+        History => (G::Open, "history"),
+        Import => (G::Open, "import"),
+        Settings => (G::App, "settings"),
+        Help => (G::App, "all keys"),
+        Quit => (G::App, "quit"),
+        other => (G::App, other.description()),
     }
 }
 
@@ -658,7 +785,7 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     (
         "Import dialog",
         "F5 or Ctrl+S / Esc",
-        "Import the pasted curl command or the Postman file / cancel",
+        "Import the pasted curl command or collection / cancel",
     ),
     (
         "Settings",
@@ -669,6 +796,11 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
         "Report dialogs",
         "y / Up, Down, PageUp, PageDown / Esc",
         "Copy / scroll / close",
+    ),
+    (
+        "MCP server / tool field",
+        "F2",
+        "Choose a configured server / discover and choose a tool",
     ),
     (
         "Command palette",
@@ -713,15 +845,15 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
 /// Symbols used on screen, listed in the help and KEYMAP.md.
 pub const SYMBOLS: &[(&str, &str)] = &[
     ("●", "unsaved changes (tab, status line)"),
-    ("↻ on a tab", "request running"),
+    ("⠋ on a tab (turning)", "request running"),
     (
         "Results 2/3 ✗",
         "on the Results tab: assertions passed / total (✓ all passed, ✗ some failed)",
     ),
     ("…", "text cut short"),
     (
-        "→ ← ■ + in the gRPC Log tab",
-        "sent, received, final status, seconds since the call started",
+        "→ ← ■ + in the gRPC and WebSocket Log tabs",
+        "sent, received, final status, seconds since the session started",
     ),
     (
         "Headers (2)",
@@ -797,6 +929,64 @@ pub fn keymap_markdown() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_key_names() {
+        assert_eq!(short_keys("Ctrl+S"), "^S");
+        assert_eq!(short_keys("Ctrl+Enter/F5"), "^⏎/F5");
+        assert_eq!(short_keys("Shift+Tab"), "⇧Tab");
+        assert_eq!(short_keys("Ctrl+PageDown"), "^PgDn");
+        assert_eq!(short_keys("F1"), "F1");
+    }
+
+    #[test]
+    fn ctrl_w_continuations_follow_overrides() {
+        let ctrl_w = Chord::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        let e = Chord::new(KeyCode::Char('e'), KeyModifiers::NONE);
+        let km = Keymap::defaults();
+        let c = km.continuations(&[Ctx::Global], false, &[ctrl_w]);
+        assert!(c.contains(&(e, Action::Send)));
+        // A key that ends a longer sequence is listed once.
+        assert_eq!(c.iter().filter(|(k, _)| *k == e).count(), 1);
+        let mut cfg = BTreeMap::new();
+        cfg.insert(
+            "all".to_string(),
+            BTreeMap::from([("send".to_string(), KeySpec::One("ctrl+w o".into()))]),
+        );
+        let (km, warnings) = km.with_overrides(&cfg);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let c = km.continuations(&[Ctx::Global], false, &[ctrl_w]);
+        let o = Chord::new(KeyCode::Char('o'), KeyModifiers::NONE);
+        assert!(c.contains(&(o, Action::Send)));
+        assert!(!c.contains(&(e, Action::Send)));
+        // Vim prefixes such as `g` have no global continuations.
+        let g = Chord::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(km.continuations(&[Ctx::Global], true, &[g]).is_empty());
+    }
+
+    #[test]
+    fn filter_key_by_mode() {
+        // The jq filter is j in conventional mode and J in vim mode (j moves
+        // the cursor there); plain j must not open it in vim mode.
+        let km = Keymap::defaults();
+        let j = Chord::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let upper = Chord::new(KeyCode::Char('J'), KeyModifiers::NONE);
+        assert_eq!(
+            km.lookup(&[Ctx::Response], false, &[j]),
+            Lookup::Action(Action::Filter)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Response], true, &[j]),
+            Lookup::Action(Action::CursorDown)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Response], true, &[upper]),
+            Lookup::Action(Action::Filter)
+        );
+        // And the hint follows the mode.
+        assert_eq!(km.hint(Action::Filter, false), "j");
+        assert_eq!(km.hint(Action::Filter, true), "J");
+    }
 
     #[test]
     fn parse_and_display() {
@@ -899,6 +1089,27 @@ mod tests {
             km.keys_for(Action::TreeDelete, false)
                 .contains(&"Delete".to_string())
         );
+    }
+
+    #[test]
+    fn no_key_is_bound_twice() {
+        // A duplicate would silently shadow the earlier action in `lookup`.
+        let km = Keymap::defaults();
+        let mut seen: Vec<(Ctx, ModeSet, KeySeq)> = Vec::new();
+        for b in &km.bindings {
+            for k in &b.keys {
+                if let Some((ctx, modes, _)) = seen
+                    .iter()
+                    .find(|(c, m, s)| *c == b.ctx && *m == b.modes && s == k)
+                {
+                    panic!(
+                        "{k} is bound to two actions in {ctx:?} ({modes:?}): {:?}",
+                        b.action
+                    );
+                }
+                seen.push((b.ctx, b.modes, k.clone()));
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,9 @@
+kind = "websocket"
+url = "{{ws_url}}/echo"
+messages = '''
+"with token"
+'''
+
+[auth]
+type = "bearer"
+token = "{{local_token}}"

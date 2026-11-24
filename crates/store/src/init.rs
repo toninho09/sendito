@@ -11,6 +11,8 @@ use crate::{Result, StoreError};
 /// Entries `sendito init` adds to the collection's `.gitignore`.
 pub const GITIGNORE_ENTRIES: &[&str] = &[
     ".sendito/secrets.toml",
+    ".sendito/cookies.toml",
+    ".sendito/cookies.lock",
     ".sendito/session.toml",
     ".sendito/history.jsonl",
 ];
@@ -75,8 +77,14 @@ pub fn init(dir: &Path) -> Result<InitReport> {
     }
 
     let gi = dir.join(".gitignore");
-    let existing = fs::read_to_string(&gi).unwrap_or_default();
-    let have: Vec<&str> = existing.lines().map(str::trim).collect();
+    // Read bytes: a file that is not UTF-8 is appended to, never replaced.
+    let existing = match fs::read(&gi) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(crate::StoreError::io(&gi, e)),
+    };
+    let existing_text = String::from_utf8_lossy(&existing);
+    let have: Vec<&str> = existing_text.lines().map(str::trim).collect();
     let mut add = String::new();
     for e in GITIGNORE_ENTRIES {
         if !have.contains(e) && !have.contains(&format!("/{e}").as_str()) {
@@ -87,14 +95,14 @@ pub fn init(dir: &Path) -> Result<InitReport> {
     }
     if !add.is_empty() {
         let mut text = existing.clone();
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
+        if !text.is_empty() && !text.ends_with(b"\n") {
+            text.push(b'\n');
         }
         if existing.is_empty() {
-            text.push_str("# Sendito local files\n");
+            text.extend_from_slice(b"# Sendito local files\n");
         }
-        text.push_str(&add);
-        write_atomic(&gi, text.as_bytes())?;
+        text.extend_from_slice(add.as_bytes());
+        write_atomic(&gi, &text)?;
     }
     Ok(rep)
 }
@@ -109,11 +117,11 @@ mod tests {
         fs::write(d.path().join(".gitignore"), "target").unwrap();
         let r = init(d.path()).unwrap();
         assert_eq!(r.created.len(), 3);
-        assert_eq!(r.gitignore_added.len(), 3);
+        assert_eq!(r.gitignore_added.len(), 5);
         let gi = fs::read_to_string(d.path().join(".gitignore")).unwrap();
         assert_eq!(
             gi,
-            "target\n.sendito/secrets.toml\n.sendito/session.toml\n.sendito/history.jsonl\n"
+            "target\n.sendito/secrets.toml\n.sendito/cookies.toml\n.sendito/cookies.lock\n.sendito/session.toml\n.sendito/history.jsonl\n"
         );
         let r2 = init(d.path()).unwrap();
         assert_eq!(r2, InitReport::default());

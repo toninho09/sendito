@@ -32,6 +32,9 @@ pub struct TreeState {
     pub rows: Vec<Row>,
     pub selected: usize,
     pub scroll: usize,
+    /// Whether the next draw should scroll the selection into view. Selection
+    /// changes arm it; the mouse wheel disarms it to allow free browsing.
+    pub follow: bool,
 }
 
 impl TreeState {
@@ -43,6 +46,7 @@ impl TreeState {
             rows: Vec::new(),
             selected: 0,
             scroll: 0,
+            follow: true,
         };
         t.rebuild();
         t
@@ -71,6 +75,7 @@ impl TreeState {
         if self.selected >= self.rows.len() {
             self.selected = self.rows.len().saturating_sub(1);
         }
+        self.follow = true;
     }
 
     fn flatten(&self, f: &Folder, depth: usize, out: &mut Vec<Row>) {
@@ -180,6 +185,7 @@ impl TreeState {
         }
         if let Some(i) = self.rows.iter().position(|r| r.rel == rel) {
             self.selected = i;
+            self.follow = true;
             true
         } else {
             false
@@ -192,6 +198,7 @@ impl TreeState {
         }
         let max = self.rows.len() as isize - 1;
         self.selected = (self.selected as isize + delta).clamp(0, max) as usize;
+        self.follow = true;
     }
 
     pub fn toggle(&mut self, rel: &str) {
@@ -219,6 +226,7 @@ impl TreeState {
                     .is_some_and(|n| n.depth > r.depth)
                 {
                     self.selected += 1;
+                    self.follow = true;
                 }
                 return true;
             }
@@ -256,11 +264,7 @@ impl TreeState {
         if height == 0 {
             return;
         }
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + height {
-            self.scroll = self.selected + 1 - height;
-        }
+        self.scroll = crate::list::keep_visible(self.selected, self.scroll, height);
         let max_scroll = self.rows.len().saturating_sub(height);
         self.scroll = self.scroll.min(max_scroll);
     }

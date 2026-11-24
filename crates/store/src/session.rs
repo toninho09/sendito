@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
-use crate::collection::{META_DIR, write_atomic};
+use crate::collection::META_DIR;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -71,7 +71,8 @@ pub fn save(path: &Path, s: &Session) -> Result<()> {
     if fs::read_to_string(path).ok().as_deref() == Some(text.as_str()) {
         return Ok(());
     }
-    write_atomic(path, text.as_bytes())
+    // Drafts can hold a typed token: owner-only, like secrets.toml.
+    crate::collection::write_private(path, text.as_bytes())
 }
 
 #[cfg(test)]

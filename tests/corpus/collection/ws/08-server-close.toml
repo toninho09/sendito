@@ -1,0 +1,5 @@
+kind = "websocket"
+url = "{{ws_url}}/close/4001/server%20closing"
+messages = '''
+"trigger"
+'''

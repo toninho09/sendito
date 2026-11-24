@@ -2,40 +2,15 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- GRPC echo unary × │ +                                                                                                                                                        env: local ▾  F1 all keys
-╭  Requests  History ────────╮┏ Request · echo unary.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│▸ Orders/                   │┃ target {{grpc}}                                                                                                                           method  Echo/Unary ▾    Send ┃
-│▸ Users/                    │┃ Message │ Metadata │ Auth │ Scripts │ Options                                                                                                                          ┃
-│  GRPC  echo unary          │┃Schema         Server reflection ▾  reflection asks the server; proto files are compiled locally                                                                        ┃
-│  GET   health              │┃Use TLS        [ ] Off  or prefix the target with https://                                                                                                              ┃
-│                            │┃Verify TLS     [x] On  turn off for self-signed certificates                                                                                                            ┃
-│                            │┃Deadline ms   none                                                                                                                                                      ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┃                                                                                                                                                                        ┃
-│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                            ││ Body │ Metadata │ Timing │ Log                                                                                                                                         │
-│                            ││ Press Ctrl+Enter or F5 to send.                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││ The response appears here.                                                                                                                                             │
+ sendito   GRPC echo unary ×    +                                                                                                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ GRPC ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  {{grpc}}  → 127.0.0.1:9                                                                                                                  Echo/Unary    ▾  ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Message  Metadata  Auth  Scripts  Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  GET   health              ││ Schema         Server reflection ▾  reflection asks the server; proto files are compiled locally                                                                       │
+│                            ││ Use TLS        [ ] Off  or prefix the target with https://                                                                                                             │
+│                            ││ Verify TLS     [✓] On  turn off for self-signed certificates                                                                                                           │
+│                            ││ Deadline ms    none                                                                                                                                                    │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -57,8 +32,33 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
+│                            │╰─ echo unary ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Metadata  Timing  Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Enter/↓ edit  ←→ switch tab  Ctrl+P commands  F1 all keys
- env: local
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                  Press  Ctrl+Enter  or  F5  to send.                                                                   │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                       The response appears here.                                                                       │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                                                                                                           ^⏎/F5 send · ^S save · ⏎/↓ edit · ^W menu · F1 all keys

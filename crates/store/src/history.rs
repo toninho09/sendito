@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::collection::{META_DIR, write_atomic};
+use crate::collection::META_DIR;
 use crate::{Result, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,8 +56,16 @@ pub fn append(path: &Path, entry: &HistoryEntry, max: usize) -> Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
+        .read(true)
         .open(path)
         .map_err(|e| StoreError::io(path, e))?;
+    // Requests are stored as written, with any literal token: owner-only.
+    crate::collection::make_private(path);
+    // A crash can leave a last line with no newline: end it first, so this
+    // entry does not join it and become unreadable.
+    if ends_without_newline(&mut f) {
+        writeln!(f).map_err(|e| StoreError::io(path, e))?;
+    }
     writeln!(f, "{line}").map_err(|e| StoreError::io(path, e))?;
     drop(f);
     let count = count_lines(path);
@@ -70,14 +78,25 @@ pub fn append(path: &Path, entry: &HistoryEntry, max: usize) -> Result<()> {
             );
             out.push('\n');
         }
-        write_atomic(path, out.as_bytes())?;
+        crate::collection::write_private(path, out.as_bytes())?;
     }
     Ok(())
 }
 
+fn ends_without_newline(f: &mut fs::File) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut last = [0u8; 1];
+    f.seek(SeekFrom::End(-1)).is_ok() && f.read_exact(&mut last).is_ok() && last[0] != b'\n'
+}
+
 fn count_lines(path: &Path) -> usize {
     fs::File::open(path)
-        .map(|f| BufReader::new(f).lines().count())
+        .map(|f| {
+            BufReader::new(f)
+                .split(b'\n')
+                .filter(|l| l.as_ref().is_ok_and(|l| !l.is_empty()))
+                .count()
+        })
         .unwrap_or(0)
 }
 
@@ -88,10 +107,12 @@ pub fn load(path: &Path, limit: usize) -> Result<Vec<HistoryEntry>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(StoreError::io(path, e)),
     };
+    // Split on bytes: one line that is not UTF-8 is skipped alone, and the
+    // entries after it still load (and survive the next trim).
     let mut v: Vec<HistoryEntry> = BufReader::new(f)
-        .lines()
+        .split(b'\n')
         .map_while(std::result::Result::ok)
-        .filter_map(|l| serde_json::from_str(&l).ok())
+        .filter_map(|l| serde_json::from_slice(&l).ok())
         .collect();
     if v.len() > limit {
         v.drain(..v.len() - limit);
@@ -132,6 +153,22 @@ mod tests {
             size: 10,
             error: None,
         }
+    }
+
+    #[test]
+    fn bad_bytes_and_partial_lines_do_not_hide_later_entries() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join(".sendito/history.jsonl");
+        append(&p, &entry(1), 100).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&p)
+            .unwrap()
+            .write_all(b"\xff\xfe not utf-8\n{\"ts\":\"cut")
+            .unwrap();
+        append(&p, &entry(2), 100).unwrap();
+        let names: Vec<String> = load(&p, 100).unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["r1", "r2"]);
     }
 
     #[test]

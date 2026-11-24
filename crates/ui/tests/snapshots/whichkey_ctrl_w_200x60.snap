@@ -1,0 +1,64 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   GET list users ×    +                                                                                                                                               ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                                                                                                             ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│├ DEL   delete user         ││     Name                                                            Value                                                                                              │
+│└ GET   list users          ││ [✓] page                                                           │1                                                                                               │× │
+│  GRPC  echo unary          ││  +  add name                                                       │                                                                                                   │
+│  GET   health              ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            ││                                                                                                                                                                        │
+│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────────────────────────────────────────────────────────────────────────────────────── 200 OK  14 ms 219 B ─╮
+│                            ││  1 ▾ {                                                                                                                                                                 │
+│                            ││  2 ▾   "items": [                                                                                                                                                      │
+│                            ││  3 ▾     {                                                                                                                                                             │
+│                            ││  4         "id": 1,                                                                                                                                                    │
+│                            ││  5         "name": "Ana",                                                                                                                                              │
+│                            ││  6         "email": "ana@example.com",                                                                                                                                 │
+│                            ││  7 ▾       "roles": [                                                                                                                                                  │
+│                            ││  8           "admin",                                                                                                                                                  │
+│                            ││  9           "dev"                                                                                                                                                     │
+│                            ││ 10         ],                                                                                                                                                          │
+│                            ││ 11         "active": true                                                                                                                                              │
+│                            ││ 12       },                                                                                                                                                            │
+│                            ││ 13 ▾     {                                                                                                                                                             │
+│                            ││ 14         "id": 2,                                                                                                                                                    │
+│                            ││ 15         "name": "Bia",                                                                                                                                              │
+│                            ││ 16         "email": "bia@example.com",                    ╭─ ^W ──────────────────────────────────────────────────────────────────────────────────────────────────────╮│
+│                            ││ 17         "roles": [],                                   │                                                                                                           │
+│                            ││ 18         "active": false,                               │  Request           Tabs                   Focus & layout              Open                   App          │
+│                            ││ 19         "manager": null                                │  e  send           t  new HTTP            h j k l  focus              v  environment         q  quit      │
+│                            ││ 20       }                                                │  x  cancel         g  new gRPC            w W  next / previous pane   V  edit environments   ?  all keys  │
+│                            ││ 21     ],                                                 │  d  end stream     y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
+│                            ││ 22     "count": 2,                                        │  m  watch          c  close               b  sidebar                  r  history                          │
+│                            ││ 23     "next": "/users?page=2"                            │  s  save           n p  next / previous   z  zoom                     i  import                           │
+│                            ││ 24   }                                                    │  u  copy as curl                          > <  sidebar width                                              │
+│                            ││                                                           │  f  format body                           + -  split height                                               │
+│                            ││                                                           │                                                                                                           │
+╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────── Esc cancel ─╯
+ demo                                                                                                                                                                                     ^W … next key

@@ -2,30 +2,15 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- GET list users × │ +                                                                         env: local ▾  F1 all keys
-╭  Requests  History ────────╮┏ Request · Users/list users.toml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│▸ Orders/                   │┃ GET    ▾ {{base_url}}/users                                                       Send ┃
-│▾ Users/                    │┃ Params (1) │ Headers (1) │ Body │ Auth• │ Scripts │ Options                            ┃
-││   POST  create user       │┃    Name                             Value                                              ┃
-││   DEL   delete user       │┃[x] page                            │1                                                │✕┃
-││   GET   list users        │┃ +  add name                        │                                                   ┃
-│  GRPC  echo unary          │┃                                                                                        ┃
-│  GET   health              │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┃                                                                                        ┃
-│                            │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-│                            │╭ Response ──────────────────────────────────────────────────────────────────────────────╮
-│                            ││ Body │ Headers │ Timing │ Results                                                      │
-│                            ││ Press Ctrl+Enter or F5 to send.                                                        │
-│                            ││                                                                                        │
-│                            ││ The response appears here.                                                             │
+ sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
+│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────╮
+│├ DEL   delete user         ││     Name                            Value                                              │
+│└ GET   list users          ││ [✓] page                           │1                                               │× │
+│  GRPC  echo unary          ││  +  add name                       │                                                   │
+│  GET   health              ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
@@ -37,8 +22,23 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
+│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────╯
+│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
 │                            ││                                                                                        │
 │                            ││                                                                                        │
-╰────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- Ctrl+Enter/F5 send  Ctrl+S save  Ctrl+P commands  F1 all keys
- env: local
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                            ││                                                                                        │
+│                            ││                               The response appears here.                               │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                        ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys

@@ -1,0 +1,2 @@
+kind = "websocket"
+url = "{{ws_url}}/echo"

@@ -1,19 +1,27 @@
 //! The request model. These types mirror the on-disk TOML schema (see FORMAT.md)
 //! but carry no serialization logic: `sendito-store` owns the file format.
 
-/// A saved request: either HTTP or gRPC.
+/// A saved request: HTTP, gRPC, WebSocket or MCP.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Http(HttpRequest),
     Grpc(GrpcRequest),
+    Ws(WebSocketRequest),
+    Mcp(McpRequest),
 }
 
+/// The auth MCP requests answer with: authentication belongs to the server
+/// definition in the config, not to the request.
+static NO_AUTH: Auth = Auth::None;
+
 impl Request {
-    /// Short label used for tree badges (`GET`, `POST`, `GRPC`).
+    /// Short label used for tree badges (`GET`, `POST`, `GRPC`, `WS`, `MCP`).
     pub fn badge(&self) -> &str {
         match self {
             Request::Http(h) => &h.method,
             Request::Grpc(_) => "GRPC",
+            Request::Ws(_) => "WS",
+            Request::Mcp(_) => "MCP",
         }
     }
 
@@ -21,6 +29,8 @@ impl Request {
         match self {
             Request::Http(h) => &h.scripts,
             Request::Grpc(g) => &g.scripts,
+            Request::Ws(w) => &w.scripts,
+            Request::Mcp(m) => &m.scripts,
         }
     }
 
@@ -28,6 +38,8 @@ impl Request {
         match self {
             Request::Http(h) => &mut h.scripts,
             Request::Grpc(g) => &mut g.scripts,
+            Request::Ws(w) => &mut w.scripts,
+            Request::Mcp(m) => &mut m.scripts,
         }
     }
 
@@ -35,13 +47,19 @@ impl Request {
         match self {
             Request::Http(h) => &h.auth,
             Request::Grpc(g) => &g.auth,
+            Request::Ws(w) => &w.auth,
+            Request::Mcp(_) => &NO_AUTH,
         }
     }
 
-    pub fn auth_mut(&mut self) -> &mut Auth {
+    /// The auth of an HTTP, gRPC or WebSocket request; `None` for MCP, whose
+    /// auth lives on the server definition in the config.
+    pub fn auth_mut(&mut self) -> Option<&mut Auth> {
         match self {
-            Request::Http(h) => &mut h.auth,
-            Request::Grpc(g) => &mut g.auth,
+            Request::Http(h) => Some(&mut h.auth),
+            Request::Grpc(g) => Some(&mut g.auth),
+            Request::Ws(w) => Some(&mut w.auth),
+            Request::Mcp(_) => None,
         }
     }
 
@@ -51,6 +69,14 @@ impl Request {
 
     pub fn new_grpc() -> Self {
         Request::Grpc(GrpcRequest::default())
+    }
+
+    pub fn new_ws() -> Self {
+        Request::Ws(WebSocketRequest::default())
+    }
+
+    pub fn new_mcp() -> Self {
+        Request::Mcp(McpRequest::default())
     }
 }
 
@@ -212,6 +238,26 @@ impl BodyKind {
         }
     }
 
+    /// The Content-Type this kind adds when no header sets one. Raw and File
+    /// take theirs from their own field; multipart (with its boundary) always
+    /// replaces a header.
+    pub fn content_type(self) -> Option<&'static str> {
+        match self {
+            BodyKind::Json => Some("application/json"),
+            BodyKind::Form => Some("application/x-www-form-urlencoded"),
+            BodyKind::Multipart => Some("multipart/form-data"),
+            _ => None,
+        }
+    }
+
+    /// A short name for the body type chips.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            BodyKind::Form => "Form",
+            k => k.label(),
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BodyKind::None => "None",
@@ -265,6 +311,10 @@ pub enum Auth {
         value: String,
         location: ApiKeyLocation,
     },
+    /// A named HTTP OAuth identity from the collection configuration.
+    OAuth {
+        name: String,
+    },
 }
 
 impl Auth {
@@ -274,6 +324,7 @@ impl Auth {
             Auth::Basic { .. } => AuthKind::Basic,
             Auth::Bearer { .. } => AuthKind::Bearer,
             Auth::ApiKey { .. } => AuthKind::ApiKey,
+            Auth::OAuth { .. } => AuthKind::OAuth,
         }
     }
 
@@ -292,6 +343,9 @@ impl Auth {
                 value: String::new(),
                 location: ApiKeyLocation::Header,
             },
+            AuthKind::OAuth => Auth::OAuth {
+                name: String::new(),
+            },
         }
     }
 }
@@ -302,14 +356,16 @@ pub enum AuthKind {
     Basic,
     Bearer,
     ApiKey,
+    OAuth,
 }
 
 impl AuthKind {
-    pub const ALL: [AuthKind; 4] = [
+    pub const ALL: [AuthKind; 5] = [
         AuthKind::None,
         AuthKind::Basic,
         AuthKind::Bearer,
         AuthKind::ApiKey,
+        AuthKind::OAuth,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -318,6 +374,7 @@ impl AuthKind {
             AuthKind::Basic => "basic",
             AuthKind::Bearer => "bearer",
             AuthKind::ApiKey => "apikey",
+            AuthKind::OAuth => "oauth",
         }
     }
 
@@ -327,6 +384,7 @@ impl AuthKind {
             AuthKind::Basic => "Basic",
             AuthKind::Bearer => "Bearer token",
             AuthKind::ApiKey => "API key",
+            AuthKind::OAuth => "OAuth 2",
         }
     }
 }
@@ -344,6 +402,9 @@ pub struct HttpOptions {
     pub timeout_ms: Option<u64>,
     pub follow_redirects: bool,
     pub verify_tls: bool,
+    /// Replay cookies from the collection's cookie jar and store the ones the
+    /// response sets. `None` follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
 }
 
 impl Default for HttpOptions {
@@ -352,6 +413,7 @@ impl Default for HttpOptions {
             timeout_ms: None,
             follow_redirects: true,
             verify_tls: true,
+            cookies: None,
         }
     }
 }
@@ -529,6 +591,90 @@ impl Default for GrpcRequest {
     }
 }
 
+/// A WebSocket session: one URL, optional headers, subprotocols and an
+/// opening message document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSocketRequest {
+    /// `ws://`, `wss://` (or `http://`/`https://`); a URL without a scheme
+    /// uses the `tls` option.
+    pub url: String,
+    pub headers: Vec<KeyValue>,
+    /// Values for `Sec-WebSocket-Protocol`, in order.
+    pub subprotocols: Vec<String>,
+    /// Messages sent right after the handshake, as a JSON document: an array
+    /// of strings (text frames) and `{ "binary": "base64" }` objects (binary
+    /// frames), or one such value alone. Stored and read as written (a
+    /// half-typed document is a valid file); rejected only at send time.
+    pub messages: String,
+    pub auth: Auth,
+    pub options: WsOptions,
+    pub scripts: Scripts,
+}
+
+impl Default for WebSocketRequest {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            headers: Vec::new(),
+            subprotocols: Vec::new(),
+            messages: "[]".into(),
+            auth: Auth::None,
+            options: WsOptions::default(),
+            scripts: Scripts::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsOptions {
+    /// Handshake timeout. `None` uses the configured default.
+    pub timeout_ms: Option<u64>,
+    /// Optional whole-session deadline (like the gRPC deadline).
+    pub deadline_ms: Option<u64>,
+    pub verify_tls: bool,
+    /// TLS when the URL has no scheme; default false.
+    pub tls: bool,
+    /// Replay cookies from the collection's jar in the handshake. `None`
+    /// follows the `[http] cookie_jar` config.
+    pub cookies: Option<bool>,
+}
+
+impl Default for WsOptions {
+    fn default() -> Self {
+        Self {
+            timeout_ms: None,
+            deadline_ms: None,
+            verify_tls: true,
+            tls: false,
+            cookies: None,
+        }
+    }
+}
+
+/// An MCP call: one tool on one server from the collection config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRequest {
+    /// Server name, a key of `[mcp.servers]` in the collection config.
+    pub server: String,
+    pub tool: String,
+    /// Tool arguments as JSON text. An empty string omits the arguments property.
+    pub arguments: String,
+    pub timeout_ms: Option<u64>,
+    pub scripts: Scripts,
+}
+
+impl Default for McpRequest {
+    fn default() -> Self {
+        Self {
+            server: String::new(),
+            tool: String::new(),
+            arguments: "{}".into(),
+            timeout_ms: None,
+            scripts: Scripts::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SchemaSource {
     #[default]
@@ -593,7 +739,9 @@ mod tests {
     fn request_accessors() {
         let mut r = Request::new_http();
         assert_eq!(r.badge(), "GET");
-        r.auth_mut().clone_from(&Auth::Bearer { token: "t".into() });
+        r.auth_mut()
+            .expect("a new HTTP request has auth")
+            .clone_from(&Auth::Bearer { token: "t".into() });
         assert_eq!(r.auth().kind(), AuthKind::Bearer);
         r.scripts_mut().pre.push(SetVar::default());
         assert!(!r.scripts().is_empty());

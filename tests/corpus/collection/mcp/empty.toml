@@ -1,0 +1,4 @@
+kind = "mcp"
+server = "echo"
+tool = "greet"
+arguments = ""

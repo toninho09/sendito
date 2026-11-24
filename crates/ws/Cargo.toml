@@ -1,0 +1,28 @@
+[package]
+name = "sendito-ws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito WebSocket client: handshake, frames, proxy CONNECT, TLS"
+
+[dependencies]
+sendito-http.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tokio-rustls.workspace = true
+futures-util.workspace = true
+http.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+url.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sendito-testkit.workspace = true
+tempfile.workspace = true

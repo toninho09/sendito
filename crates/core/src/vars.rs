@@ -301,13 +301,44 @@ pub fn uuid_v4() -> String {
     )
 }
 
-/// Masks every occurrence of the given secret values in `b`. Returns `None`
-/// when nothing matched, so large bodies are not copied needlessly.
+/// The spellings a secret may come back in: as sent, inside a JSON string, and
+/// percent-encoded as a form field or a query component. Secrets shorter than
+/// 3 characters are left out (they would mask too much). Longest first.
+fn mask_forms(secrets: &[String]) -> Vec<String> {
+    let mut forms: Vec<String> = secrets
+        .iter()
+        .filter(|s| s.len() >= 3)
+        .flat_map(|s| {
+            let mut forms = vec![s.clone()];
+            if let Ok(json) = serde_json::to_string(s.as_str()) {
+                forms.push(json[1..json.len() - 1].to_string());
+            }
+            for encoded in [
+                crate::resolve::form_urlencode(s),
+                crate::resolve::query_encode(s),
+            ] {
+                forms.push(encoded.to_ascii_lowercase());
+                forms.push(encoded);
+            }
+            forms
+        })
+        .collect();
+    forms.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    forms.dedup();
+    forms
+}
+
+/// Masks every occurrence of the given secret values in `b`, in any of the
+/// spellings a server may echo them in. Returns `None` when nothing matched, so
+/// large bodies are not copied needlessly.
 pub fn scrub_bytes(b: &[u8], secrets: &[String]) -> Option<Vec<u8>> {
     let mut out: Option<Vec<u8>> = None;
-    for sec in secrets.iter().filter(|s| s.len() >= 3) {
-        if let Some(r) = replace_bytes(out.as_deref().unwrap_or(b), sec.as_bytes(), MASK.as_bytes())
-        {
+    for form in mask_forms(secrets) {
+        if let Some(r) = replace_bytes(
+            out.as_deref().unwrap_or(b),
+            form.as_bytes(),
+            MASK.as_bytes(),
+        ) {
             out = Some(r);
         }
     }
@@ -352,10 +383,8 @@ fn replace_bytes(h: &[u8], n: &[u8], with: &[u8]) -> Option<Vec<u8>> {
 /// of defence when writing free-form text such as error messages).
 pub fn scrub(s: &str, secrets: &[String]) -> String {
     let mut out = s.to_string();
-    for sec in secrets {
-        if sec.len() >= 3 {
-            out = out.replace(sec.as_str(), MASK);
-        }
+    for form in mask_forms(secrets) {
+        out = out.replace(form.as_str(), MASK);
     }
     out
 }
@@ -464,6 +493,56 @@ mod tests {
         assert_eq!(
             scrub("tok=abcd", &["abcd".into(), "x".into()]),
             format!("tok={MASK}")
+        );
+    }
+
+    #[test]
+    fn scrub_masks_encoded_echoes() {
+        use crate::resolve::{form_urlencode, query_encode};
+        let (pw, q) = ("ab\"c\\d", "a+b/c d");
+        let secrets = vec![
+            "token123".to_string(),
+            pw.to_string(),
+            q.to_string(),
+            "x1".to_string(),
+        ];
+        let json = format!(
+            r#"{{"pw":{},"q":{}}}"#,
+            serde_json::to_string(pw).unwrap(),
+            serde_json::to_string(q).unwrap()
+        );
+        let out = scrub_bytes(json.as_bytes(), &secrets).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!(r#"{{"pw":"{MASK}","q":"{MASK}"}}"#)
+        );
+        let masked = format!("pw={MASK}");
+        let bearer = format!("Bearer {MASK}");
+        for (text, want) in [
+            (format!("pw={}", form_urlencode(q)), masked.clone()),
+            (format!("pw={}", query_encode(q)), masked.clone()),
+            (
+                format!("pw={}", form_urlencode(q).to_ascii_lowercase()),
+                masked.clone(),
+            ),
+            (format!("pw={}", query_encode(pw)), masked.clone()),
+            (
+                format!("Bearer {}", query_encode(pw).to_ascii_lowercase()),
+                bearer,
+            ),
+        ] {
+            assert_eq!(scrub(&text, &secrets), want, "{text}");
+        }
+        assert_eq!(
+            scrub(&format!("x {q} y {pw}!"), &secrets),
+            format!("x {MASK} y {MASK}!")
+        );
+        assert_eq!(scrub("Bearer token123", &secrets), format!("Bearer {MASK}"));
+        assert_eq!(scrub("x1 nothing here", &secrets), "x1 nothing here");
+        assert!(scrub_bytes(b"nothing here", &secrets).is_none());
+        assert_eq!(
+            mask_forms(&["token123".to_string()]),
+            vec!["token123".to_string()]
         );
     }
 }

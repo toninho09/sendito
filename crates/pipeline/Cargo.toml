@@ -1,0 +1,25 @@
+[package]
+name = "sendito-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito send pipeline and response document model"
+
+[dependencies]
+sendito-core.workspace = true
+sendito-http.workspace = true
+sendito-grpc.workspace = true
+sendito-mcp.workspace = true
+sendito-ws.workspace = true
+sendito-store.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+time.workspace = true
+url.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true

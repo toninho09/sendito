@@ -17,43 +17,97 @@ Instructions for AI coding agents working in this repository.
 
 ## Project
 
-Sendito is a terminal API client for HTTP and gRPC (Rust, edition 2024). Workspace
-crates: `core` (model, variables, scripts), `http`, `grpc`, `store` (files,
-environments, config, history), `import` (Postman, curl), `ui` (ratatui TUI and the
-send pipeline), `testkit` (echo servers), plus the `sendito` binary in `src/`.
+Sendito is a terminal API client for HTTP, gRPC, WebSocket and MCP tools (Rust,
+edition 2024). Each crate lives in `crates/<name>` and is `sendito-<name>` to
+cargo (`-p sendito-core`): `core` (model, variables, scripts), `http`, `grpc`,
+`ws`, `mcp` (MCP client: stdio and Streamable HTTP, OAuth), `store` (files,
+request format, environments, secrets, config, history, cookies, session,
+themes), `import` (Postman, Insomnia, Bruno, curl, `.http`), `pipeline` (the
+send pipeline the UI and the CLI share, and the response document model), `ui`
+(ratatui TUI) and `testkit` (echo servers). The `sendito` binary is `src/main.rs`.
 
-Read before changing behaviour: `README.md`, `FORMAT.md` (request file format and
-exact wire rules), `KEYMAP.md` (generated), `docs/DEBT.md` (known limits),
-`docs/PLAN.md` (original specification and verification plan).
+## Where to start
 
-## Build and test
+Read the section that covers the change, not the whole document. `docs/MAP.md`
+is the index from feature to file and symbol: its "Changing a feature" table
+lists everything a change type touches, and its "Test and tooling map" the tests.
 
-Use limited parallelism; the full suite is heavy:
+| You are changing | Open first | Then read |
+|---|---|---|
+| A request field or a wire rule | `crates/core/src/model.rs`, `crates/core/src/resolve.rs`, `crates/store/src/request_file.rs` | The `FORMAT.md` section of that request kind; `docs/DEBT.md` when the HTTP library gets in the way |
+| HTTP, gRPC, WebSocket or MCP behaviour | `crates/http/src/lib.rs`, `crates/grpc/src/lib.rs`, `crates/ws/src/lib.rs` or `crates/mcp/src/lib.rs`; the wiring in `crates/pipeline/src/runner.rs` | "What goes on the wire" in `FORMAT.md` |
+| A CLI command | `src/main.rs` | `docs/CLI.md` |
+| A UI surface | `crates/ui/src/app.rs` and its module under `crates/ui/src/draw/` | The "Terminal UI" tables in `docs/MAP.md`; `docs/reports/ux-critic.md` before changing dialog keys, hint rows or status wording |
+| A key or a `:command` | `crates/ui/src/keymap.rs`, the only source (`KEYMAP.md` is generated from it) | "Adding a key, command or setting" in `docs/MAP.md` |
+| A setting | `crates/store/src/config.rs` | The same table, then `docs/FEATURES.md` |
+| Anything else saved on disk | `crates/store/src/` | "Environment files" and "Project and global config" in `FORMAT.md` |
+| What a feature is meant to do | | The matching section of `docs/FEATURES.md` |
+
+`README.md` is written for users: read only the part you are editing.
+`docs/PLAN.md` is history and `docs/reports/` is evidence: read them only when
+the task is about them.
+
+## Commands
+
+`make help` lists every target. The cargo targets print one summary line and
+keep the full output in `target/<target>.log`; on failure they print the whole
+log. `J` and `TT` override the cargo jobs and the test threads.
 
 ```sh
-cargo build -j 4
-cargo test -j 4 --workspace -- --test-threads=2
-cargo fmt --all
-cargo clippy -j 4 --workspace --all-targets -- -D warnings
-cargo deny check
+make build                    # cargo build -j 4
+make check    [P=package]     # type-check only: the fastest "does it compile"
+make fmt                      # cargo fmt --all
+make lint     [P=package]     # clippy on all targets, -D warnings
+make test     [P=package] [F=name]   # the workspace suite, one crate or one test name
+make deny                     # cargo deny check
+make docs                     # the documentation still matches the code
+make ci                       # fmt-check + lint + deny + test
 ```
 
-Run one heavy job at a time (workspace tests, media generation, benchmarks and
-coverage must not run together).
+`P` is a cargo package (`sendito-core`, `sendito-ui`, `sendito` for the binary)
+and narrows `check`, `lint` and `test` to it. `F` is a test-name filter; `make
+test` fails when no test matches it. Others, when a task calls for them:
+`make run ARGS="req.http"`, `make servers` (the echo servers), `make cov` (line
+coverage, 80 % gate), `make bench`, `make bundles` (the reviewer bundles of
+`docs/PLAN.md`).
 
-* **Wire corpus**: `tests/corpus.rs` sends 44 HTTP and 15 gRPC requests to the echo
-  servers and compares the exact bytes with `tests/corpus/expected`.
-  `UPDATE_CORPUS=1 cargo test --test corpus` rewrites the goldens; read the diff.
-* **UI**: `crates/ui/tests/flows.rs` (scripted key/mouse flows) and `snapshots.rs`
-  (insta; `INSTA_UPDATE=always` accepts new snapshots). Snapshots are 120×40 and 200×60.
-* **Key map**: `KEYMAP.md` is generated. After changing keys or hints run
-  `cargo run -q -- --print-keymap > KEYMAP.md` (a unit test checks it is current).
-* **Media** (screenshots and GIFs): `cargo test -p sendito-ui --test media -- --ignored
-  --test-threads=1`, then `python3 docs/media/render.py`.
-* **Review bundles**: `bash scripts/critic-bundles.sh OUTDIR` builds the isolated
-  inputs for the independent UX and correctness reviews described in `docs/PLAN.md`.
-* **Coverage and performance**: `cargo llvm-cov` for the non-UI crates (CI requires
-  80% lines) and `bench/run.sh`; results are in `docs/reports/`.
+Run one heavy job at a time: the workspace tests, media generation, benchmarks
+and coverage must not run together.
+
+## Verify before you report work done
+
+1. While iterating, stay narrow: `make check P=<package>` after an edit, then
+   `make test P=<package> F=<name>` for the tests you touched. Both take seconds.
+2. Finish with `make fmt` and `make ci`. On a warm build the gate takes about a
+   minute; a cold one takes longer, so allow the timeout. A change that touches
+   only documentation needs `make docs` alone.
+3. Regenerate whatever your change made stale (next table) and read its diff.
+
+## Generated files
+
+Never edit these by hand; regenerate them and read the diff:
+
+| File | Regenerate when | How |
+|---|---|---|
+| `KEYMAP.md` | A key, a hint or a `:command` changed | `make keymap` (a unit test fails while it is stale) |
+| `tests/corpus/expected/` | Anything changed the bytes on the wire | `make corpus-update`; `make corpus` only runs the test |
+| `crates/ui/tests/snapshots/` | A UI change moved a snapshot (120×40 and 200×60) | `make snap`, then read what `git status` lists |
+| `docs/media/` | A visible UI change | `make media`, then `make render` |
+
+The wire corpus (`tests/corpus.rs`) sends every case in
+`tests/corpus/collection/` (HTTP, gRPC, WebSocket, MCP) to the echo servers and
+compares the exact bytes with the goldens.
+
+## Documentation
+
+* `tests/docs.rs` fails when a path, a `file::symbol`, a `make` target or a link
+  cited by `AGENTS.md`, `README.md`, `FORMAT.md` or `docs/` no longer exists
+  (`CHANGELOG.md`, `docs/PLAN.md` and `docs/reports/` describe the past and are
+  not checked). After moving or renaming a file, run `make docs` and fix every
+  line it lists.
+* A user-visible change updates `docs/FEATURES.md` and gets an entry in
+  `CHANGELOG.md` under the next release. A new module gets its row in
+  `docs/MAP.md`.
 
 ## Conventions
 

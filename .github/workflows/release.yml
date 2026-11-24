@@ -4,14 +4,26 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-
 env:
   CARGO_TERM_COLOR: always
+  RUST: "1.100.0"
 
 jobs:
+  test:
+    name: lint · test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST }}
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
   build:
+    needs: test
     name: build ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -23,11 +35,12 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: ${{ env.RUST }}
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-${{ matrix.target }}
       - name: Build
@@ -44,7 +57,7 @@ jobs:
           if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"; else shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"; fi
           ls -l "$name/sendito" "$name.tar.gz"
           echo "binary size: $(wc -c < "$name/sendito") bytes"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}
           path: |
@@ -54,8 +67,10 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -66,4 +81,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Sendito $GITHUB_REF_NAME" \
-            --notes "Terminal API client for HTTP and gRPC. Binaries for Linux x86_64 and macOS arm64; verify with the .sha256 files."
+            --notes "Terminal API client for HTTP, gRPC, WebSocket and MCP tools. Binaries for Linux x86_64 and macOS arm64; verify with the .sha256 files."

@@ -361,6 +361,9 @@ pub struct GrpcEcho {
     pub addr: SocketAddr,
     pub captures: Arc<Mutex<Vec<GrpcCapture>>>,
     task: tokio::task::JoinHandle<()>,
+    /// The TLS accept loop, when the server speaks TLS. It owns the sender end
+    /// of the incoming stream, so it must stop for the server task to finish.
+    accept: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl GrpcEcho {
@@ -378,6 +381,9 @@ impl GrpcEcho {
 
 impl Drop for GrpcEcho {
     fn drop(&mut self) {
+        if let Some(a) = self.accept.take() {
+            a.abort();
+        }
         self.task.abort();
     }
 }
@@ -414,5 +420,89 @@ pub async fn start_on(
         addr,
         captures,
         task,
+        accept: None,
+    })
+}
+
+/// Starts the server over TLS (ALPN `h2`) with the given certificate.
+pub async fn start_tls(
+    certs: &crate::tls::TestCerts,
+) -> Result<GrpcEcho, Box<dyn std::error::Error + Send + Sync>> {
+    start_tls_on("127.0.0.1:0", certs).await
+}
+
+/// A TLS stream tonic can serve: `Connected` is not implemented for
+/// `tokio_rustls` streams under tonic's default-features configuration.
+struct TlsConn(tokio_rustls::server::TlsStream<tokio::net::TcpStream>);
+
+impl tonic::transport::server::Connected for TlsConn {
+    type ConnectInfo = ();
+    fn connect_info(&self) -> Self::ConnectInfo {}
+}
+
+impl tokio::io::AsyncRead for TlsConn {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for TlsConn {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+pub async fn start_tls_on(
+    addr: &str,
+    certs: &crate::tls::TestCerts,
+) -> Result<GrpcEcho, Box<dyn std::error::Error + Send + Sync>> {
+    let cfg = crate::tls::server_config(certs, false, true)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let addr = listener.local_addr()?;
+    let svc = EchoService::default();
+    let captures = svc.captures.clone();
+    let router = tonic::transport::Server::builder().add_service(EchoServer::new(svc));
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<TlsConn, std::io::Error>>(16);
+    let accept = tokio::spawn(async move {
+        while let Ok((sock, _)) = listener.accept().await {
+            let tx = tx.clone();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                if let Ok(tls) = acceptor.accept(sock).await {
+                    let _ = tx.send(Ok(TlsConn(tls))).await;
+                }
+            });
+        }
+    });
+    let incoming = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let task = tokio::spawn(async move {
+        let _ = router.serve_with_incoming(incoming).await;
+    });
+    Ok(GrpcEcho {
+        addr,
+        captures,
+        task,
+        accept: Some(accept),
     })
 }

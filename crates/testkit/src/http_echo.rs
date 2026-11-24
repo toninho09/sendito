@@ -3,6 +3,7 @@
 //! Routes:
 //! * `/status/<code>` — reply with that status
 //! * `/redirect/<n>` — redirect chain ending at `/echo`
+//! * `/redirect-other-host` — 302 to `/echo` on `localhost` (another origin)
 //! * `/delay/<ms>` — wait before replying
 //! * `/bytes/<n>` — reply with `n` bytes
 //! * `/json/<n>` — reply with a JSON document of about `n` bytes
@@ -14,7 +15,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 /// One request exactly as received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,12 +148,15 @@ fn dechunk(mut raw: &[u8]) -> Vec<u8> {
 pub struct HttpEcho {
     pub addr: SocketAddr,
     pub captures: Arc<Mutex<Vec<Captured>>>,
+    /// `true` when the listener speaks TLS (`start_tls`).
+    pub secure: bool,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl HttpEcho {
     pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.addr.port())
+        let scheme = if self.secure { "https" } else { "http" };
+        format!("{scheme}://127.0.0.1:{}", self.addr.port())
     }
 
     pub fn take(&self) -> Vec<Captured> {
@@ -187,13 +191,46 @@ pub async fn start_on(addr: &str) -> std::io::Result<HttpEcho> {
         while let Ok((sock, _)) = listener.accept().await {
             let c = c2.clone();
             tokio::spawn(async move {
-                let _ = serve(sock, c).await;
+                let _ = serve(sock, c, addr.port()).await;
             });
         }
     });
     Ok(HttpEcho {
         addr,
         captures,
+        secure: false,
+        task,
+    })
+}
+
+/// Starts the echo server over TLS with the given certificate; with
+/// `require_client`, a client certificate signed by the test CA must be
+/// presented (mutual TLS).
+pub async fn start_tls(
+    certs: &crate::tls::TestCerts,
+    require_client: bool,
+) -> Result<HttpEcho, Box<dyn std::error::Error + Send + Sync>> {
+    let cfg = crate::tls::server_config(certs, require_client, false)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let captures: Arc<Mutex<Vec<Captured>>> = Arc::default();
+    let c2 = captures.clone();
+    let task = tokio::spawn(async move {
+        while let Ok((sock, _)) = listener.accept().await {
+            let c = c2.clone();
+            let a = acceptor.clone();
+            tokio::spawn(async move {
+                if let Ok(sock) = a.accept(sock).await {
+                    let _ = serve(sock, c, addr.port()).await;
+                }
+            });
+        }
+    });
+    Ok(HttpEcho {
+        addr,
+        captures,
+        secure: true,
         task,
     })
 }
@@ -202,7 +239,14 @@ fn find(h: &[u8], pat: &[u8]) -> Option<usize> {
     h.windows(pat.len()).position(|w| w == pat)
 }
 
-async fn serve(mut sock: TcpStream, captures: Arc<Mutex<Vec<Captured>>>) -> std::io::Result<()> {
+async fn serve<S>(
+    mut sock: S,
+    captures: Arc<Mutex<Vec<Captured>>>,
+    port: u16,
+) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = vec![0u8; 64 * 1024];
     loop {
@@ -264,7 +308,7 @@ async fn serve(mut sock: TcpStream, captures: Arc<Mutex<Vec<Captured>>>) -> std:
         if let Ok(mut c) = captures.lock() {
             c.push(cap.clone());
         }
-        let (status, extra, body, delay) = respond(&cap);
+        let (status, extra, body, delay) = respond(&cap, port);
         if let Some(d) = delay {
             tokio::time::sleep(d).await;
         }
@@ -295,7 +339,7 @@ async fn serve(mut sock: TcpStream, captures: Arc<Mutex<Vec<Captured>>>) -> std:
 
 type Reply = (u16, Vec<(String, String)>, Vec<u8>, Option<Duration>);
 
-fn respond(c: &Captured) -> Reply {
+fn respond(c: &Captured, port: u16) -> Reply {
     let target = c.target();
     let path = target.split('?').next().unwrap_or("/").to_string();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -316,6 +360,22 @@ fn respond(c: &Captured) -> Reply {
             };
             (302, vec![("Location".into(), to)], Vec::new(), None)
         }
+        ["redirect-other-host"] => (
+            302,
+            vec![("Location".into(), format!("http://localhost:{port}/echo"))],
+            Vec::new(),
+            None,
+        ),
+        ["set-cookie"] => (
+            200,
+            vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Set-Cookie".into(), "session=corpus-1; Path=/".into()),
+                ("Set-Cookie".into(), "theme=dark; Max-Age=3600".into()),
+            ],
+            json(serde_json::json!({"cookies_set": 2})),
+            None,
+        ),
         ["delay", ms] => {
             let ms: u64 = ms.parse().unwrap_or(0);
             (

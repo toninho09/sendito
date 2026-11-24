@@ -41,6 +41,7 @@ async fn reflection_and_all_call_kinds() {
         uri: format!("http://{}", srv.target()),
         verify_tls: true,
         connect_timeout: Duration::from_secs(5),
+        tls: Default::default(),
     })
     .await
     .unwrap();
@@ -216,6 +217,7 @@ async fn connect_errors() {
         uri: "http://127.0.0.1:1".into(),
         verify_tls: true,
         connect_timeout: Duration::from_millis(500),
+        tls: Default::default(),
     })
     .await;
     assert!(r.is_err());
@@ -223,6 +225,7 @@ async fn connect_errors() {
         uri: "not a uri".into(),
         verify_tls: true,
         connect_timeout: Duration::from_millis(500),
+        tls: Default::default(),
     })
     .await;
     assert!(r.is_err());

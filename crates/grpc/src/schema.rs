@@ -10,6 +10,7 @@ use prost_reflect::{
     SerializeOptions,
 };
 use prost_types::FileDescriptorProto;
+use sendito_core::complete::FieldNode;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 
@@ -53,6 +54,8 @@ pub struct MethodInfo {
     pub kind: CallKind,
     pub input: String,
     pub output: String,
+    /// The fields of the input message, for completion in the message editor.
+    pub input_fields: FieldNode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +123,7 @@ impl Schema {
                         kind: CallKind::of(&m),
                         input: m.input().full_name().to_string(),
                         output: m.output().full_name().to_string(),
+                        input_fields: field_tree(&m.input()),
                     })
                     .collect(),
             })
@@ -150,6 +154,173 @@ pub fn template_for(desc: &MessageDescriptor) -> String {
     let mut seen = HashSet::new();
     let v = message_template(desc, &mut seen, 0);
     serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into())
+}
+
+/// The fields of a message, for completion in the message editor. Unlike the
+/// template it keeps every `oneof` member (the editor decides which are still
+/// available) and stops descending into types that are already open.
+pub fn field_tree(desc: &MessageDescriptor) -> FieldNode {
+    let mut seen = HashSet::new();
+    FieldNode {
+        name: desc.full_name().to_string(),
+        detail: String::new(),
+        map: false,
+        example: "{}".into(),
+        children: message_fields(desc, &mut seen, 0),
+        oneof: None,
+    }
+}
+
+fn message_fields(
+    desc: &MessageDescriptor,
+    seen: &mut HashSet<String>,
+    depth: usize,
+) -> Vec<FieldNode> {
+    if depth > 6 || seen.contains(desc.full_name()) {
+        return Vec::new();
+    }
+    seen.insert(desc.full_name().to_string());
+    let out: Vec<FieldNode> = desc
+        .fields()
+        .map(|f| {
+            let kind = f.kind();
+            let (detail, example) = match (&kind, f.is_map(), f.is_list()) {
+                (_, true, _) => (map_detail(&f), "{}".to_string()),
+                (_, false, true) => (format!("repeated {}", kind_detail(&kind)), "[]".to_string()),
+                _ => (kind_detail(&kind), value_example(&kind)),
+            };
+            let children = if f.is_map() {
+                // The value shape, not the synthetic map-entry message.
+                match f.kind() {
+                    Kind::Message(entry) => match entry.map_entry_value_field().kind() {
+                        Kind::Message(m) if !is_wkt(m.full_name()) => {
+                            message_fields(&m, seen, depth + 1)
+                        }
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                }
+            } else {
+                match kind {
+                    Kind::Message(m) if !is_wkt(m.full_name()) => {
+                        message_fields(&m, seen, depth + 1)
+                    }
+                    Kind::Message(m) => wkt_fields(m.full_name()),
+                    Kind::Enum(e) => e
+                        .values()
+                        .map(|v| FieldNode::new(v.name(), format!("enum {}", e.name()), "\"\""))
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            };
+            FieldNode {
+                name: f.name().to_string(),
+                detail,
+                map: f.is_map(),
+                example,
+                children,
+                // A proto3 `optional` field gets a synthetic oneof, which is not a
+                // real choice; only keep the name for a declared group.
+                oneof: f
+                    .containing_oneof()
+                    .filter(|o| !o.is_synthetic())
+                    .map(|o| o.name().to_string()),
+            }
+        })
+        .collect();
+    seen.remove(desc.full_name());
+    out
+}
+
+fn is_wkt(full: &str) -> bool {
+    wkt_template(full).is_some()
+}
+
+fn wkt_fields(full: &str) -> Vec<FieldNode> {
+    match full {
+        "google.protobuf.Struct" => vec![FieldNode::new(
+            "fields",
+            "map<string, google.protobuf.Value>",
+            "{}",
+        )],
+        "google.protobuf.Struct.FieldsEntry" => Vec::new(),
+        _ => Vec::new(),
+    }
+}
+
+/// JSON type of a well-known type, which differs from its proto shape.
+fn wkt_detail(full: &str) -> Option<&'static str> {
+    Some(match full {
+        "google.protobuf.Timestamp" => "string (RFC 3339)",
+        "google.protobuf.Duration" => "string (e.g. 1.5s)",
+        "google.protobuf.FieldMask" => "string",
+        "google.protobuf.StringValue" | "google.protobuf.BytesValue" => "string",
+        "google.protobuf.BoolValue" => "boolean",
+        "google.protobuf.Int64Value" | "google.protobuf.UInt64Value" => "string (integer)",
+        "google.protobuf.Int32Value"
+        | "google.protobuf.UInt32Value"
+        | "google.protobuf.FloatValue"
+        | "google.protobuf.DoubleValue" => "number",
+        "google.protobuf.Struct" => "object",
+        "google.protobuf.Value" => "any",
+        "google.protobuf.ListValue" => "array",
+        "google.protobuf.Empty" => "object",
+        "google.protobuf.Any" => "object",
+        _ => return None,
+    })
+}
+
+/// A minimal snippet that completes `"name": ` with a valid value.
+fn value_example(kind: &Kind) -> String {
+    match kind {
+        Kind::Bool => "false".into(),
+        Kind::String | Kind::Bytes => "\"\"".into(),
+        Kind::Enum(e) => e
+            .values()
+            .next()
+            .map(|v| format!("\"{}\"", v.name()))
+            .unwrap_or_else(|| "0".into()),
+        Kind::Message(m) => match m.full_name() {
+            "google.protobuf.Timestamp"
+            | "google.protobuf.Duration"
+            | "google.protobuf.FieldMask"
+            | "google.protobuf.StringValue"
+            | "google.protobuf.BytesValue" => "\"\"".into(),
+            "google.protobuf.Int64Value" | "google.protobuf.UInt64Value" => "\"0\"".into(),
+            "google.protobuf.BoolValue" => "false".into(),
+            "google.protobuf.Value" => "null".into(),
+            "google.protobuf.ListValue" => "[]".into(),
+            "google.protobuf.Int32Value"
+            | "google.protobuf.UInt32Value"
+            | "google.protobuf.FloatValue"
+            | "google.protobuf.DoubleValue" => "0".into(),
+            _ => "{}".into(),
+        },
+        _ => "0".into(),
+    }
+}
+
+fn kind_detail(kind: &Kind) -> String {
+    match kind {
+        Kind::Message(m) => wkt_detail(m.full_name())
+            .map(str::to_string)
+            .unwrap_or_else(|| m.full_name().to_string()),
+        Kind::Enum(e) => format!("enum {}", e.full_name()),
+        other => format!("{other:?}").to_lowercase(),
+    }
+}
+
+fn map_detail(f: &FieldDescriptor) -> String {
+    let Kind::Message(entry) = f.kind() else {
+        return "map".to_string();
+    };
+    let key_f = entry.map_entry_key_field();
+    let val_f = entry.map_entry_value_field();
+    format!(
+        "map<{}, {}>",
+        kind_detail(&key_f.kind()),
+        kind_detail(&val_f.kind())
+    )
 }
 
 fn wkt_template(full: &str) -> Option<serde_json::Value> {
@@ -412,14 +583,14 @@ macro_rules! reflect_impl {
                             files.insert(name, fd);
                         }
                     }
-                    Some(MessageResponse::ErrorResponse(e)) => {
-                        // A missing well-known import is filled in locally below.
-                        if !e.error_message.contains("google/protobuf/") {
-                            return Err(tonic::Status::new(
-                                tonic::Code::from_i32(e.error_code),
-                                e.error_message,
-                            ));
-                        }
+                    // A missing well-known import is filled in locally below.
+                    Some(MessageResponse::ErrorResponse(e))
+                        if !e.error_message.contains("google/protobuf/") =>
+                    {
+                        return Err(tonic::Status::new(
+                            tonic::Code::from_i32(e.error_code),
+                            e.error_message,
+                        ));
                     }
                     _ => {}
                 }

@@ -5,7 +5,11 @@
 /.sendito/history.jsonl
 .claude/
 .codegraph/
+.commandcode/
+.pi/
+.idea/
 /docs/media/recordings/*/
 .DS_Store
 /bench/results/*
 !/bench/results/REPORT.md
+.sendito

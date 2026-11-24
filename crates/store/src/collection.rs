@@ -3,7 +3,8 @@
 //! Paths handed out by this module are relative to the collection root and use
 //! `/` separators, so they are stable across platforms and safe to store.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sendito_core::Request;
@@ -80,6 +81,15 @@ impl Folder {
     }
 }
 
+fn collect_rels(f: &Folder, out: &mut Vec<String>) {
+    for r in &f.requests {
+        out.push(r.rel.clone());
+    }
+    for sub in &f.folders {
+        collect_rels(sub, out);
+    }
+}
+
 /// Joins a relative collection path.
 pub fn join_rel(parent: &str, name: &str) -> String {
     if parent.is_empty() {
@@ -143,6 +153,26 @@ impl Collection {
         self.root.join(META_DIR)
     }
 
+    /// Relative paths of every request under `rel` (`""` for the whole
+    /// collection), in tree order: a folder's own requests first, then its
+    /// subfolders, each in natural sort order.
+    pub fn requests_under(&self, rel: &str) -> Result<Vec<String>> {
+        let tree = self.scan()?;
+        let start = if rel.is_empty() {
+            Some(&tree)
+        } else {
+            tree.find_folder(rel)
+        };
+        let Some(start) = start else {
+            return Err(StoreError::Invalid(format!(
+                "folder \"{rel}\" does not exist in the collection"
+            )));
+        };
+        let mut out = Vec::new();
+        collect_rels(start, &mut out);
+        Ok(out)
+    }
+
     /// Scans the tree. Request badges are sniffed from the file head; hidden
     /// entries and ignored directory names are skipped.
     pub fn scan(&self) -> Result<Folder> {
@@ -182,6 +212,9 @@ impl Collection {
             let Ok(ft) = e.file_type() else { continue };
             let path = e.path();
             let is_dir = if ft.is_symlink() {
+                if links_to_ancestor(&path, dir) {
+                    continue;
+                }
                 path.is_dir()
             } else {
                 ft.is_dir()
@@ -357,6 +390,30 @@ impl Collection {
     }
 }
 
+/// True when the symlink `link` inside `dir` leads back to a folder already
+/// on the path to `dir` (or above one). Each folder on the path is checked,
+/// so two sibling folders that link to each other stop too. Following such
+/// a link repeats the tree without end.
+fn links_to_ancestor(link: &Path, dir: &Path) -> bool {
+    let Ok(target) = fs::canonicalize(link) else {
+        return false;
+    };
+    dir.ancestors()
+        .any(|a| fs::canonicalize(a).is_ok_and(|c| c.starts_with(&target)))
+}
+
+#[cfg(unix)]
+fn copy_link(src: &Path, dst: &Path) -> Result<()> {
+    let target = fs::read_link(src).map_err(|e| StoreError::io(src, e))?;
+    std::os::unix::fs::symlink(target, dst).map_err(|e| StoreError::io(dst, e))
+}
+
+/// Links need extra rights on Windows: they are left out of the copy.
+#[cfg(not(unix))]
+fn copy_link(_src: &Path, _dst: &Path) -> Result<()> {
+    Ok(())
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     fs::create_dir_all(to).map_err(|e| StoreError::io(to, e))?;
     for e in fs::read_dir(from)
@@ -365,6 +422,12 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     {
         let src = e.path();
         let dst = to.join(e.file_name());
+        // A link is copied as a link: following it could copy files from
+        // outside the collection (or loop).
+        if e.file_type().is_ok_and(|t| t.is_symlink()) {
+            copy_link(&src, &dst)?;
+            continue;
+        }
         if src.is_dir() {
             copy_dir(&src, &dst)?;
         } else {
@@ -376,6 +439,14 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 
 /// Writes through a temporary file and renames it into place.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_temp(path, bytes, false)
+}
+
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_temp(path, bytes, true)
+}
+
+fn write_temp(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
     }
@@ -386,11 +457,42 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .unwrap_or_default(),
         std::process::id()
     ));
-    fs::write(&tmp, bytes).map_err(|e| StoreError::io(&tmp, e))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if private {
+        owner_only(&mut options);
+    }
+    let written = options.open(&tmp).and_then(|mut f| f.write_all(bytes));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(StoreError::io(&tmp, e));
+    }
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         StoreError::io(path, e)
     })
+}
+
+#[cfg(unix)]
+fn owner_only(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
+}
+
+#[cfg(not(unix))]
+fn owner_only(_: &mut OpenOptions) {}
+
+pub(crate) fn make_private(_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(_path)
+            && meta.permissions().mode() & 0o077 != 0
+        {
+            let mode = meta.permissions().mode() & !0o077;
+            let _ = fs::set_permissions(_path, fs::Permissions::from_mode(mode));
+        }
+    }
 }
 
 /// Reads badges for many files, spreading the work over a few threads.
@@ -500,6 +602,78 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let c = Collection::new(d.path(), vec!["target".into()]);
         (d, c)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_an_ancestor_is_not_followed() {
+        let (d, c) = coll();
+        let users = c.create_folder("", "Users").unwrap();
+        c.create_request(&users, "a", &Request::new_http()).unwrap();
+        std::os::unix::fs::symlink("..", d.path().join("Users/up")).unwrap();
+        std::os::unix::fs::symlink(".", d.path().join("self")).unwrap();
+        let root = c.scan().unwrap();
+        assert_eq!(root.folders.len(), 1);
+        assert!(root.folders[0].folders.is_empty());
+        // Two folders that link to each other.
+        let admin = c.create_folder("", "Admin").unwrap();
+        c.create_request(&admin, "b", &Request::new_http()).unwrap();
+        std::os::unix::fs::symlink("../Admin", d.path().join("Users/to-admin")).unwrap();
+        std::os::unix::fs::symlink("../Users", d.path().join("Admin/to-users")).unwrap();
+        let root = c.scan().unwrap();
+        assert_eq!(root.folders.len(), 2);
+        // A duplicate keeps links as links: nothing behind them is copied.
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("id_key"), "private").unwrap();
+        std::os::unix::fs::symlink(outside.path(), d.path().join("Users/keys")).unwrap();
+        let copy = c.duplicate(&users).unwrap();
+        let keys = d.path().join(&copy).join("keys");
+        assert!(
+            fs::symlink_metadata(&keys)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn requests_under_lists_in_tree_order() {
+        let (_d, c) = coll();
+        c.create_request("", "ping", &Request::new_grpc()).unwrap();
+        let users = c.create_folder("", "Users").unwrap();
+        c.create_request(&users, "zeta", &Request::new_http())
+            .unwrap();
+        c.create_request(&users, "alpha", &Request::new_http())
+            .unwrap();
+        let admin = c.create_folder(&users, "Admin").unwrap();
+        c.create_request(&admin, "ban", &Request::new_http())
+            .unwrap();
+
+        // A folder's own requests (natural sort) before its subfolders.
+        assert_eq!(
+            c.requests_under(&users).unwrap(),
+            vec![
+                "Users/alpha.toml",
+                "Users/zeta.toml",
+                "Users/Admin/ban.toml"
+            ]
+        );
+        assert_eq!(
+            c.requests_under("Users/Admin").unwrap(),
+            vec!["Users/Admin/ban.toml"]
+        );
+        // "" runs the whole collection, root requests first.
+        assert_eq!(
+            c.requests_under("").unwrap(),
+            vec![
+                "ping.toml",
+                "Users/alpha.toml",
+                "Users/zeta.toml",
+                "Users/Admin/ban.toml"
+            ]
+        );
+        let e = c.requests_under("nope").unwrap_err().to_string();
+        assert!(e.contains("nope"), "{e}");
     }
 
     #[test]

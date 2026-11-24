@@ -21,10 +21,12 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `send` | `Ctrl+Enter`, `F5`, `Ctrl+W e` | `Ctrl+Enter`, `F5`, `Ctrl+W e` | Send the request (or start the gRPC call) |
 | `cancel` | `Ctrl+W x` | `Ctrl+W x` | Cancel the running request or stream |
 | `end_stream` | `Ctrl+W d` | `Ctrl+W d` | Finish sending on a client/bidi stream (half-close) |
+| `watch` | `Ctrl+W m` | `Ctrl+W m` | Re-send the active request on an interval (watch) |
 | `save` | `Ctrl+S`, `Ctrl+W s` | `Ctrl+S`, `Ctrl+W s` | Save the request to its file (asks for a name if new) |
 | `quit` | `Ctrl+W q`, `Ctrl+Q` | `Ctrl+W q`, `Ctrl+Q` | Quit Sendito |
 | `new_request` | `Ctrl+N`, `Ctrl+W t` | `Ctrl+N`, `Ctrl+W t` | Open a new unsaved HTTP request tab |
 | `new_grpc_request` | `Ctrl+W g` | `Ctrl+W g` | Open a new unsaved gRPC request tab |
+| `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
@@ -47,9 +49,10 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
+| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the project config |
 | `history` | `F7`, `Ctrl+W r` | `F7`, `Ctrl+W r` | Show request history in the sidebar (toggle) |
 | `toggle_sidebar` | `Ctrl+B`, `Ctrl+W b` | `Ctrl+B`, `Ctrl+W b` | Show or hide the sidebar |
-| `import` | `Ctrl+W i` | `Ctrl+W i` | Import a Postman collection or a curl command |
+| `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
@@ -57,6 +60,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `shrink_sidebar` | `Ctrl+W <` | `Ctrl+W <` | Narrow the sidebar |
 | `grow_request` | `Ctrl+W +` | `Ctrl+W +` | Give the request editor more height |
 | `shrink_request` | `Ctrl+W -` | `Ctrl+W -` | Give the response more height |
+| `complete` | `Ctrl+Space` | `Ctrl+Space` | Show completion suggestions at the cursor |
 
 ## Sidebar tree
 
@@ -114,6 +118,11 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `view_raw` | `r` | `r` | Body view: raw text |
 | `view_hex` | `x` | `x` | Body view: hex dump |
 | `search` | `/`, `Ctrl+F` | `/`, `Ctrl+F` | Search in the response |
+| `filter` | `j` | `J` | Filter the response body with a jq expression |
+| `filter_here` | `f` | `f` | Filter the body to the JSON value at the cursor |
+| `copy_path` | `Y` | `Y` | Copy the jq path of the JSON value at the cursor |
+| `prev_message` | `[` | `[` | Show the previous message of a stream |
+| `next_message` | `]` | `]` | Show the next message of a stream (the last one follows new ones) |
 | `search_next` | `n`, `F3` | `n`, `F3` | Next search match |
 | `search_prev` | `N`, `Shift+F3` | `N`, `Shift+F3` | Previous search match |
 | `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the JSON block at the cursor |
@@ -148,9 +157,10 @@ These are handled by the widgets themselves and cannot be remapped.
 | Environment editor | Space (Source cell) | Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file |
 | Environment editor | Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown | Save / new environment / previous, next environment |
 | Environment editor | Enter / Ctrl+D / Esc | Next cell / delete the row / close |
-| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or the Postman file / cancel |
+| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or collection / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
+| MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
 | Command palette | :<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |
@@ -171,10 +181,10 @@ These are handled by the widgets themselves and cannot be remapped.
 | Symbol | Meaning |
 |---|---|
 | ● | unsaved changes (tab, status line) |
-| ↻ on a tab | request running |
+| ⠋ on a tab (turning) | request running |
 | Results 2/3 ✗ | on the Results tab: assertions passed / total (✓ all passed, ✗ some failed) |
 | … | text cut short |
-| → ← ■ + in the gRPC Log tab | sent, received, final status, seconds since the call started |
+| → ← ■ + in the gRPC and WebSocket Log tabs | sent, received, final status, seconds since the session started |
 | Headers (2) | number of rows in a tab (compact: Headers(2)) |
 | Body•  Auth• | the body or the auth is set |
 | ▾ | opens a menu or picker |
@@ -194,9 +204,12 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 |---|---|
 | `:send` | Send the current request |
 | `:cancel` | Cancel the running request |
+| `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
+| `:auth login <identity>` | Sign in to an HTTP OAuth identity |
+| `:auth logout <identity>` | Remove HTTP OAuth tokens for this environment |
 | `:w` | Save the request |
 | `:saveas <name>` | Save the request under a new name |
 | `:wq` | Save and quit |
@@ -204,15 +217,28 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:q!` | Quit without saving |
 | `:new` | New HTTP request (Ctrl+N) |
 | `:newgrpc` | New gRPC request (Ctrl+W g) |
-| `:import [path]` | Import a Postman collection (path) or paste a curl command |
+| `:newws` | New WebSocket request (Ctrl+W y) |
+| `:newmcp` | New MCP request |
+| `:mcpservers` | Choose an MCP server |
+| `:mcpservers edit` | Edit the MCP servers in the project config (Ctrl+W S) |
+| `:mcpadd <name>` | Add an MCP server to the project config (asks for the URL or command) |
+| `:mcptools` | Discover and choose an MCP tool |
+| `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
+| `:httpfile` | Copy the request as an .http file |
+| `:httpfile!` | Copy the .http file including secret values |
+| `:cookies` | List the active environment's cookies (values masked) |
+| `:cookies clear` | Clear the active environment's cookies |
+| `:cookies delete <number>` | Delete one cookie from the active environment |
 | `:history` | Show history |
 | `:clearhistory` | Delete all history entries |
 | `:format` | Pretty-print the JSON body |
+| `:jq [expr]` | Filter the response body with a jq expression |
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
 | `:settings` | Open settings |
+| `:theme <name>` | Switch theme; :theme reload reads your theme files again |
 | `:help` | Show keys |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |

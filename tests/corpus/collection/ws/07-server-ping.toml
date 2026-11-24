@@ -1,0 +1,5 @@
+kind = "websocket"
+url = "{{ws_url}}/ping"
+messages = '''
+"ping me"
+'''

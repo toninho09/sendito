@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   +                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                        │
+│▸ Users/                    ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
+│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
+│                            ││                                                                                        │
+│     ╭─ MCP servers ────────────────────────────────────────────────────────────────────────────────────────────╮     │
+│     │                                                                                                          │     │
+│     │ Each row is a [mcp.servers] entry: a name, the kind (Space changes it) and the URL or command. Typing in │     │
+│     │ the last row adds one; ✕ deletes a row (Ctrl+D). Args, env, headers and auth are edited in the config    │     │
+│     │ file. Ctrl+S saves to .sendito/config.toml; Esc asks before discarding unsaved changes.                  │     │
+│     │                                                                                                          │     │
+│     │ Name                       Kind     URL or command                                                       │     │
+│     │ echo                      │‹http›  │http://127.0.0.1:9/mcp                                            │× │     │
+│     │ files                     │‹stdio› │npx -y @mcp/server-fs                                             │× │     │
+│     │ add name                  │        │                                                                     │     │
+│     │ http: a URL the tool calls go to (variables allowed).                                                    │     │
+│     │                                                                                                          │     │
+│     │  Save (Ctrl+S)    Add row (Ctrl+N)    Close (Esc)                                                        │     │
+│     ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯     │
+│                                                                                                                      │
+│                            ││        Recent                                                                          │
+│                            ││        Requests you send appear here.                                                  │
+│                            ││                                                                                        │
+│                            ││         F7  all history                                                                │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                       ^S save · ^N add row · ^D delete row · Space kind · ⏎ next cell · Esc close

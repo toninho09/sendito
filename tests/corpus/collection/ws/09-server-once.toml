@@ -1,0 +1,2 @@
+kind = "websocket"
+url = "{{ws_url}}/once/one%20shot"

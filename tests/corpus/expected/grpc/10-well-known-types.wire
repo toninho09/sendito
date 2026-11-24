@@ -2,7 +2,7 @@ method: /sendito.test.v1.Echo/Unary
 metadata received:
   te: trailers
   content-type: application/grpc
-  user-agent: sendito/0.1.0 tonic/0.14.9
+  user-agent: sendito/0.2.0 tonic/0.14.9
 messages received: 1
   json: {"any_value":{"nested":["a",2.0]},"at":"2024-02-29T12:34:56.789Z","mask":"text,inner.label","maybe_count":"42","maybe_text":"wrapped","meta":{"k":"v","list":[true,null],"n":1.0},"opt":"","payload":{"@type":"type.googleapis.com/sendito.test.v1.Inner","label":"in any"},"took":"1.500s"}
   protobuf (base64): <not compared: contains map entries, whose wire order is unspecified>

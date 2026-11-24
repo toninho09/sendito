@@ -1,0 +1,4 @@
+kind = "mcp"
+server = "echo_bearer"
+tool = "greet"
+arguments = "{\"name\":\"{{greeting}}\"}"

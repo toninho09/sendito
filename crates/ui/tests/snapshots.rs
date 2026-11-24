@@ -45,6 +45,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         headers,
         body: Vec::new(),
         truncated: false,
+        decoded: None,
         timing: Timing {
             dns: Some(Duration::from_micros(1200)),
             connect: Some(Duration::from_micros(800)),
@@ -194,14 +195,78 @@ fn request_body_kinds_and_auth() {
     });
 }
 
+/// Three messages of a server stream, as the runner reports them.
+fn fake_stream(h: &mut Harness) {
+    let id = h.app.tabs[h.app.active].id;
+    for (i, text) in ["one", "two", "three"].iter().enumerate() {
+        let json = format!("{{\"text\":\"{text}\",\"n\":{i}}}");
+        h.app.on_msg(AppMsg::Grpc {
+            tab: id,
+            update: sendito_ui::runner::GrpcUpdate::Event(sendito_grpc::Event::Received {
+                full: json.clone(),
+                compact: json.clone(),
+                size: json.len(),
+                json,
+                at: Duration::from_millis(100 * (i as u64 + 1)),
+                wall: std::time::SystemTime::UNIX_EPOCH,
+            }),
+        });
+    }
+}
+
+#[test]
+fn response_stream() {
+    each(|h| {
+        open(h, "echo unary");
+        fake_stream(h);
+        h.key("ctrl+w j");
+        snap("resp_stream_list", h);
+        h.key("[");
+        snap("resp_stream_paused", h);
+    });
+    // A pane too narrow for the list shows the position in its border.
+    let mut h = Harness::new(96, 30);
+    h.app.set_env(Some("local".into()));
+    h.app.status = None;
+    open(&mut h, "echo unary");
+    fake_stream(&mut h);
+    h.key("ctrl+w j [");
+    snap("resp_stream_narrow", &mut h);
+}
+
 #[test]
 fn grpc_request() {
     each(|h| {
         open(h, "echo unary");
-        h.app.focus = Focus::Bar(0);
+        h.app.focus = Focus::Bar(1);
         snap("grpc_message", h);
         h.key("alt+5");
         snap("grpc_options", h);
+    });
+}
+
+#[test]
+fn mcp_request() {
+    each(|h| {
+        h.app.run_command("newmcp");
+        // A configured server, so the bar shows where the call goes.
+        h.app.project.config.mcp.servers.insert(
+            "example".into(),
+            sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
+                url: "http://127.0.0.1:9/mcp".into(),
+                headers: Default::default(),
+                verify_tls: true,
+                auth: None,
+            }),
+        );
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.mcp_server.set_text("example");
+        t.ed.mcp_tool.set_text("search");
+        t.ed.message.set_text("{\"query\":\"hello\"}");
+        t.refresh_model();
+        snap("mcp_tool", h);
+        h.key("alt+2");
+        snap("mcp_args", h);
     });
 }
 
@@ -231,6 +296,27 @@ fn response_views() {
 }
 
 #[test]
+fn response_jq_filter() {
+    each(|h| {
+        open(h, "list users");
+        fake_response(h, BODY, 200);
+        h.key("ctrl+w j");
+        h.key("j");
+        snap("resp_query_bar", h);
+        h.type_text(".items[] | .name");
+        h.key("enter");
+        snap("resp_jq_filter", h);
+        h.key("j");
+        h.type_text(" |");
+        snap("resp_query_error", h);
+        h.key("esc");
+        h.key("j");
+        h.key("ctrl+a backspace enter");
+        snap("resp_jq_cleared", h);
+    });
+}
+
+#[test]
 fn overlays() {
     each(|h| {
         h.key("ctrl+p");
@@ -245,6 +331,32 @@ fn overlays() {
         snap("env_picker", h);
         h.key("esc ctrl+w V");
         snap("env_editor", h);
+        // The MCP servers editor shows the project file's own servers.
+        let mut servers = std::collections::BTreeMap::new();
+        servers.insert(
+            "echo".to_string(),
+            sendito_store::config::McpServer::Http(sendito_store::config::McpHttpServer {
+                url: "http://127.0.0.1:9/mcp".into(),
+                headers: Default::default(),
+                verify_tls: true,
+                auth: None,
+            }),
+        );
+        servers.insert(
+            "files".to_string(),
+            sendito_store::config::McpServer::Stdio(sendito_store::config::McpStdioServer {
+                command: "npx".into(),
+                args: vec!["-y".into(), "@mcp/server-fs".into()],
+                env: Default::default(),
+            }),
+        );
+        sendito_store::config::set_mcp_servers(
+            &sendito_store::config::project_path(h.dir.path()),
+            &servers,
+        )
+        .unwrap();
+        h.key("esc ctrl+w S");
+        snap("mcp_servers", h);
         h.key("esc ctrl+w i");
         snap("import", h);
         h.key("esc");
@@ -305,5 +417,89 @@ fn vim_mode_and_history() {
         ]);
         h.app.focus = Focus::Sidebar;
         snap("history", h);
+    });
+}
+
+#[test]
+fn nerd_icons() {
+    each(|h| {
+        h.app.icons = sendito_ui::icons::Icons::nerd();
+        open(h, "list users");
+        fake_response(h, "{\"ok\": true}", 200);
+        snap("nerd_main", h);
+    });
+}
+
+/// A completion popup over the gRPC message editor, from a fabricated schema
+/// (no reflection round-trip, so the frame is deterministic).
+#[test]
+fn completion_popup() {
+    use sendito_core::complete::FieldNode;
+    use sendito_grpc::{CallKind, MethodInfo, ServiceInfo};
+    each(|h| {
+        open(h, "echo unary");
+        let mut inner = FieldNode::new("inner", "sendito.test.v1.Inner", "{}");
+        inner.children.push(FieldNode::new("count", "int32", "0"));
+        let mut fields = FieldNode::new("sendito.test.v1.EchoRequest", "", "{}");
+        fields
+            .children
+            .push(FieldNode::new("text", "string", "\"\""));
+        fields.children.push(FieldNode::new("i32", "int32", "0"));
+        fields.children.push(inner);
+        fields
+            .children
+            .push(FieldNode::new("tags", "repeated string", "[]"));
+        let svc = ServiceInfo {
+            name: "sendito.test.v1.Echo".into(),
+            methods: vec![MethodInfo {
+                name: "Unary".into(),
+                kind: CallKind::Unary,
+                input: "sendito.test.v1.EchoRequest".into(),
+                output: "sendito.test.v1.EchoResponse".into(),
+                input_fields: fields,
+            }],
+        };
+        let t = &mut h.app.tabs[h.app.active];
+        t.services = Some(vec![svc]);
+        t.ed.message.set_text("{\n  \n}");
+        t.ed.message.cursor = sendito_ui::editor::Pos { row: 1, col: 2 };
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        h.app.tabs[h.app.active].field = 0;
+        h.type_text("\"");
+        snap("grpc_field_completion", h);
+        h.type_text("in");
+        snap("grpc_field_completion_filtered", h);
+        h.key("esc");
+        // The method field completes from the same schema.
+        h.app.focus = Focus::Bar(0);
+        h.app.tabs[h.app.active]
+            .ed
+            .grpc_method_text
+            .set_text("sendito.test.v1.Echo/");
+        h.app.tabs[h.app.active].ed.grpc_method_text.move_to_end();
+        h.key("ctrl+space");
+        snap("grpc_method_completion", h);
+    });
+}
+
+#[test]
+fn footer_and_ctrl_w_menu() {
+    use sendito_ui::app::StatusKind;
+    each(|h| {
+        open(h, "list users");
+        fake_response(h, BODY, 200);
+        h.key("ctrl+w");
+        snap("whichkey_ctrl_w", h);
+        h.key("esc");
+        h.app.set_status("saved users/list.http", StatusKind::Ok);
+        snap("footer_message_ok", h);
+        h.app.set_status("connection refused", StatusKind::Error);
+        snap("footer_message_error", h);
+        h.app.status = None;
+        h.app.project.config.ui.hints = "full".into();
+        snap("footer_hints_full", h);
+        h.app.project.config.ui.hints = "off".into();
+        snap("footer_hints_off", h);
     });
 }

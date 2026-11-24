@@ -6,16 +6,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:?usage: critic-bundles.sh OUTDIR}
 C="$OUT/correctness"; U="$OUT/ux"
-rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,environment,files,import} "$U"/{recordings,screenshots}
+rm -rf "$C" "$U"; mkdir -p "$C"/{http,grpc,ws,mcp,environment,files,import} "$U"/{recordings,screenshots}
 
 # --- correctness: wire captures next to the request files and import inputs
-for kind in http grpc; do
+for kind in http grpc ws mcp; do
   for f in tests/corpus/collection/$kind/*.toml; do
     n=$(basename "$f" .toml)
     cp "$f" "$C/$kind/$n.toml"
     cp "target/corpus/captures/$kind/$n.wire" "$C/$kind/$n.wire"
   done
 done
+cp target/corpus/captures/mcp/list.wire "$C/mcp/list.wire"
+cp tests/corpus/collection/.sendito/config.toml "$C/environment/config.toml"
 cp tests/corpus/collection/.sendito/collection.toml "$C/environment/collection.toml"
 cp tests/corpus/collection/.sendito/environments/corpus.toml "$C/environment/corpus.toml"
 cp tests/corpus/collection/files/data.json tests/corpus/collection/files/notes.txt "$C/files/"
@@ -50,17 +52,41 @@ grpc/NAME.wire   what the gRPC echo server received for the call: the method pat
                  in proto/ (JSON, proto field names, keys sorted, default values omitted)
                  followed by the exact protobuf bytes of the message in base64. The last
                  line is what the client observed.
+ws/NAME.toml     a saved WebSocket request.
+ws/NAME.wire     the handshake head the WebSocket echo server received verbatim (the
+                 random Sec-WebSocket-Key and the generated x-request-id appear as
+                 <sec-websocket-key> and <x-request-id>; the port as <port>), then one
+                 line per frame: "<" received by the server, ">" sent by it, the frame
+                 kind, the payload length and the payload (text as text, binary as
+                 base64). The first line is the close code the client ended with.
+mcp/NAME.toml    a saved MCP tool call; server definitions are in environment/config.toml.
+mcp/NAME.wire    the HTTP request lines, headers and compact JSON-RPC bodies received
+                 by the echo server. The dynamically assigned port and session ID are
+                 replaced with <port> and <session>; the response is not included.
+                 {{mcp_url}} is the local echo server URL.
+mcp/list.wire    a tools/list session over HTTP; the echo server returns a second
+                 page with cursor "page-two".
 
 Deliberate behaviour (documented in the application's FORMAT.md). The rules
 below are design decisions, not defects: check that every capture follows them
 and report any case that does not, but do not report the rules themselves or
 ask for them to be removed.
 
+MCP: every call starts a session with initialize, notifications/initialized, then
+tools/call. The first request proposes protocol version 2025-06-18; subsequent
+requests carry the negotiated Mcp-Protocol-Version and any Mcp-Session-Id. A missing
+arguments field in a request file defaults to {}, which is sent as an object.
+
 Request format rules that matter here: on HTTP/1 header names are written in
 Title-Case ("x-api-key" is sent as "X-Api-Key"; names are case-insensitive), the
 order between headers of different names may differ from the file (headers with the
 same name stay in file order), and "Accept: */*" is added when the request defines
-no enabled Accept header (added by the HTTP library). Also: metadata keys ending in "-bin" take a
+no enabled Accept header (added by the HTTP library). When [options] cookies = true,
+matching cookies from the per-environment jar are sent in a Cookie header. Redirects
+are not followed with the jar enabled. Cases 45 and 46 cover cookie storage and replay.
+Case 47 uses a keychain-sourced OAuth bearer token. Case 48 follows a redirect to another
+origin (other scheme, host or port): the API-key header, like Authorization and Cookie,
+is not sent to the new origin. Also: metadata keys ending in "-bin" take a
 base64 value in the request file (as on the gRPC wire); the client decodes it
 and sends those bytes, so the server sees the same base64 text and, decoded,
 the bytes shown under it. An HTTP request with no body (type "none" or no
@@ -82,6 +108,18 @@ hold random values generated for each run; in the captures they appear as
 <secret:NAME>, and HTTP Basic credentials built from one appear as
 <base64 of "ana:" + secret:NAME>. Paths in requests are relative to the collection
 root, whose files/ directory is copied here (binary files as hex).
+
+WebSocket rules that matter here: the handshake is one HTTP/1.1 GET with the
+upgrade headers written by the library (Host, Connection: Upgrade, Upgrade:
+websocket, Sec-WebSocket-Version: 13, a random Sec-WebSocket-Key), then the
+request's headers in file order and Sec-WebSocket-Protocol when subprotocols are
+set. The message document is sent right after the handshake, in order, with its
+{{variables}} rendered; text frames carry the UTF-8 of the string and binary
+frames the decoded base64. Server pings are answered with a pong carrying the
+same payload. The client closes with code 1000 and waits at most 5 s for the
+peer's answer; a session deadline also closes with 1000, with a
+"deadline … reached" reason. Every string field may hold {{placeholders}},
+which are rendered when the session opens.
 
 import/postman/input.json                a Postman collection that was imported;
 import/postman/output/                    the request files it produced (one per request);
@@ -117,8 +155,18 @@ would make it clear.
 - Scripts, assertions and extracted variables (Results tab).
 - gRPC: schema from reflection or .proto files, a message template, streaming with a
   Log tab (message log, legend pinned above it), several messages per stream, end of stream.
-- Optional vim mode, mouse support (click, drag in the tree, drag pane borders),
-  two themes, sidebar on either side, pane zoom.
+- WebSocket: one session per request (handshake, headers, subprotocols, a JSON message
+  document, live frames in both directions, close code), a Handshake tab and a Log tab;
+  Send on an open session pushes one more frame and Ctrl+W d closes it.
+- Completion (Ctrl+Space, or automatic at a key position): gRPC message keys and MCP
+  argument keys, the gRPC method and the MCP server/tool names; type to filter,
+  Enter/Tab inserts, Esc closes, the hint row describes the open list.
+- Optional vim mode, mouse support (click, hover, drag in the tree, drag pane
+  borders), sidebar on either side, pane zoom.
+- Seven themes (auto, dusk, daylight, ember, linen, contrast, ansi) plus user themes
+  read from TOML files (:theme NAME, :theme reload, `sendito theme list|print`).
+- Optional Nerd Font icons (Settings > Icons); the default icon set works with any
+  font.
 - Response tools: pretty / raw / hex views, JSON folding, search, wrap, save body;
   a DNS / connect / TLS / first-byte timing breakdown.
 - Dialog choice rows: Left/Right cycle the value and Space opens the list; Enter
@@ -130,8 +178,15 @@ ask for the opposite choice.
 - In dialogs, Enter always confirms (Ctrl+S too). On a choice row, Left/Right
   change the value and Space opens the list. The button names the action, e.g.
   "Save (Enter)".
+- Layout: a top bar (name, request tabs, +, environment chip colored by name,
+  "F1 all keys"), a URL strip above both panes (method chip, URL, Send), and pane
+  tabs drawn in each pane's top border with the request's folder path on the right.
+  Details ("✓ JSON", "Ln, Col", view mode, position) and scrollbars are in the
+  bottom and right borders. The focused pane has a rounded accent border (heavy only
+  in the contrast theme and without color). Dialogs open over a dimmed screen with a
+  shadow (without color the screen is cleared instead).
 - An unsaved new tab keeps a stable name ("untitled", "untitled 2"); its URL shows
-  in the URL bar, not in the tab name.
+  in the URL strip, not in the tab name.
 - History rows show method, status and name, then the URL path (without the
   {{base}} variable or host) with the time (and the environment when the sidebar
   is wide enough). The full request opens with Enter.
@@ -142,10 +197,16 @@ ask for the opposite choice.
 - The hint row lists the keys for the focused pane by priority. When they do not
   fit, the rest are reached with "F1 all keys", which is always shown.
 - The gRPC message log is the "Log" tab for every call kind, unary included.
-- The status line's "last request:" field always describes the last request
-  sent. Other actions report in the message area on the right.
-- Transient messages (copied, saved, kept, resent ...) appear in the message area
-  to the right of the status fields; the fields themselves are separated by "|".
+- The status line shows segments without separators: vim mode, unsaved count,
+  undefined variables and a message. The environment is only shown in the top bar.
+  The last request's status, time and size appear in the status line only while
+  the Response pane is hidden (otherwise they are in the Response border).
+- Transient messages (copied, saved, kept, resent ...) appear as a chip with an
+  icon at the right of the status line.
+- The start screen (no request open) shows the wordmark, what the collection
+  holds, the keys to start and the most recent requests.
+- Help lists every key; on screens 180 columns wide or more it reads in two
+  columns (the right column continues the left one).
 - Values derived from a file (multipart filename and content type) are shown in
   italics and marked "(auto)".
 
@@ -153,7 +214,9 @@ recordings/NN-flow/ - numbered frames (00.png, 01.png, ...) of a scripted sessio
                       120x40 terminal. The yellow strip under each frame is a caption
                       describing the step; it is not part of the application.
 screenshots/        - SIZE-THEME-VIEW.png: the application at 120x40 and 200x60 cells in
-                      the dark ("dusk") and light ("daylight") themes.
+                      the dark ("dusk") and light ("daylight") themes, plus a few views
+                      at 120x40 in ember, linen, contrast, ansi and dusk with Nerd Font
+                      icons ("dusk-nerd").
 README.md, KEYMAP.md - the documentation shipped with the application.
 TXT
 echo "bundles in $OUT"
