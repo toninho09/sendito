@@ -50,6 +50,25 @@ lists everything a change type touches, and its "Test and tooling map" the tests
 `docs/PLAN.md` is history and `docs/reports/` is evidence: read them only when
 the task is about them.
 
+### Find code with CodeGraph
+
+Use CodeGraph whenever you can. It is a local index of every symbol, call
+and file in the repository, and it updates while you edit.
+
+1. To find, understand or change code, call the `codegraph_explore` MCP tool
+   first. Give it a question or the symbol and file names.
+2. Treat the source it returns as already read. Do not open those files again
+   or check the result with grep.
+3. Use the "blast radius" part of the result to find the callers and the tests
+   that a change touches.
+4. When the MCP tool is not available, run `codegraph explore "<names or
+   question>"` in the shell. It prints the same output.
+5. Use grep and file reads only for what CodeGraph does not index (Markdown,
+   TOML, the corpus files) or for a detail its result does not show.
+
+The index is local to each machine and git ignores it. When the repository has
+no index, skip CodeGraph: only the owner decides to create one.
+
 ## Commands
 
 `make help` lists every target. The cargo targets print one summary line and

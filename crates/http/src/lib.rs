@@ -21,6 +21,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, NamedGroup, SignatureScheme};
 use sendito_core::resolve::{HeaderOrigin, PartData, ResolvedBody, ResolvedHttp};
 
+pub mod auth;
 mod body;
 mod proxy;
 mod redirect;
@@ -427,6 +428,7 @@ mod tests {
             verify_tls: true,
             unresolved: vec![],
             notes: vec![],
+            signed: None,
         }
     }
 

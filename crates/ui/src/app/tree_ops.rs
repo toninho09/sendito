@@ -169,9 +169,10 @@ impl App {
 
     /// Moves a node, updating open tabs that point into it.
     pub fn move_node(&mut self, rel: &str, folder: &str) {
+        let was_folder = self.tree.root.find_folder(rel).is_some();
         match self.project.coll.move_to(rel, folder) {
             Ok(new_rel) => {
-                self.repath_tabs(rel, &new_rel);
+                self.repath_tabs(rel, &new_rel, was_folder);
                 self.rescan();
                 self.tree.select_rel(&new_rel);
                 self.set_status(format!("moved to {new_rel}"), StatusKind::Ok);
@@ -180,7 +181,9 @@ impl App {
         }
     }
 
-    pub(super) fn repath_tabs(&mut self, old: &str, new: &str) {
+    /// Moves the paths of open tabs into a renamed or moved node. `folder`
+    /// also moves the folder a folder tab edits.
+    pub(super) fn repath_tabs(&mut self, old: &str, new: &str, folder: bool) {
         for t in &mut self.tabs {
             if let Some(p) = &t.path {
                 if p == old {
@@ -188,6 +191,13 @@ impl App {
                     t.name = name_of(new).to_string();
                 } else if let Some(rest) = p.strip_prefix(&format!("{old}/")) {
                     t.path = Some(format!("{new}/{rest}"));
+                }
+            }
+            if folder && let Some(f) = &t.folder {
+                if f == old {
+                    t.folder = Some(new.to_string());
+                } else if let Some(rest) = f.strip_prefix(&format!("{old}/")) {
+                    t.folder = Some(format!("{new}/{rest}"));
                 }
             }
         }

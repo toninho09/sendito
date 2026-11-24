@@ -173,8 +173,16 @@ secrets).
 
 ## `sendito auth login <identity>` / `logout`
 
-Signs in or out of a named HTTP OAuth identity (authorization code + PKCE).
-Tokens are stored in the OS keychain per collection, environment and identity.
+Signs in or out of a named HTTP OAuth identity. Tokens are stored in the OS
+keychain per collection, environment and identity.
+
+* `authorization_code` (default grant): opens the browser for a sign-in with
+  PKCE and waits for the redirect on a loopback port.
+* `device_code`: prints the page and the code to enter there (and opens the
+  page), then waits until the sign-in on the other device ends.
+* `client_credentials` and `password`: need no sign-in; `login` gets a token
+  at once to check the credentials and prints the token endpoint's error code
+  when they are refused.
 
 | Subcommand | Flags |
 |---|---|
@@ -219,8 +227,10 @@ same, and a server that asks for a sign-in offers it.
 
 ## `sendito import <file-or-directory>`
 
-Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, or a
-Bruno collection directory.
+Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, a
+Bruno collection directory, an OpenAPI 3.x or Swagger 2.0 document (JSON, or
+YAML with a `.yaml`/`.yml` extension), or a `.http`/`.rest` file (with the
+environments of the `http-client.env.json` next to it).
 
 | Flag | Meaning |
 |---|---|

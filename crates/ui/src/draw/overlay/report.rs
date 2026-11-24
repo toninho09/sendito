@@ -17,7 +17,7 @@ pub(super) fn draw_import(
         buf,
         inner.x + 2,
         inner.y + 1,
-        "Paste a curl command, or enter a Postman/Insomnia JSON file or Bruno directory.",
+        "Paste curl, or a Postman, Insomnia, OpenAPI/Swagger or .http file, or a Bruno directory.",
         tw,
         note,
     );

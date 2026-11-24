@@ -69,6 +69,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         verify_tls: true,
         unresolved: vec![],
         notes: vec![],
+        signed: None,
     };
     let scripts = ScriptResults {
         pre: vec![],

@@ -59,6 +59,14 @@ pub(crate) async fn http_auth(cmd: AuthCmd) -> ExitCode {
     .await
     {
         Ok(tokens) => match keychain.set(&account, &tokens.to_json()) {
+            Ok(()) if !identity.grant.interactive() => {
+                println!(
+                    "the {} credentials of {name:?} work; the token is in the OS keychain \
+                     (Sendito gets a new one when a request needs it, no sign-in needed)",
+                    identity.grant.as_str()
+                );
+                ExitCode::SUCCESS
+            }
             Ok(()) => {
                 println!("signed in to {name:?} (tokens in the OS keychain)");
                 ExitCode::SUCCESS
@@ -68,6 +76,11 @@ pub(crate) async fn http_auth(cmd: AuthCmd) -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        // The token endpoint's error code says what is wrong with them.
+        Err(e) if !identity.grant.interactive() => {
+            eprintln!("sendito: the token request failed: {e}");
+            ExitCode::from(2)
+        }
         Err(_) => {
             eprintln!(
                 "sendito: HTTP OAuth login failed; check the endpoints and authorization response"

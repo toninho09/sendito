@@ -281,7 +281,8 @@ pub(super) fn draw_footer(
     }
     // Variables the current request uses but nothing defines.
     if let Some(t) = app.tab() {
-        let un = crate::runner::unresolved(&t.model, &app.names);
+        let (req, names) = app.effective(t);
+        let un = crate::runner::unresolved(&req, &names);
         if !un.is_empty() {
             let text = match un.as_slice() {
                 [one] => format!("{{{{{one}}}}} undefined"),

@@ -1,0 +1,8 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/digest/ana/open-sesame"
+
+[auth]
+type = "digest"
+username = "ana"
+password = "open-sesame"

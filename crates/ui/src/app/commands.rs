@@ -244,7 +244,12 @@ impl App {
                 let identity = identity.ok_or("OAuth identity is not defined")?;
                 let settings = runner::oauth_settings(&identity, &scope, network)?;
                 let note = |text: String| {
-                    if let Some(url) = text.strip_prefix("authorization URL:\n  ") {
+                    // A browser sign-in shows its URL; a device sign-in, the
+                    // page and the code to enter there.
+                    if let Some(url) = text
+                        .strip_prefix("authorization URL:\n  ")
+                        .or_else(|| text.strip_prefix("device sign-in:\n  "))
+                    {
                         let _ = tx.send(AppMsg::OAuthUrl {
                             job,
                             url: url.into(),
@@ -289,13 +294,14 @@ impl App {
             Some(k) if kinds.contains(&k) => true,
             Some(k) => {
                 let name = match k {
-                    Kind::Http => "HTTP",
-                    Kind::Grpc => "gRPC",
-                    Kind::Ws => "WebSocket",
-                    Kind::Mcp => "MCP",
+                    Kind::Http => "HTTP requests",
+                    Kind::Grpc => "gRPC requests",
+                    Kind::Ws => "WebSocket requests",
+                    Kind::Mcp => "MCP requests",
+                    Kind::Folder => "folder settings",
                 };
                 self.set_status(
-                    format!("{what} is not available for {name} requests"),
+                    format!("{what} is not available for {name}"),
                     StatusKind::Warn,
                 );
                 false
@@ -485,6 +491,9 @@ impl App {
                     self.open_grpc_method_picker();
                 }
             }
+            "folder" => self.folder_settings_of_active(),
+            "saveexample" => self.save_example(arg),
+            "examples" => self.examples_command(arg),
             "rescan" => {
                 self.rescan();
                 self.set_status("collection read from disk again", StatusKind::Ok);

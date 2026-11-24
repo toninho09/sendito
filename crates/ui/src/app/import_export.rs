@@ -4,8 +4,9 @@ use super::*;
 
 impl App {
     pub fn open_import(&mut self, prefill: &str) {
-        let mut input = TextEditor::multi(prefill)
-            .with_placeholder("curl https://…   or   path/to/collection.json or Bruno directory");
+        let mut input = TextEditor::multi(prefill).with_placeholder(
+            "curl https://…   or   a collection, OpenAPI, .http file or Bruno directory",
+        );
         input.move_to_end();
         self.overlay = Some(Overlay::Import(Import::new(input)));
     }
@@ -201,9 +202,44 @@ impl App {
         }));
     }
 
-    /// The scope an export renders with, and a warning naming the secrets
-    /// that did not load (they stay `{{placeholders}}` in the output).
-    pub(super) fn export_scope(&self, include_secrets: bool) -> (Scope, String) {
+    /// The active HTTP request with its folders applied, the scope an export
+    /// renders it with, and a warning naming the secrets that did not load
+    /// (they stay `{{placeholders}}` in the output). `what` names the format.
+    fn export_input(
+        &mut self,
+        include_secrets: bool,
+        what: &str,
+    ) -> Option<(String, HttpRequest, Scope, String)> {
+        let t = self.tab()?;
+        if t.folder.is_some() {
+            self.set_status(
+                format!("{what} export is for HTTP requests"),
+                StatusKind::Warn,
+            );
+            return None;
+        }
+        let name = t.name.clone();
+        let path = t.path.clone().or_else(|| t.origin_path.clone());
+        let model = t.model.clone();
+        let chain = match runner::folder_chain(&self.project.root, path.as_deref()) {
+            Ok(chain) => chain,
+            Err(e) => {
+                self.set_status(e, StatusKind::Error);
+                return None;
+            }
+        };
+        let (mut scope, warning) = self.export_scope(include_secrets);
+        let Request::Http(h) = runner::with_folders(&model, &chain, &mut scope) else {
+            self.set_status(
+                format!("{what} export is for HTTP requests"),
+                StatusKind::Warn,
+            );
+            return None;
+        };
+        Some((name, h, scope, warning))
+    }
+
+    fn export_scope(&self, include_secrets: bool) -> (Scope, String) {
         if !include_secrets {
             return (self.names.clone(), String::new());
         }
@@ -224,13 +260,9 @@ impl App {
     }
 
     pub fn export_curl(&mut self, include_secrets: bool) {
-        let Some(t) = self.tab() else { return };
-        let Request::Http(h) = &t.model else {
-            self.set_status("curl export is for HTTP requests", StatusKind::Warn);
+        let Some((_, h, scope, warning)) = self.export_input(include_secrets, "curl") else {
             return;
         };
-        let h = h.clone();
-        let (scope, warning) = self.export_scope(include_secrets);
         let cmd = sendito_import::curl::export(&h, &scope, include_secrets, &self.project.root);
         self.clipboard.set(cmd.clone(), false);
         self.osc52.push(cmd.clone());
@@ -283,14 +315,9 @@ impl App {
     /// Copies the active request as an .http file (JetBrains HTTP client /
     /// VS Code REST Client).
     pub(super) fn export_http_file(&mut self, include_secrets: bool) {
-        let Some(t) = self.tab() else { return };
-        let Request::Http(h) = &t.model else {
-            self.set_status(".http export is for HTTP requests", StatusKind::Warn);
+        let Some((name, h, scope, warning)) = self.export_input(include_secrets, ".http") else {
             return;
         };
-        let name = t.name.clone();
-        let h = h.clone();
-        let (scope, warning) = self.export_scope(include_secrets);
         let file = sendito_import::http_file::export(
             &name,
             &h,

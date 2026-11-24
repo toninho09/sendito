@@ -46,6 +46,7 @@ fn get(url: String) -> ResolvedHttp {
         verify_tls: true,
         unresolved: vec![],
         notes: vec![],
+        signed: None,
     }
 }
 

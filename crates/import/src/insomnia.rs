@@ -85,15 +85,16 @@ fn rows(v: Option<&Value>, item: &str, skipped: &mut Vec<Skipped>) -> Vec<KeyVal
         .collect()
 }
 
-fn auth(v: Option<&Value>, inherited: &Auth, item: &str, skipped: &mut Vec<Skipped>) -> Auth {
+/// A request's or a folder's auth; none given inherits from the folder above.
+fn auth(v: Option<&Value>, item: &str, skipped: &mut Vec<Skipped>) -> Auth {
     let Some(v) = v.filter(|v| v.is_object()) else {
-        return inherited.clone();
+        return Auth::Inherit;
     };
     if flag(v, "disabled") {
         return Auth::None;
     }
     match text(v, "type") {
-        "" | "inherit" => inherited.clone(),
+        "" | "inherit" => Auth::Inherit,
         "none" => Auth::None,
         "basic" => Auth::Basic {
             username: template(text(v, "username"), item, skipped),
@@ -192,7 +193,7 @@ fn body(v: Option<&Value>, item: &str, skipped: &mut Vec<Skipped>) -> Body {
 fn walk(
     parent: &str,
     name: &str,
-    inherited: &Auth,
+    folder_auth: Auth,
     children: &BTreeMap<String, Vec<&Value>>,
     seen: &mut HashSet<String>,
     skipped: &mut Vec<Skipped>,
@@ -201,6 +202,7 @@ fn walk(
         name: name.into(),
         ..Default::default()
     };
+    folder.settings.auth = folder_auth;
     for node in children.get(parent).into_iter().flatten() {
         let id = text(node, "_id");
         if id.is_empty() || !seen.insert(id.to_string()) {
@@ -216,13 +218,13 @@ fn walk(
         let item = format!("{name} / {label}");
         match text(node, "_type") {
             "request_group" => {
-                let group_auth = auth(node.get("authentication"), inherited, &item, skipped);
+                let group_auth = auth(node.get("authentication"), &item, skipped);
                 folder
                     .folders
-                    .push(walk(id, label, &group_auth, children, seen, skipped));
+                    .push(walk(id, label, group_auth, children, seen, skipped));
             }
             "request" => {
-                let a = auth(node.get("authentication"), inherited, &item, skipped);
+                let a = auth(node.get("authentication"), &item, skipped);
                 let r = HttpRequest {
                     method: if text(node, "method").is_empty() {
                         "GET".into()
@@ -341,16 +343,11 @@ pub fn import(json: &str) -> Result<ImportResult, String> {
         } else {
             text(ws, "name")
         };
-        let inherited = auth(
-            ws.get("authentication"),
-            &Auth::None,
-            name,
-            &mut result.skipped,
-        );
+        let ws_auth = auth(ws.get("authentication"), name, &mut result.skipped);
         result.root = walk(
             text(ws, "_id"),
             name,
-            &inherited,
+            ws_auth,
             &children,
             &mut seen,
             &mut result.skipped,
@@ -363,16 +360,11 @@ pub fn import(json: &str) -> Result<ImportResult, String> {
             } else {
                 text(ws, "name")
             };
-            let inherited = auth(
-                ws.get("authentication"),
-                &Auth::None,
-                name,
-                &mut result.skipped,
-            );
+            let ws_auth = auth(ws.get("authentication"), name, &mut result.skipped);
             result.root.folders.push(walk(
                 text(ws, "_id"),
                 name,
-                &inherited,
+                ws_auth,
                 &children,
                 &mut seen,
                 &mut result.skipped,

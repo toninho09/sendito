@@ -11,11 +11,16 @@ impl App {
             return;
         }
         t.refresh_model();
-        let Request::Grpc(g) = t.model.clone() else {
+        let id = t.id;
+        // Reflection goes out with the metadata and auth the folders add.
+        let (req, names) = match self.tab() {
+            Some(t) => self.effective(t),
+            None => return,
+        };
+        let Request::Grpc(g) = req else {
             return;
         };
-        let id = t.id;
-        let resolved = sendito_core::resolve::resolve_grpc(&g, &self.names);
+        let resolved = sendito_core::resolve::resolve_grpc(&g, &names);
         let root = self.project.root.clone();
         let tls = self.project.tls.clone();
         let cache = self.schemas.clone();

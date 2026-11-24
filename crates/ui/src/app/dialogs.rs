@@ -227,15 +227,15 @@ impl App {
                         matches!(t.saved(), Some(Request::Mcp(saved)) if saved.arguments == args);
                     // Arguments that are still another tool's template are
                     // replaced too: they were not typed by the user.
-                    let a_template = t
-                        .mcp_tools
-                        .iter()
-                        .any(|tl| mcp_argument_template(&tl.input_schema) == args);
+                    let a_template = t.mcp_tools.iter().any(|tl| {
+                        sendito_core::json_schema::object_template(&tl.input_schema) == args
+                    });
                     if ((unchanged && (args.trim().is_empty() || args.trim() == "{}"))
                         || a_template)
                         && let Some(tool) = t.mcp_tools.get(index)
                     {
-                        let template = mcp_argument_template(&tool.input_schema);
+                        let template =
+                            sendito_core::json_schema::object_template(&tool.input_schema);
                         t.ed.message.replace_all(&template);
                     }
                 }
@@ -279,6 +279,7 @@ impl App {
                 let verb = if login { "login" } else { "logout" };
                 self.http_oauth_command(&format!("{verb} {item}"));
             }
+            PickAction::Example => self.show_example(item),
             PickAction::McpServerDetails => {
                 if let Err(e) = self.open_mcp_server_editor(item) {
                     self.set_status(e, StatusKind::Error);
@@ -338,6 +339,7 @@ impl App {
                 self.set_status(format!("created folder {rel}"), StatusKind::Ok);
             }
             PromptAction::Rename(rel) => {
+                let was_folder = self.tree.root.find_folder(&rel).is_some();
                 let new_rel = self
                     .project
                     .coll
@@ -346,7 +348,7 @@ impl App {
                 if self.tree.expanded.remove(&rel) {
                     self.tree.expanded.insert(new_rel.clone());
                 }
-                self.repath_tabs(&rel, &new_rel);
+                self.repath_tabs(&rel, &new_rel, was_folder);
                 self.rescan();
                 self.tree.select_rel(&new_rel);
             }

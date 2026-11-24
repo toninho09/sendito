@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use sendito_core::inherit::{self, ChainItem};
 use sendito_core::model::*;
 use sendito_core::resolve::{
-    ResolvedGrpc, ResolvedHttp, mask_request, resolve_grpc, resolve_http, resolve_mcp,
+    ResolvedGrpc, ResolvedHttp, SignedAuth, mask_request, resolve_grpc, resolve_http, resolve_mcp,
 };
 use sendito_core::script::{self, AssertResult, ExtractResult, RUNTIME_LAYER, ResponseView};
 use sendito_core::vars::{Scope, VarValue};
@@ -80,6 +81,10 @@ pub enum Control {
 
 /// Re-export so the UI can name the event type without depending on the crate.
 pub use sendito_mcp::Event as McpEvent;
+
+/// The scope layer that holds values signed at send time (a JWT), so they
+/// are masked like other secrets.
+pub(super) const SIGNED_LAYER: &str = "signed";
 
 mod grpc;
 mod http;

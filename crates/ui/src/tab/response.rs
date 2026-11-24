@@ -155,6 +155,19 @@ pub struct Response {
     pub query: Option<QueryBar>,
     /// The stream message the body shows; `None` follows the last one (live).
     pub stream_sel: Option<usize>,
+    /// The status line and headers of an HTTP response, kept to save it as
+    /// an example.
+    pub http_head: Option<HttpHead>,
+    /// The saved example shown instead of a response, by name.
+    pub example: Option<String>,
+}
+
+/// The status and headers of an HTTP response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpHead {
+    pub status: u16,
+    pub reason: String,
+    pub headers: Vec<(String, String)>,
 }
 
 impl Response {
@@ -175,7 +188,16 @@ impl Response {
             jq_outputs: 0,
             query: None,
             stream_sel: None,
+            http_head: None,
+            example: None,
         }
+    }
+
+    /// The body bytes as received (before a jq filter).
+    pub fn body_bytes(&self) -> Vec<u8> {
+        self.jq_src
+            .clone()
+            .unwrap_or_else(|| self.body.doc.bytes().to_vec())
     }
 
     /// Replaces the body document (a response, message or call result); any

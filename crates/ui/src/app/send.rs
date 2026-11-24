@@ -30,6 +30,13 @@ impl App {
             self.set_status("open or create a request first (Ctrl+N)", StatusKind::Warn);
             return;
         };
+        if tab.folder.is_some() {
+            self.set_status(
+                "folder settings are not sent: they apply to the requests in the folder",
+                StatusKind::Warn,
+            );
+            return;
+        }
         tab.refresh_model();
         // On an open client/bidi stream or WebSocket session, Send pushes the
         // editor content as more input.
@@ -73,7 +80,18 @@ impl App {
             );
             return;
         }
-        let req = tab.model.clone();
+        // A history copy is recorded under the request it came from, and
+        // inherits from its folders.
+        let path = tab.path.clone().or_else(|| tab.origin_path.clone());
+        let chain = match runner::folder_chain(&self.project.root, path.as_deref()) {
+            Ok(chain) => chain,
+            Err(e) => {
+                self.set_status(format!("not sent: {e}"), StatusKind::Error);
+                return;
+            }
+        };
+        let mut names = self.names.clone();
+        let req = runner::with_folders(&tab.model, &chain, &mut names);
         if let Request::Grpc(g) = &req
             && (g.service.is_empty() || g.method.is_empty())
         {
@@ -102,7 +120,7 @@ impl App {
             return;
         }
         if !confirmed {
-            let un = runner::unresolved(&req, &self.names);
+            let un = runner::unresolved(&req, &names);
             let empty = !sendito_core::template::empty_placeholders(
                 &sendito_store::request_file::to_toml(&req),
             )
@@ -142,8 +160,6 @@ impl App {
         }
         let id = tab.id;
         let name = tab.name.clone();
-        // A history copy is recorded under the request it came from.
-        let path = tab.path.clone().or_else(|| tab.origin_path.clone());
         let edited = tab.path.is_some() && tab.dirty();
         // A watch repeat keeps the last response on screen until the new
         // one arrives and takes over its view.
@@ -195,7 +211,9 @@ impl App {
         let secrets_ok = std::mem::take(&mut self.secrets_ok);
         let task = self.rt.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
-                runner::build_scope_checked(&envs, active.as_deref(), &runtime)
+                let mut out = runner::build_scope_checked(&envs, active.as_deref(), &runtime);
+                runner::add_folder_vars(&mut out.0, &chain);
+                out
             })
             .await
             .unwrap_or_else(|e| (Scope::new(), vec![e.to_string()], Vec::new()));

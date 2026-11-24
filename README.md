@@ -24,10 +24,11 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 49 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
+  A corpus of 54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
   byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
-  (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 auth, timeout, redirects,
+  (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 / Digest /
+  AWS SigV4 / JWT auth, timeout, redirects,
   TLS verification, an optional proxy (`[http] proxy`, including `"env"` for
   `HTTPS_PROXY` and friends), a custom CA and client certificates for mutual
   TLS (`[http.tls]`), response decompression (gzip / deflate / br), watch mode and
@@ -55,9 +56,15 @@ plain TOML files you can version in git.
 * **Scripts without code**: set variables before sending, extract values (JSONPath,
   header, status) after, and assert on them.
   → [Scripts](docs/FEATURES.md#scripts)
-* **History**, **Postman / Bruno / Insomnia import**, **curl import/export**,
-  `.http` export, session restore, seven themes plus your own, optional Nerd Font
-  icons, and a key map you can change.
+* **Folder settings** (`folder.toml`): headers, auth, variables and scripts that
+  every request below a folder inherits. `s` on a tree folder opens them.
+  → [Folder settings](docs/FEATURES.md#folder-settings)
+* **Saved example responses**: `:saveexample` keeps a response next to its
+  request; `:examples` lists them.
+  → [Saved examples](docs/FEATURES.md#saved-examples)
+* **History**, **Postman / Bruno / Insomnia / OpenAPI / `.http` import**,
+  **curl import/export**, `.http` export, session restore, seven themes plus
+  your own, optional Nerd Font icons, and a key map you can change.
   → [Import and export](docs/FEATURES.md#import-and-export) ·
   [Themes](docs/FEATURES.md#themes-and-icons)
 
@@ -134,6 +141,8 @@ sendito http "Users/create user" --env local   # print as an .http file
 sendito curl x --include-secrets --env local   # include secret values
 sendito import acme.postman_collection.json    # Postman or Insomnia JSON
 sendito import path/to/bruno-collection        # Bruno directory
+sendito import openapi.yaml                    # OpenAPI or Swagger document
+sendito import requests.http                   # .http / .rest file
 sendito import acme.json --into "Imported"     # import into a subfolder
 ```
 
@@ -398,7 +407,8 @@ More: [HTTP features](docs/FEATURES.md#http) · [FORMAT.md](FORMAT.md#cookie-jar
 ## Import and export
 
 * `Ctrl+W i` (or `:import path`) imports a Postman Collection v2.1, an Insomnia
-  v4/v5 JSON export, or a Bruno collection directory. Relative paths are looked up
+  v4/v5 JSON export, a Bruno collection directory, an OpenAPI 3.x / Swagger 2.0
+  document (JSON or YAML), or a `.http` / `.rest` file. Relative paths are looked up
   in the working directory, then the collection folder. Supported requests,
   folders, authentication and variables are imported; selectable environments
   are created with unique names. A report lists skipped or changed items. Private
@@ -602,7 +612,7 @@ Every subcommand, flag and exit code is in the [CLI reference](docs/CLI.md).
 | `sendito auth login\|logout <name>` | HTTP OAuth with PKCE, tokens in the OS keychain |
 | `sendito mcp login\|logout <server>` | OAuth login for an MCP server |
 | `sendito theme list` / `print <name>` | List themes / print one as a file |
-| `sendito import <file\|dir>` | Import Postman, Insomnia or Bruno |
+| `sendito import <file\|dir>` | Import Postman, Insomnia, Bruno, OpenAPI/Swagger or `.http` |
 
 ## Development
 
@@ -633,8 +643,8 @@ The `Makefile` wraps the recurring commands with quiet, token-efficient output
 Crates: `sendito-core` (model, variables, resolution, scripts), `sendito-http`,
 `sendito-grpc`, `sendito-ws`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
 `sendito-store` (files, request format, environments, secrets, config, history,
-cookies, session, themes), `sendito-import` (Postman, Insomnia, Bruno, curl,
-`.http`), `sendito-pipeline` (send pipeline and response document model),
+cookies, session, themes), `sendito-import` (Postman, Insomnia, Bruno, OpenAPI,
+`.http`, curl), `sendito-pipeline` (send pipeline and response document model),
 `sendito-ui` (terminal UI), `sendito-testkit`
 (test servers) and the `sendito` binary. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and the test

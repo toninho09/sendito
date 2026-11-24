@@ -92,13 +92,21 @@ pub(super) fn draw_request(
     if inner.height < 1 || inner.width < 10 {
         return None;
     }
-    let names = app.names.clone();
+    let names = app.tab_names();
     let is_def = move |n: &str| names.is_defined(n);
     let vim = app.vim;
     // Sub-tabs in the top border, the file in the bottom border.
     let crumb = {
         let t = &app.tabs[app.active];
         match (&t.path, &t.origin) {
+            _ if t.folder.is_some() => {
+                let rel = t.folder.as_deref().unwrap_or_default();
+                if rel.is_empty() {
+                    sendito_store::folder::FILE.to_string()
+                } else {
+                    breadcrumb(&format!("{rel}/{}", sendito_store::folder::FILE))
+                }
+            }
             (Some(p), _) => breadcrumb(p),
             (None, Some(o)) => format!("{o} · {}", t.name),
             (None, None) => format!(
@@ -116,21 +124,21 @@ pub(super) fn draw_request(
                 table_count(&e.params),
                 table_count(&e.headers),
                 usize::from(e.body_kind != sendito_core::BodyKind::None),
-                usize::from(e.auth_kind != sendito_core::AuthKind::None),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],
             Kind::Grpc => vec![
                 0,
                 table_count(&e.metadata),
-                usize::from(e.auth_kind != sendito_core::AuthKind::None),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],
             Kind::Ws => vec![
                 table_count(&e.headers),
                 usize::from(!e.message.trimmed_is("[]") && !e.message.trimmed_is("")),
-                usize::from(e.auth_kind != sendito_core::AuthKind::None),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],
@@ -139,6 +147,12 @@ pub(super) fn draw_request(
                 usize::from(!e.message.trimmed_is("{}") && !e.message.trimmed_is("")),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
+            ],
+            Kind::Folder => vec![
+                table_count(&e.headers),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
+                table_count(&e.vars),
+                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
             ],
         };
         (n, c)

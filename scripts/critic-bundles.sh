@@ -86,6 +86,17 @@ matching cookies from the per-environment jar are sent in a Cookie header; on a 
 each hop gets the jar's Cookie header for its own URL (cookies the redirect response sets
 are stored first). Cases 45 and 46 cover cookie storage and replay; case 49 follows a
 redirect that sets a cookie, which the next hop sends.
+Cases inherit/50 and inherit/51 get headers, a variable and a bearer auth from
+inherit/folder.toml (folder settings): a request without [auth] uses the folder's
+auth, auth type "none" turns it off, a request header replaces the folder header of
+the same name, and a disabled request row stops the folder header of that name.
+Case 52 uses Digest auth: the first request goes without Authorization, the echo
+server answers 401 with a SHA-256 challenge, and the second request carries the
+answer (the server checks it; cnonce and response change at each send and are
+masked). Case 53 is signed with AWS SigV4: X-Amz-Date and Authorization are added
+(the date and signature change at each send and are masked); the signed headers are
+content-type, host and x-amz-date. Case 54 sends a HS256 JWT signed at send time
+from the claims in the file, as Authorization: Bearer.
 Case 47 uses a keychain-sourced OAuth bearer token. Case 48 follows a redirect to another
 origin (other scheme, host or port): the API-key header, like Authorization and Cookie,
 is not sent to the new origin. Also: metadata keys ending in "-bin" take a

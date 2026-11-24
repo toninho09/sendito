@@ -31,8 +31,13 @@ pub struct SessionTab {
     pub path: Option<String>,
     /// Display name for unsaved requests.
     pub name: String,
-    /// Unsaved edits as request TOML (absent when the tab is clean).
+    /// Unsaved edits as request TOML (absent when the tab is clean); for a
+    /// folder tab, as `folder.toml` text.
     pub draft: Option<String>,
+    /// The folder whose settings the tab edits (`""`: the collection root);
+    /// absent for a request tab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,11 +107,19 @@ mod tests {
         assert_eq!(load(&p), (Session::default(), None));
         let mut s = Session {
             active_env: Some("dev".into()),
-            tabs: vec![SessionTab {
-                path: Some("a.toml".into()),
-                name: "a".into(),
-                draft: Some("kind = \"http\"\nurl = '''\nx'''\n".into()),
-            }],
+            tabs: vec![
+                SessionTab {
+                    path: Some("a.toml".into()),
+                    name: "a".into(),
+                    draft: Some("kind = \"http\"\nurl = '''\nx'''\n".into()),
+                    folder: None,
+                },
+                SessionTab {
+                    name: "Users".into(),
+                    folder: Some("Users".into()),
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         };
         s.runtime_vars.insert("k".into(), "v".into());

@@ -40,10 +40,22 @@ pub async fn load_schema(
                 .map_err(|e| e.to_string())?
         }
         SchemaSource::Reflection => {
+            // Reflection goes out with the request's metadata and, when the
+            // request has a JWT and no explicit header, a token signed now.
+            let mut metadata = resolved.metadata.clone();
+            if !metadata
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                && let Some(token) = jwt_token(root, resolved.signed.as_ref())
+                    .await
+                    .map_err(|e| e.to_string())?
+            {
+                metadata.push(("authorization".into(), format!("Bearer {token}")));
+            }
             let ch = sendito_grpc::connect(&conn_settings(resolved, tls))
                 .await
                 .map_err(|e| e.to_string())?;
-            sendito_grpc::schema::from_reflection(ch)
+            sendito_grpc::schema::from_reflection_with(ch, &metadata)
                 .await
                 .map_err(|e| e.to_string())?
         }
@@ -178,11 +190,25 @@ pub async fn exec_grpc(
             scope_errors: scope_errors.clone(),
         });
     };
-    if matches!(req.auth, Auth::OAuth { .. }) {
+    if req.auth.kind().http_only() {
         return fail(
-            "OAuth 2 authentication is only supported for HTTP requests".into(),
+            format!(
+                "{} authentication is only supported for HTTP requests",
+                req.auth.kind().label()
+            ),
             results,
         );
+    }
+    // A JWT is signed now; the token is masked like the other secrets.
+    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+        Ok(Some(token)) => {
+            scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
+            resolved
+                .metadata
+                .push(("authorization".into(), format!("Bearer {token}")));
+        }
+        Ok(None) => {}
+        Err(e) => return fail(e, results),
     }
     if resolved.service.is_empty() || resolved.method.is_empty() {
         return fail("choose a service and method first".into(), results);

@@ -1,0 +1,7 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/inherit"
+
+[[headers]]
+name = "X-Replaced"
+value = "from-request"

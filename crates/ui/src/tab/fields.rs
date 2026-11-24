@@ -8,13 +8,16 @@ pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Option
 
 pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
 
+/// The tabs of a folder's settings (`folder.toml`).
+pub const FOLDER_TABS: &[&str] = &["Headers", "Auth", "Vars", "Scripts"];
+
 pub const RESP_TABS: &[&str] = &["Body", "Headers", "Timing", "Results"];
 
 /// Response tab names: the fourth holds assertions, extracted variables and
 /// notes ("Results"); for gRPC and MCP it also holds the message log ("Log").
 pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     match kind {
-        Kind::Http => ["Body", "Headers", "Timing", "Results"],
+        Kind::Http | Kind::Folder => ["Body", "Headers", "Timing", "Results"],
         Kind::Grpc => ["Body", "Metadata", "Timing", "Log"],
         Kind::Ws => ["Body", "Handshake", "Timing", "Log"],
         Kind::Mcp => ["Body", "Request", "Timing", "Log"],
@@ -80,6 +83,18 @@ pub enum Field {
     McpTool,
     WsSubprotocols,
     WsMessages,
+    /// A folder's variables.
+    Vars,
+    AwsAccessKey,
+    AwsSecretKey,
+    AwsSessionToken,
+    AwsRegion,
+    AwsService,
+    JwtAlgorithm,
+    JwtSecret,
+    JwtPrivateKey,
+    JwtClaims,
+    JwtExpires,
 }
 
 impl Field {
@@ -126,6 +141,17 @@ impl Field {
             Field::WsMessages => {
                 "Messages sent after connecting (JSON: strings, or {\"binary\": \"base64\"})"
             }
+            Field::Vars => "Variables (above the environment, below runtime values)",
+            Field::AwsAccessKey => "Access key ID",
+            Field::AwsSecretKey => "Secret access key",
+            Field::AwsSessionToken => "Session token (temporary credentials only)",
+            Field::AwsRegion => "Region",
+            Field::AwsService => "Service (e.g. execute-api, s3)",
+            Field::JwtAlgorithm => "Algorithm",
+            Field::JwtSecret => "Secret (HS256/384/512)",
+            Field::JwtPrivateKey => "Private key PEM file (relative to the collection)",
+            Field::JwtClaims => "Claims (JSON object)",
+            Field::JwtExpires => "Expires in (seconds, adds iat and exp; empty = none)",
         }
     }
 
@@ -140,11 +166,15 @@ impl Field {
                 | Field::ScriptExtract
                 | Field::ScriptAssert
                 | Field::Metadata
+                | Field::Vars
         )
     }
 
     pub fn is_multiline(self) -> bool {
-        matches!(self, Field::BodyText | Field::Message | Field::WsMessages)
+        matches!(
+            self,
+            Field::BodyText | Field::Message | Field::WsMessages | Field::JwtClaims
+        )
     }
 
     pub fn is_text(self) -> bool {
@@ -169,6 +199,15 @@ impl Field {
                 | Field::McpTool
                 | Field::WsSubprotocols
                 | Field::WsMessages
+                | Field::AwsAccessKey
+                | Field::AwsSecretKey
+                | Field::AwsSessionToken
+                | Field::AwsRegion
+                | Field::AwsService
+                | Field::JwtSecret
+                | Field::JwtPrivateKey
+                | Field::JwtClaims
+                | Field::JwtExpires
         )
     }
 
@@ -182,6 +221,7 @@ impl Field {
                 | Field::SchemaSource
                 | Field::ScriptSection
                 | Field::Cookies
+                | Field::JwtAlgorithm
         )
     }
 
@@ -199,4 +239,6 @@ pub enum Kind {
     Grpc,
     Ws,
     Mcp,
+    /// The settings of a folder, not a request.
+    Folder,
 }

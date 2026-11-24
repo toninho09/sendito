@@ -6,9 +6,9 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use sendito_core::Request;
 use sendito_core::script::RUNTIME_LAYER;
 use sendito_core::vars::Scope;
+use sendito_core::{HttpRequest, Request};
 use sendito_pipeline::human_size;
 use sendito_pipeline::runner::{self, GrpcUpdate, Project, RunCtx};
 

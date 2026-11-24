@@ -96,6 +96,32 @@ pub(super) fn refresh_lock(account: &str) -> Arc<tokio::sync::Mutex<()>> {
     }
 }
 
+impl RefreshingProvider {
+    /// The stored tokens. For a grant that gets tokens by itself, a missing
+    /// or unreadable store entry (a CI host without a keychain) or a sign-in
+    /// for another endpoint is just "no token": a new one is requested.
+    async fn stored(&self, want: Option<&String>) -> Result<Option<Tokens>, McpError> {
+        match self.load(want).await {
+            Ok(t) => Ok(Some(t)),
+            Err(McpError::NeedsLogin(_) | McpError::Transport(_))
+                if self.settings.grant.automatic() =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Saves new tokens. A failed save must not fail the request: the next
+    /// run refreshes (or requests) again.
+    async fn save(&self, tokens: &Tokens) {
+        let store = self.store.clone();
+        let account = self.account.clone();
+        let serialized = tokens.to_json();
+        let _ = tokio::task::spawn_blocking(move || store.set(&account, &serialized)).await;
+    }
+}
+
 impl TokenProvider for RefreshingProvider {
     fn token<'a>(
         &'a self,
@@ -109,46 +135,70 @@ impl TokenProvider for RefreshingProvider {
                 .resource_url
                 .clone()
                 .or_else(|| self.settings.token_url.clone());
-            let seen = self.load(want.as_ref()).await?;
-            if !force_refresh && !seen.expired(unix_now()) {
-                return Ok(seen.access);
+            let seen = self.stored(want.as_ref()).await?;
+            if let Some(t) = &seen
+                && !force_refresh
+                && !t.expired(unix_now())
+            {
+                return Ok(t.access.clone());
             }
             let lock = refresh_lock(&self.account);
             let _guard = lock.lock().await;
             // Another request refreshed while this one waited: the token is
             // seconds old, so it is used even when it expires soon.
-            let mut tokens = self.load(want.as_ref()).await?;
-            if tokens.access != seen.access {
-                return Ok(tokens.access);
+            let current = self.stored(want.as_ref()).await?;
+            if let Some(c) = &current
+                && seen.as_ref().is_none_or(|s| s.access != c.access)
+            {
+                return Ok(c.access.clone());
             }
-            let Some(refresh) = tokens.refresh.clone() else {
-                return Err(McpError::NeedsLogin(
-                    "the token expired; sign in again".into(),
-                ));
-            };
-            let endpoints = self.endpoints().await?;
-            let client_secret = tokens
-                .client_secret
-                .clone()
-                .or_else(|| self.settings.client_secret.clone());
-            tokens = refresh_with_resource(
-                &endpoints,
-                self.resource_url.as_deref(),
-                &tokens.client_id,
-                client_secret.as_deref(),
-                &refresh,
-                &self.settings.network,
-            )
-            .await?;
-            tokens.client_secret = client_secret;
-            tokens.bound_to = want;
-            let store = self.store.clone();
-            let account = self.account.clone();
-            let serialized = tokens.to_json();
-            // The refresh worked: a failed save must not fail this request.
-            // The next run refreshes again from the stored refresh token.
-            let _ = tokio::task::spawn_blocking(move || store.set(&account, &serialized)).await;
-            Ok(tokens.access)
+            // Refresh when there is a refresh token.
+            if let Some(tokens) = &current
+                && let Some(refresh) = tokens.refresh.clone()
+            {
+                let client_secret = tokens
+                    .client_secret
+                    .clone()
+                    .or_else(|| self.settings.client_secret.clone());
+                let refreshed = match self.endpoints().await {
+                    Ok(endpoints) => {
+                        refresh_with_resource(
+                            &endpoints,
+                            self.resource_url.as_deref(),
+                            &tokens.client_id,
+                            client_secret.as_deref(),
+                            &refresh,
+                            &self.settings.network,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                };
+                match refreshed {
+                    Ok(mut t) => {
+                        t.client_secret = client_secret;
+                        t.bound_to = want;
+                        self.save(&t).await;
+                        return Ok(t.access);
+                    }
+                    // A grant that gets tokens by itself asks for a new one.
+                    Err(_) if self.settings.grant.automatic() => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            if self.settings.grant.automatic() {
+                let t = fetch_token(&self.settings).await?;
+                self.save(&t).await;
+                return Ok(t.access);
+            }
+            Err(McpError::NeedsLogin(
+                if current.is_some() {
+                    "the token expired; sign in again"
+                } else {
+                    "not signed in (run `sendito auth login`)"
+                }
+                .into(),
+            ))
         })
     }
 }

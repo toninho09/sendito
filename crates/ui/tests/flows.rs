@@ -2874,6 +2874,14 @@ fn flow_oauth_editor() {
     h.app.run_command("oauth");
     assert!(matches!(h.app.overlay, Some(Overlay::Cfg(_))));
     h.type_text("gh");
+    // An unknown grant is refused; empty is authorization_code.
+    h.key("tab");
+    h.type_text("magic");
+    h.key("ctrl+s");
+    assert!(h.screen().contains("gh: the grant is"), "{}", h.screen());
+    for _ in 0.."magic".len() {
+        h.key("backspace");
+    }
     h.key("tab");
     h.type_text("https://github.com/login/oauth/authorize");
     h.key("ctrl+s");
@@ -2884,6 +2892,9 @@ fn flow_oauth_editor() {
     h.type_text("abc");
     h.key("tab");
     h.type_text("{{gh_secret}}");
+    // Username and password: the password grant only.
+    h.key("tab");
+    h.key("tab");
     h.key("tab");
     h.type_text("repo read:user");
     h.key("ctrl+s");
@@ -2892,6 +2903,10 @@ fn flow_oauth_editor() {
     assert_eq!(id.client_id, "abc");
     assert_eq!(id.client_secret.as_deref(), Some("{{gh_secret}}"));
     assert_eq!(id.scopes, vec!["repo", "read:user"]);
+    assert_eq!(
+        id.grant,
+        sendito_store::config::OAuthGrant::AuthorizationCode
+    );
     assert!(
         project_file(&h).contains("[oauth.gh]"),
         "{}",
@@ -3029,4 +3044,120 @@ fn flow_request_pickers_follow_the_request_kind() {
     h.type_text("staging");
     h.key("enter");
     assert!(h.app.project.envs.list().contains(&"staging".to_string()));
+}
+
+/// `s` on a tree folder opens its settings; saved headers and variables go
+/// out with the requests below it, and the request shows what it inherits.
+#[test]
+fn flow_folder_settings_apply_to_requests() {
+    let s = servers();
+    let mut h = harness(&s, 140, 40);
+    h.key("ctrl+w h");
+    assert!(h.app.tree.select_rel("Users"));
+    h.key("s");
+    let t = &mut h.app.tabs[h.app.active];
+    assert_eq!(t.folder.as_deref(), Some("Users"));
+    t.ed.headers.push_texts(true, &["X-Team", "{{team}}"]);
+    t.ed.vars.push_texts(true, &["team", "blue"]);
+    t.refresh_model();
+    assert!(t.dirty());
+    let sc = h.screen();
+    assert!(
+        sc.contains("FOLDER") && sc.contains("applies to 3 requests"),
+        "{sc}"
+    );
+    // Its own variables are defined while the folder edits them.
+    assert!(!sc.contains("undefined"), "{sc}");
+    // A folder tab is not sent.
+    h.key("f5");
+    assert!(h.app.tabs[h.app.active].running.is_none());
+    h.key("ctrl+s");
+    let file = std::fs::read_to_string(h.dir.path().join("Users/folder.toml")).must();
+    assert!(file.contains("X-Team") && file.contains("blue"), "{file}");
+    assert!(!h.app.tabs[h.app.active].dirty());
+    // A request of the folder lists the inherited header and sends it.
+    open(&mut h, "delete user");
+    h.app.tabs[h.app.active].req_tab = 1;
+    let sc = h.screen();
+    assert!(
+        sc.contains("From folders") && sc.contains("X-Team: {{team}}"),
+        "{sc}"
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    let caps = s.http.take();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0].header("x-team").as_deref(), Some("blue"));
+    // The folder tab comes back with the session.
+    let session = h.app.session();
+    assert!(
+        session
+            .tabs
+            .iter()
+            .any(|t| t.folder.as_deref() == Some("Users"))
+    );
+    // Renaming the folder moves the open folder tab with it.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("Users");
+    h.key("r");
+    h.key("ctrl+a");
+    h.type_text("People");
+    h.key("enter");
+    assert!(
+        h.app
+            .tabs
+            .iter()
+            .any(|t| t.folder.as_deref() == Some("People")),
+        "{:?}",
+        h.app
+            .tabs
+            .iter()
+            .map(|t| t.folder.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `:saveexample` saves the response next to the request, with credential
+/// headers masked; `:examples` lists the examples and shows one.
+#[test]
+fn flow_save_and_show_an_example() {
+    let s = servers();
+    let mut h = harness(&s, 140, 40);
+    open(&mut h, "list users");
+    // Nothing to save before a send.
+    h.app.run_command("saveexample");
+    assert!(
+        status(&h).contains("send the request first"),
+        "{}",
+        status(&h)
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    h.app.run_command("saveexample");
+    assert!(
+        status(&h).contains("saved example 200-ok"),
+        "{}",
+        status(&h)
+    );
+    let file =
+        std::fs::read_to_string(h.dir.path().join("Users/list users.examples/200-ok.toml")).must();
+    assert!(file.starts_with("status = 200\n"), "{file}");
+    // The echo body names the request's headers: the bearer token is masked.
+    assert!(!file.contains("s3cr3t-token"), "{file}");
+    // The examples directory is not a folder in the tree.
+    h.app.rescan();
+    assert!(
+        h.app
+            .tree
+            .root
+            .find_folder("Users/list users.examples")
+            .is_none()
+    );
+    h.app.run_command("examples");
+    assert!(h.screen().contains("Saved examples"), "{}", h.screen());
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("example: 200-ok"), "{sc}");
+    h.app.run_command("examples delete 200-ok");
+    assert!(!h.dir.path().join("Users/list users.examples").exists());
 }

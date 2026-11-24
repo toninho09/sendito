@@ -157,15 +157,75 @@ pub struct WsConfig {
     pub timeout_ms: u64,
 }
 
-/// Authorization-code + PKCE settings for `[oauth.<name>]`.
+/// An OAuth 2 identity for HTTP requests (`[oauth.<name>]`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct OAuthIdentity {
+    /// How the token is obtained.
+    #[serde(skip_serializing_if = "OAuthGrant::is_default")]
+    pub grant: OAuthGrant,
+    /// Authorization code only.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub authorize_url: String,
     pub token_url: String,
+    /// Device code only (RFC 8628).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub device_authorization_url: String,
     pub client_id: String,
     pub client_secret: Option<String>,
+    /// Password grant only; may use `{{variables}}`, secrets included.
+    pub username: Option<String>,
+    /// Password grant only; keep it in a secret: `{{name}}`.
+    pub password: Option<String>,
     pub scopes: Vec<String>,
+}
+
+/// The OAuth 2 grant of an identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthGrant {
+    /// A browser sign-in with PKCE (`sendito auth login`).
+    #[default]
+    AuthorizationCode,
+    /// A token for the client itself, requested when a request needs one.
+    ClientCredentials,
+    /// The resource owner's username and password, sent to the token
+    /// endpoint when a request needs a token.
+    Password,
+    /// A code the user enters on another device (`sendito auth login`).
+    DeviceCode,
+}
+
+impl OAuthGrant {
+    pub const ALL: [OAuthGrant; 4] = [
+        OAuthGrant::AuthorizationCode,
+        OAuthGrant::ClientCredentials,
+        OAuthGrant::Password,
+        OAuthGrant::DeviceCode,
+    ];
+
+    fn is_default(&self) -> bool {
+        *self == OAuthGrant::AuthorizationCode
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OAuthGrant::AuthorizationCode => "authorization_code",
+            OAuthGrant::ClientCredentials => "client_credentials",
+            OAuthGrant::Password => "password",
+            OAuthGrant::DeviceCode => "device_code",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|g| g.as_str() == s.trim())
+    }
+
+    /// Needs a sign-in by a person (`sendito auth login`); the other grants
+    /// get a token when a request needs one.
+    pub fn interactive(self) -> bool {
+        matches!(self, OAuthGrant::AuthorizationCode | OAuthGrant::DeviceCode)
+    }
 }
 
 /// MCP settings and the servers a request can call (`[mcp.servers.<name>]`).
@@ -824,12 +884,28 @@ scopes = ["read"]
                 client_id: "id".into(),
                 client_secret: Some("{{s}}".into()),
                 scopes: vec!["repo".into()],
+                ..Default::default()
+            },
+        );
+        ids.insert(
+            "robot".to_string(),
+            OAuthIdentity {
+                grant: OAuthGrant::Password,
+                token_url: "https://t".into(),
+                client_id: "id".into(),
+                username: Some("{{user}}".into()),
+                password: Some("{{pw}}".into()),
+                ..Default::default()
             },
         );
         set_table(&p, &["oauth"], &ids).unwrap();
         let (c, w) = load(None, Some(&p));
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(c.oauth, ids);
+        // Defaults stay out of the file: no grant line for the default grant.
+        let text = fs::read_to_string(&p).unwrap();
+        assert_eq!(text.matches("grant = ").count(), 1, "{text}");
+        assert!(text.contains("grant = \"password\"") && !text.contains("authorize_url = \"\""));
         assert!(!c.ui.mouse);
         set_table(&p, &["oauth"], &BTreeMap::<String, OAuthIdentity>::new()).unwrap();
         let (c, _) = load(None, Some(&p));

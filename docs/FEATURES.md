@@ -20,7 +20,9 @@ requests as plain TOML files that you can version in git.
 | Environments and secrets | yes | `--env`, `run` | [Variables and secrets](#variables-and-secrets) |
 | Scripts (set / extract / assert) | yes | `run` | [Scripts](#scripts) |
 | Collections on disk | yes | all commands | [Storage](#storage) |
-| Import (Postman / Insomnia / Bruno / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
+| Folder settings (inherited headers, auth, variables, scripts) | yes | `run`, exports | [Folder settings](#folder-settings) |
+| Saved example responses | yes | — | [Saved examples](#saved-examples) |
+| Import (Postman / Insomnia / Bruno / OpenAPI / `.http` / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
 | Export (curl / `.http`) | yes | `sendito curl`, `sendito http` | [Import and export](#import-and-export) |
 | History | yes | `run` records it | [Storage](#storage) |
 | Cookie jar | yes | `--no-cookies` | [HTTP](#http) |
@@ -62,12 +64,25 @@ The wire rules are exact and spelled out in
     the extension, explicit boundary);
   * `file` (raw bytes of a path, relative to the collection root, `~/` expands).
 * **Auth** — one of:
+  * `inherit` (the default: the auth of the nearest folder that sets one, see
+    [Folder settings](#folder-settings));
   * `none`;
   * `basic` (`Authorization: Basic base64(user:pass)`);
   * `bearer`;
   * `apikey`, sent as a header or as a query parameter;
-  * `oauth`, naming an identity from `[oauth.<name>]` (authorization code +
-    PKCE, tokens in the OS keychain, one refresh and retry on `401`).
+  * `oauth`, naming an identity from `[oauth.<name>]` (tokens in the OS
+    keychain, one refresh and retry on `401`). The grant is authorization code
+    + PKCE (a browser sign-in), device code (a code to enter on another
+    device), or client credentials / password (no sign-in: a token is
+    requested when a request needs one, also in CI);
+  * `digest` (RFC 7616: SHA-256 or MD5, `qop=auth`; the first send gets the
+    server's challenge and the request is sent once more with the answer);
+  * `awsv4` (AWS Signature Version 4 over the request as it is sent: access
+    key, secret key, optional session token, region, service; not for a
+    multipart body);
+  * `jwt` (a JWT signed at send time from the claims: HS256/384/512 with a
+    secret, RS256/ES256 with a PEM key file; `expires_in_s` adds `iat` and
+    `exp`; also for gRPC and WebSocket).
 * **Per-request options**: `timeout_ms`, `follow_redirects` (default on, up to
   10 hops, no `Referer` added; authentication stays behind on a redirect to
   another origin), `verify_tls`, `cookies`.
@@ -333,12 +348,61 @@ token = "{{token}}"
 
 ---
 
+## Folder settings
+
+A folder, and the collection root, can hold a `folder.toml`
+([FORMAT.md](../FORMAT.md#folder-settings)). Its headers, auth, variables and
+scripts apply to every request below it.
+
+* **Auth**: a request without its own auth inherits the auth of the nearest
+  folder that sets one. "No auth" (`type = "none"`) in the request turns that
+  off. MCP requests do not inherit an auth.
+* **Headers**: sent before the request's own; a request header of the same
+  name replaces the folder's, and a disabled request row stops it. gRPC
+  requests get them as metadata.
+* **Variables**: above the environment, below the runtime variables.
+* **Scripts**: the folder's rows run before the request's.
+* **Folder tab**: `s` on a tree folder (on a request: its folder) or
+  `:folder` opens the settings in a tab with **Headers · Auth · Vars ·
+  Scripts**. The card names the folder and how many requests the settings
+  reach. `Ctrl+S` writes `folder.toml`; empty settings remove it. A folder tab
+  is never sent.
+* **In a request tab**: the Auth tab offers **Inherit** and names the folder
+  the auth comes from (`→ Bearer token from Users`); the Headers tab lists
+  the headers the folders add under the table ("From folders").
+* **Everywhere**: `sendito run`, folder runs, the curl and `.http` exports
+  and the history use the request with what it inherits. A `folder.toml`
+  that cannot be read stops the send and names the file.
+* **Imports**: Postman and Insomnia folder auth and Bruno `folder.bru` /
+  `collection.bru` become `folder.toml`.
+
+---
+
+## Saved examples
+
+An HTTP request can keep example responses next to its file
+(`<name>.examples/`, [FORMAT.md](../FORMAT.md#saved-examples)).
+
+* **`:saveexample [name]`** saves the response on screen: status, headers and
+  body (as received, before a jq filter). The default name is the status and
+  reason (`200-ok`). Credential headers (`Set-Cookie`, `Authorization`, …) are
+  masked, and so are the secrets the server echoed.
+* **`:examples`** lists them with their status; Enter shows one in the
+  response pane, marked `example: <name>` in the border. `:examples delete
+  <name>` deletes one.
+* Renaming, moving, duplicating or deleting the request takes its examples
+  along. The tree does not show the `.examples` directories.
+* **Imports**: Postman saved responses become examples.
+
+---
+
 ## Variables and secrets
 
 Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 
 * **Lookup order, last wins**: collection variables → active environment →
-  runtime variables set by scripts.
+  the variables of the request's folders (`folder.toml`) → runtime variables
+  set by scripts.
 * **Nesting**: a value may contain `{{other}}`, resolved up to 8 levels; cycles
   stay unresolved.
 * **Dynamic values** are generated once per send:
@@ -436,14 +500,31 @@ Full schema and the directory diagram: [FORMAT.md](../FORMAT.md).
 collection):
 
 * **Postman Collection v2.1** — folders, requests (method, URL, query, headers,
-  every body mode, basic / bearer / API-key auth with inheritance), collection
-  variables, dynamic-variable aliases. Scripts, saved examples, OAuth 2, Digest
-  and descriptions are **reported**, not converted.
+  every body mode, basic / bearer / API-key / Digest / AWS SigV4 / JWT auth;
+  folder and collection auth go to `folder.toml`), collection
+  variables, dynamic-variable aliases, saved responses (as examples). Scripts,
+  OAuth 2, a JWT private key and descriptions are **reported**, not converted.
 * **Insomnia v4/v5** — folders, supported HTTP requests, selectable
   environments, `{{ _.name }}` templates where expressible. Private
   environments are not imported.
 * **Bruno directory** — folders, supported HTTP requests, environments; secret
   variables are reported.
+* **OpenAPI 3.0 / 3.1 and Swagger 2.0** (JSON, or YAML with `.yaml`/`.yml`) —
+  one request per operation, one folder per first tag, `{{baseUrl}}` from the
+  first server (each server also becomes an environment when there are
+  several), path parameters as `{{name}}` collection variables, query and
+  header parameters (required ones enabled), the request body from its
+  example or a sample of its schema (JSON, form, multipart), the response
+  examples as saved examples, and basic / bearer / Digest / API-key security
+  (the document's security goes to the root `folder.toml`; an operation's own
+  security to the request). OAuth 2 and OpenID Connect security, cookie
+  parameters and external `$ref`s are reported.
+* **`.http` / `.rest` file** (JetBrains HTTP client, VS Code REST Client) —
+  `###` blocks, `@name = value` variables, `# @name`, `# @timeout`,
+  `# @no-redirect`, multi-line queries, headers, JSON / form / raw / `< file`
+  bodies, `Authorization: Basic|Digest user password` and `Bearer token` as
+  auth, and the environments of `http-client.env.json` next to it. Response
+  handlers and `http-client.private.env.json` are reported.
 * **curl paste** — paste a `curl …` command into the URL field or the import
   dialog. Supported flags include `-X -H -d --data-* -F/--form/--form-string
   -u -A -e -b -G -I -L -k -m --url --json --compressed --http* -x`. curl
@@ -666,8 +747,10 @@ path or text removes the key. Two rows open editors of their own.
 | Skipped directories | `collection.ignore` | Comma-separated; empty = the defaults |
 
 **OAuth editor** (`:oauth`): one row per `[oauth.<name>]` identity — name,
-authorize URL, token URL, client ID, client secret and scopes (separated by
-spaces). The name, the two URLs and the client ID are required. A client
+grant, authorize or device URL, token URL, client ID, client secret, username,
+password and scopes (separated by spaces). The name, the token URL and the
+client ID are required; the authorize URL for `authorization_code`, the device
+URL for `device_code` and the username for `password`. A client
 secret without `{{variable}}` is saved with a warning: keep it in an
 environment secret and write `{{name}}`.
 

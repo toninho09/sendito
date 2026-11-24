@@ -409,6 +409,27 @@ fn respond(c: &Captured, port: u16) -> Reply {
             let n: usize = n.parse().unwrap_or(1000);
             (200, ct(), big_json(n), None)
         }
+        // HTTP Digest (RFC 7616, SHA-256, qop=auth) for `user` with `pass`:
+        // a challenge first, then 200 when the answer checks out.
+        ["digest", user, pass] => {
+            let answer = c.header("authorization").unwrap_or_default();
+            if digest_ok(&answer, user, pass, &c.method()) {
+                (200, ct(), json(serde_json::json!({"digest": "ok"})), None)
+            } else {
+                (
+                    401,
+                    vec![(
+                        "WWW-Authenticate".into(),
+                        format!(
+                            "Digest realm=\"{DIGEST_REALM}\", qop=\"auth\", algorithm=SHA-256, \
+                             nonce=\"{DIGEST_NONCE}\", opaque=\"corpus-opaque\""
+                        ),
+                    )],
+                    Vec::new(),
+                    None,
+                )
+            }
+        }
         _ => {
             let headers: Vec<serde_json::Value> = c
                 .headers()
@@ -436,6 +457,40 @@ fn respond(c: &Captured, port: u16) -> Reply {
             )
         }
     }
+}
+
+const DIGEST_REALM: &str = "corpus";
+const DIGEST_NONCE: &str = "corpus-nonce";
+
+/// Checks a Digest answer on its own (not with Sendito's code): SHA-256,
+/// `qop=auth`, the nonce this server sent.
+fn digest_ok(header: &str, user: &str, pass: &str, method: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let Some(params) = header.strip_prefix("Digest ") else {
+        return false;
+    };
+    let get = |k: &str| {
+        params.split(", ").find_map(|p| {
+            let (n, v) = p.split_once('=')?;
+            (n == k).then(|| v.trim_matches('"').to_string())
+        })
+    };
+    let h = |s: String| {
+        Sha256::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let (Some(uri), Some(nc), Some(cnonce), Some(response)) =
+        (get("uri"), get("nc"), get("cnonce"), get("response"))
+    else {
+        return false;
+    };
+    let ha1 = h(format!("{user}:{DIGEST_REALM}:{pass}"));
+    let ha2 = h(format!("{method}:{uri}"));
+    get("username").as_deref() == Some(user)
+        && get("nonce").as_deref() == Some(DIGEST_NONCE)
+        && response == h(format!("{ha1}:{DIGEST_NONCE}:{nc}:{cnonce}:auth:{ha2}"))
 }
 
 /// A JSON document of roughly `n` bytes with nested objects and arrays.

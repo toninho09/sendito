@@ -100,7 +100,8 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         cmd: ThemeCmd,
     },
-    /// Import a Postman, Insomnia, or Bruno collection.
+    /// Import a Postman, Insomnia or Bruno collection, an OpenAPI / Swagger
+    /// document (JSON or YAML) or a `.http` file.
     Import {
         /// JSON export file, or a Bruno collection directory.
         file: PathBuf,

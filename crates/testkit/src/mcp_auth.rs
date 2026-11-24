@@ -32,6 +32,10 @@ struct State {
     logins: u32,
     refreshes: u32,
     http_requests: u32,
+    /// Tokens issued for client_credentials, password and device_code.
+    grants: u32,
+    /// device code → token polls so far
+    devices: HashMap<String, u32>,
 }
 
 impl State {
@@ -71,6 +75,12 @@ impl McpAuth {
 
     pub fn http_requests(&self) -> u32 {
         self.state.lock().map(|s| s.http_requests).unwrap_or(0)
+    }
+
+    /// Tokens issued without a browser: client_credentials, password and
+    /// device_code.
+    pub fn grants(&self) -> u32 {
+        self.state.lock().map(|s| s.grants).unwrap_or(0)
     }
 }
 
@@ -280,6 +290,30 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, base: String) -> s
                     .await?;
                 }
             }
+            // RFC 8628: the first poll is pending, the next one gets tokens.
+            ("POST", "/device") => {
+                let form = parse_query(&body);
+                if form.get("client_id").map(String::as_str) != Some("test-client") {
+                    respond(
+                        &mut sock,
+                        400,
+                        "application/json",
+                        "{\"error\":\"invalid_client\"}",
+                        "",
+                    )
+                    .await?;
+                    continue;
+                }
+                let code = format!("dev-{}", state.lock().map(|mut s| s.new_id()).unwrap_or(0));
+                if let Ok(mut s) = state.lock() {
+                    s.devices.insert(code.clone(), 0);
+                }
+                let text = format!(
+                    "{{\"device_code\":\"{code}\",\"user_code\":\"ABCD-EFGH\",\
+                     \"verification_uri\":\"{base}/device-page\",\"expires_in\":60,\"interval\":1}}"
+                );
+                respond(&mut sock, 200, "application/json", &text, "").await?;
+            }
             ("POST", "/token" | "/token-http") => {
                 let form = parse_query(&body);
                 let resource = if path == "/token-http" {
@@ -334,6 +368,26 @@ fn token(
             }
             s.refreshes += 1;
         }
+        // No refresh token for these two: a new token is requested instead.
+        Some("client_credentials") => return Ok(plain_token(&mut s)),
+        Some("password") => {
+            if form.get("username").map(String::as_str) != Some("ana")
+                || form.get("password").map(String::as_str) != Some("test-password")
+            {
+                return Err("invalid_grant".into());
+            }
+            return Ok(plain_token(&mut s));
+        }
+        Some("urn:ietf:params:oauth:grant-type:device_code") => {
+            let code = form.get("device_code").ok_or("no device_code")?;
+            let polls = s.devices.get_mut(code).ok_or("expired_token")?;
+            *polls += 1;
+            if *polls == 1 {
+                return Err("authorization_pending".into());
+            }
+            s.devices.remove(code);
+            s.grants += 1;
+        }
         g => return Err(format!("bad grant_type {g:?}")),
     }
     let id = s.new_id();
@@ -345,6 +399,15 @@ fn token(
         "{{\"access_token\":\"{access}\",\"token_type\":\"Bearer\",\
           \"expires_in\":1,\"refresh_token\":\"{refresh}\"}}"
     ))
+}
+
+/// An access token without a refresh token (client_credentials, password).
+fn plain_token(s: &mut State) -> String {
+    s.grants += 1;
+    let id = s.new_id();
+    let access = format!("tok-{id}");
+    s.access.insert(access.clone(), id);
+    format!("{{\"access_token\":\"{access}\",\"token_type\":\"Bearer\",\"expires_in\":1}}")
 }
 
 /// A tiny JSON-RPC answer so `tools/call` works behind the auth wall.

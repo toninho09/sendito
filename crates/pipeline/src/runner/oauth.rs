@@ -39,13 +39,26 @@ pub fn oauth_settings(
     let render = |text: &str, field: &str, allow_secret: bool| {
         render_oauth_field(scope, text, field, allow_secret)
     };
+    use sendito_mcp::oauth::Grant;
+    use sendito_store::config::OAuthGrant;
+    let opt =
+        |v: &Option<String>, field: &str| v.as_deref().map(|s| render(s, field, true)).transpose();
     Ok(sendito_mcp::oauth::OAuthSettings {
+        grant: match identity.grant {
+            OAuthGrant::AuthorizationCode => Grant::AuthorizationCode,
+            OAuthGrant::ClientCredentials => Grant::ClientCredentials,
+            OAuthGrant::Password => Grant::Password,
+            OAuthGrant::DeviceCode => Grant::DeviceCode,
+        },
+        username: opt(&identity.username, "username")?,
+        password: opt(&identity.password, "password")?,
+        device_authorization_url: Some(render(
+            &identity.device_authorization_url,
+            "device_authorization_url",
+            false,
+        )?),
         client_id: Some(render(&identity.client_id, "client_id", false)?),
-        client_secret: identity
-            .client_secret
-            .as_deref()
-            .map(|s| render(s, "client_secret", true))
-            .transpose()?,
+        client_secret: opt(&identity.client_secret, "client_secret")?,
         authorize_url: Some(render(&identity.authorize_url, "authorize_url", false)?),
         token_url: Some(render(&identity.token_url, "token_url", false)?),
         scopes: identity
@@ -58,7 +71,8 @@ pub fn oauth_settings(
     })
 }
 
-/// Renders one OAuth setting. Only `client_secret` may hold a secret.
+/// Renders one OAuth setting. Only the client secret, the username and the
+/// password may hold a secret.
 pub(super) fn render_oauth_field(
     scope: &Scope,
     text: &str,
@@ -113,6 +127,7 @@ pub fn mcp_oauth_settings(
             .map(|t| render_oauth_field(scope, t, "scope", false))
             .collect::<Result<_, _>>()?,
         network,
+        ..Default::default()
     })
 }
 

@@ -37,6 +37,8 @@ mod commands;
 mod completion;
 mod dialogs;
 mod env;
+mod examples;
+mod folders;
 mod hints;
 mod history;
 mod import_export;
@@ -52,6 +54,7 @@ mod settings;
 mod text;
 mod tree_ops;
 
+pub use folders::folder_label;
 pub use settings::*;
 pub use text::*;
 
@@ -378,6 +381,8 @@ pub struct App {
     pub env_list: Vec<String>,
     pub runtime: BTreeMap<String, VarValue>,
     pub names: Scope,
+    /// The settings of every folder that has a `folder.toml`, by folder path.
+    pub folders: BTreeMap<String, FolderSettings>,
     pub clipboard: Clipboard,
     pub pending: Vec<Chord>,
     pub overlay: Option<Overlay>,
@@ -516,6 +521,7 @@ impl App {
             env_list,
             runtime,
             names,
+            folders: BTreeMap::new(),
             clipboard: Clipboard::default(),
             pending: Vec::new(),
             overlay: None,
@@ -557,6 +563,7 @@ impl App {
             cursor: None,
             complete: None,
         };
+        app.load_folders();
         app.restore_tabs(&session);
         if app.tabs.is_empty() {
             app.focus = Focus::Sidebar;
@@ -573,6 +580,10 @@ impl App {
 
     fn restore_tabs(&mut self, s: &Session) {
         for t in &s.tabs {
+            if let Some(rel) = &t.folder {
+                self.restore_folder_tab(rel, t.draft.as_deref());
+                continue;
+            }
             let saved = t.path.as_ref().and_then(|p| self.project.coll.load(p).ok());
             let draft = t
                 .draft
@@ -646,11 +657,15 @@ impl App {
                     path: t.path.clone(),
                     name: t.name.clone(),
                     // Tabs without a file always keep their request here.
-                    draft: if t.dirty() || t.path.is_none() {
+                    draft: if t.folder.is_some() {
+                        t.dirty()
+                            .then(|| sendito_store::folder::to_toml(&t.folder_settings()))
+                    } else if t.dirty() || t.path.is_none() {
                         Some(sendito_store::request_file::to_toml(&t.model))
                     } else {
                         None
                     },
+                    folder: t.folder.clone(),
                 })
                 .collect(),
             layout: self.layout.clone(),
@@ -715,10 +730,10 @@ impl App {
         let mut changed = false;
         for i in due {
             self.tabs[i].refresh_model();
-            let request = &self.tabs[i].model;
-            let undefined = !runner::unresolved(request, &self.names).is_empty()
+            let (request, names) = self.effective(&self.tabs[i]);
+            let undefined = !runner::unresolved(&request, &names).is_empty()
                 || !sendito_core::template::empty_placeholders(
-                    &sendito_store::request_file::to_toml(request),
+                    &sendito_store::request_file::to_toml(&request),
                 )
                 .is_empty();
             if undefined {

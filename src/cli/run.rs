@@ -47,10 +47,17 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
             "warning: --report json applies to folder runs; ignoring it for a single request"
         );
     }
-    let (scope, errors, failed) = scope_of(&project, &env).await;
+    let (mut scope, errors, failed) = scope_of(&project, &env).await;
     for e in &errors {
         eprintln!("warning: {e}");
     }
+    let req = match project.coll.chain(&rel) {
+        Ok(chain) => runner::with_folders(&req, &chain, &mut scope),
+        Err(e) => {
+            eprintln!("sendito: {e}");
+            return ExitCode::from(3);
+        }
+    };
     // Check against the loaded values, as a folder run does: a secret that
     // failed to load (no keychain entry, no secrets.toml) is unresolved.
     let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
@@ -399,8 +406,15 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         rels.len()
     );
     for rel in &rels {
-        let req = match project.coll.load(rel) {
-            Ok(r) => r,
+        // Each request gets its folders' variables on top of the shared
+        // scope; the runtime values it extracts go to the shared scope.
+        let mut rscope = scope.clone();
+        let loaded = project
+            .coll
+            .load(rel)
+            .and_then(|r| project.coll.chain(rel).map(|chain| (r, chain)));
+        let req = match loaded {
+            Ok((r, chain)) => runner::with_folders(&r, &chain, &mut rscope),
             Err(e) => {
                 nerr += 1;
                 // Multi-line parse errors: the first line names the file and
@@ -429,7 +443,7 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             Request::Ws(_) => "websocket",
             Request::Mcp(_) => "mcp",
         };
-        let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
+        let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
         if !un.is_empty() && !allow_unresolved {
             nunresolved += 1;
             let names = un
@@ -456,7 +470,7 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         }
         let ctx = ctx_for(&project, &env, rel, no_history, no_cookies, schemas.clone());
         let t0 = Instant::now();
-        let ran = run_one(&ctx, &req, &scope, &scope_errors, &mcp_info, no_cookies).await;
+        let ran = run_one(&ctx, &req, &rscope, &scope_errors, &mcp_info, no_cookies).await;
         let ms = t0.elapsed().as_millis();
         let mark = match ran.outcome {
             "pass" => "PASS",

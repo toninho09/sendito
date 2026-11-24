@@ -4,6 +4,8 @@ pub mod collection;
 pub mod config;
 pub mod cookies;
 pub mod env;
+pub mod examples;
+pub mod folder;
 mod fsio;
 pub mod history;
 pub mod init;

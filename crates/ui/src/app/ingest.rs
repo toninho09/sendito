@@ -170,9 +170,16 @@ impl App {
             AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
             AppMsg::OAuthUrl { job, url } => {
                 if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
-                    let text = format!(
-                        "Open this URL in a browser if it did not open automatically:\n\n{url}\n\nWaiting for the callback. Close this dialog and use Ctrl+W x to cancel.\n"
-                    );
+                    let text = if url.starts_with("http") {
+                        format!(
+                            "Open this URL in a browser if it did not open automatically:\n\n{url}\n\nWaiting for the callback. Close this dialog and use Ctrl+W x to cancel.\n"
+                        )
+                    } else {
+                        // A device sign-in: the page and the code.
+                        format!(
+                            "{url}\n\nWaiting for the sign-in on the other device. Close this dialog and use Ctrl+W x to cancel.\n"
+                        )
+                    };
                     if self.overlay.is_none() {
                         self.show_report("OAuth login", &text);
                     } else {
@@ -440,6 +447,11 @@ impl App {
                     };
                     resp.set_body(std::mem::take(&mut o.doc));
                     resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, &o)));
+                    resp.http_head = Some(crate::tab::HttpHead {
+                        status: r.status,
+                        reason: r.reason.clone(),
+                        headers: r.headers.clone(),
+                    });
                     let mut timing = timing_text(r, o.body_size);
                     if let Some(w) = &mut t.watch {
                         w.record(r.status < 400, r.timing.total.as_secs_f64() * 1000.0);

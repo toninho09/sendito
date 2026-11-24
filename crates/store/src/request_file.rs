@@ -8,7 +8,7 @@ use crate::tomlfmt::Writer;
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawKv {
+pub(crate) struct RawKv {
     name: String,
     #[serde(default)]
     value: String,
@@ -63,7 +63,7 @@ struct RawBody {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawAuth {
+pub(crate) struct RawAuth {
     #[serde(rename = "type")]
     kind: String,
     #[serde(default)]
@@ -80,6 +80,23 @@ struct RawAuth {
     value: String,
     #[serde(rename = "in", default)]
     location: Option<String>,
+    #[serde(default)]
+    access_key: String,
+    #[serde(default)]
+    secret_key: String,
+    #[serde(default)]
+    session_token: String,
+    #[serde(default)]
+    region: String,
+    #[serde(default)]
+    service: String,
+    algorithm: Option<String>,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    private_key: String,
+    claims: Option<String>,
+    expires_in_s: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -124,7 +141,7 @@ struct RawAssert {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawScripts {
+pub(crate) struct RawScripts {
     #[serde(default)]
     pre: Vec<RawSet>,
     #[serde(default)]
@@ -163,7 +180,7 @@ struct RawRequest {
     scripts: RawScripts,
 }
 
-fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
+pub(crate) fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
     v.into_iter()
         .map(|k| KeyValue {
             name: k.name,
@@ -173,9 +190,11 @@ fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
         .collect()
 }
 
-fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
-    let Some(a) = a else { return Ok(Auth::None) };
+pub(crate) fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
+    // No `[auth]` table: the request inherits its folder's auth.
+    let Some(a) = a else { return Ok(Auth::Inherit) };
     Ok(match a.kind.as_str() {
+        "inherit" => Auth::Inherit,
         "none" => Auth::None,
         "basic" => Auth::Basic {
             username: a.username,
@@ -196,11 +215,34 @@ fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
                 }
             },
         },
+        "digest" => Auth::Digest {
+            username: a.username,
+            password: a.password,
+        },
+        "awsv4" => Auth::AwsSigV4 {
+            access_key: a.access_key,
+            secret_key: a.secret_key,
+            session_token: a.session_token,
+            region: a.region,
+            service: a.service,
+        },
+        "jwt" => Auth::Jwt {
+            algorithm: match a.algorithm.as_deref() {
+                None => JwtAlgorithm::Hs256,
+                Some(s) => JwtAlgorithm::parse(s).ok_or_else(|| {
+                    format!("auth.algorithm must be HS256, HS384, HS512, RS256 or ES256, got {s:?}")
+                })?,
+            },
+            secret: a.secret,
+            private_key: a.private_key,
+            claims: a.claims.unwrap_or_else(|| "{}".into()),
+            expires_in_s: a.expires_in_s,
+        },
         o => return Err(format!("unknown auth type {o:?}")),
     })
 }
 
-fn scripts(s: RawScripts) -> Result<Scripts, String> {
+pub(crate) fn scripts(s: RawScripts) -> Result<Scripts, String> {
     let src = |s: &str| {
         Source::parse(s)
             .ok_or_else(|| format!("unknown script source {s:?} (jsonpath, header, status)"))
@@ -370,7 +412,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
     }
 }
 
-fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
+pub(crate) fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
     for kv in v {
         w.array_table(table);
         w.str("name", &kv.name);
@@ -381,9 +423,14 @@ fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
     }
 }
 
-fn write_auth(w: &mut Writer, a: &Auth) {
+pub(crate) fn write_auth(w: &mut Writer, a: &Auth) {
     match a {
-        Auth::None => {}
+        Auth::Inherit => {}
+        // Written out: an absent `[auth]` means "inherit".
+        Auth::None => {
+            w.table("auth");
+            w.str("type", "none");
+        }
         Auth::Basic { username, password } => {
             w.table("auth");
             w.str("type", "basic");
@@ -417,10 +464,54 @@ fn write_auth(w: &mut Writer, a: &Auth) {
                 },
             );
         }
+        Auth::Digest { username, password } => {
+            w.table("auth");
+            w.str("type", "digest");
+            w.str("username", username);
+            w.str("password", password);
+        }
+        Auth::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        } => {
+            w.table("auth");
+            w.str("type", "awsv4");
+            w.str("access_key", access_key);
+            w.str("secret_key", secret_key);
+            if !session_token.is_empty() {
+                w.str("session_token", session_token);
+            }
+            w.str("region", region);
+            w.str("service", service);
+        }
+        Auth::Jwt {
+            algorithm,
+            secret,
+            private_key,
+            claims,
+            expires_in_s,
+        } => {
+            w.table("auth");
+            w.str("type", "jwt");
+            w.str("algorithm", algorithm.as_str());
+            if !secret.is_empty() {
+                w.str("secret", secret);
+            }
+            if !private_key.is_empty() {
+                w.str("private_key", private_key);
+            }
+            w.str("claims", claims);
+            if let Some(s) = expires_in_s {
+                w.int("expires_in_s", *s);
+            }
+        }
     }
 }
 
-fn write_scripts(w: &mut Writer, s: &Scripts) {
+pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
     for p in &s.pre {
         w.array_table("scripts.pre");
         w.str("var", &p.var);
@@ -762,6 +853,7 @@ mod tests {
             },
         ] {
             for auth in [
+                Auth::Inherit,
                 Auth::None,
                 Auth::Basic {
                     username: "u".into(),
@@ -770,6 +862,38 @@ mod tests {
                 Auth::Bearer { token: "t".into() },
                 Auth::OAuth {
                     name: "identity".into(),
+                },
+                Auth::Digest {
+                    username: "u".into(),
+                    password: "{{p}}".into(),
+                },
+                Auth::AwsSigV4 {
+                    access_key: "{{ak}}".into(),
+                    secret_key: "{{sk}}".into(),
+                    session_token: String::new(),
+                    region: "eu-west-1".into(),
+                    service: "execute-api".into(),
+                },
+                Auth::AwsSigV4 {
+                    access_key: "a".into(),
+                    secret_key: "s".into(),
+                    session_token: "{{st}}".into(),
+                    region: "us-east-1".into(),
+                    service: "s3".into(),
+                },
+                Auth::Jwt {
+                    algorithm: JwtAlgorithm::Hs512,
+                    secret: "{{jwt_secret}}".into(),
+                    private_key: String::new(),
+                    claims: "{\n  \"sub\": \"{{user}}\"\n}\n".into(),
+                    expires_in_s: Some(300),
+                },
+                Auth::Jwt {
+                    algorithm: JwtAlgorithm::Es256,
+                    secret: String::new(),
+                    private_key: "keys/es.pem".into(),
+                    claims: "{}".into(),
+                    expires_in_s: None,
                 },
             ] {
                 reqs.push(Request::Http(HttpRequest {
@@ -785,6 +909,21 @@ mod tests {
             assert_eq!(back, r, "{t}");
             assert_eq!(to_toml(&back), t);
         }
+    }
+
+    #[test]
+    fn absent_auth_inherits_and_none_is_written() {
+        let Request::Http(h) = parse("kind = \"http\"\nurl = \"x\"\n").unwrap() else {
+            panic!()
+        };
+        assert_eq!(h.auth, Auth::Inherit);
+        let none = Request::Http(HttpRequest {
+            auth: Auth::None,
+            ..Default::default()
+        });
+        assert!(to_toml(&none).contains("[auth]\ntype = \"none\""));
+        let inherit = parse("kind = \"http\"\n[auth]\ntype = \"inherit\"\n").unwrap();
+        assert!(!to_toml(&inherit).contains("[auth]"));
     }
 
     #[test]

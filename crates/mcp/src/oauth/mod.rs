@@ -25,9 +25,34 @@ pub use encode::*;
 pub use flow::*;
 pub use provider::*;
 
-/// OAuth settings from `[mcp.servers.<name>.auth]` (type = "oauth").
+/// How an HTTP OAuth identity gets its tokens (MCP servers always use the
+/// authorization code).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Grant {
+    #[default]
+    AuthorizationCode,
+    ClientCredentials,
+    Password,
+    DeviceCode,
+}
+
+impl Grant {
+    /// Gets a token without a person: when a request needs one.
+    pub fn automatic(self) -> bool {
+        matches!(self, Grant::ClientCredentials | Grant::Password)
+    }
+}
+
+/// OAuth settings from `[mcp.servers.<name>.auth]` (type = "oauth") or from
+/// an HTTP identity (`[oauth.<name>]`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OAuthSettings {
+    pub grant: Grant,
+    /// Password grant only.
+    pub username: Option<String>,
+    pub password: Option<String>,
+    /// Device code only (RFC 8628).
+    pub device_authorization_url: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub authorize_url: Option<String>,

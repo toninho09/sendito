@@ -14,6 +14,7 @@ pub(super) fn draw_url_card(app: &App, buf: &mut Buffer, area: Rect, theme: &The
         Kind::Grpc => ("GRPC".to_string(), theme.grpc),
         Kind::Ws => ("WS".to_string(), theme.grpc),
         Kind::Mcp => ("MCP".to_string(), theme.grpc),
+        Kind::Folder => ("FOLDER".to_string(), theme.accent),
     };
     let focused = matches!(app.focus, Focus::Bar(_));
     let border = if focused || theme.mono {
@@ -129,7 +130,11 @@ pub(in crate::draw) fn draw_url_strip(
     } else {
         Rect::new(area.x, area.y, area.width, 1)
     };
-    let names = app.names.clone();
+    if let Some(rel) = app.tabs[app.active].folder.clone() {
+        draw_folder_strip(app, buf, row, theme, &rel);
+        return None;
+    }
+    let names = app.tab_names();
     let is_def = move |n: &str| names.is_defined(n);
     let focus = app.focus;
     let icons = app.icons;
@@ -274,6 +279,8 @@ pub(in crate::draw) fn draw_url_strip(
             }
             app.hits.push((Rect::new(cx, y, cw, 1), Hit::Bar(0)));
         }
+        // Drawn by `draw_folder_strip`.
+        Kind::Folder => {}
         Kind::Ws => {
             // The card's title names the kind; a single row keeps a static
             // badge where the other kinds have their picker chip.
@@ -396,7 +403,7 @@ pub(in crate::draw) fn draw_url_strip(
             .bar_text(1)
             .map(|e| e.text())
             .unwrap_or_default();
-        if let Some((preview, undefined)) = resolved_preview(&app.names, &text) {
+        if let Some((preview, undefined)) = resolved_preview(&app.tab_names(), &text) {
             let x = tr.x + text.width() as u16 + 2;
             let room = (tr.x + tr.width).saturating_sub(x);
             if room >= 10 {
@@ -431,4 +438,29 @@ pub(in crate::draw) fn draw_url_strip(
         app.hits.push((Rect::new(sx, y, sw, 1), Hit::Bar(3)));
     }
     cursor
+}
+
+/// The strip of a folder tab: which folder, how many requests its settings
+/// reach, and the file they are saved to.
+fn draw_folder_strip(app: &App, buf: &mut Buffer, row: Rect, theme: &Theme, rel: &str) {
+    let requests = app
+        .tree
+        .root
+        .find_folder(rel)
+        .map(|f| f.count_requests())
+        .unwrap_or(0);
+    let file = if rel.is_empty() {
+        sendito_store::folder::FILE.to_string()
+    } else {
+        format!("{rel}/{}", sendito_store::folder::FILE)
+    };
+    let name = crate::app::folder_label(rel);
+    let save = app.keymap.hint(Action::Save, app.vim);
+    let text = format!(
+        "{name} · applies to {requests} request{} below · {save} saves {file}",
+        if requests == 1 { "" } else { "s" }
+    );
+    let x = row.x + 1;
+    let w = row.width.saturating_sub(2);
+    put(buf, x, row.y, &truncate(&text, w as usize), w, theme.dim());
 }

@@ -73,8 +73,20 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":grpcmethod", "Choose the gRPC service and method"),
     (":rescan", "Read the collection from disk again"),
     (
+        ":saveexample [name]",
+        "Save the response on screen as an example of the request",
+    ),
+    (
+        ":examples",
+        "List the request's saved examples and show one (:examples delete <name> deletes)",
+    ),
+    (
+        ":folder",
+        "Edit the settings of the active request's folder (headers, auth, variables, scripts)",
+    ),
+    (
         ":import [path]",
-        "Import a Postman/Insomnia file or Bruno directory, or paste curl",
+        "Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl",
     ),
     (
         ":curl",

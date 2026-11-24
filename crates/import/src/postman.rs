@@ -140,6 +140,68 @@ fn auth(v: Option<&Value>, item: &str, ctx: &mut Ctx) -> Option<Auth> {
                 location,
             })
         }
+        "digest" => {
+            let a = v.get("digest");
+            Some(Auth::Digest {
+                username: d(&auth_param(a, "username"), ctx),
+                password: d(&auth_param(a, "password"), ctx),
+            })
+        }
+        "awsv4" => {
+            let a = v.get("awsv4");
+            Some(Auth::AwsSigV4 {
+                access_key: d(&auth_param(a, "accessKey"), ctx),
+                secret_key: d(&auth_param(a, "secretKey"), ctx),
+                session_token: d(&auth_param(a, "sessionToken"), ctx),
+                region: d(&auth_param(a, "region"), ctx),
+                service: d(&auth_param(a, "service"), ctx),
+            })
+        }
+        "jwt" => {
+            let a = v.get("jwt");
+            let name = auth_param(a, "algorithm");
+            let Some(algorithm) =
+                JwtAlgorithm::parse(if name.is_empty() { "HS256" } else { &name })
+            else {
+                ctx.skip(
+                    item,
+                    format!(
+                        "its JWT algorithm {name} is not supported, so the request has no auth"
+                    ),
+                );
+                return Some(Auth::None);
+            };
+            if !algorithm.uses_secret() {
+                ctx.skip(
+                    item,
+                    "its JWT private key was not imported: save the PEM in a file and set the key path",
+                );
+            }
+            if auth_param(a, "isSecretBase64Encoded") == "true" {
+                ctx.skip(
+                    item,
+                    "its JWT secret is base64-encoded in Postman; Sendito uses it as text",
+                );
+            }
+            if auth_param(a, "addTokenTo") == "queryParam" {
+                ctx.skip(
+                    item,
+                    "its JWT went in the query; Sendito sends it in the Authorization header",
+                );
+            }
+            let claims = auth_param(a, "payload");
+            Some(Auth::Jwt {
+                algorithm,
+                secret: d(&auth_param(a, "secret"), ctx),
+                private_key: String::new(),
+                claims: if claims.trim().is_empty() {
+                    "{}".into()
+                } else {
+                    d(&claims, ctx)
+                },
+                expires_in_s: None,
+            })
+        }
         other => {
             ctx.skip(
                 item,
@@ -148,6 +210,38 @@ fn auth(v: Option<&Value>, item: &str, ctx: &mut Ctx) -> Option<Auth> {
             Some(Auth::None)
         }
     }
+}
+
+/// A request's saved responses (`response[]`): name, status code and text,
+/// headers and body.
+fn examples(v: Option<&Value>) -> Vec<sendito_store::examples::Example> {
+    v.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let status = r.get("code").and_then(Value::as_u64).unwrap_or(200) as u16;
+            let reason = get_str(r, "status");
+            let name = get_str(r, "name");
+            sendito_store::examples::Example {
+                name: if name.trim().is_empty() {
+                    sendito_store::examples::Example::default_name(status, &reason)
+                } else {
+                    name
+                },
+                status,
+                reason,
+                headers: r
+                    .get("header")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|h| (get_str(h, "key"), get_str(h, "value")))
+                    .filter(|(k, _)| !k.is_empty())
+                    .collect(),
+                body: get_str(r, "body").into_bytes(),
+            }
+        })
+        .collect()
 }
 
 fn url_of(v: Option<&Value>, item: &str, ctx: &mut Ctx) -> (String, Vec<KeyValue>) {
@@ -441,12 +535,11 @@ fn body(v: Option<&Value>, item: &str, ctx: &mut Ctx) -> Body {
     }
 }
 
-fn request(item: &Value, path: &str, inherited: &Auth, ctx: &mut Ctx) -> Request {
+fn request(item: &Value, path: &str, ctx: &mut Ctx) -> Request {
     let r = item.get("request").cloned().unwrap_or(Value::Null);
     if let Value::String(url) = &r {
         return Request::Http(HttpRequest {
             url: url.clone(),
-            auth: inherited.clone(),
             ..Default::default()
         });
     }
@@ -460,7 +553,8 @@ fn request(item: &Value, path: &str, inherited: &Auth, ctx: &mut Ctx) -> Request
     };
     let (url, params) = url_of(r.get("url"), path, ctx);
     let headers = kv_list(r.get("header"), path, ctx);
-    let auth = auth(r.get("auth"), path, ctx).unwrap_or_else(|| inherited.clone());
+    // No auth (or "inherit") inherits from the folder settings, as in Postman.
+    let auth = auth(r.get("auth"), path, ctx).unwrap_or_default();
     let body = body(r.get("body"), path, ctx);
     if r.get("description")
         .is_some_and(|d| !d.is_null() && !s(d).is_empty())
@@ -476,13 +570,6 @@ fn request(item: &Value, path: &str, inherited: &Auth, ctx: &mut Ctx) -> Request
         .is_some_and(|a| !a.is_empty())
     {
         ctx.skip(path, "its JavaScript scripts were not imported (Sendito runs no JavaScript; rebuild checks in the Scripts tab)");
-    }
-    if item
-        .get("response")
-        .and_then(Value::as_array)
-        .is_some_and(|a| !a.is_empty())
-    {
-        ctx.skip(path, "its saved example responses were not imported");
     }
     if item
         .get("protocolProfileBehavior")
@@ -506,17 +593,12 @@ fn request(item: &Value, path: &str, inherited: &Auth, ctx: &mut Ctx) -> Request
     })
 }
 
-fn folder(
-    items: &[Value],
-    name: &str,
-    path: &str,
-    inherited: &Auth,
-    ctx: &mut Ctx,
-) -> ImportFolder {
+fn folder(items: &[Value], name: &str, path: &str, auth_of: Auth, ctx: &mut Ctx) -> ImportFolder {
     let mut f = ImportFolder {
         name: name.to_string(),
         ..Default::default()
     };
+    f.settings.auth = auth_of;
     for it in items {
         let iname = {
             let n = get_str(it, "name");
@@ -532,7 +614,7 @@ fn folder(
             format!("{path} / {iname}")
         };
         if let Some(children) = it.get("item").and_then(Value::as_array) {
-            let auth = auth(it.get("auth"), &ipath, ctx).unwrap_or_else(|| inherited.clone());
+            let auth = auth(it.get("auth"), &ipath, ctx).unwrap_or_default();
             if it
                 .get("event")
                 .and_then(Value::as_array)
@@ -543,9 +625,13 @@ fn folder(
             if it.get("description").is_some_and(|d| !s(d).is_empty()) {
                 ctx.skip(&ipath, "the folder's description was not imported");
             }
-            f.folders.push(folder(children, &iname, &ipath, &auth, ctx));
+            f.folders.push(folder(children, &iname, &ipath, auth, ctx));
         } else if it.get("request").is_some() {
-            let req = request(it, &ipath, inherited, ctx);
+            let req = request(it, &ipath, ctx);
+            let examples = examples(it.get("response"));
+            if !examples.is_empty() {
+                f.examples.insert(f.requests.len(), examples);
+            }
             f.requests.push((iname, req));
         } else {
             ctx.skip(&ipath, "item has neither a request nor sub-items");
@@ -579,7 +665,7 @@ pub fn import(json: &str) -> Result<ImportResult, PostmanError> {
     let mut ctx = Ctx {
         skipped: Vec::new(),
     };
-    let root_auth = auth(v.get("auth"), "(collection)", &mut ctx).unwrap_or(Auth::None);
+    let root_auth = auth(v.get("auth"), "(collection)", &mut ctx).unwrap_or_default();
     if v.get("event")
         .and_then(Value::as_array)
         .is_some_and(|a| !a.is_empty())
@@ -589,7 +675,7 @@ pub fn import(json: &str) -> Result<ImportResult, PostmanError> {
             "the collection's JavaScript scripts were not imported (Sendito runs no JavaScript)",
         );
     }
-    let root = folder(items, &name, "", &root_auth, &mut ctx);
+    let root = folder(items, &name, "", root_auth, &mut ctx);
     let mut variables = Vec::new();
     for var in v
         .get("variable")
@@ -652,23 +738,20 @@ fn report_undefined(
 }
 
 fn collect_uses(f: &ImportFolder, prefix: &str, uses: &mut Vec<(String, Vec<String>)>) {
+    // A folder's auth is used by the folder itself (its `folder.toml`).
+    let folder = if prefix.is_empty() {
+        format!("{} (folder)", f.name)
+    } else {
+        format!("{prefix} (folder)")
+    };
+    add_uses(&sendito_store::folder::to_toml(&f.settings), &folder, uses);
     for (name, req) in &f.requests {
         let item = if prefix.is_empty() {
             name.clone()
         } else {
             format!("{prefix} / {name}")
         };
-        let text = sendito_store::request_file::to_toml(req);
-        for v in sendito_core::template::var_names(&text) {
-            match uses.iter_mut().find(|(n, _)| n == v) {
-                Some((_, items)) => {
-                    if !items.contains(&item) {
-                        items.push(item.clone());
-                    }
-                }
-                None => uses.push((v.to_string(), vec![item.clone()])),
-            }
-        }
+        add_uses(&sendito_store::request_file::to_toml(req), &item, uses);
     }
     for sub in &f.folders {
         let p = if prefix.is_empty() {
@@ -677,6 +760,19 @@ fn collect_uses(f: &ImportFolder, prefix: &str, uses: &mut Vec<(String, Vec<Stri
             format!("{prefix} / {}", sub.name)
         };
         collect_uses(sub, &p, uses);
+    }
+}
+
+fn add_uses(text: &str, item: &str, uses: &mut Vec<(String, Vec<String>)>) {
+    for v in sendito_core::template::var_names(text) {
+        match uses.iter_mut().find(|(n, _)| n == v) {
+            Some((_, items)) => {
+                if !items.iter().any(|i| i == item) {
+                    items.push(item.to_string());
+                }
+            }
+            None => uses.push((v.to_string(), vec![item.to_string()])),
+        }
     }
 }
 
@@ -726,8 +822,10 @@ mod tests {
         assert_eq!(list.method, "GET");
         assert_eq!(list.url, "{{base}}/users?page=1");
         assert_eq!(list.params, vec![KeyValue::new("debug", "1").disabled()]);
+        // The folder's auth goes to its settings; the request inherits it.
+        assert_eq!(list.auth, Auth::Inherit);
         assert_eq!(
-            list.auth,
+            users.settings.auth,
             Auth::Basic {
                 username: "u".into(),
                 password: "p".into()
@@ -741,6 +839,8 @@ mod tests {
         let Request::Http(create) = &users.requests[2].1 else {
             panic!()
         };
+        // Its saved response is an example (an empty one gets a default name).
+        assert_eq!(users.examples[&2][0].name, "200");
         assert_eq!(create.headers[0].value, "{{$uuid}}");
         assert!(!create.headers[1].enabled);
         assert_eq!(
@@ -752,8 +852,9 @@ mod tests {
         let Request::Http(form) = &r.root.requests[0].1 else {
             panic!()
         };
+        assert_eq!(form.auth, Auth::Inherit);
         assert_eq!(
-            form.auth,
+            r.root.settings.auth,
             Auth::Bearer {
                 token: "{{token}}".into()
             }
@@ -813,7 +914,6 @@ mod tests {
             "was disabled in Postman",
             ":id in the URL",
             "its JavaScript scripts",
-            "saved example",
             "oauth2",
             "description",
             "GraphQL",

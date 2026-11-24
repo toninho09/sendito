@@ -212,8 +212,13 @@ pub async fn exec_http(
                         provider = Some(p);
                         Ok(())
                     }
+                    Err(e @ sendito_mcp::McpError::NeedsLogin(_)) => {
+                        Err(sendito_http::HttpError::Send(format!(
+                            "OAuth token unavailable ({e}); run sendito auth login for this identity and environment"
+                        )))
+                    }
                     Err(e) => Err(sendito_http::HttpError::Send(format!(
-                        "OAuth token unavailable ({e}); run sendito auth login for this identity and environment"
+                        "OAuth token request failed: {e}"
                     ))),
                 },
                 Err(e) => Err(sendito_http::HttpError::Send(e)),
@@ -221,10 +226,21 @@ pub async fn exec_http(
         }
         _ => Ok(()),
     };
+    // JWT and AWS SigV4 go on now that the headers are final (the jar's
+    // Cookie included); Digest answers the server's challenge below.
+    let auth_setup = match auth_setup {
+        Ok(()) => sign_before_send(ctx, &mut resolved, &mut cookie_secrets).await,
+        Err(e) => Err(e),
+    };
     let jar_hops = JarHops {
         root: &ctx.root,
         env: jar_env,
         secrets: Mutex::new(Vec::new()),
+    };
+    let jar = Jar {
+        on: cookies_on,
+        env: jar_env,
+        hops: &jar_hops,
     };
     // One timeout covers the first send, a token refresh and the retry.
     let budget = resolved
@@ -236,70 +252,91 @@ pub async fn exec_http(
         Ok(()) => send_http(&resolved, ctx, cookies_on.then_some(&jar_hops)).await,
         Err(e) => Err(e),
     };
-    if sent.as_ref().is_ok_and(|r| {
-        r.status == 401
-            && url::Url::parse(&resolved.url)
-                .ok()
-                .zip(url::Url::parse(&r.url).ok())
-                .is_some_and(|(original, final_url)| original.origin() == final_url.origin())
-    }) && let Some(provider) = provider
+    // A 401 from the origin the request was sent to.
+    let unauthorized = |sent: &Result<sendito_http::HttpResponse, sendito_http::HttpError>,
+                        url: &str| {
+        sent.as_ref().is_ok_and(|r| {
+            r.status == 401
+                && url::Url::parse(url)
+                    .ok()
+                    .zip(url::Url::parse(&r.url).ok())
+                    .is_some_and(|(original, final_url)| original.origin() == final_url.origin())
+        })
+    };
+    if unauthorized(&sent, &resolved.url)
+        && let Some(provider) = provider
+        && let Ok(first) = &sent
     {
         use sendito_mcp::TokenProvider;
         let left = budget.saturating_sub(started.elapsed());
         let refreshed = tokio::time::timeout(left, provider.token(true)).await;
         let left = budget.saturating_sub(started.elapsed());
-        match refreshed {
-            Ok(Err(e)) => {
-                sent = Err(sendito_http::HttpError::Send(format!(
-                    "OAuth refresh failed ({e}); sign in again"
-                )));
-            }
+        sent = match refreshed {
+            Ok(Err(e)) => Err(sendito_http::HttpError::Send(format!(
+                "OAuth refresh failed ({e}); sign in again"
+            ))),
             Ok(Ok(token)) if !left.is_zero() => {
                 resolved.timeout_ms = Some((left.as_millis() as u64).max(1));
                 cookie_secrets.push(token.clone());
-                if let Some((_, value)) = resolved
-                    .headers
-                    .iter_mut()
-                    .find(|(n, _)| n.eq_ignore_ascii_case("authorization"))
-                {
-                    *value = format!("Bearer {token}");
-                }
-                // The 401 may have set cookies: store them and replay the
-                // updated jar on the retry instead of the first send's header.
-                if cookies_on && let Ok(first) = &sent {
-                    let sets = set_cookie_headers(&first.headers);
-                    if !sets.is_empty() {
-                        cookie_secrets.extend(sendito_store::cookies::response_secrets(&sets));
-                        if let Err(e) = jar_store(&ctx.root, jar_env, &first.url, &sets).await {
-                            resolved.notes.push(format!("cookies not stored: {e}"));
-                        }
-                    }
-                    match jar_request(&ctx.root, jar_env, &resolved.url).await {
-                        Ok((header, secrets)) => {
-                            cookie_secrets.extend(secrets);
-                            match (jar_cookie, header) {
-                                (Some(i), Some(h)) => resolved.headers[i].1 = h,
-                                (Some(i), None) => {
-                                    resolved.headers.remove(i);
-                                    resolved.header_origins.remove(i);
-                                }
-                                (None, Some(h)) => {
-                                    resolved.headers.push(("Cookie".into(), h));
-                                    resolved
-                                        .header_origins
-                                        .push(sendito_core::resolve::HeaderOrigin::Jar);
-                                }
-                                (None, None) => {}
-                            }
-                        }
-                        Err(e) => resolved.notes.push(format!("cookie jar: {e}")),
-                    }
-                }
-                sent = send_http(&resolved, ctx, cookies_on.then_some(&jar_hops)).await;
+                let first = first.clone();
+                retry_401(
+                    ctx,
+                    &mut resolved,
+                    &first,
+                    format!("Bearer {token}"),
+                    &jar,
+                    &mut jar_cookie,
+                    &mut cookie_secrets,
+                )
+                .await
             }
-            _ => sent = Err(sendito_http::HttpError::Timeout(budget.as_millis())),
+            _ => Err(sendito_http::HttpError::Timeout(budget.as_millis())),
+        };
+    } else if unauthorized(&sent, &resolved.url)
+        && let Some(SignedAuth::Digest { username, password }) = resolved.signed.clone()
+        && let Ok(first) = &sent
+    {
+        let values: Vec<&str> = first
+            .headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("www-authenticate"))
+            .map(|(_, v)| v.as_str())
+            .collect();
+        match sendito_http::auth::digest::challenge(&values) {
+            None => resolved
+                .notes
+                .push("Digest: the 401 has no Digest challenge Sendito can answer".into()),
+            Some(challenge) => {
+                let left = budget.saturating_sub(started.elapsed());
+                if left.is_zero() {
+                    sent = Err(sendito_http::HttpError::Timeout(budget.as_millis()));
+                } else {
+                    resolved.timeout_ms = Some((left.as_millis() as u64).max(1));
+                    let value = sendito_http::auth::digest::authorization(
+                        &challenge,
+                        &username,
+                        &password,
+                        &resolved.method,
+                        &request_target(&resolved.url),
+                        &sendito_http::auth::digest::cnonce(),
+                        1,
+                    );
+                    cookie_secrets.push(value.clone());
+                    let first = first.clone();
+                    sent = retry_401(
+                        ctx,
+                        &mut resolved,
+                        &first,
+                        value,
+                        &jar,
+                        &mut jar_cookie,
+                        &mut cookie_secrets,
+                    )
+                    .await;
+                }
+            }
         }
-    };
+    }
     if let Ok(mut hop_secrets) = jar_hops.secrets.lock() {
         cookie_secrets.append(&mut hop_secrets);
     }
@@ -409,4 +446,200 @@ pub async fn exec_http(
         scripts: results,
         scope_errors,
     }
+}
+
+/// The cookie jar of a send, for a retry after a `401`.
+struct Jar<'a> {
+    on: bool,
+    env: &'a str,
+    hops: &'a JarHops<'a>,
+}
+
+/// Sends `resolved` again after a `401`, with `authorization` as its
+/// `Authorization` header. With the cookie jar, the cookies the 401 set are
+/// stored and the jar's new `Cookie` header replaces the first send's.
+async fn retry_401(
+    ctx: &RunCtx,
+    resolved: &mut sendito_core::resolve::ResolvedHttp,
+    first: &sendito_http::HttpResponse,
+    authorization: String,
+    jar: &Jar<'_>,
+    jar_cookie: &mut Option<usize>,
+    secrets: &mut Vec<String>,
+) -> Result<sendito_http::HttpResponse, sendito_http::HttpError> {
+    match resolved
+        .headers
+        .iter_mut()
+        .find(|(n, _)| n.eq_ignore_ascii_case("authorization"))
+    {
+        Some((_, value)) => *value = authorization,
+        None => {
+            resolved
+                .headers
+                .push(("Authorization".into(), authorization));
+            resolved
+                .header_origins
+                .push(sendito_core::resolve::HeaderOrigin::Auth);
+        }
+    }
+    if jar.on {
+        let sets = set_cookie_headers(&first.headers);
+        if !sets.is_empty() {
+            secrets.extend(sendito_store::cookies::response_secrets(&sets));
+            if let Err(e) = jar_store(&ctx.root, jar.env, &first.url, &sets).await {
+                resolved.notes.push(format!("cookies not stored: {e}"));
+            }
+        }
+        match jar_request(&ctx.root, jar.env, &resolved.url).await {
+            Ok((header, found)) => {
+                secrets.extend(found);
+                match (*jar_cookie, header) {
+                    (Some(i), Some(h)) => resolved.headers[i].1 = h,
+                    (Some(i), None) => {
+                        resolved.headers.remove(i);
+                        resolved.header_origins.remove(i);
+                        *jar_cookie = None;
+                    }
+                    (None, Some(h)) => {
+                        resolved.headers.push(("Cookie".into(), h));
+                        resolved
+                            .header_origins
+                            .push(sendito_core::resolve::HeaderOrigin::Jar);
+                        *jar_cookie = Some(resolved.headers.len() - 1);
+                    }
+                    (None, None) => {}
+                }
+            }
+            Err(e) => resolved.notes.push(format!("cookie jar: {e}")),
+        }
+    }
+    send_http(resolved, ctx, jar.on.then_some(jar.hops)).await
+}
+
+/// The path and query of a URL, as the request line has them (Digest `uri`).
+fn request_target(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) => match u.query() {
+            Some(q) => format!("{}?{q}", u.path()),
+            None => u.path().to_string(),
+        },
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Adds the headers of a JWT or an AWS SigV4 auth; the values are masked
+/// like other secrets.
+async fn sign_before_send(
+    ctx: &RunCtx,
+    resolved: &mut sendito_core::resolve::ResolvedHttp,
+    secrets: &mut Vec<String>,
+) -> Result<(), sendito_http::HttpError> {
+    let fail = sendito_http::HttpError::Send;
+    let added = match resolved.signed.clone() {
+        Some(SignedAuth::Jwt { .. }) => {
+            let token = jwt_token(&ctx.root, resolved.signed.as_ref())
+                .await
+                .map_err(fail)?;
+            vec![(
+                "Authorization".to_string(),
+                format!("Bearer {}", token.unwrap_or_default()),
+            )]
+        }
+        Some(SignedAuth::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        }) => {
+            let payload = payload_sha256(&resolved.body).await.map_err(fail)?;
+            if !session_token.is_empty() {
+                secrets.push(session_token.clone());
+            }
+            sendito_http::auth::sigv4::sign(
+                &resolved.method,
+                &resolved.url,
+                &resolved.headers,
+                &payload,
+                &sendito_http::auth::sigv4::Credentials {
+                    access_key: &access_key,
+                    secret_key: &secret_key,
+                    session_token: &session_token,
+                    region: &region,
+                    service: &service,
+                },
+                std::time::SystemTime::now(),
+            )
+            .map_err(fail)?
+        }
+        _ => return Ok(()),
+    };
+    for (name, value) in added {
+        if name == "Authorization" {
+            secrets.push(value.clone());
+        }
+        resolved.headers.push((name, value));
+        resolved
+            .header_origins
+            .push(sendito_core::resolve::HeaderOrigin::Auth);
+    }
+    Ok(())
+}
+
+/// The SHA-256 of the body as it is sent (AWS SigV4).
+async fn payload_sha256(body: &sendito_core::resolve::ResolvedBody) -> Result<String, String> {
+    use sendito_core::resolve::ResolvedBody;
+    match body {
+        ResolvedBody::None => Ok(sendito_http::auth::sha256_hex(b"")),
+        ResolvedBody::Bytes(b) => Ok(sendito_http::auth::sha256_hex(b)),
+        ResolvedBody::File(p) => tokio::fs::read(p)
+            .await
+            .map(|b| sendito_http::auth::sha256_hex(&b))
+            .map_err(|e| format!("AWS SigV4: cannot read {}: {e}", p.display())),
+        ResolvedBody::Multipart(_) => Err(
+            "AWS SigV4 cannot sign a multipart body: its boundary is made when it is sent; \
+             use a file or raw body"
+                .into(),
+        ),
+    }
+}
+
+/// The token of a JWT auth, signed now; `None` for any other auth. The
+/// private key path is relative to the collection root.
+pub(super) async fn jwt_token(
+    root: &Path,
+    signed: Option<&SignedAuth>,
+) -> Result<Option<String>, String> {
+    let Some(SignedAuth::Jwt {
+        algorithm,
+        secret,
+        private_key,
+        claims,
+        expires_in_s,
+    }) = signed
+    else {
+        return Ok(None);
+    };
+    let key = if algorithm.uses_secret() {
+        None
+    } else if private_key.is_empty() {
+        return Err(format!("{} needs a private key file", algorithm.as_str()));
+    } else {
+        let path = sendito_store::env::expand(root, private_key);
+        Some(
+            tokio::fs::read(&path)
+                .await
+                .map_err(|e| format!("JWT key {}: {e}", path.display()))?,
+        )
+    };
+    sendito_http::auth::jwt::sign(
+        *algorithm,
+        secret,
+        key.as_deref(),
+        claims,
+        *expires_in_s,
+        std::time::SystemTime::now(),
+    )
+    .map(Some)
+    .map_err(|e| format!("JWT: {e}"))
 }

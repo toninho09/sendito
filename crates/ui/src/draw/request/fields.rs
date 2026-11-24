@@ -29,6 +29,17 @@ pub(in crate::draw) fn short_label(f: Field) -> &'static str {
         Field::McpTool => "Tool",
         Field::WsSubprotocols => "Subprotocols",
         Field::WsMessages => "Messages sent after connecting",
+        Field::Vars => "Variables",
+        Field::AwsAccessKey => "Access key",
+        Field::AwsSecretKey => "Secret key",
+        Field::AwsSessionToken => "Session token",
+        Field::AwsRegion => "Region",
+        Field::AwsService => "Service",
+        Field::JwtAlgorithm => "Algorithm",
+        Field::JwtSecret => "Secret",
+        Field::JwtPrivateKey => "Private key",
+        Field::JwtClaims => "Claims (JSON)",
+        Field::JwtExpires => "Expires in s",
         Field::ScriptPre | Field::ScriptExtract | Field::ScriptAssert => "",
         _ => "",
     }
@@ -198,6 +209,14 @@ pub(in crate::draw) fn draw_fields(
 ) -> Option<(u16, u16)> {
     let focus_body = app.focus == Focus::ReqBody;
     let root = app.project.root.clone();
+    // What the tab inherits from its folders: drawn beside the auth type and
+    // under the headers.
+    let (auth_note, from_folders) = {
+        let t = &app.tabs[app.active];
+        let note =
+            (t.ed.auth_kind == sendito_core::AuthKind::Inherit).then(|| app.inherited_auth_note(t));
+        (note, app.inherited_rows(t))
+    };
     let tab = &mut app.tabs[app.active];
     let fields = tab.fields();
     app.areas.field_rects.clear();
@@ -369,7 +388,10 @@ pub(in crate::draw) fn draw_fields(
                     theme.bar()
                 };
                 put(buf, vr.x, y, &label, vr.width, theme.bold(st));
-                let hint = choice_hint(*f);
+                let hint = match &auth_note {
+                    Some(note) if *f == Field::AuthKind => note.as_str(),
+                    _ => choice_hint(*f),
+                };
                 let hx = vr.x + label.width() as u16 + 1;
                 let room = (vr.x + vr.width).saturating_sub(hx);
                 put(
@@ -420,32 +442,76 @@ pub(in crate::draw) fn draw_fields(
         }
         y += h;
     }
-    // Headers tab: show the headers Sendito adds automatically.
-    if tab.ed.kind == Kind::Http && tab.req_tab == 1 {
-        let auto = tab.ed.auto_headers();
-        if !auto.is_empty() {
-            let rows = auto.len().min(3) as u16 + 1;
-            if let Some(r) = rects.first().copied() {
-                let used = tab.ed.headers.rows.len() as u16 + 2;
-                if r.height > used + rows {
-                    let ay = r.y + r.height - rows;
-                    rule(buf, r.x, ay, r.width, "Added automatically", theme);
-                    for (j, (n, v)) in auto.iter().take(3).enumerate() {
-                        put(
-                            buf,
-                            r.x + 2,
-                            ay + 1 + j as u16,
-                            &truncate(&format!("{n}: {v}"), r.width.saturating_sub(2) as usize),
-                            r.width.saturating_sub(2),
-                            theme.dim(),
-                        );
-                    }
-                }
+    // Under the headers (gRPC: metadata): the rows the folders add, then
+    // for HTTP the headers Sendito adds automatically.
+    let header_field = fields
+        .iter()
+        .position(|f| matches!(f, Field::Headers | Field::Metadata));
+    if let Some(i) = header_field
+        && let Some(r) = rects.get(i).copied()
+    {
+        let mut sections: Vec<(&str, Vec<String>)> = Vec::new();
+        if !from_folders.is_empty() {
+            sections.push((
+                "From folders",
+                from_folders
+                    .iter()
+                    .map(|(n, v, from)| format!("{n}: {v}  ({from})"))
+                    .collect(),
+            ));
+        }
+        if tab.ed.kind == Kind::Http {
+            let auto = tab.ed.auto_headers();
+            if !auto.is_empty() {
+                sections.push((
+                    "Added automatically",
+                    auto.iter().map(|(n, v)| format!("{n}: {v}")).collect(),
+                ));
             }
         }
+        let rows = tab
+            .ed
+            .table_mut(fields[i])
+            .map(|t| t.rows.len() as u16)
+            .unwrap_or(0);
+        draw_sections(buf, r, rows + 2, &sections, theme);
     }
     app.areas.field_rects = rects;
     cursor
+}
+
+/// Read-only sections at the bottom of `r` (a title rule and up to three
+/// dim lines each), drawn only where `used` rows of the table leave room.
+fn draw_sections(
+    buf: &mut Buffer,
+    r: Rect,
+    used: u16,
+    sections: &[(&str, Vec<String>)],
+    theme: &Theme,
+) {
+    let need: u16 = sections
+        .iter()
+        .map(|(_, lines)| lines.len().min(3) as u16 + 1)
+        .sum();
+    if need == 0 || r.height <= used + need {
+        return;
+    }
+    let mut y = r.y + r.height - need;
+    for (title, lines) in sections {
+        rule(buf, r.x, y, r.width, title, theme);
+        y += 1;
+        for line in lines.iter().take(3) {
+            put(
+                buf,
+                r.x + 2,
+                y,
+                &truncate(line, r.width.saturating_sub(2) as usize),
+                r.width.saturating_sub(2),
+                theme.dim(),
+            );
+            y += 1;
+        }
+    }
 }
 
 /// The Content-Type the body adds on the wire and where it comes from: the
@@ -472,6 +538,7 @@ pub(in crate::draw) fn choice_hint(f: Field) -> &'static str {
         Field::AuthIn => "header or query parameter",
         Field::SchemaSource => "reflection asks the server; proto files are compiled locally",
         Field::ScriptSection => "Enter to switch",
+        Field::JwtAlgorithm => "HS* sign with a secret; RS256 and ES256 with a PEM key",
         _ => "",
     }
 }

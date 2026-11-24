@@ -112,6 +112,17 @@ impl Scope {
         &self.layers
     }
 
+    /// Inserts `layers` just below the first layer named `above` (on top
+    /// when there is none), keeping their order.
+    pub fn insert_below(&mut self, above: &str, layers: Vec<Layer>) {
+        let at = self
+            .layers
+            .iter()
+            .position(|l| l.name == above)
+            .unwrap_or(self.layers.len());
+        self.layers.splice(at..at, layers);
+    }
+
     /// Sets a variable in the top layer named `layer`, creating it if needed.
     pub fn set(&mut self, layer: &str, name: impl Into<String>, value: VarValue) {
         if let Some(l) = self.layers.iter_mut().find(|l| l.name == layer) {

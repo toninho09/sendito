@@ -50,10 +50,8 @@ fn postman_import_has_no_unexplained_losses() {
         ("(collection)", "variable \"old\" was disabled"),
         ("Users / Get user", ":id in the URL"),
         ("Users / Admin / Ban user", "JavaScript scripts"),
-        ("Orders / Order receipt", "saved example responses"),
         ("Orders / Cancel order", "description"),
         ("Auth / OAuth token", "\"oauth2\" auth is not supported"),
-        ("Auth / Digest login", "\"digest\" auth is not supported"),
         ("GraphQL query", "GraphQL body became a JSON body"),
         ("Random name", "$randomFirstName"),
         ("Dynamic id", "{{$guid}} became {{$uuid}}"),
@@ -77,7 +75,27 @@ fn postman_import_has_no_unexplained_losses() {
             "missing explanation for {item} ({needle}) in:\n{report}"
         );
     }
-    assert_eq!(r.skipped.len(), 22, "unexpected report entries:\n{report}");
+    assert_eq!(r.skipped.len(), 20, "unexpected report entries:\n{report}");
+    // Saved responses are imported as examples.
+    let receipt = r
+        .root
+        .folders
+        .iter()
+        .find(|f| f.name == "Orders")
+        .and_then(|f| {
+            let i = f.requests.iter().position(|(n, _)| n == "Order receipt")?;
+            f.examples.get(&i)
+        });
+    assert!(receipt.is_some_and(|e| !e.is_empty()));
+    // Digest auth is imported.
+    let digest = r
+        .root
+        .folders
+        .iter()
+        .find(|f| f.name == "Auth")
+        .and_then(|f| f.requests.iter().find(|(n, _)| n == "Digest login"))
+        .map(|(_, req)| req.auth().kind());
+    assert_eq!(digest, Some(sendito_core::AuthKind::Digest));
     // Spot checks of converted content.
     let users = &r.root.folders[0];
     let Request::Http(list) = &users.requests[0].1 else {
@@ -90,7 +108,11 @@ fn postman_import_has_no_unexplained_losses() {
     let Request::Http(ban) = &admin.requests[0].1 else {
         panic!()
     };
-    assert!(matches!(&ban.auth, sendito_core::Auth::Basic { username, .. } if username == "admin"));
+    // The folder's auth goes to its folder.toml; the request inherits it.
+    assert_eq!(ban.auth, sendito_core::Auth::Inherit);
+    assert!(
+        matches!(&admin.settings.auth, sendito_core::Auth::Basic { username, .. } if username == "admin")
+    );
     let Request::Http(dynamic) = &r.root.requests[6].1 else {
         panic!()
     };
@@ -278,6 +300,20 @@ fn format_is_stable() {
     for f in &files {
         let original = std::fs::read(f).unwrap_or_else(|e| panic!("{e}"));
         let text = String::from_utf8(original.clone()).unwrap_or_else(|e| panic!("{e}"));
+        // Folder settings have their own canonical form.
+        if f.file_name()
+            .is_some_and(|n| n == sendito_store::folder::FILE)
+        {
+            let settings = sendito_store::folder::parse(&text)
+                .unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            assert_eq!(
+                sendito_store::folder::to_toml(&settings),
+                text,
+                "{} is not in canonical form",
+                f.display()
+            );
+            continue;
+        }
         let req = sendito_store::request_file::parse(&text)
             .unwrap_or_else(|e| panic!("{}: {e}", f.display()));
         let canonical = sendito_store::request_file::to_toml(&req);
@@ -938,6 +974,7 @@ fn http_oauth_login_refresh_and_send() {
                     verify_tls: true,
                     unresolved: vec![],
                     notes: vec![],
+                    signed: None,
                 };
                 let _ = sendito_http::send(&request, &Default::default()).await;
             });
@@ -958,7 +995,7 @@ fn http_oauth_login_refresh_and_send() {
                 token_url: settings.token_url.take().unwrap(),
                 client_id: "cli-1".into(),
                 client_secret: Some("test-client-secret".into()),
-                scopes: vec![],
+                ..Default::default()
             },
         );
         let account =
@@ -1028,6 +1065,68 @@ fn http_oauth_login_refresh_and_send() {
     });
 }
 
+/// A client_credentials identity needs no sign-in: the first send gets a
+/// token, and the 401 retry gets a new one (no refresh token).
+#[test]
+fn http_oauth_client_credentials_needs_no_login() {
+    use sendito_core::model::{Auth, HttpRequest};
+    use sendito_store::env::MemoryKeychain;
+    use std::sync::Arc;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let srv = sendito_testkit::mcp_auth::start().await.unwrap();
+        let mut p = sendito_pipeline::runner::Project::open_with(
+            dir.path(),
+            Arc::new(MemoryKeychain::default()),
+            None,
+        );
+        p.config.oauth.insert(
+            "machine".into(),
+            sendito_store::config::OAuthIdentity {
+                grant: sendito_store::config::OAuthGrant::ClientCredentials,
+                token_url: format!("{}/token-http", srv.url()),
+                client_id: "cli-1".into(),
+                client_secret: Some("test-client-secret".into()),
+                ..Default::default()
+            },
+        );
+        let ctx = sendito_pipeline::runner::RunCtx {
+            root: dir.path().to_path_buf(),
+            send: p.send_options(),
+            history: None,
+            name: "machine".into(),
+            path: None,
+            env: None,
+            schemas: Default::default(),
+            grpc_deadline_ms: 0,
+            ws_timeout_ms: 0,
+            mask_echoed_secrets: true,
+            cookie_jar: false,
+            oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
+        };
+        let mut req = HttpRequest {
+            url: format!("{}/http-api", srv.url()),
+            auth: Auth::OAuth {
+                name: "machine".into(),
+            },
+            ..Default::default()
+        };
+        req.options.cookies = Some(true);
+        let o = sendito_pipeline::runner::exec_http(&ctx, &req, Scope::new(), vec![]).await;
+        assert_eq!(
+            o.response.as_ref().map(|r| r.status).ok(),
+            Some(200),
+            "{:?}",
+            o.response.err()
+        );
+        assert_eq!(srv.http_requests(), 2);
+        assert_eq!(srv.grants(), 2);
+        assert_eq!(srv.logins(), 0);
+    });
+}
+
 /// A WebSocket session replays the collection cookie jar: the handshake carries
 /// one `Cookie` header. The jar only speaks HTTP, so a ws:// URL must be mapped
 /// to its http:// equivalent instead of being refused.
@@ -1091,4 +1190,40 @@ fn ws_session_replays_the_cookie_jar() {
         head.to_ascii_lowercase().contains("cookie: sid=corpus-1"),
         "{head}"
     );
+}
+
+/// An OpenAPI YAML file imports through the same path as the other formats:
+/// the document's security goes to the root `folder.toml`, the response
+/// examples next to their requests, the servers to environments.
+#[test]
+fn openapi_yaml_file_imports_into_the_collection() {
+    let dir = tempfile::tempdir().unwrap();
+    sendito_store::init::init(dir.path()).unwrap();
+    let spec = dir.path().join("spec.yaml");
+    std::fs::write(
+        &spec,
+        "openapi: 3.1.0\ninfo: {title: Shop}\nservers:\n  - {url: 'https://shop.example.com', description: prod}\n  - {url: 'http://localhost:3000', description: local}\nsecurity: [{bearer: []}]\npaths:\n  /orders/{id}:\n    get:\n      operationId: getOrder\n      tags: [orders]\n      parameters: [{name: id, in: path, required: true}]\n      responses:\n        '200':\n          description: ok\n          content: {application/json: {example: {id: 1}}}\ncomponents:\n  securitySchemes:\n    bearer: {type: http, scheme: bearer}\n",
+    )
+    .unwrap();
+    let (format, result) = sendito_import::import_path(&spec).unwrap();
+    assert_eq!(format, sendito_import::ImportFormat::OpenApi);
+    let coll = sendito_store::Collection::new(dir.path(), vec![]);
+    let envs = sendito_store::env::Envs::new(
+        dir.path(),
+        "t",
+        std::sync::Arc::new(sendito_store::env::MemoryKeychain::default()),
+    );
+    let rep = sendito_import::write(&result, &coll, Some(&envs), "").unwrap();
+    assert_eq!((rep.requests, rep.environments), (1, 2));
+    let chain = coll.chain("Shop/orders/getOrder.toml").unwrap();
+    assert!(matches!(chain[0].1.auth, sendito_core::Auth::Bearer { .. }));
+    assert_eq!(
+        sendito_store::examples::list(&coll, "Shop/orders/getOrder.toml").unwrap(),
+        ["200"]
+    );
+    let Request::Http(req) = coll.load("Shop/orders/getOrder.toml").unwrap() else {
+        panic!()
+    };
+    assert_eq!(req.url, "{{baseUrl}}/orders/{{id}}");
+    assert!(envs.list().iter().any(|e| e == "prod"));
 }

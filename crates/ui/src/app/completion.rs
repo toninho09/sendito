@@ -41,7 +41,7 @@ impl App {
                     .and_then(|s| s.methods.iter().find(|mi| mi.name == m))
                     .map(|mi| mi.input_fields.clone())
             }
-            Kind::Ws => None,
+            Kind::Ws | Kind::Folder => None,
             Kind::Mcp => {
                 let tools = self.mcp_tools(t);
                 tools

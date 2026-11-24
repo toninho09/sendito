@@ -82,7 +82,7 @@ Consequences worth knowing:
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in each crate | `make test` |
-| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (49 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
+| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (54 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
 | Rewrite corpus goldens | same | `make corpus-update` |
 | Integration (HTTP, TLS, proxy) | `tests/integration.rs`, `tests/tls.rs`, `tests/proxy.rs` | `make test` |
 | gRPC calls, MCP client and OAuth | `crates/{grpc,mcp}/tests/` | `make test` |

@@ -5,7 +5,8 @@ use std::path::Path;
 
 use crate::{ImportEnvironment, ImportFolder, ImportResult, Skipped};
 use sendito_core::model::{
-    ApiKeyLocation, Auth, Body, HttpRequest, KeyValue, MultipartPart, PartKind, Request,
+    ApiKeyLocation, Auth, Body, FolderSettings, HttpRequest, KeyValue, MultipartPart, PartKind,
+    Request,
 };
 
 #[derive(Default)]
@@ -99,15 +100,9 @@ fn note(skipped: &mut Vec<Skipped>, item: &str, reason: impl Into<String>) {
     });
 }
 
-fn auth(
-    b: &Blocks,
-    choice: &str,
-    inherited: &Auth,
-    item: &str,
-    skipped: &mut Vec<Skipped>,
-) -> Auth {
+fn auth(b: &Blocks, choice: &str, item: &str, skipped: &mut Vec<Skipped>) -> Auth {
     match choice {
-        "" | "inherit" => inherited.clone(),
+        "" | "inherit" => Auth::Inherit,
         "none" => Auth::None,
         "basic" => Auth::Basic {
             username: field(b.get("auth:basic"), "username"),
@@ -154,12 +149,7 @@ fn file_part(value: &str) -> Option<String> {
         .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
 }
 
-fn request(
-    b: &Blocks,
-    inherited: &Auth,
-    item: &str,
-    skipped: &mut Vec<Skipped>,
-) -> Option<HttpRequest> {
+fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpRequest> {
     let methods = [
         "get", "post", "put", "patch", "delete", "head", "options", "trace", "connect",
     ];
@@ -279,7 +269,7 @@ fn request(
         headers: rows(b.get("headers")),
         params,
         body,
-        auth: auth(b, &field(details, "auth"), inherited, item, skipped),
+        auth: auth(b, &field(details, "auth"), item, skipped),
         ..Default::default()
     })
 }
@@ -293,10 +283,31 @@ fn read_blocks(path: &Path) -> Result<Blocks, String> {
     blocks(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The folder settings a `folder.bru` or `collection.bru` gives: its auth,
+/// its headers and its pre-request variables.
+fn settings(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> FolderSettings {
+    FolderSettings {
+        auth: auth(b, &field(b.get("auth"), "mode"), item, skipped),
+        headers: rows(b.get("headers")),
+        vars: rows(b.get("vars:pre-request")),
+        ..Default::default()
+    }
+}
+
+/// The blocks [`settings`] converts.
+const SETTINGS_BLOCKS: &[&str] = &[
+    "meta",
+    "auth",
+    "auth:basic",
+    "auth:bearer",
+    "auth:apikey",
+    "headers",
+    "vars:pre-request",
+];
+
 fn directory(
     path: &Path,
     name: &str,
-    inherited: &Auth,
     skipped: &mut Vec<Skipped>,
     depth: usize,
 ) -> Result<ImportFolder, String> {
@@ -307,18 +318,14 @@ fn directory(
         name: name.into(),
         ..Default::default()
     };
-    let mut inherited = inherited.clone();
     let config = path.join("folder.bru");
     if is_regular_file(&config) {
         let b = read_blocks(&config)?;
-        let choice = field(b.get("auth"), "mode");
-        inherited = auth(&b, &choice, &inherited, name, skipped);
-        for k in b.0.keys().filter(|k| {
-            !matches!(
-                k.as_str(),
-                "meta" | "auth" | "auth:basic" | "auth:bearer" | "auth:apikey"
-            )
-        }) {
+        folder.settings = settings(&b, name, skipped);
+        for k in
+            b.0.keys()
+                .filter(|k| !SETTINGS_BLOCKS.contains(&k.as_str()))
+        {
             note(
                 skipped,
                 name,
@@ -341,13 +348,9 @@ fn directory(
             if (depth == 0 && file_name == "environments") || file_name == "node_modules" {
                 continue;
             }
-            folder.folders.push(directory(
-                &entry.path(),
-                &file_name,
-                &inherited,
-                skipped,
-                depth + 1,
-            )?);
+            folder
+                .folders
+                .push(directory(&entry.path(), &file_name, skipped, depth + 1)?);
         } else if ty.is_file()
             && file_name.ends_with(".bru")
             && file_name != "folder.bru"
@@ -361,7 +364,7 @@ fn directory(
                 display
             };
             let item = format!("{name} / {display}");
-            if let Some(r) = request(&b, &inherited, &item, skipped) {
+            if let Some(r) = request(&b, &item, skipped) {
                 folder.requests.push((display, Request::Http(r)));
             }
         }
@@ -388,7 +391,7 @@ pub fn import(path: &Path) -> Result<ImportResult, String> {
         .filter(|s| !s.is_empty())
         .unwrap_or("Bruno");
     let mut result = ImportResult::default();
-    let mut inherited = Auth::None;
+    let mut root_settings = FolderSettings::default();
     let collection = path.join("collection.bru");
     if is_regular_file(&collection) {
         let b = read_blocks(&collection)?;
@@ -415,24 +418,9 @@ pub fn import(path: &Path) -> Result<ImportResult, String> {
                 );
             }
         }
-        inherited = auth(
-            &b,
-            &field(b.get("auth"), "mode"),
-            &Auth::None,
-            name,
-            &mut result.skipped,
-        );
+        root_settings = settings(&b, name, &mut result.skipped);
         for k in b.0.keys().filter(|k| {
-            !matches!(
-                k.as_str(),
-                "meta"
-                    | "vars"
-                    | "vars:secret"
-                    | "auth"
-                    | "auth:basic"
-                    | "auth:bearer"
-                    | "auth:apikey"
-            )
+            !SETTINGS_BLOCKS.contains(&k.as_str()) && !matches!(k.as_str(), "vars" | "vars:secret")
         }) {
             note(
                 &mut result.skipped,
@@ -441,7 +429,8 @@ pub fn import(path: &Path) -> Result<ImportResult, String> {
             );
         }
     }
-    result.root = directory(path, name, &inherited, &mut result.skipped, 0)?;
+    result.root = directory(path, name, &mut result.skipped, 0)?;
+    result.root.settings = root_settings;
     let envdir = path.join("environments");
     if std::fs::symlink_metadata(&envdir).is_ok_and(|m| m.file_type().is_dir()) {
         let mut entries: Vec<_> = std::fs::read_dir(&envdir)
@@ -520,7 +509,7 @@ mod tests {
     fn nested_body_and_disabled_rows() {
         let b = blocks("meta {\n  name: Create\n  type: http\n}\npost {\n  url: {{base}}/users\n  body: json\n  auth: bearer\n}\nheaders {\n  ~X-Off: value\n  X-On: yes\n}\nauth:bearer {\n  token: {{token}}\n}\nbody:json {\n  {\n    \"x\": 1\n  }\n}\nscript:pre-request {\n  foo();\n}\n").unwrap();
         let mut skipped = Vec::new();
-        let req = request(&b, &Auth::None, "Create", &mut skipped).unwrap();
+        let req = request(&b, "Create", &mut skipped).unwrap();
         assert_eq!(req.url, "{{base}}/users");
         assert!(!req.headers[0].enabled);
         assert_eq!(
@@ -562,5 +551,43 @@ mod tests {
         );
         assert!(!format!("{r:?}").contains("secret-value"));
         assert!(r.skipped.iter().any(|s| s.reason.contains("secret")));
+    }
+
+    #[test]
+    fn folder_and_collection_files_become_folder_settings() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("bruno.json"), "{\"name\":\"Example\"}").unwrap();
+        std::fs::write(
+            d.path().join("collection.bru"),
+            "auth {\n  mode: bearer\n}\nauth:bearer {\n  token: {{token}}\n}\nheaders {\n  X-App: demo\n}\n",
+        )
+        .unwrap();
+        std::fs::create_dir(d.path().join("Users")).unwrap();
+        std::fs::write(
+            d.path().join("Users/folder.bru"),
+            "auth {\n  mode: none\n}\nvars:pre-request {\n  page: 1\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.path().join("Users/get.bru"),
+            "meta {\n  name: list\n}\nget {\n  url: {{base}}/users\n}\n",
+        )
+        .unwrap();
+        let r = import(d.path()).unwrap();
+        assert_eq!(
+            r.root.settings.auth,
+            Auth::Bearer {
+                token: "{{token}}".into()
+            }
+        );
+        assert_eq!(
+            r.root.settings.headers,
+            vec![KeyValue::new("X-App", "demo")]
+        );
+        let users = &r.root.folders[0];
+        assert_eq!(users.settings.auth, Auth::None);
+        assert_eq!(users.settings.vars, vec![KeyValue::new("page", "1")]);
+        assert_eq!(users.requests[0].1.auth(), &Auth::Inherit);
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
     }
 }

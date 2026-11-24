@@ -336,44 +336,6 @@ pub(super) fn clock(t: std::time::SystemTime) -> String {
     )
 }
 
-pub(super) fn mcp_argument_template(schema: &serde_json::Value) -> String {
-    fn sample(schema: &serde_json::Value, depth: usize) -> serde_json::Value {
-        if let Some(value) = schema.get("default").or_else(|| {
-            schema
-                .get("enum")
-                .and_then(|v| v.as_array())
-                .and_then(|v| v.first())
-        }) {
-            return value.clone();
-        }
-        if depth >= 8 {
-            return serde_json::Value::Null;
-        }
-        match schema.get("type").and_then(|v| v.as_str()) {
-            Some("object") => {
-                let mut out = serde_json::Map::new();
-                if let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) {
-                    for (name, value) in properties {
-                        out.insert(name.clone(), sample(value, depth + 1));
-                    }
-                }
-                serde_json::Value::Object(out)
-            }
-            Some("array") => serde_json::json!([]),
-            Some("string") => serde_json::json!(""),
-            Some("integer" | "number") => serde_json::json!(0),
-            Some("boolean") => serde_json::json!(false),
-            _ => serde_json::Value::Null,
-        }
-    }
-    let value = sample(schema, 0);
-    if value.is_object() {
-        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
-    } else {
-        "{}".into()
-    }
-}
-
 /// One MCP event's log line (the Response "Log" tab).
 pub fn mcp_event_text(e: &runner::McpEvent) -> String {
     use runner::McpEvent::*;

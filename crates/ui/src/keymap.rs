@@ -99,6 +99,7 @@ actions! {
     TreeNewRequest => "tree_new_request", "New request in the selected folder";
     TreeNewFolder => "tree_new_folder", "New folder in the selected folder";
     TreeRename => "tree_rename", "Rename the selected item";
+    TreeFolderSettings => "tree_folder_settings", "Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit)";
     TreeDuplicate => "tree_duplicate", "Duplicate the selected item";
     TreeDelete => "tree_delete", "Delete the selected item (asks first)";
     TreeMove => "tree_move", "Move the selected item to another folder";
@@ -369,6 +370,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (TreeNewRequest, Tree, Both, &["n"]),
         (TreeNewFolder, Tree, Both, &["N"]),
         (TreeRename, Tree, Both, &["r", "f2"]),
+        (TreeFolderSettings, Tree, Both, &["s"]),
         (TreeDuplicate, Tree, Both, &["d"]),
         (TreeDelete, Tree, Both, &["delete", "x"]),
         (TreeMove, Tree, Both, &["m"]),

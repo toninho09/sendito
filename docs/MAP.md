@@ -43,6 +43,9 @@ model carries no serialization logic on purpose.
 |---|---|
 | `Request`, `HttpRequest`, `GrpcRequest`, `WebSocketRequest`, `McpRequest`, auth kinds, body kinds, rows | `crates/core/src/model.rs` |
 | Parse and canonical write of `<name>.toml` | `crates/store/src/request_file.rs` |
+| Folder settings: parse and write `folder.toml`, the chain of a request | `crates/store/src/folder.rs`, `crates/store/src/collection.rs::chain` |
+| Saved examples: `<name>.examples/<example>.toml` | `crates/store/src/examples.rs` |
+| Saved examples in the UI (`:saveexample`, `:examples`) | `crates/ui/src/app/examples.rs` |
 | Canonical TOML emitter (stable key order, multi-line strings) | `crates/store/src/tomlfmt.rs` |
 | Cheap `kind`/`method` sniff for tree badges | `crates/store/src/request_file.rs::sniff` |
 | Schema and wire rules (prose) | [FORMAT.md](../FORMAT.md) |
@@ -65,7 +68,9 @@ here.
 | URL normalization (no scheme → `http://`), query append before fragment | `crates/core/src/resolve.rs::normalize_url`, `append_query` | |
 | Unresolved variables, masked copy of a request | `crates/core/src/resolve.rs::unresolved_vars`, `mask_request` | |
 | Declarative scripts: pre, extract, assert | `crates/core/src/script.rs` | No code execution |
+| Folder inheritance (auth, headers, variables, scripts) | `crates/core/src/inherit.rs::apply` | `var_layers`; applied once per send by `crates/pipeline/src/runner/scope.rs::with_folders` |
 | Completion shape of a message or tool input | `crates/core/src/complete.rs` | Shared by gRPC and MCP editors |
+| A sample value from a JSON Schema (MCP argument template, OpenAPI bodies) | `crates/core/src/json_schema.rs` | `sample`, `object_template` |
 | Sent pipeline (scope → pre → resolve → send → extract/assert → history) | `crates/pipeline/src/runner/` | Used identically by the TUI and `sendito run` |
 
 ## HTTP
@@ -87,7 +92,7 @@ here.
 | JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app/import_export.rs::filter_here` |
 | Watch (repeat the active request) | `crates/ui/src/app/mod.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
 
-Tests: `tests/corpus.rs` (49 HTTP cases under
+Tests: `tests/corpus.rs` (54 HTTP cases under
 `tests/corpus/collection/http/`), `tests/integration.rs`, `tests/tls.rs`,
 `tests/proxy.rs`.
 
@@ -96,8 +101,10 @@ Tests: `tests/corpus.rs` (49 HTTP cases under
 | What | Entry point | Supporting |
 |---|---|---|
 | Basic / bearer / API key resolution | `crates/core/src/resolve.rs::resolve_http` | Auth is part of the resolved request |
+| Digest, AWS SigV4 and JWT (computed at send time) | `crates/http/src/auth/` (`digest.rs`, `sigv4.rs`, `jwt.rs`) | Fields rendered into `crates/core/src/resolve.rs::SignedAuth`; applied by `crates/pipeline/src/runner/http.rs::sign_before_send` and `retry_401`, `jwt_token` for gRPC and WebSocket |
 | HTTP OAuth identity (`[oauth.<name>]`) | `crates/pipeline/src/runner/http.rs::http_oauth_provider` | `crates/pipeline/src/runner/oauth.rs::oauth_settings`, `oauth_token_account` |
 | OAuth login/logout for HTTP, CLI | `src/cli/auth.rs::http_auth` | `crates/mcp/src/oauth/flow.rs::login_http` |
+| OAuth grants: client credentials, password, device code | `crates/mcp/src/oauth/flow.rs::fetch_token`, `device_login` | A new token on expiry: `crates/mcp/src/oauth/provider.rs::RefreshingProvider`; grant in `crates/store/src/config.rs::OAuthGrant` |
 | OAuth login/logout in the UI | `crates/ui/src/app/commands.rs::http_oauth_command` | `OAuthRunInfo` in `crates/pipeline/src/runner/oauth.rs` |
 | MCP OAuth 2.1 (discovery, PKCE, registration, refresh) | `crates/mcp/src/oauth/flow.rs::login` | `crates/mcp/src/oauth/flow.rs::pkce`, `crates/mcp/src/oauth/provider.rs::RefreshingProvider`, `crates/mcp/src/oauth/discovery.rs::well_known`, `validate_oauth_url` |
 | MCP sign-in in the app (`:auth login <server>`, "Sign in now?" after `McpError::NeedsLogin`) | `crates/ui/src/app/mcp.rs` (`offer_mcp_login`, `mcp_oauth_command`, `after_mcp_login`) | `crates/pipeline/src/runner/oauth.rs::mcp_login`, `crates/store/src/config.rs::set_mcp_server_auth` |
@@ -181,6 +188,8 @@ Tests: corpus cookie cases, `tests/integration.rs` (secret hygiene),
 | curl import | `crates/import/src/curl.rs::import` | Combined-flag splitting, documented flag set |
 | curl export | `crates/import/src/curl.rs::export` | Secret placeholders unless `include_secrets` |
 | `.http` export | `crates/import/src/http_file.rs::export` | Boundary escalation, `< path` file bodies |
+| `.http` import | `crates/import/src/http_file.rs::import`, `import_path` | `http-client.env.json` environments |
+| OpenAPI 3.x and Swagger 2.0 import | `crates/import/src/openapi.rs::import` | YAML read by `crates/import/src/lib.rs::import_path`; bodies from `crates/core/src/json_schema.rs::sample` |
 | Import/report dialogs in the UI | `crates/ui/src/overlay/mod.rs::{Import, Report}` | `crates/ui/src/app/import_export.rs` opens them |
 
 Tests: `tests/integration.rs` (32-request Postman fixture, curl → request →
@@ -204,6 +213,7 @@ the module for the surface you are changing.
 | Environment picker and editor | `crates/ui/src/app/env.rs` |
 | History panel | `crates/ui/src/app/history.rs` |
 | Tree operations (new, rename, duplicate, delete, move) | `crates/ui/src/app/tree_ops.rs` |
+| Folder settings: the cache, the folder tab (open, save, restore), what a tab inherits | `crates/ui/src/app/folders.rs` |
 | Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
 | Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
 | Import, export, body actions | `crates/ui/src/app/import_export.rs` |
@@ -281,7 +291,7 @@ binary in a child process), `tests/corpus.rs`.
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in every crate | `make test`; `P=<package>` and `F=<name>` narrow it |
-| Wire corpus (exact bytes; 49 HTTP, 15 gRPC, 12 WS, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
+| Wire corpus (exact bytes; 54 HTTP, 15 gRPC, 12 WS, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
 | Corpus golden rewrite | same, `UPDATE_CORPUS=1` | `make corpus-update` |
 | Import, format stability, secret hygiene | `tests/integration.rs`, `tests/fixtures/` | `make test` |
 | TLS and mutual TLS | `tests/tls.rs` | `make test` |

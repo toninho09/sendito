@@ -1,0 +1,16 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/aws/items?b=2&a=1"
+
+[auth]
+type = "awsv4"
+access_key = "AKIDEXAMPLE"
+secret_key = "{{local_token}}"
+region = "eu-west-1"
+service = "execute-api"
+
+[body]
+type = "json"
+text = '''
+{"id": 1}
+'''

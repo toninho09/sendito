@@ -101,6 +101,8 @@ pub struct ResolvedHttp {
     pub unresolved: Vec<String>,
     /// Notes about adjustments (e.g. a user Content-Type replaced for multipart).
     pub notes: Vec<String>,
+    /// An auth to compute just before sending (Digest, AWS SigV4, JWT).
+    pub signed: Option<SignedAuth>,
 }
 
 impl ResolvedHttp {
@@ -189,7 +191,7 @@ fn has_header(h: &[(String, String)], name: &str) -> bool {
 /// Header produced by the auth settings, if any (`None` for query API keys).
 fn auth_header(ctx: &mut Ctx<'_>, auth: &Auth) -> Option<(String, String)> {
     match auth {
-        Auth::None => None,
+        Auth::Inherit | Auth::None => None,
         Auth::Basic { username, password } => {
             let raw = format!("{}:{}", ctx.r(username), ctx.r(password));
             let enc = base64::engine::general_purpose::STANDARD.encode(raw.as_bytes());
@@ -203,8 +205,89 @@ fn auth_header(ctx: &mut Ctx<'_>, auth: &Auth) -> Option<(String, String)> {
             value,
             location: ApiKeyLocation::Header,
         } => Some((ctx.r(key), ctx.r(value))),
-        Auth::ApiKey { .. } | Auth::OAuth { .. } => None,
+        Auth::ApiKey { .. }
+        | Auth::OAuth { .. }
+        | Auth::Digest { .. }
+        | Auth::AwsSigV4 { .. }
+        | Auth::Jwt { .. } => None,
     }
+}
+
+/// An auth Sendito computes just before sending: it needs the request as it
+/// is sent (AWS SigV4), the server's challenge (Digest) or the clock (JWT).
+/// The fields are rendered; `sendito-http::auth` signs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignedAuth {
+    Digest {
+        username: String,
+        password: String,
+    },
+    AwsSigV4 {
+        access_key: String,
+        secret_key: String,
+        session_token: String,
+        region: String,
+        service: String,
+    },
+    Jwt {
+        algorithm: JwtAlgorithm,
+        secret: String,
+        /// As written (rendered): relative to the collection root.
+        private_key: String,
+        claims: String,
+        expires_in_s: Option<u64>,
+    },
+}
+
+/// The signed auth of a request, its fields rendered. `http` allows the
+/// HTTP-only kinds; other requests send no auth for them. `taken`: the
+/// request already defines an `Authorization` header, which wins; the fields
+/// then do not count as unresolved.
+fn signed_auth(ctx: &mut Ctx, auth: &Auth, http: bool, taken: bool) -> Option<SignedAuth> {
+    if taken || (!http && auth.kind().http_only()) {
+        return None;
+    }
+    Some(match auth {
+        Auth::Digest { username, password } => SignedAuth::Digest {
+            username: ctx.r(username),
+            password: ctx.r(password),
+        },
+        Auth::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        } => SignedAuth::AwsSigV4 {
+            access_key: ctx.r(access_key),
+            secret_key: ctx.r(secret_key),
+            session_token: ctx.r(session_token),
+            region: ctx.r(region.trim()),
+            service: ctx.r(service.trim()),
+        },
+        Auth::Jwt {
+            algorithm,
+            secret,
+            private_key,
+            claims,
+            expires_in_s,
+        } => SignedAuth::Jwt {
+            algorithm: *algorithm,
+            secret: if algorithm.uses_secret() {
+                ctx.r(secret)
+            } else {
+                String::new()
+            },
+            private_key: if algorithm.uses_secret() {
+                String::new()
+            } else {
+                ctx.r(private_key.trim())
+            },
+            claims: ctx.r(claims),
+            expires_in_s: *expires_in_s,
+        },
+        _ => return None,
+    })
 }
 
 /// Resolves an HTTP request. `base_dir` anchors relative file paths (the collection root).
@@ -371,6 +454,16 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
         }
     }
 
+    let taken = has_header(&headers, "authorization");
+    let signed = signed_auth(&mut ctx, &req.auth, true, taken);
+    if taken
+        && matches!(
+            req.auth,
+            Auth::Digest { .. } | Auth::AwsSigV4 { .. } | Auth::Jwt { .. }
+        )
+    {
+        notes.push("auth not added: the request already defines Authorization".into());
+    }
     ResolvedHttp {
         method,
         url,
@@ -382,6 +475,7 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
         verify_tls: req.options.verify_tls,
         unresolved: ctx.unresolved,
         notes,
+        signed,
     }
 }
 
@@ -397,6 +491,8 @@ pub struct ResolvedGrpc {
     pub metadata: Vec<(String, String)>,
     pub deadline_ms: Option<u64>,
     pub unresolved: Vec<String>,
+    /// A JWT to sign just before the call (the only signed auth gRPC sends).
+    pub signed: Option<SignedAuth>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,6 +519,9 @@ pub struct ResolvedWs {
     pub deadline_ms: Option<u64>,
     pub cookies: Option<bool>,
     pub unresolved: Vec<String>,
+    /// A JWT to sign just before the handshake (the only signed auth a
+    /// WebSocket session sends).
+    pub signed: Option<SignedAuth>,
 }
 
 /// Resolves an MCP request. The server name must match a `[mcp.servers]`
@@ -491,7 +590,10 @@ pub fn resolve_grpc(req: &GrpcRequest, scope: &Scope) -> ResolvedGrpc {
             metadata.push((n, v));
         }
     }
+    let taken = metadata.iter().any(|(k, _)| k == "authorization");
+    let signed = signed_auth(&mut ctx, &req.auth, false, taken);
     ResolvedGrpc {
+        signed,
         uri,
         tls,
         verify_tls: req.verify_tls,
@@ -546,7 +648,12 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
     }) {
         headers.push((n, v));
     }
+    let taken = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+    let signed = signed_auth(&mut ctx, &req.auth, false, taken);
     ResolvedWs {
+        signed,
         url,
         tls,
         verify_tls: req.options.verify_tls,
@@ -587,6 +694,7 @@ fn mask_kv(v: &[KeyValue], s: &Scope) -> Vec<KeyValue> {
 
 fn mask_auth(a: &Auth, s: &Scope) -> Auth {
     match a {
+        Auth::Inherit => Auth::Inherit,
         Auth::None => Auth::None,
         Auth::Basic { username, password } => Auth::Basic {
             username: s.render_masked(username),
@@ -606,6 +714,36 @@ fn mask_auth(a: &Auth, s: &Scope) -> Auth {
         },
         Auth::OAuth { name } => Auth::OAuth {
             name: s.render_masked(name),
+        },
+        Auth::Digest { username, password } => Auth::Digest {
+            username: s.render_masked(username),
+            password: s.render_masked(password),
+        },
+        Auth::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        } => Auth::AwsSigV4 {
+            access_key: s.render_masked(access_key),
+            secret_key: s.render_masked(secret_key),
+            session_token: s.render_masked(session_token),
+            region: s.render_masked(region),
+            service: s.render_masked(service),
+        },
+        Auth::Jwt {
+            algorithm,
+            secret,
+            private_key,
+            claims,
+            expires_in_s,
+        } => Auth::Jwt {
+            algorithm: *algorithm,
+            secret: s.render_masked(secret),
+            private_key: s.render_masked(private_key),
+            claims: s.render_masked(claims),
+            expires_in_s: *expires_in_s,
         },
     }
 }

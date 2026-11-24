@@ -2,6 +2,95 @@
 
 ## Unreleased
 
+### Folder settings
+
+* **`folder.toml` in a folder** (or the collection root) holds headers, an
+  auth, variables and scripts that every request below it inherits. The
+  nearest folder's auth wins; a request header replaces a folder header of
+  the same name, and a disabled request row stops it; folder variables sit
+  between the environment and the runtime variables; folder scripts run
+  first. gRPC requests get the headers as metadata; MCP requests inherit
+  only variables and scripts.
+* **Behaviour change: a request without `[auth]` now inherits** its folder's
+  auth. Without a `folder.toml` nothing changes. `type = "none"` turns
+  inheritance off and is now written to the file; `type = "inherit"` is
+  accepted too. New requests inherit.
+* **Folder tab.** `s` on a tree folder (or on a request: its folder) or
+  `:folder` opens the folder's settings in a tab with Headers, Auth, Vars and
+  Scripts. `Ctrl+S` writes `folder.toml`; empty settings remove the file. The
+  tab comes back with the session.
+* **What a request inherits is shown.** The Auth tab offers "Inherit" and
+  names the folder the auth comes from; the Headers tab lists the folder
+  headers under the table.
+* **Everywhere a request is sent.** `sendito run` (one request or a folder),
+  the curl and `.http` exports and the history use the request as it is
+  sent. A `folder.toml` that cannot be read stops the send and names the file.
+* **Imports keep folder auth.** Postman folder and collection auth, Bruno
+  `folder.bru`/`collection.bru` (auth, headers, pre-request variables) and
+  Insomnia folder auth now go to `folder.toml` instead of being copied into
+  each request. A request named `folder` is imported as `folder (2)`.
+
+### Import OpenAPI, Swagger and .http files
+
+* **OpenAPI 3.0 / 3.1 and Swagger 2.0**, JSON or YAML: a request per
+  operation in a folder per tag, `{{baseUrl}}` and one environment per server,
+  path parameters as variables, query and header parameters, bodies from
+  their example or a sample of the schema, response examples as saved
+  examples, and the security as auth (the document's in the root
+  `folder.toml`). OAuth 2 security and external references are reported.
+* **`.http` / `.rest` files**: `###` blocks, `@variables`, `# @name`,
+  `# @timeout`, `# @no-redirect`, headers, bodies and the auth forms both
+  editors use, with the environments of `http-client.env.json`. A file
+  exported by `sendito http` imports back to the same request with basic,
+  bearer, API-key or Digest auth; an OAuth, JWT or AWS SigV4 auth comes back
+  as the header the export wrote (`Bearer {{…}}` or `AWS …`).
+* `sendito import` and `:import` pick the format from the file.
+
+### Saved examples
+
+* **`:saveexample [name]`** saves the response on screen as an example of the
+  request, in `<name>.examples/<example>.toml` next to its file (a body that
+  is not UTF-8 goes to a `.bin` file). Credential headers are masked.
+* **`:examples`** lists a request's examples and shows one in the response
+  pane (`example: <name>` in the border); `:examples delete <name>` deletes
+  one.
+* Renaming, moving, duplicating and deleting a request take its examples
+  along; the tree does not show the `.examples` directories, and a folder
+  name cannot end in `.examples`.
+* Postman saved responses are imported as examples.
+
+### More auth types
+
+* **Digest** (RFC 7616): SHA-256 or MD5, `qop=auth`, `-sess`. The first send
+  gets the server's `401` challenge; the request is sent once more with the
+  answer, in the same timeout.
+* **AWS Signature Version 4** (`type = "awsv4"`): access key, secret key,
+  optional session token, region and service. The signature covers the
+  request as it is sent (the jar's cookies included); `X-Amz-Date`,
+  `X-Amz-Content-Sha256` (s3) and `X-Amz-Security-Token` are added. A
+  multipart body cannot be signed.
+* **JWT** (`type = "jwt"`): signed at send time with HS256/384/512 (a secret)
+  or RS256/ES256 (a PEM key file); `expires_in_s` adds `iat` and `exp`. HTTP,
+  gRPC and WebSocket send it as a bearer token.
+* The Auth tab has their fields; curl export writes `--digest` and
+  `--aws-sigv4`; the `.http` export writes `Digest user password` and `AWS …`;
+  a JWT is exported as `{{sendito_jwt}}`. Postman `digest`, `awsv4` and `jwt`
+  auth are imported (a JWT private key is reported).
+* A gRPC or WebSocket request with OAuth, Digest or AWS SigV4 auth (also when
+  it inherits one) fails with a message.
+
+### OAuth grants
+
+* **`grant` in `[oauth.<name>]`**: `authorization_code` (the default, as
+  before), `client_credentials`, `password` or `device_code`.
+* **client_credentials and password need no sign-in.** A request gets a token
+  when it needs one, a new one when it expires or after a `401`; it works in
+  CI, also without a keychain. `sendito auth login` checks the credentials.
+* **device_code**: `sendito auth login` and `:auth login` show the page and
+  the code to enter on another device, open the page and wait for the sign-in.
+* The `:oauth` editor has Grant, Username and Password columns; the URL column
+  holds the device URL for `device_code`. A plain password gets a warning.
+
 ### MCP sign-in from the app
 
 * **Sign in when the server asks.** When an MCP call or the tool list gets a

@@ -186,3 +186,25 @@ pub(super) fn mcp_config_failed(
     }
     out
 }
+
+/// The folder chain of the request at `rel` (relative to the collection
+/// root): the `folder.toml` settings from the root to its folder. An unsaved
+/// request (`None`) gets the root's settings only.
+pub fn folder_chain(root: &Path, rel: Option<&str>) -> Result<Vec<ChainItem>, String> {
+    Collection::new(root, Vec::new())
+        .chain(rel.unwrap_or(""))
+        .map_err(|e| e.to_string())
+}
+
+/// The request with its folders applied (see `sendito_core::inherit`), and
+/// the folder variables added to `scope` below the runtime variables. Apply
+/// it once per send: folder scripts would run twice otherwise.
+pub fn with_folders(req: &Request, chain: &[ChainItem], scope: &mut Scope) -> Request {
+    add_folder_vars(scope, chain);
+    inherit::apply(req, chain)
+}
+
+/// Adds the folder variable layers below the runtime variables.
+pub fn add_folder_vars(scope: &mut Scope, chain: &[ChainItem]) {
+    scope.insert_below(RUNTIME_LAYER, inherit::var_layers(chain));
+}

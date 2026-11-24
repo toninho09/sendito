@@ -135,7 +135,7 @@ impl Default for HttpRequest {
             params: Vec::new(),
             headers: Vec::new(),
             body: Body::None,
-            auth: Auth::None,
+            auth: Auth::Inherit,
             options: HttpOptions::default(),
             scripts: Scripts::default(),
         }
@@ -297,7 +297,10 @@ pub enum PartKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Auth {
+    /// Use the auth of the nearest folder that defines one (`folder.toml`);
+    /// no auth when no folder does. A request file without `[auth]` inherits.
     #[default]
+    Inherit,
     None,
     Basic {
         username: String,
@@ -315,21 +318,99 @@ pub enum Auth {
     OAuth {
         name: String,
     },
+    /// HTTP Digest (RFC 7616): the first send has no `Authorization`; a `401`
+    /// with a Digest challenge is answered once. HTTP only.
+    Digest {
+        username: String,
+        password: String,
+    },
+    /// AWS Signature Version 4, computed over the request as it is sent.
+    /// HTTP only.
+    AwsSigV4 {
+        access_key: String,
+        secret_key: String,
+        /// Temporary credentials only; empty sends no `X-Amz-Security-Token`.
+        session_token: String,
+        region: String,
+        service: String,
+    },
+    /// A JWT signed at send time and sent as `Authorization: Bearer`.
+    Jwt {
+        algorithm: JwtAlgorithm,
+        /// The HMAC secret (HS*).
+        secret: String,
+        /// A PEM private key file for RS256 / ES256, relative to the collection.
+        private_key: String,
+        /// The claims, JSON text.
+        claims: String,
+        /// Adds `iat` (now) and `exp` (now + this) to the claims.
+        expires_in_s: Option<u64>,
+    },
+}
+
+/// The signing algorithms of [`Auth::Jwt`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JwtAlgorithm {
+    #[default]
+    Hs256,
+    Hs384,
+    Hs512,
+    Rs256,
+    Es256,
+}
+
+impl JwtAlgorithm {
+    pub const ALL: [JwtAlgorithm; 5] = [
+        JwtAlgorithm::Hs256,
+        JwtAlgorithm::Hs384,
+        JwtAlgorithm::Hs512,
+        JwtAlgorithm::Rs256,
+        JwtAlgorithm::Es256,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JwtAlgorithm::Hs256 => "HS256",
+            JwtAlgorithm::Hs384 => "HS384",
+            JwtAlgorithm::Hs512 => "HS512",
+            JwtAlgorithm::Rs256 => "RS256",
+            JwtAlgorithm::Es256 => "ES256",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|a| a.as_str().eq_ignore_ascii_case(s))
+    }
+
+    /// Signed with a shared secret (HS*), not a private key file.
+    pub fn uses_secret(self) -> bool {
+        matches!(
+            self,
+            JwtAlgorithm::Hs256 | JwtAlgorithm::Hs384 | JwtAlgorithm::Hs512
+        )
+    }
 }
 
 impl Auth {
     pub fn kind(&self) -> AuthKind {
         match self {
+            Auth::Inherit => AuthKind::Inherit,
             Auth::None => AuthKind::None,
             Auth::Basic { .. } => AuthKind::Basic,
             Auth::Bearer { .. } => AuthKind::Bearer,
             Auth::ApiKey { .. } => AuthKind::ApiKey,
             Auth::OAuth { .. } => AuthKind::OAuth,
+            Auth::Digest { .. } => AuthKind::Digest,
+            Auth::AwsSigV4 { .. } => AuthKind::AwsSigV4,
+            Auth::Jwt { .. } => AuthKind::Jwt,
         }
     }
 
     pub fn with_kind(kind: AuthKind) -> Auth {
         match kind {
+            AuthKind::Inherit => Auth::Inherit,
             AuthKind::None => Auth::None,
             AuthKind::Basic => Auth::Basic {
                 username: String::new(),
@@ -346,45 +427,89 @@ impl Auth {
             AuthKind::OAuth => Auth::OAuth {
                 name: String::new(),
             },
+            AuthKind::Digest => Auth::Digest {
+                username: String::new(),
+                password: String::new(),
+            },
+            AuthKind::AwsSigV4 => Auth::AwsSigV4 {
+                access_key: String::new(),
+                secret_key: String::new(),
+                session_token: String::new(),
+                region: "us-east-1".into(),
+                service: String::new(),
+            },
+            AuthKind::Jwt => Auth::Jwt {
+                algorithm: JwtAlgorithm::Hs256,
+                secret: String::new(),
+                private_key: String::new(),
+                claims: "{}".into(),
+                expires_in_s: None,
+            },
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthKind {
+    Inherit,
     None,
     Basic,
     Bearer,
     ApiKey,
+    Jwt,
     OAuth,
+    Digest,
+    AwsSigV4,
 }
 
 impl AuthKind {
-    pub const ALL: [AuthKind; 5] = [
+    /// Every kind; the HTTP-only ones ([`AuthKind::http_only`]) come last.
+    pub const ALL: [AuthKind; 9] = [
+        AuthKind::Inherit,
         AuthKind::None,
         AuthKind::Basic,
         AuthKind::Bearer,
         AuthKind::ApiKey,
+        AuthKind::Jwt,
         AuthKind::OAuth,
+        AuthKind::Digest,
+        AuthKind::AwsSigV4,
     ];
+
+    /// Kinds that only HTTP requests can send: a gRPC call or a WebSocket
+    /// session with one of them fails with a message.
+    pub fn http_only(self) -> bool {
+        matches!(
+            self,
+            AuthKind::OAuth | AuthKind::Digest | AuthKind::AwsSigV4
+        )
+    }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            AuthKind::Inherit => "inherit",
             AuthKind::None => "none",
             AuthKind::Basic => "basic",
             AuthKind::Bearer => "bearer",
             AuthKind::ApiKey => "apikey",
             AuthKind::OAuth => "oauth",
+            AuthKind::Digest => "digest",
+            AuthKind::AwsSigV4 => "awsv4",
+            AuthKind::Jwt => "jwt",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
+            AuthKind::Inherit => "Inherit",
             AuthKind::None => "No auth",
             AuthKind::Basic => "Basic",
             AuthKind::Bearer => "Bearer token",
             AuthKind::ApiKey => "API key",
             AuthKind::OAuth => "OAuth 2",
+            AuthKind::Digest => "Digest",
+            AuthKind::AwsSigV4 => "AWS Signature v4",
+            AuthKind::Jwt => "JWT (signed here)",
         }
     }
 }
@@ -415,6 +540,26 @@ impl Default for HttpOptions {
             verify_tls: true,
             cookies: None,
         }
+    }
+}
+
+/// What a folder gives the requests below it (`folder.toml`): headers, auth,
+/// variables and scripts. Closer folders win; see `crate::inherit`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FolderSettings {
+    pub headers: Vec<KeyValue>,
+    pub auth: Auth,
+    /// Plain values; a value may reference other variables (`{{secret}}`).
+    pub vars: Vec<KeyValue>,
+    pub scripts: Scripts,
+}
+
+impl FolderSettings {
+    pub fn is_empty(&self) -> bool {
+        self.headers.is_empty()
+            && self.auth == Auth::Inherit
+            && self.vars.is_empty()
+            && self.scripts.is_empty()
     }
 }
 
@@ -581,7 +726,7 @@ impl Default for GrpcRequest {
             method: String::new(),
             message: "{}".into(),
             metadata: Vec::new(),
-            auth: Auth::None,
+            auth: Auth::Inherit,
             tls: false,
             verify_tls: true,
             deadline_ms: None,
@@ -618,7 +763,7 @@ impl Default for WebSocketRequest {
             headers: Vec::new(),
             subprotocols: Vec::new(),
             messages: "[]".into(),
-            auth: Auth::None,
+            auth: Auth::Inherit,
             options: WsOptions::default(),
             scripts: Scripts::default(),
         }
@@ -748,7 +893,7 @@ mod tests {
         let g = Request::new_grpc();
         assert_eq!(g.badge(), "GRPC");
         assert!(g.scripts().is_empty());
-        assert_eq!(g.auth(), &Auth::None);
+        assert_eq!(g.auth(), &Auth::Inherit);
         assert!(!KeyValue::new("a", "b").disabled().enabled);
         assert!(KeyValue::default().enabled);
     }

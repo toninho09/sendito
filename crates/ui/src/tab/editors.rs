@@ -47,8 +47,46 @@ pub struct Editors {
     pub mcp_server: TextEditor,
     pub mcp_tool: TextEditor,
     pub ws_subprotocols: TextEditor,
+    /// A folder's variables (Kind::Folder only).
+    pub vars: Table,
+    pub aws_access: TextEditor,
+    pub aws_secret: TextEditor,
+    pub aws_token: TextEditor,
+    pub aws_region: TextEditor,
+    pub aws_service: TextEditor,
+    pub jwt_alg: JwtAlgorithm,
+    pub jwt_secret: TextEditor,
+    pub jwt_key: TextEditor,
+    pub jwt_claims: TextEditor,
+    pub jwt_expires: TextEditor,
     /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
     pub script_section: usize,
+}
+
+/// A folder tab keeps its settings in an HTTP request, so the tab's model,
+/// saved state and editors work as for a request: the headers, auth and
+/// scripts as they are, the variables in `params`.
+pub fn folder_request(f: &FolderSettings) -> Request {
+    Request::Http(HttpRequest {
+        params: f.vars.clone(),
+        headers: f.headers.clone(),
+        auth: f.auth.clone(),
+        scripts: f.scripts.clone(),
+        ..Default::default()
+    })
+}
+
+/// The folder settings a [`folder_request`] holds.
+pub fn request_folder(req: &Request) -> FolderSettings {
+    match req {
+        Request::Http(h) => FolderSettings {
+            headers: h.headers.clone(),
+            auth: h.auth.clone(),
+            vars: h.params.clone(),
+            scripts: h.scripts.clone(),
+        },
+        _ => FolderSettings::default(),
+    }
 }
 
 pub(super) fn ms_text(v: Option<u64>) -> String {
@@ -176,7 +214,7 @@ impl Editors {
             file_path: TextEditor::single("")
                 .with_placeholder("path/to/file (relative to the collection)"),
             file_ct: TextEditor::single("").with_placeholder("application/octet-stream"),
-            auth_kind: AuthKind::None,
+            auth_kind: AuthKind::Inherit,
             auth_user: TextEditor::single(""),
             auth_pass: TextEditor::single(""),
             auth_token: TextEditor::single("").with_placeholder("{{token}}"),
@@ -268,6 +306,17 @@ impl Editors {
                 .with_placeholder("server name from [mcp.servers] or http(s):// URL"),
             mcp_tool: TextEditor::single("").with_placeholder("tool name"),
             ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
+            vars: Table::kv("Variable", "Value"),
+            aws_access: TextEditor::single("").with_placeholder("{{aws_access_key_id}}"),
+            aws_secret: TextEditor::single("").with_placeholder("{{aws_secret_access_key}}"),
+            aws_token: TextEditor::single("").with_placeholder("empty for long-term keys"),
+            aws_region: TextEditor::single("us-east-1"),
+            aws_service: TextEditor::single("").with_placeholder("execute-api"),
+            jwt_alg: JwtAlgorithm::Hs256,
+            jwt_secret: TextEditor::single("").with_placeholder("{{jwt_secret}}"),
+            jwt_key: TextEditor::single("").with_placeholder("keys/private.pem"),
+            jwt_claims: TextEditor::multi("{}").with_highlight(Highlight::Json),
+            jwt_expires: TextEditor::single("").with_placeholder("none"),
             script_section: 0,
         };
         let scripts = req.scripts();
@@ -395,10 +444,18 @@ impl Editors {
         e
     }
 
+    /// The editors of a folder's settings.
+    pub fn from_folder(f: &FolderSettings) -> Self {
+        let mut e = Self::from_request(&folder_request(f));
+        e.kind = Kind::Folder;
+        e.vars = kv_table("Variable", "Value", &f.vars);
+        e
+    }
+
     fn set_auth(&mut self, a: &Auth) {
         self.auth_kind = a.kind();
         match a {
-            Auth::None => {}
+            Auth::Inherit | Auth::None => {}
             Auth::Basic { username, password } => {
                 self.auth_user.set_text(username);
                 self.auth_pass.set_text(password);
@@ -414,11 +471,42 @@ impl Editors {
                 self.auth_value.set_text(value);
                 self.auth_in = *location;
             }
+            Auth::Digest { username, password } => {
+                self.auth_user.set_text(username);
+                self.auth_pass.set_text(password);
+            }
+            Auth::AwsSigV4 {
+                access_key,
+                secret_key,
+                session_token,
+                region,
+                service,
+            } => {
+                self.aws_access.set_text(access_key);
+                self.aws_secret.set_text(secret_key);
+                self.aws_token.set_text(session_token);
+                self.aws_region.set_text(region);
+                self.aws_service.set_text(service);
+            }
+            Auth::Jwt {
+                algorithm,
+                secret,
+                private_key,
+                claims,
+                expires_in_s,
+            } => {
+                self.jwt_alg = *algorithm;
+                self.jwt_secret.set_text(secret);
+                self.jwt_key.set_text(private_key);
+                self.jwt_claims.set_text(claims);
+                self.jwt_expires.set_text(&ms_text(*expires_in_s));
+            }
         }
     }
 
     fn auth(&self) -> Auth {
         match self.auth_kind {
+            AuthKind::Inherit => Auth::Inherit,
             AuthKind::None => Auth::None,
             AuthKind::Basic => Auth::Basic {
                 username: self.auth_user.text(),
@@ -434,6 +522,24 @@ impl Editors {
                 key: self.auth_key.text(),
                 value: self.auth_value.text(),
                 location: self.auth_in,
+            },
+            AuthKind::Digest => Auth::Digest {
+                username: self.auth_user.text(),
+                password: self.auth_pass.text(),
+            },
+            AuthKind::AwsSigV4 => Auth::AwsSigV4 {
+                access_key: self.aws_access.text(),
+                secret_key: self.aws_secret.text(),
+                session_token: self.aws_token.text(),
+                region: self.aws_region.text(),
+                service: self.aws_service.text(),
+            },
+            AuthKind::Jwt => Auth::Jwt {
+                algorithm: self.jwt_alg,
+                secret: self.jwt_secret.text(),
+                private_key: self.jwt_key.text(),
+                claims: self.jwt_claims.text(),
+                expires_in_s: parse_ms(&self.jwt_expires.text()),
             },
         }
     }
@@ -592,6 +698,12 @@ impl Editors {
                 timeout_ms: parse_ms(&self.timeout.text()),
                 scripts: self.scripts(),
             }),
+            Kind::Folder => folder_request(&FolderSettings {
+                headers: kv_rows(&self.headers),
+                auth: self.auth(),
+                vars: kv_rows(&self.vars),
+                scripts: self.scripts(),
+            }),
         }
     }
 
@@ -600,11 +712,29 @@ impl Editors {
         let auth_fields = |out: &mut Vec<Field>| {
             out.push(Field::AuthKind);
             match self.auth_kind {
-                AuthKind::None => {}
-                AuthKind::Basic => out.extend([Field::AuthUser, Field::AuthPass]),
+                AuthKind::Inherit | AuthKind::None => {}
+                AuthKind::Basic | AuthKind::Digest => {
+                    out.extend([Field::AuthUser, Field::AuthPass])
+                }
                 AuthKind::Bearer => out.push(Field::AuthToken),
                 AuthKind::OAuth => out.push(Field::AuthOAuthName),
                 AuthKind::ApiKey => out.extend([Field::AuthKey, Field::AuthValue, Field::AuthIn]),
+                AuthKind::AwsSigV4 => out.extend([
+                    Field::AwsAccessKey,
+                    Field::AwsSecretKey,
+                    Field::AwsSessionToken,
+                    Field::AwsRegion,
+                    Field::AwsService,
+                ]),
+                AuthKind::Jwt => {
+                    out.push(Field::JwtAlgorithm);
+                    out.push(if self.jwt_alg.uses_secret() {
+                        Field::JwtSecret
+                    } else {
+                        Field::JwtPrivateKey
+                    });
+                    out.extend([Field::JwtExpires, Field::JwtClaims]);
+                }
             }
         };
         let mut v = Vec::new();
@@ -665,6 +795,12 @@ impl Editors {
                 2 => v.extend([Field::ScriptSection, self.script_table()]),
                 _ => v.push(Field::Timeout),
             },
+            Kind::Folder => match tab {
+                0 => v.push(Field::Headers),
+                1 => auth_fields(&mut v),
+                2 => v.push(Field::Vars),
+                _ => v.extend([Field::ScriptSection, self.script_table()]),
+            },
         }
         v
     }
@@ -694,6 +830,7 @@ impl Editors {
             Kind::Grpc => GRPC_TABS,
             Kind::Ws => WS_TABS,
             Kind::Mcp => MCP_TABS,
+            Kind::Folder => FOLDER_TABS,
         }
     }
 
@@ -718,6 +855,15 @@ impl Editors {
             Field::McpTool => &mut self.mcp_tool,
             Field::WsSubprotocols => &mut self.ws_subprotocols,
             Field::WsMessages => &mut self.message,
+            Field::AwsAccessKey => &mut self.aws_access,
+            Field::AwsSecretKey => &mut self.aws_secret,
+            Field::AwsSessionToken => &mut self.aws_token,
+            Field::AwsRegion => &mut self.aws_region,
+            Field::AwsService => &mut self.aws_service,
+            Field::JwtSecret => &mut self.jwt_secret,
+            Field::JwtPrivateKey => &mut self.jwt_key,
+            Field::JwtClaims => &mut self.jwt_claims,
+            Field::JwtExpires => &mut self.jwt_expires,
             _ => return None,
         })
     }
@@ -732,6 +878,7 @@ impl Editors {
             Field::ScriptExtract => &mut self.extract,
             Field::ScriptAssert => &mut self.asserts,
             Field::Metadata => &mut self.metadata,
+            Field::Vars => &mut self.vars,
             _ => return None,
         })
     }
@@ -766,6 +913,7 @@ impl Editors {
             },
             Field::Tls => onoff(self.tls),
             Field::GrpcVerify => onoff(self.grpc_verify),
+            Field::JwtAlgorithm => self.jwt_alg.as_str().into(),
             _ => String::new(),
         }
     }
@@ -776,10 +924,14 @@ impl Editors {
                 .iter()
                 .map(|k| k.label().to_string())
                 .collect(),
-            Field::AuthKind => AuthKind::ALL
+            Field::AuthKind => self
+                .auth_kinds()
                 .iter()
-                .filter(|k| self.kind == Kind::Http || **k != AuthKind::OAuth)
                 .map(|k| k.label().to_string())
+                .collect(),
+            Field::JwtAlgorithm => JwtAlgorithm::ALL
+                .iter()
+                .map(|a| a.as_str().to_string())
                 .collect(),
             Field::AuthIn => vec!["Header".into(), "Query parameter".into()],
             Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
@@ -801,16 +953,14 @@ impl Editors {
                 self.set_body_kind(BodyKind::ALL[step(i, BodyKind::ALL.len())]);
             }
             Field::AuthKind => {
-                let i = AuthKind::ALL
-                    .iter()
-                    .position(|k| *k == self.auth_kind)
-                    .unwrap_or(0);
-                let len = if self.kind == Kind::Http {
-                    AuthKind::ALL.len()
-                } else {
-                    AuthKind::ALL.len() - 1
-                };
-                self.auth_kind = AuthKind::ALL[step(i, len)];
+                let kinds = self.auth_kinds();
+                let i = kinds.iter().position(|k| *k == self.auth_kind).unwrap_or(0);
+                self.auth_kind = kinds[step(i, kinds.len())];
+            }
+            Field::JwtAlgorithm => {
+                let all = JwtAlgorithm::ALL;
+                let i = all.iter().position(|a| *a == self.jwt_alg).unwrap_or(0);
+                self.jwt_alg = all[step(i, all.len())];
             }
             Field::AuthIn => {
                 self.auth_in = match self.auth_in {
@@ -849,8 +999,13 @@ impl Editors {
                 }
             }
             Field::AuthKind => {
-                if let Some(k) = AuthKind::ALL.get(index) {
+                if let Some(k) = self.auth_kinds().get(index) {
                     self.auth_kind = *k;
+                }
+            }
+            Field::JwtAlgorithm => {
+                if let Some(a) = JwtAlgorithm::ALL.get(index) {
+                    self.jwt_alg = *a;
                 }
             }
             Field::AuthIn => {
@@ -871,6 +1026,16 @@ impl Editors {
             }
             _ => {}
         }
+    }
+
+    /// The auth kinds this tab offers: the HTTP-only ones for HTTP and for a
+    /// folder (whose HTTP requests may use them).
+    fn auth_kinds(&self) -> Vec<AuthKind> {
+        let http = matches!(self.kind, Kind::Http | Kind::Folder);
+        AuthKind::ALL
+            .into_iter()
+            .filter(|k| http || !k.http_only())
+            .collect()
     }
 
     pub fn set_body_kind(&mut self, k: BodyKind) {
@@ -925,6 +1090,21 @@ impl Editors {
             {
                 v.push((self.auth_key.text(), self.auth_value.text()))
             }
+            AuthKind::Digest if !has("authorization") => v.push((
+                "Authorization".into(),
+                "Digest … (answers the server's 401 challenge)".into(),
+            )),
+            AuthKind::AwsSigV4 if !has("authorization") => {
+                v.push((
+                    "Authorization".into(),
+                    "AWS4-HMAC-SHA256 … (signed when sent)".into(),
+                ));
+                v.push(("X-Amz-Date".into(), "(time of the send)".into()));
+            }
+            AuthKind::Jwt if !has("authorization") => v.push((
+                "Authorization".into(),
+                format!("Bearer <{} JWT signed when sent>", self.jwt_alg.as_str()),
+            )),
             _ => {}
         }
         v
@@ -956,6 +1136,15 @@ impl Editors {
             &mut self.proto_files,
             &mut self.import_paths,
             &mut self.ws_subprotocols,
+            &mut self.aws_access,
+            &mut self.aws_secret,
+            &mut self.aws_token,
+            &mut self.aws_region,
+            &mut self.aws_service,
+            &mut self.jwt_secret,
+            &mut self.jwt_key,
+            &mut self.jwt_claims,
+            &mut self.jwt_expires,
         ] {
             e.vim = mode;
         }
@@ -968,6 +1157,7 @@ impl Editors {
             &mut self.extract,
             &mut self.asserts,
             &mut self.metadata,
+            &mut self.vars,
         ] {
             for r in &mut t.rows {
                 for c in &mut r.cells {

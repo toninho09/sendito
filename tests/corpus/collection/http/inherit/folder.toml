@@ -1,0 +1,15 @@
+[[headers]]
+name = "X-Folder"
+value = "{{folder_value}}"
+
+[[headers]]
+name = "X-Replaced"
+value = "from-folder"
+
+[auth]
+type = "bearer"
+token = "{{local_token}}"
+
+[[vars]]
+name = "folder_value"
+value = "inherited"

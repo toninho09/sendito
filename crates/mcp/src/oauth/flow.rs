@@ -269,9 +269,34 @@ pub(super) async fn token_request(
     client_id: &str,
     net: &Network,
 ) -> Result<Tokens, McpError> {
-    validate_oauth_url(&endpoints.token)?;
+    match token_call(&endpoints.token, form, client_id, net).await? {
+        TokenReply::Tokens(t) => Ok(t),
+        TokenReply::Refused { status, error } => Err(McpError::Transport(format!(
+            "HTTP {status}: {}",
+            error.as_deref().unwrap_or("token request failed")
+        ))),
+    }
+}
+
+/// What a token endpoint answered.
+enum TokenReply {
+    Tokens(Tokens),
+    /// An error status, with the OAuth `error` code when the body has one.
+    Refused {
+        status: reqwest::StatusCode,
+        error: Option<String>,
+    },
+}
+
+async fn token_call(
+    token_url: &str,
+    form: &[(String, String)],
+    client_id: &str,
+    net: &Network,
+) -> Result<TokenReply, McpError> {
+    validate_oauth_url(token_url)?;
     let resp = client(net)?
-        .post(&endpoints.token)
+        .post(token_url)
         .header(
             reqwest::header::CONTENT_TYPE,
             "application/x-www-form-urlencoded",
@@ -291,12 +316,10 @@ pub(super) async fn token_request(
         ))
     })?;
     if !status.is_success() {
-        return Err(McpError::Transport(format!(
-            "HTTP {status}: {}",
-            v.get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("token request failed")
-        )));
+        return Ok(TokenReply::Refused {
+            status,
+            error: v.get("error").and_then(Value::as_str).map(str::to_string),
+        });
     }
     let access = v
         .get("access_token")
@@ -306,7 +329,7 @@ pub(super) async fn token_request(
         .get("expires_in")
         .and_then(Value::as_u64)
         .map(|s| unix_now().saturating_add(s));
-    Ok(Tokens {
+    Ok(TokenReply::Tokens(Tokens {
         access: access.to_string(),
         refresh: v
             .get("refresh_token")
@@ -316,7 +339,178 @@ pub(super) async fn token_request(
         client_id: client_id.to_string(),
         client_secret: None,
         bound_to: None,
-    })
+    }))
+}
+
+/// The client id an HTTP identity must have.
+fn required_client_id(settings: &OAuthSettings) -> Result<&str, McpError> {
+    settings
+        .client_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth client_id is required".into()))
+}
+
+/// The form fields every token request of an HTTP identity ends with: the
+/// scopes, the client id and the client secret.
+fn client_fields(settings: &OAuthSettings, client_id: &str) -> Vec<(String, String)> {
+    let mut form = Vec::new();
+    if !settings.scopes.is_empty() {
+        form.push(("scope".into(), settings.scopes.join(" ")));
+    }
+    form.push(("client_id".into(), client_id.to_string()));
+    if let Some(secret) = &settings.client_secret {
+        form.push(("client_secret".into(), secret.clone()));
+    }
+    form
+}
+
+/// A token for the client credentials or the password grant, from the token
+/// endpoint alone: no person signs in.
+pub async fn fetch_token(settings: &OAuthSettings) -> Result<Tokens, McpError> {
+    let endpoints = http_endpoints(settings)?;
+    let client_id = required_client_id(settings)?;
+    let mut form: Vec<(String, String)> = match settings.grant {
+        Grant::ClientCredentials => vec![("grant_type".into(), "client_credentials".into())],
+        Grant::Password => {
+            let username = settings
+                .username
+                .clone()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| McpError::Message("the password grant needs a username".into()))?;
+            vec![
+                ("grant_type".into(), "password".into()),
+                ("username".into(), username),
+                (
+                    "password".into(),
+                    settings.password.clone().unwrap_or_default(),
+                ),
+            ]
+        }
+        _ => {
+            return Err(McpError::Message(
+                "this OAuth grant needs a sign-in (sendito auth login)".into(),
+            ));
+        }
+    };
+    form.extend(client_fields(settings, client_id));
+    let mut tokens = token_request(&endpoints, &form, client_id, &settings.network).await?;
+    tokens.client_secret = settings.client_secret.clone();
+    tokens.bound_to = Some(endpoints.token.clone());
+    Ok(tokens)
+}
+
+/// The device authorization grant (RFC 8628): asks for a code, shows it with
+/// `note`, opens the verification page with `opener`, then polls the token
+/// endpoint until the user accepts, refuses or the code expires.
+pub async fn device_login(
+    settings: &OAuthSettings,
+    opener: &(dyn Fn(&str) -> bool + Sync),
+    note: &(dyn Fn(String) + Sync),
+) -> Result<Tokens, McpError> {
+    let token_url = settings
+        .token_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth token_url is required".into()))?;
+    let device_url = settings
+        .device_authorization_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| McpError::Message("OAuth device_authorization_url is required".into()))?;
+    validate_oauth_url(&device_url)?;
+    let client_id = required_client_id(settings)?;
+    let resp = client(&settings.network)?
+        .post(&device_url)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(form_encode(&client_fields(settings, client_id)))
+        .send()
+        .await
+        .map_err(|e| McpError::Transport(e.to_string()))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|_| {
+        McpError::Transport(format!(
+            "HTTP {status}: the device endpoint answered no JSON"
+        ))
+    })?;
+    if !status.is_success() {
+        return Err(McpError::Transport(format!(
+            "HTTP {status}: {}",
+            v.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("device authorization failed")
+        )));
+    }
+    let field = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+    let (Some(device_code), Some(user_code), Some(uri)) = (
+        field("device_code"),
+        field("user_code"),
+        field("verification_uri"),
+    ) else {
+        return Err(McpError::Message(
+            "the device endpoint sent no device_code, user_code or verification_uri".into(),
+        ));
+    };
+    let complete = field("verification_uri_complete");
+    let expires_in = v.get("expires_in").and_then(Value::as_u64).unwrap_or(600);
+    let mut interval = v
+        .get("interval")
+        .and_then(Value::as_u64)
+        .unwrap_or(5)
+        .max(1);
+    note(format!(
+        "device sign-in:\n  Open {uri} and enter the code {user_code}. It expires in {} min.",
+        expires_in.div_ceil(60)
+    ));
+    let _ = opener(complete.as_deref().unwrap_or(&uri));
+    let deadline = std::time::Instant::now() + Duration::from_secs(expires_in);
+    let mut form = vec![
+        (
+            "grant_type".to_string(),
+            "urn:ietf:params:oauth:grant-type:device_code".to_string(),
+        ),
+        ("device_code".into(), device_code),
+        ("client_id".into(), client_id.to_string()),
+    ];
+    if let Some(secret) = &settings.client_secret {
+        form.push(("client_secret".into(), secret.clone()));
+    }
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        if std::time::Instant::now() >= deadline {
+            return Err(McpError::Message(
+                "the device code expired; sign in again".into(),
+            ));
+        }
+        match token_call(&token_url, &form, client_id, &settings.network).await? {
+            TokenReply::Tokens(mut tokens) => {
+                tokens.client_secret = settings.client_secret.clone();
+                tokens.bound_to = Some(token_url);
+                return Ok(tokens);
+            }
+            TokenReply::Refused { error, status } => match error.as_deref() {
+                Some("authorization_pending") => {}
+                Some("slow_down") => interval += 5,
+                Some("access_denied") => {
+                    return Err(McpError::Message("the sign-in was refused".into()));
+                }
+                Some("expired_token") => {
+                    return Err(McpError::Message(
+                        "the device code expired; sign in again".into(),
+                    ));
+                }
+                other => {
+                    return Err(McpError::Transport(format!(
+                        "HTTP {status}: {}",
+                        other.unwrap_or("token request failed")
+                    )));
+                }
+            },
+        }
+    }
 }
 
 /// The whole interactive login, as the CLI runs it. Returns the tokens to
@@ -383,6 +577,12 @@ pub async fn login_http(
     opener: &(dyn Fn(&str) -> bool + Sync),
     note: &(dyn Fn(String) + Sync),
 ) -> Result<Tokens, McpError> {
+    match settings.grant {
+        Grant::AuthorizationCode => {}
+        Grant::DeviceCode => return device_login(settings, opener, note).await,
+        // No sign-in: getting a token now checks the credentials.
+        Grant::ClientCredentials | Grant::Password => return fetch_token(settings).await,
+    }
     let endpoints = http_endpoints(settings)?;
     let client_id = settings
         .client_id
@@ -413,17 +613,23 @@ pub async fn login_http(
 }
 
 pub(super) fn http_endpoints(settings: &OAuthSettings) -> Result<Endpoints, McpError> {
-    let authorize = settings
-        .authorize_url
-        .clone()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| McpError::Message("OAuth authorize_url is required".into()))?;
+    // Only the authorization code grant uses the authorize endpoint.
+    let authorize = match settings.grant {
+        Grant::AuthorizationCode => settings
+            .authorize_url
+            .clone()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| McpError::Message("OAuth authorize_url is required".into()))?,
+        _ => String::new(),
+    };
     let token = settings
         .token_url
         .clone()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| McpError::Message("OAuth token_url is required".into()))?;
-    validate_oauth_url(&authorize)?;
+    if !authorize.is_empty() {
+        validate_oauth_url(&authorize)?;
+    }
     validate_oauth_url(&token)?;
     Ok(Endpoints {
         authorize,

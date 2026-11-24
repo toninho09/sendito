@@ -72,6 +72,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `tree_new_request` | `n` | `n` | New request in the selected folder |
 | `tree_new_folder` | `N` | `N` | New folder in the selected folder |
 | `tree_rename` | `r`, `F2` | `r`, `F2` | Rename the selected item |
+| `tree_folder_settings` | `s` | `s` | Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit) |
 | `tree_duplicate` | `d` | `d` | Duplicate the selected item |
 | `tree_delete` | `Delete`, `x` | `Delete`, `x` | Delete the selected item (asks first) |
 | `tree_move` | `m` | `m` | Move the selected item to another folder |
@@ -230,7 +231,10 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:authtype` | Choose the auth type of the request |
 | `:grpcmethod` | Choose the gRPC service and method |
 | `:rescan` | Read the collection from disk again |
-| `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
+| `:saveexample [name]` | Save the response on screen as an example of the request |
+| `:examples` | List the request's saved examples and show one (:examples delete <name> deletes) |
+| `:folder` | Edit the settings of the active request's folder (headers, auth, variables, scripts) |
+| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
 | `:httpfile` | Copy the request as an .http file |

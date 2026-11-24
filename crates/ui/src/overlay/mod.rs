@@ -100,6 +100,8 @@ pub enum PickAction {
     },
     /// Open the details editor of an MCP server.
     McpServerDetails,
+    /// Show a saved example of the active request.
+    Example,
 }
 
 pub struct Prompt {

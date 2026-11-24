@@ -2,22 +2,38 @@
 
 use crate::*;
 
-pub(crate) fn curl(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
-    let (project, _, req) = match load(request, &env) {
-        Ok(v) => v,
-        Err((e, code)) => {
-            eprintln!("sendito: {e}");
-            return ExitCode::from(code);
-        }
-    };
-    let Request::Http(h) = req else {
-        eprintln!("sendito: curl export is only available for HTTP requests");
-        return ExitCode::from(3);
-    };
-    let scope = if include_secrets {
+/// The HTTP request to export, with its folders applied, and the scope to
+/// render it with (secret values only with `include_secrets`).
+fn export_input(
+    request: &Path,
+    env: &Option<String>,
+    include_secrets: bool,
+    what: &str,
+) -> Result<(Project, String, HttpRequest, Scope), ExitCode> {
+    let (project, rel, req) = load(request, env).map_err(|(e, code)| {
+        eprintln!("sendito: {e}");
+        ExitCode::from(code)
+    })?;
+    let mut scope = if include_secrets {
         runner::build_scope(&project.envs, env.as_deref(), &Default::default()).0
     } else {
         runner::names_scope(&project.envs, env.as_deref(), &Default::default())
+    };
+    let chain = project.coll.chain(&rel).map_err(|e| {
+        eprintln!("sendito: {e}");
+        ExitCode::from(3)
+    })?;
+    let Request::Http(h) = runner::with_folders(&req, &chain, &mut scope) else {
+        eprintln!("sendito: {what} export is only available for HTTP requests");
+        return Err(ExitCode::from(3));
+    };
+    Ok((project, rel, h, scope))
+}
+
+pub(crate) fn curl(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
+    let (project, _, h, scope) = match export_input(request, &env, include_secrets, "curl") {
+        Ok(v) => v,
+        Err(code) => return code,
     };
     println!(
         "{}",
@@ -27,21 +43,9 @@ pub(crate) fn curl(request: &Path, env: Option<String>, include_secrets: bool) -
 }
 
 pub(crate) fn http_export(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
-    let (project, rel, req) = match load(request, &env) {
+    let (project, rel, h, scope) = match export_input(request, &env, include_secrets, ".http") {
         Ok(v) => v,
-        Err((e, code)) => {
-            eprintln!("sendito: {e}");
-            return ExitCode::from(code);
-        }
-    };
-    let Request::Http(h) = req else {
-        eprintln!("sendito: .http export is only available for HTTP requests");
-        return ExitCode::from(3);
-    };
-    let scope = if include_secrets {
-        runner::build_scope(&project.envs, env.as_deref(), &Default::default()).0
-    } else {
-        runner::names_scope(&project.envs, env.as_deref(), &Default::default())
+        Err(code) => return code,
     };
     let name = sendito_store::collection::name_of(&rel).to_string();
     print!(

@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sendito_store::config::{
-    self, KeySpec, McpHttpServer, McpServer, McpServerAuth, McpStdioServer, OAuthIdentity,
+    self, KeySpec, McpHttpServer, McpServer, McpServerAuth, McpStdioServer, OAuthGrant,
+    OAuthIdentity,
 };
 
 use crate::app::{App, StatusKind};
@@ -196,10 +197,17 @@ impl CfgEditor {
             .map(|(name, i)| {
                 vec![
                     name.clone(),
-                    i.authorize_url.clone(),
+                    i.grant.as_str().to_string(),
+                    if i.grant == OAuthGrant::DeviceCode {
+                        i.device_authorization_url.clone()
+                    } else {
+                        i.authorize_url.clone()
+                    },
                     i.token_url.clone(),
                     i.client_id.clone(),
                     i.client_secret.clone().unwrap_or_default(),
+                    i.username.clone().unwrap_or_default(),
+                    i.password.clone().unwrap_or_default(),
                     i.scopes.join(" "),
                 ]
             })
@@ -212,10 +220,13 @@ impl CfgEditor {
             tables: vec![text_table(
                 &[
                     ("Name", 2),
-                    ("Authorize URL", 4),
+                    ("Grant", 3),
+                    ("Authorize / device URL", 4),
                     ("Token URL", 4),
                     ("Client ID", 3),
                     ("Client secret", 3),
+                    ("Username", 2),
+                    ("Password", 2),
                     ("Scopes", 3),
                 ],
                 &rows,
@@ -461,24 +472,56 @@ impl App {
                                 .into(),
                         );
                     }
+                    let grant = if r[1].is_empty() {
+                        OAuthGrant::AuthorizationCode
+                    } else {
+                        OAuthGrant::parse(&r[1]).ok_or_else(|| {
+                            format!(
+                                "{name}: the grant is authorization_code, client_credentials, \
+                                 password or device_code"
+                            )
+                        })?
+                    };
+                    let url_need = match grant {
+                        OAuthGrant::AuthorizationCode => Some("an authorize URL"),
+                        OAuthGrant::DeviceCode => Some("a device authorization URL"),
+                        _ => None,
+                    };
                     for (i, what) in [
-                        (1, "an authorize URL"),
-                        (2, "a token URL"),
-                        (3, "a client ID"),
+                        (2, url_need),
+                        (3, Some("a token URL")),
+                        (4, Some("a client ID")),
                     ] {
-                        if r[i].is_empty() {
+                        if let Some(what) = what
+                            && r[i].is_empty()
+                        {
                             return Err(format!("{name}: set {what}"));
                         }
                     }
-                    if plain(&r[4]) {
-                        plain_values.push(format!("the client secret of {name}"));
+                    if grant == OAuthGrant::Password && r[6].is_empty() {
+                        return Err(format!("{name}: the password grant needs a username"));
                     }
+                    for (i, what) in [(5, "client secret"), (7, "password")] {
+                        if plain(&r[i]) {
+                            plain_values.push(format!("the {what} of {name}"));
+                        }
+                    }
+                    let given = |i: usize| (!r[i].is_empty()).then(|| r[i].clone());
+                    let (authorize_url, device_authorization_url) = match grant {
+                        OAuthGrant::AuthorizationCode => (r[2].clone(), String::new()),
+                        OAuthGrant::DeviceCode => (String::new(), r[2].clone()),
+                        _ => (String::new(), String::new()),
+                    };
                     let id = OAuthIdentity {
-                        authorize_url: r[1].clone(),
-                        token_url: r[2].clone(),
-                        client_id: r[3].clone(),
-                        client_secret: (!r[4].is_empty()).then(|| r[4].clone()),
-                        scopes: split_list(&r[5]),
+                        grant,
+                        authorize_url,
+                        token_url: r[3].clone(),
+                        device_authorization_url,
+                        client_id: r[4].clone(),
+                        client_secret: given(5),
+                        username: given(6),
+                        password: given(7),
+                        scopes: split_list(&r[8]),
                     };
                     if ids.insert(name.clone(), id).is_some() {
                         return Err(format!("{name}: two identities have this name"));
@@ -645,11 +688,17 @@ pub fn cfg_explain(e: &CfgEditor) -> String {
         }
         CfgKind::OAuth => match t.sel_col {
             0 => "Name: the [oauth.<name>] key a request's auth names.".into(),
-            4 => {
-                "Client secret: write {{name}} and keep the value in an environment secret.".into()
-            }
-            5 => "Scopes: separated by spaces.".into(),
-            _ => "URLs and client ID may use {{variables}}; :auth login <name> signs in.".into(),
+            1 => "Grant: authorization_code (empty), client_credentials, password or device_code."
+                .into(),
+            2 => "The authorize URL (authorization_code) or the device authorization URL \
+                  (device_code); empty for the other grants."
+                .into(),
+            5 | 7 => "Write {{name}} and keep the value in an environment secret.".into(),
+            6 => "Username: password grant only.".into(),
+            8 => "Scopes: separated by spaces.".into(),
+            _ => "URLs and client ID may use {{variables}}; :auth login <name> signs in \
+                  (client_credentials and password get a token when a request needs one)."
+                .into(),
         },
         CfgKind::Keymap => {
             let id = cell(0);

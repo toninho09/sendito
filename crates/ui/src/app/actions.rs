@@ -88,6 +88,7 @@ impl App {
             Action::TreeNewRequest => self.prompt_new_request(),
             Action::TreeNewFolder => self.prompt_new_folder(),
             Action::TreeRename => self.prompt_rename(),
+            Action::TreeFolderSettings => self.tree_folder_settings(),
             Action::TreeDuplicate => self.tree_duplicate(),
             Action::TreeDelete => self.tree_delete(),
             Action::TreeMove => self.tree_move(),
@@ -218,6 +219,8 @@ impl App {
     pub(super) fn open_focus(kind: Kind) -> Focus {
         match kind {
             Kind::Http | Kind::Ws => Focus::Bar(1),
+            // A folder tab has no request bar.
+            Kind::Folder => Focus::ReqTabs,
             _ => Focus::Bar(0),
         }
     }
@@ -242,13 +245,16 @@ impl App {
                     v.push(Focus::Bar(0));
                 }
                 Some(Kind::Ws) => v.push(Focus::Bar(1)),
+                Some(Kind::Folder) => {}
                 _ => {
                     v.push(Focus::Bar(0));
                     v.push(Focus::Bar(1));
                 }
             }
+            if self.tab().is_some_and(|t| t.folder.is_none()) {
+                v.push(Focus::Bar(2));
+            }
             v.extend([
-                Focus::Bar(2),
                 Focus::ReqTabs,
                 Focus::ReqBody,
                 Focus::RespTabs,
@@ -544,6 +550,10 @@ impl App {
 
     pub fn save(&mut self) {
         let Some(t) = self.tab() else { return };
+        if t.folder.is_some() {
+            self.save_folder_tab();
+            return;
+        }
         let Some(path) = t.path.clone() else {
             let id = t.id;
             let name = t.name.clone();
@@ -602,7 +612,10 @@ impl App {
 
     pub fn rescan(&mut self) {
         match self.project.coll.scan() {
-            Ok(root) => self.tree.set_root(root),
+            Ok(root) => {
+                self.tree.set_root(root);
+                self.load_folders();
+            }
             Err(e) => self.set_status(format!("cannot read collection: {e}"), StatusKind::Error),
         }
     }

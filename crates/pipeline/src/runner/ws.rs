@@ -157,11 +157,25 @@ pub async fn exec_ws(
             scope_errors: scope_errors.clone(),
         });
     };
-    if matches!(req.auth, Auth::OAuth { .. }) {
+    if req.auth.kind().http_only() {
         return fail(
-            "OAuth 2 authentication is only supported for HTTP requests".into(),
+            format!(
+                "{} authentication is only supported for HTTP requests",
+                req.auth.kind().label()
+            ),
             results,
         );
+    }
+    // A JWT is signed now; the token is masked like the other secrets.
+    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+        Ok(Some(token)) => {
+            scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
+            resolved
+                .headers
+                .push(("Authorization".into(), format!("Bearer {token}")));
+        }
+        Ok(None) => {}
+        Err(e) => return fail(e, results),
     }
     if resolved.url.is_empty() {
         return fail("choose a WebSocket URL first".into(), results);

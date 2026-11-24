@@ -7,11 +7,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sendito_core::Request;
+use sendito_core::inherit::ChainItem;
+use sendito_core::model::FolderSettings;
 
 pub(crate) use crate::fsio::make_private;
 pub use crate::fsio::{write_atomic, write_private};
-use crate::request_file;
 use crate::{Result, StoreError};
+use crate::{examples, folder, request_file};
 
 pub const META_DIR: &str = ".sendito";
 pub const EXT: &str = "toml";
@@ -109,6 +111,49 @@ pub fn parent_rel(rel: &str) -> &str {
 pub fn name_of(rel: &str) -> &str {
     let base = rel.rsplit('/').next().unwrap_or(rel);
     base.strip_suffix(".toml").unwrap_or(base)
+}
+
+/// The folders whose settings apply to `rel` (a request, or a folder),
+/// from the root (`""`) to its own folder.
+pub fn folders_above(rel: &str) -> Vec<String> {
+    let dir = if rel.ends_with(".toml") {
+        parent_rel(rel)
+    } else {
+        rel
+    };
+    let mut out = vec![String::new()];
+    let mut acc = String::new();
+    for part in dir.split('/').filter(|p| !p.is_empty()) {
+        acc = join_rel(&acc, part);
+        out.push(acc.clone());
+    }
+    out
+}
+
+/// Checks a user-supplied request name: a folder name, and not the name of
+/// the folder settings file.
+pub fn validate_request_name(name: &str) -> Result<()> {
+    validate_name(name)?;
+    if format!("{name}.{EXT}").eq_ignore_ascii_case(folder::FILE) {
+        return Err(StoreError::Invalid(format!(
+            "invalid name {name:?}: {} holds the folder settings",
+            folder::FILE
+        )));
+    }
+    Ok(())
+}
+
+/// Checks a user-supplied folder name: a name, and not one that looks like
+/// a request's examples directory.
+pub fn validate_folder_name(name: &str) -> Result<()> {
+    validate_name(name)?;
+    if name.ends_with(examples::DIR_SUFFIX) {
+        return Err(StoreError::Invalid(format!(
+            "invalid folder name {name:?}: names ending in {} hold saved examples",
+            examples::DIR_SUFFIX
+        )));
+    }
+    Ok(())
 }
 
 /// Checks a user-supplied folder or request name.
@@ -243,13 +288,16 @@ impl Collection {
         let mut has_other_files = false;
         for (fname, path, is_dir) in entries {
             if is_dir {
-                if self.ignore.contains(&fname) {
+                // A request's saved examples, not a folder.
+                if self.ignore.contains(&fname) || fname.ends_with(examples::DIR_SUFFIX) {
                     continue;
                 }
                 let child_rel = join_rel(&rel, &fname);
                 folder
                     .folders
                     .push(self.scan_dir(&path, child_rel, fname, files)?);
+            } else if fname == folder::FILE {
+                // The folder settings, not a request.
             } else if path.extension().is_some_and(|e| e == EXT) {
                 let child_rel = join_rel(&rel, &fname);
                 files.push((child_rel.clone(), path));
@@ -289,8 +337,57 @@ impl Collection {
         Ok(true)
     }
 
+    fn folder_file(&self, rel: &str) -> PathBuf {
+        self.abs(rel).join(folder::FILE)
+    }
+
+    /// The settings of a folder (`""` is the root); empty when it has no
+    /// `folder.toml`.
+    pub fn load_folder(&self, rel: &str) -> Result<FolderSettings> {
+        let path = self.folder_file(rel);
+        match fs::read_to_string(&path) {
+            Ok(text) => folder::parse(&text).map_err(|msg| StoreError::Parse { path, msg }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(FolderSettings::default()),
+            Err(e) => Err(StoreError::io(&path, e)),
+        }
+    }
+
+    /// Writes a folder's settings; empty settings remove its `folder.toml`.
+    /// Equal settings leave the file untouched. Returns whether it changed.
+    pub fn save_folder(&self, rel: &str, settings: &FolderSettings) -> Result<bool> {
+        validate_rel(rel)?;
+        if self.load_folder(rel).ok().as_ref() == Some(settings) {
+            return Ok(false);
+        }
+        let path = self.folder_file(rel);
+        if settings.is_empty() {
+            return match fs::remove_file(&path) {
+                Ok(()) => Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(e) => Err(StoreError::io(&path, e)),
+            };
+        }
+        write_atomic(&path, folder::to_toml(settings).as_bytes())?;
+        Ok(true)
+    }
+
+    /// The settings of every folder from the root to the folder that holds
+    /// `request_rel`, root first, without the folders that define nothing. A
+    /// `folder.toml` that cannot be read is an error: sending without the
+    /// auth it defines would be wrong.
+    pub fn chain(&self, request_rel: &str) -> Result<Vec<ChainItem>> {
+        let mut out = Vec::new();
+        for rel in folders_above(request_rel) {
+            let f = self.load_folder(&rel)?;
+            if !f.is_empty() {
+                out.push((rel, f));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn create_folder(&self, parent: &str, name: &str) -> Result<String> {
-        validate_name(name)?;
+        validate_folder_name(name)?;
         validate_rel(parent)?;
         let rel = join_rel(parent, name);
         let p = self.abs(&rel);
@@ -302,7 +399,7 @@ impl Collection {
     }
 
     pub fn create_request(&self, parent: &str, name: &str, req: &Request) -> Result<String> {
-        validate_name(name)?;
+        validate_request_name(name)?;
         validate_rel(parent)?;
         let rel = join_rel(parent, &format!("{name}.{EXT}"));
         let p = self.abs(&rel);
@@ -322,7 +419,11 @@ impl Collection {
 
     /// Renames a folder or request in place. Returns the new relative path.
     pub fn rename(&self, rel: &str, new_name: &str) -> Result<String> {
-        validate_name(new_name)?;
+        if Self::is_request_rel(rel) {
+            validate_request_name(new_name)?;
+        } else {
+            validate_folder_name(new_name)?;
+        }
         let fname = if Self::is_request_rel(rel) {
             format!("{new_name}.{EXT}")
         } else {
@@ -338,7 +439,26 @@ impl Collection {
             return Err(StoreError::Exists(to));
         }
         fs::rename(&from, &to).map_err(|e| StoreError::io(&from, e))?;
+        self.carry_examples(rel, &new_rel, false)?;
         Ok(new_rel)
+    }
+
+    /// Moves (or with `copy`, copies) a request's examples directory along
+    /// with the request. Folders carry theirs inside them.
+    fn carry_examples(&self, from_rel: &str, to_rel: &str, copy: bool) -> Result<()> {
+        if !Self::is_request_rel(from_rel) {
+            return Ok(());
+        }
+        let from = self.abs(&examples::dir_rel(from_rel));
+        if !from.is_dir() {
+            return Ok(());
+        }
+        let to = self.abs(&examples::dir_rel(to_rel));
+        if copy {
+            copy_dir(&from, &to)
+        } else {
+            fs::rename(&from, &to).map_err(|e| StoreError::io(&from, e))
+        }
     }
 
     /// Moves a node into another folder ("" is the root).
@@ -361,6 +481,7 @@ impl Collection {
             return Err(StoreError::Exists(to));
         }
         fs::rename(&from, &to).map_err(|e| StoreError::io(&from, e))?;
+        self.carry_examples(rel, &new_rel, false)?;
         Ok(new_rel)
     }
 
@@ -388,6 +509,7 @@ impl Collection {
             let from = self.abs(rel);
             if is_req {
                 fs::copy(&from, &to).map_err(|e| StoreError::io(&from, e))?;
+                self.carry_examples(rel, &new_rel, true)?;
             } else {
                 copy_dir(&from, &to)?;
             }
@@ -406,7 +528,12 @@ impl Collection {
         if p.is_dir() {
             fs::remove_dir_all(&p).map_err(|e| StoreError::io(&p, e))
         } else {
-            fs::remove_file(&p).map_err(|e| StoreError::io(&p, e))
+            fs::remove_file(&p).map_err(|e| StoreError::io(&p, e))?;
+            let ex = self.abs(&examples::dir_rel(rel));
+            if Self::is_request_rel(rel) && ex.is_dir() {
+                fs::remove_dir_all(&ex).map_err(|e| StoreError::io(&ex, e))?;
+            }
+            Ok(())
         }
     }
 }
@@ -725,6 +852,87 @@ mod tests {
         assert!(c.delete("").is_err());
         assert!(c.rename(&dup, "all users").is_err());
         assert_eq!(c.scan().unwrap().count_requests(), 3);
+    }
+
+    #[test]
+    fn folder_settings_chain_and_scan() {
+        let (_d, c) = coll();
+        c.create_folder("", "Users").unwrap();
+        c.create_request("Users", "list", &Request::new_http())
+            .unwrap();
+        let root = FolderSettings {
+            auth: Auth::Bearer {
+                token: "{{t}}".into(),
+            },
+            ..Default::default()
+        };
+        let users = FolderSettings {
+            headers: vec![KeyValue::new("X-A", "1")],
+            ..Default::default()
+        };
+        assert!(c.save_folder("", &root).unwrap());
+        assert!(!c.save_folder("", &root).unwrap());
+        c.save_folder("Users", &users).unwrap();
+        let chain = c.chain("Users/list.toml").unwrap();
+        assert_eq!(
+            chain,
+            vec![(String::new(), root.clone()), ("Users".into(), users)]
+        );
+        assert_eq!(c.chain("Users").unwrap().len(), 2);
+        // folder.toml is not a request in the tree.
+        let tree = c.scan().unwrap();
+        assert_eq!(tree.count_requests(), 1);
+        // Empty settings remove the file.
+        assert!(c.save_folder("Users", &FolderSettings::default()).unwrap());
+        assert!(!c.abs("Users/folder.toml").exists());
+        assert_eq!(
+            c.chain("Users/list.toml").unwrap(),
+            vec![(String::new(), root)]
+        );
+        // A broken folder.toml stops the chain with its path.
+        fs::write(c.abs("Users/folder.toml"), "kind = \"http\"\n").unwrap();
+        let e = c.chain("Users/list.toml").unwrap_err().to_string();
+        assert!(
+            e.contains("folder.toml") && e.contains("request file"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn examples_follow_their_request() {
+        let (_d, c) = coll();
+        c.create_folder("", "A").unwrap();
+        let rel = c.create_request("", "login", &Request::new_http()).unwrap();
+        let ex = examples::Example {
+            name: "200".into(),
+            status: 200,
+            ..Default::default()
+        };
+        examples::save(&c, &rel, &ex).unwrap();
+        // Not a folder in the tree.
+        assert_eq!(c.scan().unwrap().count_folders(), 1);
+        assert!(c.create_folder("", "x.examples").is_err());
+        let rel = c.rename(&rel, "sign in").unwrap();
+        assert_eq!(examples::list(&c, &rel).unwrap(), ["200"]);
+        let rel = c.move_to(&rel, "A").unwrap();
+        assert_eq!(examples::list(&c, &rel).unwrap(), ["200"]);
+        let copy = c.duplicate(&rel).unwrap();
+        assert_eq!(examples::list(&c, &copy).unwrap(), ["200"]);
+        c.delete(&rel).unwrap();
+        assert!(!c.abs("A/sign in.examples").exists());
+        assert!(c.abs("A/sign in copy.examples").is_dir());
+    }
+
+    #[test]
+    fn a_request_cannot_be_named_folder() {
+        let (_d, c) = coll();
+        assert!(
+            c.create_request("", "folder", &Request::new_http())
+                .is_err()
+        );
+        let rel = c.create_request("", "x", &Request::new_http()).unwrap();
+        assert!(c.rename(&rel, "Folder").is_err());
+        assert!(c.create_folder("", "folder").is_ok());
     }
 
     #[test]

@@ -106,6 +106,9 @@ pub struct Tab {
     /// The saved request a history copy came from; its history entries and
     /// "save to tree" default to that folder.
     pub origin_path: Option<String>,
+    /// The folder whose settings (`folder.toml`) this tab edits, `""` for
+    /// the collection root; `None` for a request tab.
+    pub folder: Option<String>,
     /// jq expressions applied in this tab, oldest first (kept in memory only).
     pub jq_history: Vec<String>,
 }
@@ -147,8 +150,31 @@ impl Tab {
             model: req.clone(),
             origin: None,
             origin_path: None,
+            folder: None,
             jq_history: Vec::new(),
         }
+    }
+
+    /// A tab that edits the settings of the folder `rel`. `saved` is what
+    /// its `folder.toml` holds.
+    pub fn new_folder(
+        id: u64,
+        rel: &str,
+        name: String,
+        settings: &FolderSettings,
+        saved: Option<&FolderSettings>,
+    ) -> Self {
+        let req = folder_request(settings);
+        let mut tab = Self::new(id, None, name, &req, saved.map(folder_request));
+        tab.ed = Editors::from_folder(settings);
+        tab.folder = Some(rel.to_string());
+        tab.refresh_model();
+        tab
+    }
+
+    /// The settings a folder tab holds now.
+    pub fn folder_settings(&self) -> FolderSettings {
+        request_folder(&self.model)
     }
 
     /// Adds a jq expression to the tab's history (not twice in a row).
@@ -188,6 +214,9 @@ impl Tab {
     }
 
     pub fn badge(&self) -> String {
+        if self.folder.is_some() {
+            return "DIR".into();
+        }
         self.model.badge().to_string()
     }
 
@@ -422,6 +451,7 @@ mod tests {
         let mut reqs = vec![full()];
         for b in bodies {
             for auth in [
+                Auth::Inherit,
                 Auth::None,
                 Auth::Basic {
                     username: "u".into(),
@@ -430,6 +460,24 @@ mod tests {
                 Auth::Bearer { token: "t".into() },
                 Auth::OAuth {
                     name: "identity".into(),
+                },
+                Auth::Digest {
+                    username: "d".into(),
+                    password: "{{dp}}".into(),
+                },
+                Auth::AwsSigV4 {
+                    access_key: "ak".into(),
+                    secret_key: "{{sk}}".into(),
+                    session_token: "tok".into(),
+                    region: "eu-west-1".into(),
+                    service: "s3".into(),
+                },
+                Auth::Jwt {
+                    algorithm: JwtAlgorithm::Rs256,
+                    secret: String::new(),
+                    private_key: "keys/rsa.pem".into(),
+                    claims: "{\"sub\": \"x\"}".into(),
+                    expires_in_s: Some(60),
                 },
             ] {
                 reqs.push(Request::Http(HttpRequest {
@@ -477,6 +525,41 @@ mod tests {
             let e = Editors::from_request(&r);
             assert_eq!(e.to_request(), r);
         }
+        // A folder's settings, variables included.
+        let folder = FolderSettings {
+            headers: vec![KeyValue::new("X-A", "1")],
+            auth: Auth::Jwt {
+                algorithm: JwtAlgorithm::Hs256,
+                secret: "{{s}}".into(),
+                private_key: String::new(),
+                claims: "{}".into(),
+                expires_in_s: None,
+            },
+            vars: vec![KeyValue::new("tenant", "acme").disabled()],
+            ..Default::default()
+        };
+        let e = Editors::from_folder(&folder);
+        assert_eq!(e.kind, Kind::Folder);
+        assert_eq!(request_folder(&e.to_request()), folder);
+        assert_eq!(e.fields(2), vec![Field::Vars]);
+        assert_eq!(
+            e.fields(1),
+            vec![
+                Field::AuthKind,
+                Field::JwtAlgorithm,
+                Field::JwtSecret,
+                Field::JwtExpires,
+                Field::JwtClaims
+            ]
+        );
+    }
+
+    #[test]
+    fn http_only_auth_kinds_are_not_offered_to_grpc() {
+        let e = Editors::from_request(&Request::new_grpc());
+        let options = e.choice_options(Field::AuthKind);
+        assert!(options.iter().any(|o| o.starts_with("JWT")));
+        assert!(!options.iter().any(|o| o == "Digest" || o == "OAuth 2"));
     }
 
     #[test]
@@ -497,7 +580,7 @@ mod tests {
         e.set_choice(Field::BodyKind, 1);
         assert_eq!(e.body_kind, BodyKind::Json);
         assert_eq!(e.choice_label(Field::BodyKind), "JSON");
-        assert_eq!(e.choice_options(Field::AuthKind).len(), 5);
+        assert_eq!(e.choice_options(Field::AuthKind).len(), 9);
         assert!(e.cycle(Field::FollowRedirects, 1));
         assert_eq!(e.choice_label(Field::FollowRedirects), "On");
         assert!(!e.cycle(Field::Params, 1));

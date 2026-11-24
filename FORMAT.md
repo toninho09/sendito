@@ -17,8 +17,12 @@ my-api/
 │   ├── cookies.lock              # cookie jar lock (gitignored)
 │   ├── session.toml              # open tabs, drafts, layout (gitignored)
 │   └── history.jsonl             # sent requests, masked    (gitignored)
+├── folder.toml                   # optional: settings every request inherits
 ├── Users/
+│   ├── folder.toml               # optional: settings the requests of Users inherit
 │   ├── list users.toml           # a request: the file name is its name
+│   ├── list users.examples/      # optional: its saved example responses
+│   │   └── 200-ok.toml
 │   └── create user.toml
 └── health.toml
 ```
@@ -32,6 +36,10 @@ my-api/
   hidden; empty folders are shown (they are folders you created).
 * Items are sorted folders first, then by name (case-insensitive, `req 2` before `req 10`).
 * Names cannot be empty, start with `.`, or contain `/`, `\` or control characters.
+  A request cannot be named `folder`: `folder.toml` holds the folder settings
+  (see [Folder settings](#folder-settings)). A folder name cannot end in
+  `.examples`: such a directory holds the saved examples of the request with
+  the same name (see [Saved examples](#saved-examples)); the tree does not show it.
 
 ## Canonical form
 
@@ -51,7 +59,9 @@ Lookup order, last wins:
 
 1. collection variables (`.sendito/collection.toml`)
 2. the active environment (`.sendito/environments/<name>.toml`)
-3. runtime variables set by scripts (pre-request `set`, post-response `extract`)
+3. the variables of the request's folders (`folder.toml`), the collection root
+   first and the request's own folder last
+4. runtime variables set by scripts (pre-request `set`, post-response `extract`)
 
 A variable's value may itself contain `{{other}}` placeholders (resolved up to
 8 levels; cycles stay unresolved). Built-in dynamic variables, generated once per
@@ -92,12 +102,17 @@ name = "X-Request-Id"
 value = "{{$uuid}}"
 enabled = true
 
-[auth]                          # optional; one of:
-type = "bearer"                 # none | basic | bearer | apikey | oauth (HTTP only)
-token = "{{token}}"
+[auth]                          # optional: no [auth] inherits the folder's auth; one of:
+type = "bearer"                 # inherit | none | basic | bearer | apikey | jwt
+token = "{{token}}"             #   | oauth | digest | awsv4 (these three: HTTP only)
 # type = "basic"   → username, password   (Authorization: Basic base64(user:pass))
 # type = "apikey"  → key, value, in = "header" | "query"
 # type = "oauth"   → name = "identity" from [oauth.<identity>]
+# type = "digest"  → username, password   (answers the server's Digest challenge)
+# type = "awsv4"   → access_key, secret_key, session_token (optional), region, service
+# type = "jwt"     → algorithm = "HS256" | "HS384" | "HS512" | "RS256" | "ES256",
+#                    secret (HS*) or private_key (a PEM file, relative to the
+#                    collection), claims (JSON object text), expires_in_s (optional)
 
 [body]                          # optional; one of:
 type = "json"
@@ -150,8 +165,28 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
     or `application/octet-stream` (file), `multipart/form-data; boundary=…`
     (multipart — this one replaces a user `Content-Type`, because the boundary must
     match; a note is shown).
-  * `Authorization` (basic, bearer, OAuth) or the API-key header, unless the request
-    already defines a header with that name (the explicit header wins; a note is shown).
+  * `Authorization` (basic, bearer, OAuth, JWT, AWS SigV4, Digest) or the API-key
+    header, unless the request already defines a header with that name (the
+    explicit header wins; a note is shown).
+  * AWS SigV4 also adds `X-Amz-Date`, `X-Amz-Content-Sha256` (service `s3`
+    only) and `X-Amz-Security-Token` (with a session token). The signature
+    covers the method, the path, the query, `host`, `content-type` (when the
+    request has one), every `x-amz-*` header and the SHA-256 of the body as
+    it is sent. The path is encoded twice, except for `s3` (the AWS rule). A
+    multipart body cannot be signed (its boundary is made at send time): the
+    send stops with a message.
+  * Digest: the first send goes without `Authorization`. When the answer is a
+    `401` from the same origin with a `WWW-Authenticate: Digest` challenge
+    (SHA-256 is preferred over MD5; `qop=auth` or none; `-sess` variants),
+    the request is sent once more with the answer (`nc=00000001`, a random
+    `cnonce`). The retry shares the request's timeout. A challenge with only
+    `qop=auth-int` or another algorithm is not answered (a note says so).
+  * JWT: signed at send time and sent as `Authorization: Bearer <token>`. The
+    header is `{"alg": …, "typ": "JWT"}`; `expires_in_s` adds `iat` (now) and
+    `exp` (now + seconds) to the claims. RS256 takes a PKCS#8 or PKCS#1 RSA
+    key, ES256 a PKCS#8 P-256 key. gRPC sends it as `authorization` metadata,
+    WebSocket in the handshake. A gRPC or WebSocket request with an `oauth`,
+    `digest` or `awsv4` auth fails with a message.
   * `Accept: */*`, when no enabled `Accept` header is defined (added by the HTTP
     library; it cannot be turned off, see `docs/DEBT.md`).
   * `Cookie` from the environment's jar, only when enabled (see below).
@@ -398,6 +433,85 @@ not sent byte-for-byte as written. The client recognizes `2024-11-05`,
 The client supports tools only; it does not consume a server-initiated GET stream
 or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
 
+## Folder settings
+
+A folder (and the collection root) can hold a `folder.toml`. Its headers, auth,
+variables and scripts apply to every request below that folder, in its
+subfolders too. The file is optional; the tree does not show it as a request.
+
+```toml
+[[headers]]                     # added to the requests below (gRPC: metadata)
+name = "X-Tenant"
+value = "{{tenant}}"
+
+[auth]                          # the auth of the requests that inherit it
+type = "bearer"                 # the same types as a request, plus "inherit"
+token = "{{token}}"
+
+[[vars]]                        # variables (see the lookup order above)
+name = "tenant"
+value = "acme"
+enabled = true                  # default true
+
+[[scripts.pre]]                 # the same tables as a request's scripts
+var = "ts"
+value = "{{$timestamp}}"
+```
+
+How a request inherits:
+
+* **Auth**: a request without `[auth]` (or with `type = "inherit"`) uses the
+  auth of the nearest folder that sets one; with none, no auth is sent.
+  `type = "none"` in the request turns inheritance off. A folder with
+  `type = "inherit"`, or without `[auth]`, passes on the auth from above it.
+  MCP requests have no auth here (it belongs to the server in the config).
+* **Headers**: the folders' headers come first (the collection root first),
+  then the request's. A header that a closer folder or the request also
+  defines (the name compared without case) replaces the ones from further up;
+  when that closer row is disabled, the header is not sent at all. For gRPC the
+  folders' headers are sent as metadata, with lower-case names. MCP requests do
+  not get headers.
+* **Variables**: one layer per folder, above the environment and below the
+  runtime variables.
+* **Scripts**: the folders' pre-request, extract and assert rows run before the
+  request's own, the collection root first.
+
+An unsaved request inherits from the collection root only. A `folder.toml`
+that cannot be read stops the send of every request below it, with the file
+named in the error: sending without the auth it defines would be wrong. A file
+that is a request (it has `kind`) is refused the same way; rename it.
+
+The exports (`sendito curl`, `sendito http`, `:curl`, `:httpfile`) and the
+history show the request as it is sent, with what it inherits.
+
+## Saved examples
+
+A request's example responses live in `<request name>.examples/` next to its
+file, one TOML file per example. Renaming, moving, duplicating or deleting the
+request does the same to the directory. Examples are for HTTP requests.
+
+```toml
+# Users/list users.examples/200-ok.toml
+status = 200
+reason = "OK"                   # optional
+body = '''
+{"users": []}
+'''
+# body_file = "200-ok.bin"      # instead of body, for a body that is not UTF-8
+
+[[headers]]
+name = "Content-Type"
+value = "application/json"
+```
+
+`:saveexample [name]` saves the response on screen (the name defaults to the
+status and reason: `200-ok`; a taken name gets ` (2)`). The body is saved as
+received, before a jq filter, with the secrets the server echoed masked as
+on screen; the values of `Set-Cookie`, `Cookie`, `Authorization` and headers
+whose name has `token`, `secret`, `key` or `session` are saved as `••••••`.
+`:examples` lists them and shows one in the response pane, and
+`:examples delete <name>` deletes one. Examples are never sent.
+
 ## Environment files
 
 `.sendito/environments/<name>.toml` and `.sendito/collection.toml`:
@@ -495,12 +609,16 @@ client_key = "certs/c.key"   # platform roots; the client pair does mutual TLS
                          # and must be set together. A request's verify_tls = false
                          # skips server verification, so ca is unused there
 
-[oauth.example]          # HTTP OAuth identity; authorization code + PKCE
-authorize_url = "https://example.com/authorize"
+[oauth.example]          # HTTP OAuth identity
+grant = "authorization_code"   # default; or client_credentials | password | device_code
+authorize_url = "https://example.com/authorize"  # authorization_code only
 token_url = "https://example.com/token"
 client_id = "client"
 client_secret = "{{client_secret}}"  # optional, from a secret environment source
 scopes = ["read"]
+# device_authorization_url = "https://example.com/device"  # device_code only
+# username = "{{api_user}}"       # password only
+# password = "{{api_password}}"   # password only; keep it in a secret
 
 [grpc]
 deadline_ms = 0          # default deadline when a request sets none; 0 = none
@@ -535,12 +653,28 @@ send = ["f9", "ctrl+w e"]
 ```
 
 For HTTP OAuth use `[auth] type = "oauth"` and `name = "example"` in an HTTP
-request. Sign in with `sendito auth login example --env local` or
-`:auth login example` in the UI; logout with the corresponding `logout` command.
-The authorization URL is available even when no browser opens. Tokens are kept in
-an OS keychain account isolated by collection, environment and identity. The
-endpoint and client fields can use environment variables; secrets are allowed only
-in `client_secret`, never in URLs, client ID or scopes. OAuth endpoints and protected
+request. How the token is obtained depends on `grant`:
+
+* `authorization_code` (the default): a browser sign-in with PKCE. Sign in with
+  `sendito auth login example --env local` or `:auth login example` in the UI;
+  logout with the corresponding `logout` command. The authorization URL is
+  available even when no browser opens.
+* `device_code` (RFC 8628): `auth login` asks `device_authorization_url` for a
+  code, shows the page and the code to enter there (and opens the page), then
+  polls `token_url` at the interval the server gives (`slow_down` adds 5 s)
+  until the user accepts, refuses or the code expires.
+* `client_credentials` and `password`: no sign-in. When a request needs a token
+  and the stored one is missing or expired, Sendito asks `token_url` for a new
+  one (`grant_type`, the `username` and `password` for `password`, `scope`,
+  `client_id`, `client_secret`). A refresh token is used when the server sends
+  one; when the refresh fails, a new token is requested. A keychain that
+  cannot be read (a CI host) counts as "no token". `auth login` gets a token
+  at once, which checks the credentials.
+
+Tokens are kept in an OS keychain account isolated by collection, environment
+and identity. The endpoint and client fields can use environment variables;
+secrets are allowed only in `client_secret`, `username` and `password`, never in
+URLs, client ID or scopes. OAuth endpoints and protected
 HTTP URLs require HTTPS except for loopback. An explicit Authorization header wins.
 On HTTP 401 Sendito refreshes the token and retries the request once; this may
 repeat a request with side effects. Exports use a `{{oauth.example}}` placeholder

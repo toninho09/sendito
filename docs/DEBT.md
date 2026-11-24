@@ -76,10 +76,16 @@ allows `accept` as a transport header.
   JUnit/TAP writer (the JSON report is the machine format). A request that
   fails does not stop the run unless `--fail-fast` is given, and a request with
   unresolved variables is reported as an error and skipped.
-* Postman import covers v2.1 collections; OAuth 2 and Digest auth are not imported
-  (reported), and neither are saved example responses. Bruno and Insomnia imports
+* Postman import covers v2.1 collections; OAuth 2 auth and a JWT private key are
+  not imported (reported). Bruno and Insomnia imports
   cover supported HTTP requests and environments, not arbitrary scripts or template
   engines; skipped features and secret environments are reported.
+* OpenAPI import follows local `$ref`s only (an external one is reported), takes
+  the first security requirement and the first scheme in it, does not import
+  OAuth 2 / OpenID Connect security, cookie parameters, callbacks or links, and
+  makes a request body from an example or the schema (arrays stay empty). A
+  `.http` import reads the `< file` path as relative to the collection, not to
+  the `.http` file (reported), and keeps multipart bodies as raw text.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
 * MCP supports tools only; resources and prompts are not implemented. Each list
@@ -106,6 +112,13 @@ allows `accept` as a transport header.
   characters is never masked in what a server sends back. Closing the gap needs
   decoding the response by content type before matching.
 * HTTP/3 is not supported.
+* **AWS SigV4 cannot sign a multipart body.** `reqwest` makes the multipart
+  boundary when it sends, so the body bytes (and their hash) are not known
+  before. The send stops with a message; a file or raw body can be signed.
+  Fixing it means building the multipart body in Sendito.
+* **Digest answers `qop=auth` only.** `auth-int` would hash the body, and the
+  `userhash` and `username*` parameters are not used; a username with
+  non-ASCII characters is sent as UTF-8 in a quoted string.
 * gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
   support yet. HTTP requests, MCP servers over Streamable HTTP and WebSocket
   sessions do.
@@ -152,4 +165,4 @@ allows `accept` as a transport header.
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  49 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.

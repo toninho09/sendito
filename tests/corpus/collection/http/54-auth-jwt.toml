@@ -1,0 +1,11 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/jwt"
+
+[auth]
+type = "jwt"
+algorithm = "HS256"
+secret = "corpus-jwt-secret"
+claims = '''
+{"sub": "corpus", "role": "tester"}
+'''
