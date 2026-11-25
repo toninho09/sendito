@@ -3,9 +3,9 @@
 use super::*;
 
 /// Source labels in the editor, in the order of the file's `source` values
-/// (plain, "local", "keychain", "file"). "local" reads as "secrets" here so it
-/// is not confused with an environment named "local".
-pub const SOURCE_NAMES: &[&str] = &["plain", "secrets", "keychain", "file"];
+/// (plain, "local", "keychain", "file", "dotenv"). "local" reads as "secrets"
+/// here so it is not confused with an environment named "local".
+pub const SOURCE_NAMES: &[&str] = &["plain", "secrets", "keychain", "file", "dotenv"];
 
 pub struct EnvEditor {
     /// Environment file names; index 0 is the collection-level env.
@@ -63,6 +63,7 @@ impl EnvEditor {
                 VarSource::Local { key } => (1, key.clone().unwrap_or_default()),
                 VarSource::Keychain { key } => (2, key.clone().unwrap_or_default()),
                 VarSource::File { path } => (3, path.clone()),
+                VarSource::Dotenv { key } => (4, key.clone().unwrap_or_default()),
             };
             let hint = match (src, is_set(v)) {
                 (1 | 2, Some(true)) => "set",
@@ -70,6 +71,8 @@ impl EnvEditor {
                 (1 | 2, None) => "type to set",
                 (3, Some(false)) => "file not found",
                 (3, _) => "from the file",
+                (4, Some(false)) => "NOT SET",
+                (4, _) => "from .env",
                 _ => "",
             };
             let mut secret = TextEditor::single("").with_placeholder(hint);
@@ -89,7 +92,8 @@ impl EnvEditor {
         self.error = None;
     }
 
-    /// The environment as edited, plus secret values to store.
+    /// The environment as edited, plus secret values to store. The editor
+    /// does not show the `dotenv` path: the caller keeps the file's value.
     pub fn to_env(&self, name: &str) -> (sendito_store::env::EnvFile, Vec<(String, String)>) {
         use sendito_store::env::{EnvFile, EnvVar, VarSource};
         let mut env = EnvFile::new(name);
@@ -111,6 +115,7 @@ impl EnvEditor {
                 1 => VarSource::Local { key: opt(value) },
                 2 => VarSource::Keychain { key: opt(value) },
                 3 => VarSource::File { path: value },
+                4 => VarSource::Dotenv { key: opt(value) },
                 _ => VarSource::Plain(value),
             };
             let secret = r.cells[3].text();

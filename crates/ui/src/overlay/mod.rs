@@ -316,6 +316,16 @@ mod tests {
             name: "d".into(),
             source: VarSource::File { path: "f".into() },
         });
+        env.set(EnvVar {
+            name: "e".into(),
+            source: VarSource::Dotenv {
+                key: Some("API_TOKEN".into()),
+            },
+        });
+        env.set(EnvVar {
+            name: "g".into(),
+            source: VarSource::Dotenv { key: None },
+        });
         let mut ed = EnvEditor {
             envs: vec![],
             current: 0,

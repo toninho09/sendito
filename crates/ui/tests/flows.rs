@@ -1223,6 +1223,21 @@ fn flow_env_editor_outside_click_asks_when_dirty() {
     assert!(h.app.overlay.is_none());
 }
 
+/// The env editor does not show the `dotenv` path, and a save keeps it.
+#[test]
+fn flow_env_editor_save_keeps_the_dotenv_path() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    // The editor opens on the active environment.
+    let p = h.dir.path().join(".sendito/environments/local.toml");
+    std::fs::write(&p, "dotenv = \".env.x\"\n\n[variables]\na = \"1\"\n").must();
+    h.key("ctrl+w V");
+    h.key("ctrl+d"); // delete the row of `a`
+    h.key("ctrl+s");
+    let after = std::fs::read_to_string(&p).must();
+    assert_eq!(after, "dotenv = \".env.x\"\n\n[variables]\n");
+}
+
 /// A secret typed into a new env row is masked on screen right away,
 /// not only after a save reloads the table.
 #[test]

@@ -395,6 +395,8 @@ token = { source = "local" }                # .sendito/secrets.toml (gitignored;
                                             # "secrets" in the environment editor)
 api_key = { source = "keychain" }           # OS keychain
 client_key = { source = "file", path = "~/.acme/key" }
+db_url = { source = "dotenv", key = "DATABASE_URL" } # .env at the collection
+                                            # root, or set `dotenv = "<path>"`
 ```
 
 Set secret values in the environment editor (`Ctrl+W V`), which writes them to

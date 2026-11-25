@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### `.env` variables
+
+* Add the `dotenv` variable source: `{ source = "dotenv", key = "API_TOKEN" }`
+  reads a key of a `.env` file (default key: the variable name). The value is a
+  secret. Sendito only reads the file.
+* An environment file sets the path with a top-level `dotenv = "<path>"`; the
+  default is `.env` at the collection root.
+* The environment editor offers `dotenv` as a source and shows whether the key
+  is set.
+
 ### Descriptions
 
 * Add a Markdown `description` to every request kind and to `folder.toml`; the

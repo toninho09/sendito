@@ -62,7 +62,7 @@ impl App {
     pub(super) fn load_env_into(&self, ed: &mut EnvEditor) {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
         match self.project.envs.load(&name) {
-            Ok(env) => ed.load(&env, |v| self.project.envs.is_set(&name, v)),
+            Ok(env) => ed.load(&env, |v| self.project.envs.is_set(&env, v)),
             Err(e) => {
                 // Never show (and so never save) another environment's rows.
                 ed.table = EnvEditor::table();
@@ -76,16 +76,20 @@ impl App {
         let name = ed.envs.get(ed.current).cloned().unwrap_or_default();
         // A file that does not parse was never loaded: saving would replace
         // it with what the editor shows.
-        match self.project.envs.load(&name) {
-            Ok(_) => {}
+        // The editor does not show the `dotenv` path: keep the file's value.
+        let dotenv = match self.project.envs.load(&name) {
+            Ok(old) => old.dotenv,
             // A deleted file is written again.
             Err(sendito_store::StoreError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound => {}
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                None
+            }
             Err(e) => {
                 ed.error = Some(format!("not saved: fix the file first ({e})"));
                 return false;
             }
-        }
+        };
         // `to_env` keeps the last of two rows with one name: say so instead.
         let mut seen = std::collections::HashSet::new();
         for r in ed.table.values() {
@@ -95,7 +99,8 @@ impl App {
                 return false;
             }
         }
-        let (env, secrets) = ed.to_env(&name);
+        let (mut env, secrets) = ed.to_env(&name);
+        env.dotenv = dotenv;
         if let Err(e) = self.project.envs.save(&env) {
             ed.error = Some(e.to_string());
             return false;

@@ -539,7 +539,7 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   a watch stops. An active-environment secret that did not load never falls
   back to the collection's value for the same name, and while the active
   environment file cannot be read no collection value stands in for it.
-* **Four secret sources**, mixable in one environment:
+* **Five secret sources**, mixable in one environment:
 
 | `source` | Value lives in | Secret |
 |---|---|---|
@@ -547,8 +547,10 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 | `local` | `.sendito/secrets.toml` (`[<env>]`, `[_collection]`), gitignored | yes |
 | `keychain` | the OS keychain (Secret Service / macOS Keychain) | yes |
 | `file` | the contents of a path (one trailing newline removed) | yes |
+| `dotenv` | a key of the environment's `.env` file (top-level `dotenv = "<path>"`, default `.env` at the collection root); read only | yes |
 
-* `key = …` selects an explicit key/account in `secrets.toml` or the keychain;
+* `key = …` selects an explicit key/account in `secrets.toml`, the keychain or
+  the `.env` file;
   otherwise the variable name is used.
 * **Derived values inherit secrecy**: `Bearer {{token}}` and any value built from
   a secret is a secret too.

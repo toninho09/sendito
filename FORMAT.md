@@ -716,6 +716,8 @@ whose name has `token`, `secret`, `key` or `session` are saved as `••••�
 `.sendito/environments/<name>.toml` and `.sendito/collection.toml`:
 
 ```toml
+dotenv = ".env.dev"                                   # optional: the .env file of dotenv variables
+
 [variables]
 base_url = "http://localhost:8080"                    # plain: stored in this file
 token = { source = "local" }                          # .sendito/secrets.toml
@@ -723,6 +725,7 @@ api_key = { source = "keychain" }                     # OS keychain
 signing_key = { source = "file", path = "~/.acme/key" } # contents of a file
 admin_pw = { source = "local", key = "admin" }        # explicit key in secrets.toml
 deploy = { source = "keychain", key = "acme/deploy" } # explicit keychain account
+db_url = { source = "dotenv", key = "DATABASE_URL" }  # a key of the .env file
 ```
 
 Each variable has exactly one source; sources can be mixed in one environment.
@@ -733,8 +736,19 @@ Each variable has exactly one source; sources can be mixed in one environment.
 | `local` | `.sendito/secrets.toml`, section `[<env>]` (`[_collection]` for collection variables), key = `key` or the variable name | gitignored by `sendito init` |
 | `keychain` | OS keychain, service `sendito`, account = `key` or `<collection name>/<env>/<variable>` | Linux: Secret Service (GNOME Keyring, KWallet); macOS: Keychain |
 | `file` | the file's contents, one trailing newline removed | path relative to the collection root, `~/` expanded |
+| `dotenv` | the environment's `.env` file, key = `key` or the variable name | read only: Sendito never writes the file |
 
-Values from `local`, `keychain` and `file` are secrets, and so is any value built
+The top-level `dotenv` key sets the path of the `.env` file for the `dotenv`
+variables of that file. Without it, the path is `.env` at the collection root.
+A relative path starts at the collection root, and `~/` is expanded.
+`collection.toml` takes the same key for the collection variables. The file
+uses the usual `.env` syntax: `KEY=value` lines, `#` comments, an optional
+`export`, single or double quotes, and `${VAR}` substitution (from the earlier
+lines, then from the process environment). Sendito does not load the file into
+the process environment. A parse error names the file and the line, never the
+line's text.
+
+Values from `local`, `keychain`, `file` and `dotenv` are secrets, and so is any value built
 from one (for example a header `Bearer {{token}}` or a pre-request variable that
 references a secret). Secrets are masked (`••••••`) in the UI, kept as
 `{{placeholders}}` in `history.jsonl` and in exported curl commands (unless you
