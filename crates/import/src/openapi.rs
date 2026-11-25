@@ -257,7 +257,7 @@ pub fn import(doc: &Value) -> Result<ImportResult, String> {
             );
             // The summary when the name does not already show it, then the description.
             let summary = str_at(op, "/summary");
-            req.description = [
+            req.common.description = [
                 if summary == name {
                     String::new()
                 } else {
@@ -767,7 +767,7 @@ components:
             panic!()
         };
         assert_eq!(list.url, "{{baseUrl}}/pets");
-        assert_eq!(list.description, "List pets");
+        assert_eq!(list.common.description, "List pets");
         assert_eq!(pets.requests[1].1.description(), "");
         assert_eq!(pets.requests[2].1.description(), "Returns *one* pet.");
         assert_eq!(pets.settings.description, "Pet calls");

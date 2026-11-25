@@ -43,6 +43,7 @@ model carries no serialization logic on purpose.
 | What | File |
 |---|---|
 | `Request`, `HttpRequest`, `GrpcRequest`, `WebSocketRequest`, `SseRequest`, `MqttRequest`, `McpRequest`, auth kinds, body kinds, rows | `crates/core/src/model.rs` |
+| Fields every request kind has (scripts, description): one place in the model and one read in the parser | `crates/core/src/model.rs::RequestCommon`, `crates/store/src/request_file.rs::common` |
 | Parse and canonical write of `<name>.toml` | `crates/store/src/request_file.rs` |
 | Folder settings: parse and write `folder.toml`, the chain of a request | `crates/store/src/folder.rs`, `crates/store/src/collection.rs::chain` |
 | Saved examples: `<name>.examples/<example>.toml` | `crates/store/src/examples.rs` |
@@ -69,7 +70,7 @@ here.
 | URL normalization (no scheme → `http://`), query append before fragment | `crates/core/src/resolve.rs::normalize_url`, `append_query` | |
 | Unresolved variables, masked copy of a request | `crates/core/src/resolve.rs::unresolved_vars`, `mask_request` | |
 | Declarative scripts: pre, extract, assert | `crates/core/src/script.rs` | No code execution |
-| Lua scripts: `[scripts.lua] pre` and `post`, sandbox and API | `crates/core/src/lua_script.rs` | Run by `crates/pipeline/src/runner/mod.rs::pre_phase` and `post_phase` in every runner |
+| Lua scripts: `[scripts.lua] pre` and `post`, sandbox and API | `crates/core/src/lua_script.rs` | Run by `crates/pipeline/src/runner/mod.rs::pre_phase` and `response_phase` (extracts, assertions, post scripts) in every runner |
 | Script sources (`jsonpath`, `header`, `status`, `time`, `size`, `hash`, `xpath`, `regex`, `cookie`) | `crates/core/src/script.rs::read`, `crates/core/src/xpath.rs` | Each runner fills `ResponseView`, with `timing` |
 | Folder inheritance (auth, headers, variables, scripts) | `crates/core/src/inherit.rs::apply` | `var_layers`; applied once per send by `crates/pipeline/src/runner/scope.rs::with_folders` |
 | Completion shape of a message or tool input | `crates/core/src/complete.rs` | Shared by gRPC and MCP editors |
@@ -339,7 +340,7 @@ binary in a child process), `tests/corpus.rs`.
 | gRPC calls | `crates/grpc/tests/calls.rs` | `make test` |
 | MCP client and OAuth | `crates/mcp/tests/`, `crates/testkit/src/mcp_auth.rs` | `make test` |
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs`, harness in `crates/ui/tests/common/mod.rs` | `make test` |
-| UI snapshots (120×40, 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
+| UI snapshots (one pane or dialog; the layout at 120×40 and 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
 | Screenshots and GIFs | `crates/ui/tests/media.rs`, `docs/media/render.py`, `docs/media/README.md` | `make media && make render` |
 | Visual peeking while developing | `crates/ui/tests/peek.rs` | `cargo test -p sendito-ui --test peek -- --ignored --nocapture` |
 | Echo servers for manual work | `crates/testkit/src/bin/echo-servers.rs` | `make servers` |
@@ -362,7 +363,7 @@ type:
 | A WebSocket behaviour | `crates/ws/src/` → `crates/pipeline/src/runner/ws.rs` → `tests/integration.rs` + corpus |
 | An MCP behaviour | `crates/mcp/src/` → `crates/pipeline/src/runner/mcp.rs` → `crates/mcp/tests/` + corpus |
 | A secret or masking rule | `crates/core/src/vars.rs` (`scrub_bytes`, taint) → every caller's scrub list → `tests/integration.rs` |
-| A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → `make media && make render` → [reports/ux-critic.md](reports/ux-critic.md) decisions |
+| A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → [reports/ux-critic.md](reports/ux-critic.md) decisions |
 | A key, command or setting | see [Adding a key, command or setting](#adding-a-key-command-or-setting) |
 
 ## Keeping this map current

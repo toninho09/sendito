@@ -61,8 +61,8 @@ pub async fn exec_sse(
     } = pre_phase(req, &mut scope);
     let req = &req;
     let mut request = req.http_request();
-    request.scripts.pre.clear();
-    request.scripts.lua_pre.clear();
+    request.common.scripts.pre.clear();
+    request.common.scripts.lua_pre.clear();
     let mut opening_ctx = ctx.clone();
     opening_ctx.history = None;
     opening_ctx.send.default_timeout = Duration::from_millis(ctx.sse_timeout_ms);
@@ -194,19 +194,13 @@ pub async fn exec_sse(
             body: &last,
             timing: &[("total", start.elapsed())],
         };
-        scripts.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
-        for extract in &mut scripts.extracts {
-            if let Ok(value) = &mut extract.value
-                && secrets
-                    .iter()
-                    .any(|s| !s.is_empty() && value.value.contains(s))
-            {
-                value.secret = true;
-                scope.set(RUNTIME_LAYER, &extract.var, value.clone());
-            }
-        }
-        scripts.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-        post_phase(&req.scripts, &view, &mut scope, &mut scripts);
+        response_phase(
+            &req.common.scripts,
+            &view,
+            &mut scope,
+            &mut scripts,
+            &secrets,
+        );
         scrub_asserts(&mut scripts.asserts, &secrets);
     }
     error = error.map(|e| sendito_core::vars::scrub(&e, &secrets));

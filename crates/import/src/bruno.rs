@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::{ImportEnvironment, ImportFolder, ImportResult, Skipped};
 use sendito_core::model::{
     ApiKeyLocation, Auth, Body, FolderSettings, HttpRequest, KeyValue, MultipartPart, PartKind,
-    Request,
+    Request, RequestCommon,
 };
 
 #[derive(Default)]
@@ -283,7 +283,10 @@ fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpReq
         params,
         body,
         auth: auth(b, &field(details, "auth"), item, skipped),
-        description: b.get("docs").into(),
+        common: RequestCommon {
+            description: b.get("docs").into(),
+            ..Default::default()
+        },
         ..Default::default()
     })
 }

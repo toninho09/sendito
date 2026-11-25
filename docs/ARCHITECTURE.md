@@ -90,7 +90,7 @@ Consequences worth knowing:
 | gRPC calls, MCP client and OAuth | `crates/{grpc,mcp}/tests/` | `make test` |
 | WebSocket sessions | `crates/ws/src/lib.rs` (unit tests) and `tests/integration.rs` (cookie jar) | `make test` |
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs` | `make test` |
-| UI snapshots (insta, 120×40 and 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
+| UI snapshots (insta; one pane or dialog at 120×40, the layout at 120×40 and 200×60) | `crates/ui/tests/snapshots.rs` | `make test`, accept with `make snap` |
 | Screenshots and GIFs | `crates/ui/tests/media.rs` + `docs/media/render.py` | `make media && make render` |
 | Coverage (all but `ui` and `testkit`, ≥ 80 % lines) | cargo-llvm-cov, by the whole test suite | `make cov` |
 | Performance | `bench/run.sh` (hyperfine, `script(1)`) | `make bench` |

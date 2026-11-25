@@ -449,6 +449,14 @@ No change in behaviour.
   movement, icons and color themes, with no app state.
 * **`sendito-ui` reaches HTTP, gRPC, WebSocket and MCP only through
   `sendito-pipeline`**, which re-exports the types the UI reads.
+* **Smaller changes per feature.** The fields every request kind has
+  (scripts, description) are one `RequestCommon` in the model; the request
+  file parser reads them once. The six runners share `response_phase`
+  (extracts, assertions, Lua post scripts). A UI snapshot keeps only the pane
+  or dialog of its test, and only the layout tests run at 200×60. The
+  screenshots and GIFs are regenerated before a release only. The README
+  keeps the overview, the install and the quick start; the features are in
+  `docs/FEATURES.md`.
 
 ## 0.2.0 — 2026-11-24
 

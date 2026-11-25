@@ -29,38 +29,40 @@ impl Request {
         }
     }
 
-    pub fn scripts(&self) -> &Scripts {
+    /// The fields every request kind has.
+    pub fn common(&self) -> &RequestCommon {
         match self {
-            Request::Http(h) => &h.scripts,
-            Request::Grpc(g) => &g.scripts,
-            Request::Ws(w) => &w.scripts,
-            Request::Sse(s) => &s.scripts,
-            Request::Mqtt(m) => &m.scripts,
-            Request::Mcp(m) => &m.scripts,
+            Request::Http(h) => &h.common,
+            Request::Grpc(g) => &g.common,
+            Request::Ws(w) => &w.common,
+            Request::Sse(s) => &s.common,
+            Request::Mqtt(m) => &m.common,
+            Request::Mcp(m) => &m.common,
         }
     }
 
-    pub fn scripts_mut(&mut self) -> &mut Scripts {
+    pub fn common_mut(&mut self) -> &mut RequestCommon {
         match self {
-            Request::Http(h) => &mut h.scripts,
-            Request::Grpc(g) => &mut g.scripts,
-            Request::Ws(w) => &mut w.scripts,
-            Request::Sse(s) => &mut s.scripts,
-            Request::Mqtt(m) => &mut m.scripts,
-            Request::Mcp(m) => &mut m.scripts,
+            Request::Http(h) => &mut h.common,
+            Request::Grpc(g) => &mut g.common,
+            Request::Ws(w) => &mut w.common,
+            Request::Sse(s) => &mut s.common,
+            Request::Mqtt(m) => &mut m.common,
+            Request::Mcp(m) => &mut m.common,
         }
+    }
+
+    pub fn scripts(&self) -> &Scripts {
+        &self.common().scripts
+    }
+
+    pub fn scripts_mut(&mut self) -> &mut Scripts {
+        &mut self.common_mut().scripts
     }
 
     /// The Markdown description of the request.
     pub fn description(&self) -> &str {
-        match self {
-            Request::Http(h) => &h.description,
-            Request::Grpc(g) => &g.description,
-            Request::Ws(w) => &w.description,
-            Request::Sse(s) => &s.description,
-            Request::Mqtt(m) => &m.description,
-            Request::Mcp(m) => &m.description,
-        }
+        &self.common().description
     }
 
     pub fn auth(&self) -> &Auth {
@@ -112,6 +114,15 @@ impl Request {
     }
 }
 
+/// The fields every request kind has. A field that all kinds share goes
+/// here, so the model, the file format and the editors read it in one place.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequestCommon {
+    pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
+}
+
 /// A name/value row with an enable toggle (query params, headers, form fields, metadata).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyValue {
@@ -156,9 +167,8 @@ pub struct HttpRequest {
     pub body: Body,
     pub auth: Auth,
     pub options: HttpOptions,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 impl Default for HttpRequest {
@@ -171,8 +181,7 @@ impl Default for HttpRequest {
             body: Body::None,
             auth: Auth::Inherit,
             options: HttpOptions::default(),
-            scripts: Scripts::default(),
-            description: String::new(),
+            common: RequestCommon::default(),
         }
     }
 }
@@ -929,9 +938,8 @@ pub struct GrpcRequest {
     pub verify_tls: bool,
     pub deadline_ms: Option<u64>,
     pub schema: SchemaSource,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 impl Default for GrpcRequest {
@@ -947,8 +955,7 @@ impl Default for GrpcRequest {
             verify_tls: true,
             deadline_ms: None,
             schema: SchemaSource::Reflection,
-            scripts: Scripts::default(),
-            description: String::new(),
+            common: RequestCommon::default(),
         }
     }
 }
@@ -970,9 +977,8 @@ pub struct WebSocketRequest {
     pub messages: String,
     pub auth: Auth,
     pub options: WsOptions,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 impl Default for WebSocketRequest {
@@ -984,8 +990,7 @@ impl Default for WebSocketRequest {
             messages: "[]".into(),
             auth: Auth::Inherit,
             options: WsOptions::default(),
-            scripts: Scripts::default(),
-            description: String::new(),
+            common: RequestCommon::default(),
         }
     }
 }
@@ -1024,9 +1029,8 @@ pub struct SseRequest {
     pub headers: Vec<KeyValue>,
     pub auth: Auth,
     pub options: SseOptions,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1073,8 +1077,10 @@ impl SseRequest {
                 verify_tls: self.options.verify_tls,
                 cookies: self.options.cookies,
             },
-            scripts: self.scripts.clone(),
-            description: String::new(),
+            common: RequestCommon {
+                scripts: self.common.scripts.clone(),
+                description: String::new(),
+            },
         }
     }
 }
@@ -1132,9 +1138,8 @@ pub struct MqttRequest {
     pub last_will: Option<MqttWill>,
     /// `Inherit`, `None` or `Basic`; other kinds fail before the connection.
     pub auth: Auth,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 impl Default for MqttRequest {
@@ -1152,8 +1157,7 @@ impl Default for MqttRequest {
             publish: Vec::new(),
             last_will: None,
             auth: Auth::default(),
-            scripts: Scripts::default(),
-            description: String::new(),
+            common: RequestCommon::default(),
         }
     }
 }
@@ -1234,9 +1238,8 @@ pub struct McpRequest {
     /// Tool arguments as JSON text. An empty string omits the arguments property.
     pub arguments: String,
     pub timeout_ms: Option<u64>,
-    pub scripts: Scripts,
-    /// Markdown notes for people; never sent on the wire.
-    pub description: String,
+    /// The fields every request kind has.
+    pub common: RequestCommon,
 }
 
 impl Default for McpRequest {
@@ -1246,8 +1249,7 @@ impl Default for McpRequest {
             tool: String::new(),
             arguments: "{}".into(),
             timeout_ms: None,
-            scripts: Scripts::default(),
-            description: String::new(),
+            common: RequestCommon::default(),
         }
     }
 }

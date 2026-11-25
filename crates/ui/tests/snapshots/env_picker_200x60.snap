@@ -2,63 +2,13 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                                                                                                        │
-│▸ Users/                    ││                                                                                                                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                    ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                                                                    │
-│                            ││                                                                     ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                                                                    │
-│                            ││                                                                    ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                                                                     │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                  ╭─ Environment ──────────────────────╮the terminal                                                                    │
-│                            ││                                                  │ ▍  type to filter                  │ ders  ·  ● local                                                               │
-│                            ││                                                  │                                    │                                                                                │
-│                            ││                            Start                 │  ● (no environment)                │            Recent                                                              │
-│                            ││                             Ctrl+N       New HTTP│▌ ● local  3 variables              │            Requests you send appear here.                                      │
-│                            ││                             n / N        New requ│  ● staging  1 variable             │                                                                                │
-│                            ││                             Enter        Open the│  ● Manage environments…  Ctrl+W V  │             F7  all history                                                    │
-│                            ││                             Ctrl+P       Command │                                    │                                                                                │
-│                            ││                             Ctrl+W i     Import a│                                    │                                                                                │
-│                            ││                             F4           Choose t╰────────────────────────────────────╯                                                                                │
-│                            ││                             m            Move the                                       mouse)                                                                         │
-│                            ││                             Ctrl+W ,     Settings: vim mode, theme, icons, sidebar side                                                                                │
-│                            ││                             F1           All keys                                                                                                                      │
-│                            ││                             Ctrl+W q     Quit                                                                                                                          │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                                                                                                      type filter · ↑↓ move · ⏎ choose · Esc close
+╭─ Environment ──────────────────────╮
+│ ▍  type to filter                  │
+│                                    │
+│  ● (no environment)                │
+│▌ ● local  3 variables              │
+│  ● staging  1 variable             │
+│  ● Manage environments…  Ctrl+W V  │
+│                                    │
+│                                    │
+╰────────────────────────────────────╯

@@ -2,8 +2,11 @@
 
 The screenshots and GIFs used in [README](../README.md) and
 [FEATURES](../FEATURES.md) are rendered from the application's **own styled
-frames**, not captured from a terminal. They therefore always match the real UI
-and can be regenerated deterministically.
+frames**, not captured from a terminal. They can be regenerated
+deterministically.
+
+Regenerate the media before a release only. A feature change does not
+regenerate it, so the media can show the UI of the last release.
 
 ## Pipeline
 

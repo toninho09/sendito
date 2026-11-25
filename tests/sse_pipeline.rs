@@ -51,27 +51,30 @@ mod tests {
                 max_events: Some(2),
                 ..Default::default()
             },
-            scripts: Scripts {
-                extract: vec![Extract {
-                    var: "n".into(),
-                    source: Source::Body,
-                    expr: "$.n".into(),
-                    secret: false,
-                }],
-                asserts: vec![
-                    Assertion {
+            common: RequestCommon {
+                scripts: Scripts {
+                    extract: vec![Extract {
+                        var: "n".into(),
                         source: Source::Body,
                         expr: "$.n".into(),
-                        op: AssertOp::Eq,
-                        value: "2".into(),
-                    },
-                    Assertion {
-                        source: Source::Status,
-                        expr: String::new(),
-                        op: AssertOp::Eq,
-                        value: "200".into(),
-                    },
-                ],
+                        secret: false,
+                    }],
+                    asserts: vec![
+                        Assertion {
+                            source: Source::Body,
+                            expr: "$.n".into(),
+                            op: AssertOp::Eq,
+                            value: "2".into(),
+                        },
+                        Assertion {
+                            source: Source::Status,
+                            expr: String::new(),
+                            op: AssertOp::Eq,
+                            value: "200".into(),
+                        },
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -99,13 +102,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let req = SseRequest {
             url: format!("{}/sse/redirect-cookie", server.url()),
-            scripts: Scripts {
-                extract: vec![Extract {
-                    var: "cookie".into(),
-                    source: Source::Body,
-                    expr: "$.cookie".into(),
-                    secret: false,
-                }],
+            common: RequestCommon {
+                scripts: Scripts {
+                    extract: vec![Extract {
+                        var: "cookie".into(),
+                        source: Source::Body,
+                        expr: "$.cookie".into(),
+                        secret: false,
+                    }],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             ..Default::default()

@@ -111,8 +111,10 @@ pub fn folder_request(f: &FolderSettings) -> Request {
         params: f.vars.clone(),
         headers: f.headers.clone(),
         auth: f.auth.clone(),
-        scripts: f.scripts.clone(),
-        description: f.description.clone(),
+        common: RequestCommon {
+            scripts: f.scripts.clone(),
+            description: f.description.clone(),
+        },
         ..Default::default()
     })
 }
@@ -124,8 +126,8 @@ pub fn request_folder(req: &Request) -> FolderSettings {
             headers: h.headers.clone(),
             auth: h.auth.clone(),
             vars: h.params.clone(),
-            scripts: h.scripts.clone(),
-            description: h.description.clone(),
+            scripts: h.common.scripts.clone(),
+            description: h.common.description.clone(),
         },
         _ => FolderSettings::default(),
     }
@@ -754,6 +756,14 @@ impl Editors {
         }
     }
 
+    /// The fields every request kind has, as the editors hold them.
+    fn common(&self) -> RequestCommon {
+        RequestCommon {
+            scripts: self.scripts(),
+            description: self.description.text(),
+        }
+    }
+
     fn scripts(&self) -> Scripts {
         Scripts {
             pre: self
@@ -870,8 +880,7 @@ impl Editors {
                         verify_tls: self.verify,
                         cookies: self.cookies,
                     },
-                    scripts: self.scripts(),
-                    description: self.description.text(),
+                    common: self.common(),
                 })
             }
             Kind::Sse => Request::Sse(SseRequest {
@@ -879,8 +888,7 @@ impl Editors {
                 params: kv_rows(&self.params),
                 headers: kv_rows(&self.headers),
                 auth: self.auth(),
-                scripts: self.scripts(),
-                description: self.description.text(),
+                common: self.common(),
                 options: SseOptions {
                     timeout_ms: crate::units::parse_ms(&self.timeout.text()),
                     deadline_ms: crate::units::parse_ms(&self.deadline.text()),
@@ -908,8 +916,7 @@ impl Editors {
                 } else {
                     SchemaSource::Reflection
                 },
-                scripts: self.scripts(),
-                description: self.description.text(),
+                common: self.common(),
             }),
             Kind::Ws => Request::Ws(WebSocketRequest {
                 url: self.url.text(),
@@ -924,8 +931,7 @@ impl Editors {
                     tls: self.tls,
                     cookies: self.cookies,
                 },
-                scripts: self.scripts(),
-                description: self.description.text(),
+                common: self.common(),
             }),
             Kind::Mqtt => {
                 let will_topic = self.will_topic.text();
@@ -971,8 +977,7 @@ impl Editors {
                         },
                     ),
                     auth: self.auth(),
-                    scripts: self.scripts(),
-                    description: self.description.text(),
+                    common: self.common(),
                 })
             }
             Kind::Mcp => Request::Mcp(McpRequest {
@@ -980,8 +985,7 @@ impl Editors {
                 tool: self.mcp_tool.text(),
                 arguments: self.message.text(),
                 timeout_ms: crate::units::parse_ms(&self.timeout.text()),
-                scripts: self.scripts(),
-                description: self.description.text(),
+                common: self.common(),
             }),
             Kind::Folder => folder_request(&FolderSettings {
                 headers: kv_rows(&self.headers),

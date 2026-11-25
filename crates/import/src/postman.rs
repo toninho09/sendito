@@ -579,8 +579,10 @@ fn request(item: &Value, path: &str, ctx: &mut Ctx) -> Request {
         auth,
         // Postman follows redirects and verifies TLS by default, like Sendito.
         options: HttpOptions::default(),
-        scripts: Scripts::default(),
-        description,
+        common: RequestCommon {
+            description,
+            ..Default::default()
+        },
     })
 }
 
@@ -916,7 +918,7 @@ mod tests {
         let Request::Http(oauth) = &r.root.requests[4].1 else {
             panic!()
         };
-        assert_eq!(oauth.description, "docs");
+        assert_eq!(oauth.common.description, "docs");
         let reasons: Vec<String> = r
             .skipped
             .iter()

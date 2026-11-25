@@ -1061,8 +1061,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
                 body,
                 auth: mask_auth(&h.auth, s),
                 options: h.options.clone(),
-                scripts: h.scripts.clone(),
-                description: h.description.clone(),
+                common: h.common.clone(),
             })
         }
         Request::Grpc(g) => Request::Grpc(GrpcRequest {
@@ -1076,8 +1075,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             verify_tls: g.verify_tls,
             deadline_ms: g.deadline_ms,
             schema: g.schema.clone(),
-            scripts: g.scripts.clone(),
-            description: g.description.clone(),
+            common: g.common.clone(),
         }),
         Request::Sse(r) => Request::Sse(SseRequest {
             url: s.render_masked(&r.url),
@@ -1085,8 +1083,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             headers: mask_kv(&r.headers, s),
             auth: mask_auth(&r.auth, s),
             options: r.options.clone(),
-            scripts: r.scripts.clone(),
-            description: r.description.clone(),
+            common: r.common.clone(),
         }),
         Request::Mqtt(m) => {
             let message = |msg: &MqttMessage| MqttMessage {
@@ -1123,16 +1120,14 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             messages: s.render_masked(&w.messages),
             auth: mask_auth(&w.auth, s),
             options: w.options.clone(),
-            scripts: w.scripts.clone(),
-            description: w.description.clone(),
+            common: w.common.clone(),
         }),
         Request::Mcp(m) => Request::Mcp(McpRequest {
             server: s.render_masked(&m.server),
             tool: m.tool.clone(),
             arguments: s.render_masked(&m.arguments),
             timeout_ms: m.timeout_ms,
-            scripts: m.scripts.clone(),
-            description: m.description.clone(),
+            common: m.common.clone(),
         }),
     }
 }

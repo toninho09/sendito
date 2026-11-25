@@ -2,43 +2,20 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   POST create user ● ×    +                                                           ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││  POST   ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
-│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs• ──────────────────────────────╮
-│├ DEL   delete user         ││ View           Preview ▾  Markdown text or the rendered page                           │
-│└ GET   list users          ││ Create user                                                                            │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││ Adds a user to the users table.                                                        │
-│                            ││                                                                                        │
-│                            ││ • name is required                                                                     │
-│                            ││ • email must be unique                                                                 │
-│                            ││                                                                                        │
-│                            ││ │ Needs the admin role.                                                                │
-│                            ││                                                                                        │
-│                            ││   json                                                                                 │
-│                            ││   {"name": "ana"}                                                                      │
-│                            ││                                                                                        │
-│                            ││ See the guide (https://example.com/guide).                                             │
-│                            ││                                                                                        │
-│                            │╰─ Users › create user ──────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
-│                            ││                                                                                        │
-│                            ││                               The response appears here.                               │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo   ● 1 unsaved                                          ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys
+╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs• ──────────────────────────────╮
+│ View           Preview ▾  Markdown text or the rendered page                           │
+│ Create user                                                                            │
+│                                                                                        │
+│ Adds a user to the users table.                                                        │
+│                                                                                        │
+│ • name is required                                                                     │
+│ • email must be unique                                                                 │
+│                                                                                        │
+│ │ Needs the admin role.                                                                │
+│                                                                                        │
+│   json                                                                                 │
+│   {"name": "ana"}                                                                      │
+│                                                                                        │
+│ See the guide (https://example.com/guide).                                             │
+│                                                                                        │
+╰─ Users › create user ──────────────────────────────────────────────────────────────────╯

@@ -454,21 +454,13 @@ pub(super) async fn exec_http_inner(
                 body: &body,
                 timing: &timing,
             };
-            results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
-            // Cookie values and OAuth access tokens remain secret even if an
-            // extraction rule did not mark them; runtime variables may persist.
-            for extract in &mut results.extracts {
-                if let Ok(value) = &mut extract.value
-                    && cookie_secrets
-                        .iter()
-                        .any(|s| !s.is_empty() && value.value.contains(s))
-                {
-                    value.secret = true;
-                    scope.set(RUNTIME_LAYER, &extract.var, value.clone());
-                }
-            }
-            results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-            post_phase(&req.scripts, &view, &mut scope, &mut results);
+            response_phase(
+                &req.common.scripts,
+                &view,
+                &mut scope,
+                &mut results,
+                &cookie_secrets,
+            );
             let mut assert_secrets = http_secrets(req, &scope);
             assert_secrets.extend(cookie_secrets.iter().cloned());
             scrub_asserts(&mut results.asserts, &assert_secrets);

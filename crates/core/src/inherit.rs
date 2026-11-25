@@ -28,23 +28,23 @@ pub fn apply(req: &Request, chain: &[ChainItem]) -> Request {
     match &mut out {
         Request::Http(h) => {
             h.headers = merge_rows(folder_headers(), &h.headers, false);
-            h.scripts = merge_scripts(chain, &h.scripts);
+            h.common.scripts = merge_scripts(chain, &h.common.scripts);
         }
         Request::Sse(s) => {
             s.headers = merge_rows(folder_headers(), &s.headers, false);
-            s.scripts = merge_scripts(chain, &s.scripts);
+            s.common.scripts = merge_scripts(chain, &s.common.scripts);
         }
         Request::Ws(w) => {
             w.headers = merge_rows(folder_headers(), &w.headers, false);
-            w.scripts = merge_scripts(chain, &w.scripts);
+            w.common.scripts = merge_scripts(chain, &w.common.scripts);
         }
         Request::Grpc(g) => {
             g.metadata = merge_rows(folder_headers(), &g.metadata, true);
-            g.scripts = merge_scripts(chain, &g.scripts);
+            g.common.scripts = merge_scripts(chain, &g.common.scripts);
         }
         // Folder headers do not apply to MQTT: the protocol has no headers.
-        Request::Mqtt(m) => m.scripts = merge_scripts(chain, &m.scripts),
-        Request::Mcp(m) => m.scripts = merge_scripts(chain, &m.scripts),
+        Request::Mqtt(m) => m.common.scripts = merge_scripts(chain, &m.common.scripts),
+        Request::Mcp(m) => m.common.scripts = merge_scripts(chain, &m.common.scripts),
     }
     resolve_auth(out, chain)
 }
@@ -310,9 +310,9 @@ mod tests {
         a.scripts.lua_pre = lua("a()");
         let chain = vec![(String::new(), root), ("A".into(), a)];
         let mut mcp = McpRequest::default();
-        mcp.scripts.pre.push(set("own"));
-        mcp.scripts.lua_pre = lua("own()");
-        mcp.scripts.lua_post = lua("own()");
+        mcp.common.scripts.pre.push(set("own"));
+        mcp.common.scripts.lua_pre = lua("own()");
+        mcp.common.scripts.lua_post = lua("own()");
         let out = apply(&Request::Mcp(mcp), &chain);
         let order: Vec<&str> = out.scripts().pre.iter().map(|s| s.var.as_str()).collect();
         assert_eq!(order, ["root", "a", "own"]);

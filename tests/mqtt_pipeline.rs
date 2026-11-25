@@ -96,7 +96,7 @@ mod tests {
             qos: 1,
             retain: false,
         }];
-        req.scripts = Scripts {
+        req.common.scripts = Scripts {
             pre: vec![SetVar {
                 var: "room".into(),
                 value: "kitchen".into(),
@@ -236,7 +236,7 @@ mod tests {
         let ctx = context(root.path());
         let mut req = request(broker.url(), Some(400));
         req.username = "bad".into();
-        req.scripts.asserts = vec![Assertion {
+        req.common.scripts.asserts = vec![Assertion {
             source: Source::Status,
             expr: String::new(),
             op: AssertOp::Eq,

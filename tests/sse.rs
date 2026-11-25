@@ -130,7 +130,9 @@ mod tests {
 
     #[tokio::test]
     async fn sse_suite_reports_events_and_chains_extractions() {
-        use sendito_core::{AssertOp, Assertion, Extract, HttpRequest, Scripts, Source};
+        use sendito_core::{
+            AssertOp, Assertion, Extract, HttpRequest, RequestCommon, Scripts, Source,
+        };
         let server = http_echo::start().await.unwrap();
         let root = tempfile::tempdir().unwrap();
         sendito_store::init::init(root.path()).unwrap();
@@ -142,13 +144,16 @@ mod tests {
                 max_events: Some(1),
                 ..Default::default()
             },
-            scripts: Scripts {
-                extract: vec![Extract {
-                    var: "n".into(),
-                    source: Source::Body,
-                    expr: "$.n".into(),
-                    secret: false,
-                }],
+            common: RequestCommon {
+                scripts: Scripts {
+                    extract: vec![Extract {
+                        var: "n".into(),
+                        source: Source::Body,
+                        expr: "$.n".into(),
+                        secret: false,
+                    }],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -156,13 +161,16 @@ mod tests {
         let http = Request::Http(HttpRequest {
             url: format!("{}/echo", server.url()),
             params: vec![KeyValue::new("n", "{{n}}")],
-            scripts: Scripts {
-                asserts: vec![Assertion {
-                    source: Source::Body,
-                    expr: "$.target".into(),
-                    op: AssertOp::Eq,
-                    value: "/echo?n=1".into(),
-                }],
+            common: RequestCommon {
+                scripts: Scripts {
+                    asserts: vec![Assertion {
+                        source: Source::Body,
+                        expr: "$.target".into(),
+                        op: AssertOp::Eq,
+                        value: "/echo?n=1".into(),
+                    }],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             ..Default::default()

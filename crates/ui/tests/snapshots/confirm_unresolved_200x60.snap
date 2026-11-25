@@ -2,63 +2,13 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET get order ×    +                                                                                                                                                ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│▾ Orders/                   ││  GET    ▾  ▍{{base_url}}/orders/{{order_id}}                                                                                                               ▶ Send  ^⏎  │
-│└ GET   get order           │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-│▸ Users/                    │╭─ Params  Headers  Body  Auth  Scripts  Options  Docs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  GRPC  echo unary          ││     Name                                                            Value                                                                                              │
-│  GET   health              ││  +  add name                                                       │                                                                                                   │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                     ╭─ Undefined variables ────────────────────────────────────────╮                                                                   │
-│                            ││                                     │                                                              │                                                                   │
-│                            ││                                     │  {{order_id}} not defined in the collection variables or     │                                                                   │
-│                            ││                                     │  "local". Send anyway sends them as typed, braces            │                                                                   │
-│                            ││                                     │  included. Define opens the environment editor with them     │                                                                   │
-│                            ││                                     │  added to "local".                                           │                                                                   │
-│                            │╰─ Orders › get order ────────────────│                                                              │ ──────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results ────│                                                              │ ──────────────────────────────────────────────────────────────────╮
-│                            ││                                     │   Send anyway (s)    Define (d)    Cancel (Esc)              │                                                                   │
-│                            ││                                     ╰──────────────────────────────────────────────────────────────╯                                                                   │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                  Press  Ctrl+Enter  or  F5  to send.                                                                   │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                       The response appears here.                                                                       │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo   {{order_id}} undefined                                                                                                             s send anyway · d define · ⏎ cancel · ←→ choose · Esc cancel
+╭─ Undefined variables ────────────────────────────────────────╮
+│                                                              │
+│  {{order_id}} not defined in the collection variables or     │
+│  "local". Send anyway sends them as typed, braces            │
+│  included. Define opens the environment editor with them     │
+│  added to "local".                                           │
+│                                                              │
+│                                                              │
+│   Send anyway (s)    Define (d)    Cancel (Esc)              │
+╰──────────────────────────────────────────────────────────────╯

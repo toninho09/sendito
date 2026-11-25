@@ -329,9 +329,7 @@ pub async fn exec_ws(
         body: &body,
         timing: &[("total", Duration::from_millis(total))],
     };
-    results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
-    results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-    post_phase(&req.scripts, &view, &mut scope, &mut results);
+    response_phase(&req.common.scripts, &view, &mut scope, &mut results, &[]);
     scrub_asserts(
         &mut results.asserts,
         &[&secrets[..], &cookie_secrets[..]].concat(),

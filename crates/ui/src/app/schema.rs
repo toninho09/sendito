@@ -61,7 +61,7 @@ impl App {
                     let mut check = request.clone();
                     if let Request::Http(http) = &mut check {
                         http.body = Body::None;
-                        http.scripts = Scripts::default();
+                        http.common.scripts = Scripts::default();
                     }
                     if !runner::unresolved_loaded(&check, &scope, &failed).is_empty() {
                         return Err("GraphQL introspection has unresolved variables".to_string());

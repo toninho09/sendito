@@ -2,33 +2,16 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GRPC echo unary ×    +                                      ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ GRPC ──────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││  {{grpc}}  → 127.0.0.1:9              Echo/Unary    ▾  ▶ Send  │
-│▸ Users/                    │╰────────────────────────────────────────────────────────────────╯
-│  GRPC  echo unary          │╭─ Message  Metadata  Auth  Scripts  Options  Docs ──────────────╮
-│  GET   health              ││   1 {                                                          │
-│                            ││   2   "text": "hello"                                          │
-│                            ││   3 }                                                          │
-│                            ││   4                                                            │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            │╰─ echo unary ────────────────────────────────────────── ✓ JSON ─╯
-│                            │╭─ Body  Metadata  Timing  Log ──────────────────────────────────╮
-│                            ││ ▾ {                                                            │
-│                            ││     "text": "two",                                             │
-│                            ││     "n": 1                                                     │
-│                            ││   }                                                            │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-│                            ││                                                                │
-╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────── ◀ 2/3 ▶ · Ln 1/4 ─╯
- demo                               Alt+1-4 tabs · [ ] message · y copy · ^W menu · F1 all keys
+╭─ Body  Metadata  Timing  Log ──────────────────────────────────╮
+│ ▾ {                                                            │
+│     "text": "two",                                             │
+│     "n": 1                                                     │
+│   }                                                            │
+│                                                                │
+│                                                                │
+│                                                                │
+│                                                                │
+│                                                                │
+│                                                                │
+│                                                                │
+╰─ Pretty  Raw  Hex ────────────────────────── ◀ 2/3 ▶ · Ln 1/4 ─╯

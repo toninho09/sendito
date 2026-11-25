@@ -147,6 +147,8 @@ The wire rules are exact and spelled out in
   and a scrollbar. In the pretty view the bottom border shows the jq path of
   the line at the cursor (`.items[0].email`): `f` filters the body to that
   value and `Y` copies the path (JSON only).
+* **Copy**: `y` and `Ctrl+W u` copy through the terminal clipboard (OSC 52).
+  In tmux, enable it with `set -g set-clipboard on`.
 * **Pretty formats**: the Content-Type chooses the format; with none that
   names one, a body that starts with `{` or `[` is JSON, `<?xml` is XML and
   `<!doctype html` or `<html` is HTML. YAML and CSV need their Content-Type.
@@ -725,6 +727,9 @@ collection):
   -u -A -e -b -G -I -L -k -m --url --json --compressed --http* -x`. curl
   semantics are reproduced: `-H 'Name:'` becomes a disabled row, `-H 'Name;'`
   an empty value.
+* An imported environment gets a unique name: a name that already exists in
+  the collection gets ` (2)`, ` (3)` and so on, and a reserved name (`_…`,
+  `runtime`) gets the prefix `env-`.
 * The import **report dialog** groups items as Needs action / Skipped /
   Imported with changes; `y` copies it and `:report` reopens it.
 

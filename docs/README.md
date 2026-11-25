@@ -28,7 +28,7 @@ Some documents are produced from the code. Do not hand-edit them; regenerate:
 | File | Generator |
 |---|---|
 | [KEYMAP.md](../KEYMAP.md) | `make keymap` (`sendito --print-keymap`); a unit test checks it is current |
-| `docs/media/screenshots/*.png`, `docs/media/recordings/*.gif` | `make media && make render` |
+| `docs/media/screenshots/*.png`, `docs/media/recordings/*.gif` | `make media && make render`, before a release only |
 | `crates/ui/tests/snapshots/*.snap` | `make snap` |
 | `tests/corpus/expected/*.wire` | `make corpus-update` |
 

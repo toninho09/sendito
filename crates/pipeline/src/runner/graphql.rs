@@ -34,7 +34,7 @@ pub async fn fetch_schema(
         variables: String::new(),
         operation_name: "IntrospectionQuery".into(),
     };
-    request.scripts = Scripts::default();
+    request.common.scripts = Scripts::default();
     if !resolve_http(&request, &scope, &ctx.root)
         .unresolved
         .is_empty()

@@ -212,7 +212,7 @@ fn mqtt_message(m: RawMessage, what: &str) -> Result<MqttMessage, String> {
     })
 }
 
-fn mqtt(r: RawRequest) -> Result<Request, String> {
+fn mqtt(r: RawRequest, common: RequestCommon) -> Result<Request, String> {
     if r.method.is_some() || r.body.is_some() || !r.headers.is_empty() || !r.params.is_empty() {
         return Err("MQTT does not support method, body, headers or params fields".into());
     }
@@ -265,8 +265,7 @@ fn mqtt(r: RawRequest) -> Result<Request, String> {
             .map(|m| mqtt_message(m, "last_will"))
             .transpose()?,
         auth,
-        scripts: scripts(r.scripts)?,
-        description: r.description.unwrap_or_default(),
+        common,
     }))
 }
 
@@ -497,8 +496,17 @@ fn body(b: Option<RawBody>) -> Result<Body, String> {
 }
 
 /// Parses a request file.
+/// The fields every request kind has (see `RequestCommon`), taken out of `r`.
+fn common(r: &mut RawRequest) -> Result<RequestCommon, String> {
+    Ok(RequestCommon {
+        scripts: scripts(std::mem::take(&mut r.scripts))?,
+        description: r.description.take().unwrap_or_default(),
+    })
+}
+
 pub fn parse(text: &str) -> Result<Request, String> {
-    let r: RawRequest = toml::from_str(text).map_err(|e| e.to_string())?;
+    let mut r: RawRequest = toml::from_str(text).map_err(|e| e.to_string())?;
+    let common = common(&mut r)?;
     match r.kind.as_str() {
         "http" => Ok(Request::Http(HttpRequest {
             method: r.method.unwrap_or_else(|| "GET".into()),
@@ -513,8 +521,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 verify_tls: r.options.verify_tls.unwrap_or(true),
                 cookies: r.options.cookies,
             },
-            scripts: scripts(r.scripts)?,
-            description: r.description.unwrap_or_default(),
+            common,
         })),
         "sse" if r.method.is_some() || r.body.is_some() => {
             Err("SSE does not support method or body fields".into())
@@ -524,8 +531,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
             params: kvs(r.params),
             headers: kvs(r.headers),
             auth: auth(r.auth)?,
-            scripts: scripts(r.scripts)?,
-            description: r.description.unwrap_or_default(),
+            common,
             options: SseOptions {
                 timeout_ms: r.options.timeout_ms,
                 deadline_ms: r.options.deadline_ms,
@@ -556,8 +562,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                     o => return Err(format!("unknown schema source {o:?}")),
                 },
             },
-            scripts: scripts(r.scripts)?,
-            description: r.description.unwrap_or_default(),
+            common,
         })),
         "mcp" => {
             // `arguments` is JSON text. It is not validated here: a half-typed
@@ -569,8 +574,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 tool: r.tool.unwrap_or_default(),
                 arguments,
                 timeout_ms: r.options.timeout_ms,
-                scripts: scripts(r.scripts)?,
-                description: r.description.unwrap_or_default(),
+                common,
             }))
         }
         "websocket" => Ok(Request::Ws(WebSocketRequest {
@@ -588,10 +592,9 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 tls: r.options.tls.unwrap_or(false),
                 cookies: r.options.cookies,
             },
-            scripts: scripts(r.scripts)?,
-            description: r.description.unwrap_or_default(),
+            common,
         })),
-        "mqtt" => mqtt(r),
+        "mqtt" => mqtt(r, common),
         o => Err(format!(
             "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\", \"sse\", \"mqtt\" or \"mcp\")"
         )),
@@ -837,7 +840,7 @@ pub fn to_toml(req: &Request) -> String {
                     }
                 }
             }
-            write_scripts(&mut w, &h.scripts);
+            write_scripts(&mut w, &h.common.scripts);
         }
         Request::Grpc(g) => {
             w.str("kind", "grpc");
@@ -870,7 +873,7 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_kvs(&mut w, "metadata", &g.metadata);
             write_auth(&mut w, &g.auth);
-            write_scripts(&mut w, &g.scripts);
+            write_scripts(&mut w, &g.common.scripts);
         }
         Request::Mcp(m) => {
             w.str("kind", "mcp");
@@ -884,7 +887,7 @@ pub fn to_toml(req: &Request) -> String {
                 w.table("options");
                 w.int("timeout_ms", t);
             }
-            write_scripts(&mut w, &m.scripts);
+            write_scripts(&mut w, &m.common.scripts);
         }
         Request::Sse(s) => {
             w.str("kind", "sse");
@@ -915,7 +918,7 @@ pub fn to_toml(req: &Request) -> String {
             write_kvs(&mut w, "params", &s.params);
             write_kvs(&mut w, "headers", &s.headers);
             write_auth(&mut w, &s.auth);
-            write_scripts(&mut w, &s.scripts);
+            write_scripts(&mut w, &s.common.scripts);
         }
         Request::Mqtt(m) => {
             w.str("kind", "mqtt");
@@ -971,7 +974,7 @@ pub fn to_toml(req: &Request) -> String {
                 write_mqtt_message(&mut w, will);
             }
             write_auth(&mut w, &m.auth);
-            write_scripts(&mut w, &m.scripts);
+            write_scripts(&mut w, &m.common.scripts);
         }
         Request::Ws(wq) => {
             w.str("kind", "websocket");
@@ -1009,7 +1012,7 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_kvs(&mut w, "headers", &wq.headers);
             write_auth(&mut w, &wq.auth);
-            write_scripts(&mut w, &wq.scripts);
+            write_scripts(&mut w, &wq.common.scripts);
         }
     }
     w.finish()
@@ -1125,41 +1128,43 @@ mod tests {
                 verify_tls: false,
                 cookies: None,
             },
-            description: String::new(),
-            scripts: Scripts {
-                pre: vec![SetVar {
-                    var: "ts".into(),
-                    value: "{{$timestamp}}".into(),
-                }],
-                extract: vec![
-                    Extract {
-                        var: "tok".into(),
-                        source: Source::Body,
-                        expr: "$.token".into(),
-                        secret: true,
-                    },
-                    Extract {
-                        var: "code".into(),
-                        source: Source::Status,
-                        expr: String::new(),
-                        secret: false,
-                    },
-                ],
-                asserts: vec![
-                    Assertion {
-                        source: Source::Status,
-                        expr: String::new(),
-                        op: AssertOp::Eq,
-                        value: "200".into(),
-                    },
-                    Assertion {
-                        source: Source::Header,
-                        expr: "content-type".into(),
-                        op: AssertOp::Exists,
-                        value: String::new(),
-                    },
-                ],
-                ..Scripts::default()
+            common: RequestCommon {
+                scripts: Scripts {
+                    pre: vec![SetVar {
+                        var: "ts".into(),
+                        value: "{{$timestamp}}".into(),
+                    }],
+                    extract: vec![
+                        Extract {
+                            var: "tok".into(),
+                            source: Source::Body,
+                            expr: "$.token".into(),
+                            secret: true,
+                        },
+                        Extract {
+                            var: "code".into(),
+                            source: Source::Status,
+                            expr: String::new(),
+                            secret: false,
+                        },
+                    ],
+                    asserts: vec![
+                        Assertion {
+                            source: Source::Status,
+                            expr: String::new(),
+                            op: AssertOp::Eq,
+                            value: "200".into(),
+                        },
+                        Assertion {
+                            source: Source::Header,
+                            expr: "content-type".into(),
+                            op: AssertOp::Exists,
+                            value: String::new(),
+                        },
+                    ],
+                    ..Scripts::default()
+                },
+                ..Default::default()
             },
         })
     }
@@ -1295,9 +1300,11 @@ mod tests {
                 files: vec!["echo.proto".into()],
                 import_paths: vec!["protos".into()],
             },
-            scripts: Scripts::default(),
+            common: RequestCommon {
+                description: "# Echo\n\nkind = \"mcp\"\n[x](y) say \"hi\" '''\n".into(),
+                ..Default::default()
+            },
             // Lines that look like keys stay text for the badge sniff.
-            description: "# Echo\n\nkind = \"mcp\"\n[x](y) say \"hi\" '''\n".into(),
         });
         let t = to_toml(&g);
         assert_eq!(parse(&t).ok(), Some(g.clone()));
@@ -1313,8 +1320,10 @@ mod tests {
             tool: "create_issue".into(),
             arguments: "{\n  \"title\": \"{{version}}\"\n}".into(),
             timeout_ms: Some(150),
-            scripts: Scripts::default(),
-            description: "Creates an *issue*.".into(),
+            common: RequestCommon {
+                description: "Creates an *issue*.".into(),
+                ..Default::default()
+            },
         });
         let t = to_toml(&m);
         assert_eq!(parse(&t).ok(), Some(m.clone()));
@@ -1359,9 +1368,12 @@ mod tests {
             })
             .collect();
         let m = Request::Mcp(McpRequest {
-            scripts: Scripts {
-                asserts,
-                ..Scripts::default()
+            common: RequestCommon {
+                scripts: Scripts {
+                    asserts,
+                    ..Scripts::default()
+                },
+                description: "- one\n- two\nmethod = 'post'\n".into(),
             },
             ..McpRequest::default()
         });
@@ -1379,16 +1391,19 @@ mod tests {
         let pre = "vars.set(\"a\", 1)\nrequest:set_header(\"X\", '''q''')\n";
         let h = Request::Http(HttpRequest {
             url: "https://x".into(),
-            scripts: Scripts {
-                pre: vec![SetVar {
-                    var: "v".into(),
-                    value: "1".into(),
-                }],
-                lua_pre: LuaScript::own(pre).into_iter().collect(),
-                lua_post: LuaScript::own("test(\"ok\", response.status == 200);")
-                    .into_iter()
-                    .collect(),
-                ..Scripts::default()
+            common: RequestCommon {
+                scripts: Scripts {
+                    pre: vec![SetVar {
+                        var: "v".into(),
+                        value: "1".into(),
+                    }],
+                    lua_pre: LuaScript::own(pre).into_iter().collect(),
+                    lua_post: LuaScript::own("test(\"ok\", response.status == 200);")
+                        .into_iter()
+                        .collect(),
+                    ..Scripts::default()
+                },
+                ..Default::default()
             },
             ..HttpRequest::default()
         });
@@ -1429,8 +1444,7 @@ mod tests {
                 tls: true,
                 cookies: Some(false),
             },
-            scripts: Scripts::default(),
-            description: "- one\n- two\nmethod = 'post'\n".into(),
+            common: RequestCommon::default(),
         });
         let t = to_toml(&w);
         assert_eq!(parse(&t).ok(), Some(w.clone()));

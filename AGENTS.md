@@ -47,6 +47,16 @@ lists everything a change type touches, and its "Test and tooling map" the tests
 | Anything else saved on disk | `crates/store/src/` | "Environment files" and "Project and global config" in `FORMAT.md` |
 | What a feature is meant to do | | The matching section of `docs/FEATURES.md` |
 
+### Keep a change in one place
+
+* A field that every request kind has goes in `RequestCommon`
+  (`crates/core/src/model.rs`). The parser reads it once in
+  `crates/store/src/request_file.rs::common`. Do not add it to each kind.
+* Logic that every protocol runs goes in `crates/pipeline/src/runner/mod.rs`
+  (`pre_phase`, `response_phase`), not in each runner module.
+* In tests and importers, build a request with `..Default::default()` and set
+  only the fields that the code needs. Then a new field does not break them.
+
 `README.md` is written for users: read only the part you are editing.
 `docs/PLAN.md` is history and `docs/reports/` is evidence: read them only when
 the task is about them.
@@ -144,13 +154,18 @@ Never edit these by hand; regenerate them and read the diff:
 |---|---|---|
 | `KEYMAP.md` | A key, a hint or a `:command` changed | `make keymap` (a unit test fails while it is stale) |
 | `tests/corpus/expected/` | Anything changed the bytes on the wire | `make corpus-update`; `make corpus` only runs the test |
-| `crates/ui/tests/snapshots/` | A UI change moved a snapshot (120×40 and 200×60) | `make test P=sendito-ui` first, then `make snap` (see below) |
-| `docs/media/` | A visible UI change | `make media`, then `make render` |
+| `crates/ui/tests/snapshots/` | A UI change moved a snapshot | `make test P=sendito-ui` first, then `make snap` (see below) |
+| `docs/media/` | Before a release only: a feature change does not regenerate it | `make media`, then `make render` |
 
 ### Snapshots
 
-One file in `crates/ui/tests/snapshots/` holds one full screen. Compare the
-screens with commands, not by reading the files:
+One file in `crates/ui/tests/snapshots/` holds one part of a screen: the pane
+or the dialog that its test is about (`Area` in `crates/ui/tests/snapshots.rs`).
+Only the layout tests keep the full screen, at 120×40 and 200×60; the others
+use 120×40. A new pane test uses the smallest area that shows the change.
+A new key or `:command` also changes the `help_*` snapshots, because the help
+lists every key and shows the line count.
+Compare the screens with commands, not by reading the files:
 
 1. Run `make test P=sendito-ui F=<test>` for the test of the screen. On a
    mismatch, the test fails and prints only the lines that changed.
@@ -177,7 +192,9 @@ compares the exact bytes with the goldens.
   line it lists.
 * A user-visible change updates `docs/FEATURES.md` and gets an entry in
   `CHANGELOG.md` under the next release. A new module gets its row in
-  `docs/MAP.md`.
+  `docs/MAP.md`. `FORMAT.md` changes only when a file format or a wire rule
+  changes. `README.md` changes only when the overview, the install steps or
+  the quick start change: it does not describe features.
 
 ## Conventions
 

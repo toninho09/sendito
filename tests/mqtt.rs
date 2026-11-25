@@ -70,8 +70,10 @@ mod tests {
                 username: "ana".into(),
                 password: "{{pass}}".into(),
             },
-            scripts: Scripts::default(),
-            description: "Room sensors.\n\n- [x] temperature\n".into(),
+            common: RequestCommon {
+                description: "Room sensors.\n\n- [x] temperature\n".into(),
+                ..Default::default()
+            },
         }
     }
 
@@ -204,7 +206,7 @@ mod tests {
         let Request::Mqtt(out) = inherit::apply(&req, &chain) else {
             panic!("not MQTT")
         };
-        assert_eq!(out.scripts.pre.len(), 1);
+        assert_eq!(out.common.scripts.pre.len(), 1);
         assert!(matches!(&out.auth, Auth::Basic { username, .. } if username == "folder"));
         let note = inherit::ignored_headers_note(&req, &chain).unwrap();
         assert!(note.contains("Devices"), "{note}");

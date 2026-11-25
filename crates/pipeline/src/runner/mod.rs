@@ -116,14 +116,31 @@ pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
     }
 }
 
-/// The Lua post scripts of a send, after the assertions: their tests join
-/// the assertions, their variables and logs join `results`.
-pub(crate) fn post_phase(
+/// The response phase of a send: the extracts, the assertions, then the Lua
+/// post scripts. Their tests join the assertions, their variables and logs
+/// join `results`. An extracted value that contains one of `taint` stays a
+/// secret. The caller masks the assertions after this phase.
+pub(crate) fn response_phase(
     scripts: &Scripts,
     view: &ResponseView<'_>,
     scope: &mut Scope,
     results: &mut ScriptResults,
+    taint: &[String],
 ) {
+    results.extracts = script::run_extract(&scripts.extract, view, scope);
+    // Cookie values and OAuth access tokens remain secret even if an
+    // extraction rule did not mark them; runtime variables may persist.
+    for extract in &mut results.extracts {
+        if let Ok(value) = &mut extract.value
+            && taint
+                .iter()
+                .any(|s| !s.is_empty() && value.value.contains(s))
+        {
+            value.secret = true;
+            scope.set(RUNTIME_LAYER, &extract.var, value.clone());
+        }
+    }
+    results.asserts = script::run_asserts(&scripts.asserts, view, scope);
     let out = lua_script::run_lua_post(&scripts.lua_post, view, scope);
     results.asserts.extend(out.tests);
     results.post.extend(out.sets);

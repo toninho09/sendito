@@ -415,31 +415,33 @@ mod tests {
                 verify_tls: false,
                 cookies: None,
             },
-            scripts: Scripts {
-                pre: vec![SetVar {
-                    var: "a".into(),
-                    value: "b".into(),
-                }],
-                extract: vec![Extract {
-                    var: "t".into(),
-                    source: Source::Header,
-                    expr: "x".into(),
-                    secret: true,
-                }],
-                asserts: vec![Assertion {
-                    source: Source::Status,
-                    expr: String::new(),
-                    op: AssertOp::Lt,
-                    value: "300".into(),
-                }],
-                lua_pre: LuaScript::own("request:set_header(\"X\", \"1\")\nprint(1)")
-                    .into_iter()
-                    .collect(),
-                lua_post: LuaScript::own("test(\"ok\", response.status < 300);")
-                    .into_iter()
-                    .collect(),
+            common: RequestCommon {
+                scripts: Scripts {
+                    pre: vec![SetVar {
+                        var: "a".into(),
+                        value: "b".into(),
+                    }],
+                    extract: vec![Extract {
+                        var: "t".into(),
+                        source: Source::Header,
+                        expr: "x".into(),
+                        secret: true,
+                    }],
+                    asserts: vec![Assertion {
+                        source: Source::Status,
+                        expr: String::new(),
+                        op: AssertOp::Lt,
+                        value: "300".into(),
+                    }],
+                    lua_pre: LuaScript::own("request:set_header(\"X\", \"1\")\nprint(1)")
+                        .into_iter()
+                        .collect(),
+                    lua_post: LuaScript::own("test(\"ok\", response.status < 300);")
+                        .into_iter()
+                        .collect(),
+                },
+                description: "# Create\n\nMakes an *x*.".into(),
             },
-            description: "# Create\n\nMakes an *x*.".into(),
         })
     }
 

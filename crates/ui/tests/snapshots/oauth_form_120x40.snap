@@ -2,43 +2,19 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
-│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
-│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
-│ ╭─ OAuth identities · project config ──────────────────────────────────────────────────────────────────────────────╮ │
-│ │ Ctrl+S saves to ~/.sendito/config.toml                                                                           │ │
-│ │                                                                                                                  │ │
-│ │ ▌ billing              │ Name           ▍billing                                                                 │ │
-│ │   + New (Ctrl+N)       │ Grant           Authorization code   Client credentials   Password   Device code        │ │
-│ │                        │ Token URL       https://auth.example.test/token                                         │ │
-│ │                        │ Client ID       sendito                                                                 │ │
-│ │                        │ Client secret   {{billing_secret}}                                                      │ │
-│ │                        │ Username        {{api_user}}                                                            │ │
-│ │                        │ Password        hunter2                                                  ⚠ plain text   │ │
-│ │                        │ Scopes          invoices:read                                                           │ │
-│ │                                                                                                                  │ │
-│ │ The [oauth.<name>] key a request's OAuth auth names; no spaces.                                                  │ │
-│ │                                                                                                                  │ │
-│ │  Save (Ctrl+S)    New (Ctrl+N)    Sign in (Ctrl+L)    Close (Esc)                                                │ │
-│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-│                                                                                                                      │
-│                            ││        Requests you send appear here.                                                  │
-│                            ││                                                                                        │
-│                            ││         F7  all history                                                                │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                   ^S save · Tab ↑↓ fields · ^L sign in · Esc list
+╭─ OAuth identities · project config ──────────────────────────────────────────────────────────────────────────────╮
+│ Ctrl+S saves to ~/.sendito/config.toml                                                                           │
+│                                                                                                                  │
+│ ▌ billing              │ Name           ▍billing                                                                 │
+│   + New (Ctrl+N)       │ Grant           Authorization code   Client credentials   Password   Device code        │
+│                        │ Token URL       https://auth.example.test/token                                         │
+│                        │ Client ID       sendito                                                                 │
+│                        │ Client secret   {{billing_secret}}                                                      │
+│                        │ Username        {{api_user}}                                                            │
+│                        │ Password        hunter2                                                  ⚠ plain text   │
+│                        │ Scopes          invoices:read                                                           │
+│                                                                                                                  │
+│ The [oauth.<name>] key a request's OAuth auth names; no spaces.                                                  │
+│                                                                                                                  │
+│  Save (Ctrl+S)    New (Ctrl+N)    Sign in (Ctrl+L)    Close (Esc)                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

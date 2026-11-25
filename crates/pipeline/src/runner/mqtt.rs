@@ -292,19 +292,13 @@ pub async fn exec_mqtt(
             body: &last,
             timing: &[("total", start.elapsed())],
         };
-        scripts.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
-        for extract in &mut scripts.extracts {
-            if let Ok(value) = &mut extract.value
-                && secrets
-                    .iter()
-                    .any(|s| !s.is_empty() && value.value.contains(s))
-            {
-                value.secret = true;
-                scope.set(RUNTIME_LAYER, &extract.var, value.clone());
-            }
-        }
-        scripts.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
-        post_phase(&req.scripts, &view, &mut scope, &mut scripts);
+        response_phase(
+            &req.common.scripts,
+            &view,
+            &mut scope,
+            &mut scripts,
+            &secrets,
+        );
         scrub_asserts(&mut scripts.asserts, &secrets);
     }
     error = error.map(|e| scrub(&e, &secrets));

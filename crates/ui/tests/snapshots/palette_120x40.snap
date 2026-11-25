@@ -2,43 +2,29 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  e╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮         │
-│  GET   h│ ▍  type to search actions, settings, commands and requests                               1/171   ┃         │
-│         │                                                                                                  ┃         │
-│         │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃         │
-│         │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  │         │
-│         │  Cancel the running request or stream                                                  Ctrl+W x  │         │
-│         │  Finish sending on a client/bidi stream (half-close)                                   Ctrl+W d  │         │
-│         │  Re-send the active request on an interval (watch)                                     Ctrl+W m  │         │
-│         │  Save the request to its file (asks for a name if new)                        Ctrl+S / Ctrl+W s  │         │
-│         │  Quit Sendito                                                                 Ctrl+W q / Ctrl+Q  │         │
-│         │  Open a new unsaved HTTP request tab                                          Ctrl+N / Ctrl+W t  │         │
-│         │  Open a new unsaved gRPC request tab                                                   Ctrl+W g  │         │
-│         │  Open a new unsaved SSE request tab                                                    Ctrl+W E  │         │
-│         │  Open a new unsaved MQTT request tab                                                   Ctrl+W M  │         │
-│         │  Open a new unsaved WebSocket request tab                                              Ctrl+W y  │         │
-│         │  Close the current tab                                                                 Ctrl+W c  │         │
-│         │  Next open request tab                                                 Ctrl+W n / Ctrl+PageDown  │         │
-│         │  Previous open request tab                                               Ctrl+W p / Ctrl+PageUp  │         │
-│         │  Pin or unpin the current tab (pinned tabs stay first)                                 Ctrl+W P  │         │
-│         │  Focus the pane to the left                                              Ctrl+W h / Ctrl+W Left  │         │
-│         │  Focus the pane below                                                    Ctrl+W j / Ctrl+W Down  │         │
-│         │  Focus the pane above                                                      Ctrl+W k / Ctrl+W Up  │         │
-│         │  Focus the pane to the right                                            Ctrl+W l / Ctrl+W Right  │         │
-│         │  Next tab of the focused pane (e.g. Params → Headers)                                  Ctrl+W ]  │         │
-│         │  Previous tab of the focused pane                                                      Ctrl+W [  │         │
-│         ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 149 more ─╯         │
-│                                                                                                                      │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                          ↑↓ move · ⏎ run · : commands · Esc close
+╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮
+│ ▍get order                                                                                 1/4   │
+│                                                                                                  │
+│▌ Open GET get order                                                       Orders/get order.toml  │
+│  Edit the settings of the selected folder (headers, auth, variables and scripts its request…  s  │
+│  :folder   Edit the settings of the active request's folder (headers, auth, variables, scripts)  │
+│  :import…                                                                                        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

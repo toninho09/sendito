@@ -744,6 +744,7 @@ fn cookie_jar_stores_and_replays() {
     masked_ctx.mask_echoed_secrets = true;
     let mut with_extract = login.clone();
     with_extract
+        .common
         .scripts
         .extract
         .push(sendito_core::model::Extract {
@@ -1258,12 +1259,15 @@ fn http_oauth_login_refresh_and_send() {
         let mut req = req;
         // The jar is on: the 401 sets a cookie and the retry must replay it.
         req.options.cookies = Some(true);
-        req.scripts.extract.push(sendito_core::model::Extract {
-            var: "reflected_token".into(),
-            source: sendito_core::model::Source::Body,
-            expr: "$.token".into(),
-            secret: false,
-        });
+        req.common
+            .scripts
+            .extract
+            .push(sendito_core::model::Extract {
+                var: "reflected_token".into(),
+                source: sendito_core::model::Source::Body,
+                expr: "$.token".into(),
+                secret: false,
+            });
         let o = sendito_pipeline::runner::exec_http(&ctx, &req, Scope::new(), vec![]).await;
         assert_eq!(o.response.as_ref().unwrap().status, 200);
         assert!(o.scripts.extracts[0].value.as_ref().unwrap().secret);

@@ -2,63 +2,59 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭─────────────╭─ Environments ───────────────────────────────────────────────────────────────────────────────────────────────╮───────────────────────────────────────────╮
-│▸ Orders/                   ││             │  Collection variables  local (active)  staging                                                               │                                           │
-│▸ Users/                    ││             │                                                                                                              │                                           │
-│  GRPC  echo unary          ││             │ .env file    .env (default)                                                                          no file │                                           │
-│  GET   health              ││             │                                                                                                              │                                           │
-│                            ││             │ Type says where a value lives (Space changes it). A secret or keychain value is typed here but stored        │                                           │
-│                            ││             │ outside this file. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.       │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │ Variable                  Type            Value                                                              │                                           │
-│                            ││             │ base_url                 │‹text›         │http://127.0.0.1:9                                              │× │                                           │
-│                            ││             │ grpc                     │‹text›         │127.0.0.1:9                                                     │× │                                           │
-│                            ││             │ token                    │‹secret›       │set · type to replace it                                        │× │                                           │
-│                            ││             │ add variable             │               │                                                                   │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │ ere.                                      │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │ text: the value is written in this file and shared through git.                                              │                                           │
-│                            ││             │                                                                                                              │                                           │
-│                            ││             │  Save (Ctrl+S)    New env (Ctrl+N)    Close (Esc)                                                            │                                           │
-│                            ││             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                           │
-│                            ││                                                                                                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                                                                                   ^D delete row · Space type · ^S save · ^PgUp/Dn env · Esc close
+╭─ Environments ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Collection variables  local (active)  staging                                                               │
+│                                                                                                              │
+│ .env file    .env (default)                                                                          no file │
+│                                                                                                              │
+│ Type says where a value lives (Space changes it). A secret or keychain value is typed here but stored        │
+│ outside this file. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.       │
+│                                                                                                              │
+│ Variable                  Type            Value                                                              │
+│ base_url                 │‹text›         │http://127.0.0.1:9                                              │× │
+│ grpc                     │‹text›         │127.0.0.1:9                                                     │× │
+│ token                    │‹secret›       │set · type to replace it                                        │× │
+│ add variable             │               │                                                                   │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│                                                                                                              │
+│ text: the value is written in this file and shared through git.                                              │
+│                                                                                                              │
+│  Save (Ctrl+S)    New env (Ctrl+N)    Close (Esc)                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

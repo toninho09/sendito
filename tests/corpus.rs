@@ -743,10 +743,14 @@ async fn http_corpus() {
         // The pre-request rows and Lua scripts are part of the request
         // definition: the variables they set and the fields they change.
         let mut oscope = scope.clone();
-        sendito_core::script::run_pre(&req.scripts.pre, &mut oscope);
+        sendito_core::script::run_pre(&req.common.scripts.pre, &mut oscope);
         let mut defined = Request::Http(req.clone());
-        sendito_core::lua_script::run_lua_pre(&req.scripts.lua_pre, &mut defined, &mut oscope)
-            .must();
+        sendito_core::lua_script::run_lua_pre(
+            &req.common.scripts.lua_pre,
+            &mut defined,
+            &mut oscope,
+        )
+        .must();
         let Request::Http(defined) = defined else {
             panic!("{rel}: a script changed the request kind")
         };

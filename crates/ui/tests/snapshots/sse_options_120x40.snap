@@ -2,43 +2,20 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   SSE untitled ● ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ SSE ● ─────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││  https://example.test/events                                               ▶ Send  ^⏎  │
-│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│  GRPC  echo unary          │╭─ Params  Headers 1  Auth  Scripts  Options  Docs ──────────────────────────────────────╮
-│  GET   health              ││ Timeout       ▍  default · 30 s (Settings)                                             │
-│                            ││ Deadline       5000                                                                    │
-│                            ││ Max events     3                                                                       │
-│                            ││ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
-│                            ││ Verify TLS     [✓] On  turn off for self-signed certificates                           │
-│                            ││ Cookie jar     Config default ▾                                                        │
-│                            ││                                                                                        │
-│                            ││ The longest wait for the stream to open: 30 s, 500 ms (a bare number is ms).           │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Log ────────────────────── 3 events · max events  350 ms 81 B ─╮
-│                            ││ 3 events · live                   │  1 ▾ {                                             │
-│                            ││ #1 +0.100s   27 B update id=1 ret…│  2     "count": 3,                                 │
-│                            ││ #2 +0.200s   27 B update id=2 ret…│  3     "state": "ready"                            │
-│                            ││ #3 +0.300s   27 B update id=3 ret…│  4   }                                             │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-│                            ││                                   │                                                    │
-╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ──────────────────────────────────────────────────────────── Ln 1/4 ─╯
- demo   ● 1 unsaved                                          ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys
+╭─ Params  Headers 1  Auth  Scripts  Options  Docs ──────────────────────────────────────╮
+│ Timeout       ▍  default · 30 s (Settings)                                             │
+│ Deadline       5000                                                                    │
+│ Max events     3                                                                       │
+│ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
+│ Verify TLS     [✓] On  turn off for self-signed certificates                           │
+│ Cookie jar     Config default ▾                                                        │
+│                                                                                        │
+│ The longest wait for the stream to open: 30 s, 500 ms (a bare number is ms).           │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯

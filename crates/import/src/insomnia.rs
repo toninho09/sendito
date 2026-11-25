@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{ImportEnvironment, ImportFolder, ImportResult, Skipped};
 use sendito_core::model::{
     ApiKeyLocation, Auth, Body, HttpRequest, KeyValue, MultipartPart, PartKind, Request,
+    RequestCommon,
 };
 use serde_json::Value;
 
@@ -236,7 +237,10 @@ fn walk(
                     params: rows(node.get("parameters"), &item, skipped),
                     body: body(node.get("body"), &item, skipped),
                     auth: a,
-                    description: text(node, "description").into(),
+                    common: RequestCommon {
+                        description: text(node, "description").into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
                 for key in [
@@ -447,7 +451,7 @@ mod tests {
             panic!("not http")
         };
         assert_eq!(req.url, "{{base}}/users");
-        assert_eq!(req.description, "Creates a *user*.");
+        assert_eq!(req.common.description, "Creates a *user*.");
         assert_eq!(result.root.folders[0].settings.description, "User calls");
         assert_eq!(result.root.settings.description, "API *docs*");
         assert!(!req.headers[1].enabled);
