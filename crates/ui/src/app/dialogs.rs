@@ -26,13 +26,15 @@ impl App {
                         for t in &mut self.tabs {
                             if t.path
                                 .as_deref()
-                                .is_some_and(|p| p == rel || p.starts_with(&format!("{rel}/")))
+                                .is_some_and(|p| crate::tree::repath(p, &rel, "").is_some())
                             {
                                 t.path = None;
                                 t.set_saved(None);
                                 t.name = format!("{} (deleted)", t.name);
                             }
                         }
+                        self.tree.forget_favorites(&rel);
+                        self.session_dirty = true;
                         self.rescan();
                         self.set_status(format!("deleted {}", name_of(&rel)), StatusKind::Ok);
                     }

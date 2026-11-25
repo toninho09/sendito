@@ -1,6 +1,7 @@
 //! Collection tree operations: open, new, rename, duplicate, delete and move.
 
 use super::*;
+use crate::tree::repath;
 
 impl App {
     // ----- tree operations ----------------------------------------------
@@ -17,6 +18,7 @@ impl App {
                 }
             }
             RowKind::Request { .. } => self.open_request(&row.rel),
+            RowKind::Section => {}
         }
     }
 
@@ -183,26 +185,55 @@ impl App {
         }
     }
 
-    /// Moves the paths of open tabs into a renamed or moved node. `folder`
-    /// also moves the folder a folder tab edits.
+    /// Toggles the favorite of the tree's selected request, or with another
+    /// focus, of the active tab's request.
+    pub(super) fn toggle_favorite(&mut self) {
+        let rel = if self.focus == Focus::Sidebar && self.sidebar_mode == SidebarMode::Tree {
+            match self.tree.selected_row() {
+                Some(r) if r.is_folder() => {
+                    self.set_status("only requests can be favorites", StatusKind::Info);
+                    return;
+                }
+                r => r.map(|r| r.rel.clone()),
+            }
+        } else {
+            match self.tab() {
+                Some(t) if t.folder.is_some() => {
+                    self.set_status("only requests can be favorites", StatusKind::Info);
+                    return;
+                }
+                Some(t) if t.path.is_none() => {
+                    self.set_status("save the request first", StatusKind::Info);
+                    return;
+                }
+                t => t.and_then(|t| t.path.clone()),
+            }
+        };
+        let Some(rel) = rel else { return };
+        let msg = if self.tree.toggle_favorite(&rel) {
+            "added to favorites"
+        } else {
+            "removed from favorites"
+        };
+        self.session_dirty = true;
+        self.set_status(format!("{msg}: {}", name_of(&rel)), StatusKind::Ok);
+    }
+
+    /// Moves the paths of open tabs and favorites into a renamed or moved
+    /// node. `folder` also moves the folder a folder tab edits.
     pub(super) fn repath_tabs(&mut self, old: &str, new: &str, folder: bool) {
         for t in &mut self.tabs {
-            if let Some(p) = &t.path {
-                if p == old {
-                    t.path = Some(new.to_string());
+            if let Some(p) = t.path.as_deref().and_then(|p| repath(p, old, new)) {
+                if t.path.as_deref() == Some(old) {
                     t.name = name_of(new).to_string();
-                } else if let Some(rest) = p.strip_prefix(&format!("{old}/")) {
-                    t.path = Some(format!("{new}/{rest}"));
                 }
+                t.path = Some(p);
             }
-            if folder && let Some(f) = &t.folder {
-                if f == old {
-                    t.folder = Some(new.to_string());
-                } else if let Some(rest) = f.strip_prefix(&format!("{old}/")) {
-                    t.folder = Some(format!("{new}/{rest}"));
-                }
+            if folder && let Some(f) = t.folder.as_deref().and_then(|f| repath(f, old, new)) {
+                t.folder = Some(f);
             }
         }
+        self.tree.repath_favorites(old, new);
         self.session_dirty = true;
     }
 }

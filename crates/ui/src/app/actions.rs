@@ -27,6 +27,8 @@ impl App {
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
             Action::PrevTab => self.switch_tab(-1),
+            Action::TogglePin => self.toggle_pin(),
+            Action::ToggleFavorite => self.toggle_favorite(),
             Action::FocusLeft => self.focus_dir(-1, 0),
             Action::FocusRight => self.focus_dir(1, 0),
             Action::FocusUp => self.focus_dir(0, -1),
@@ -495,6 +497,21 @@ impl App {
             self.focus = Focus::Sidebar;
         }
         self.session_dirty = true;
+    }
+
+    /// Pins or unpins the active tab. A pinned tab moves to the end of the
+    /// pinned tabs, an unpinned one to the start of the others.
+    pub(super) fn toggle_pin(&mut self) {
+        let Some(t) = self.tab_mut() else { return };
+        t.pinned = !t.pinned;
+        let pinned = t.pinned;
+        let tab = self.tabs.remove(self.active);
+        let to = self.tabs.iter().take_while(|t| t.pinned).count();
+        self.tabs.insert(to, tab);
+        self.active = to;
+        self.session_dirty = true;
+        let msg = if pinned { "tab pinned" } else { "tab unpinned" };
+        self.set_status(msg, StatusKind::Ok);
     }
 
     /// The Save/Discard/Cancel prompt for closing the active dirty tab.

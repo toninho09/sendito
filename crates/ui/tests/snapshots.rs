@@ -138,6 +138,22 @@ fn welcome_and_tree() {
     });
 }
 
+/// Favorites in the sidebar and on the start screen, and a pinned tab.
+#[test]
+fn favorites_and_pinned_tab() {
+    each(|h| {
+        h.app.tree.toggle_favorite("health.toml");
+        h.app.tree.toggle_favorite("Users/list users.toml");
+        snap("welcome_favorites", h);
+        open(h, "health");
+        open(h, "get order");
+        h.key("ctrl+w P");
+        h.app.status = None;
+        h.key("ctrl+w h");
+        snap("tree_favorites_pinned_tab", h);
+    });
+}
+
 #[test]
 fn request_tabs_http() {
     each(|h| {

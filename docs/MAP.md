@@ -200,7 +200,7 @@ Every file here is documented in
 | Layered config (defaults < global < project) | `crates/store/src/config.rs::Config` | `UiConfig`, `HttpConfig`, `GrpcConfig`, `WsConfig`, `OAuthIdentity`, `HistoryConfig` |
 | Environments, four secret sources, keychain, secret files | `crates/store/src/env.rs` | `EnvFile`, `VarSource`, `Envs`, `OsKeychain`, `MemoryKeychain` |
 | History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear` |
-| Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, layout, environment |
+| Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, pinned tabs, layout, environment, favorites |
 | Cookie jar (RFC 6265, PSL, `0600`, cross-process lock) | `crates/store/src/cookies.rs` | `request`, `store_response`, `describe`, `delete`, `clear` |
 | Durable writes and cross-process locks | `crates/store/src/fsio.rs` | `write_atomic`, `write_private`, `with_lock`, `with_dir_lock` |
 | User themes on disk (`themes/*.toml`, `extends`) | `crates/store/src/themes.rs` | Contrast and `extends` problems are reported, not fatal |

@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
 ╭ Req╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮────╮
-│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/248 · ↑↓ PgUp PgDn   ┃    │
+│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/251 · ↑↓ PgUp PgDn   ┃    │
 │▸ Us│                                                                                                            ┃    │
 │  GR│ All keys, including any you changed in the config.                                                         ┃    │
 │  GE│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃    │
@@ -24,6 +24,8 @@ expression: screen
 │    │   Ctrl+W c                     Close the current tab                                                       │    │
 │    │   Ctrl+W n, Ctrl+PageDown      Next open request tab                                                       │    │
 │    │   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                                   │    │
+│    │   Ctrl+W P                     Pin or unpin the current tab (pinned tabs stay first)                       │    │
+│    │   Ctrl+W F                     Add or remove the request from the favorites                                │    │
 │    │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                                  │    │
 │    │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                                        │    │
 │    │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                                        │    │
@@ -37,8 +39,6 @@ expression: screen
 │    │   Alt+3                        Jump to tab 3 of the focused pane                                           │    │
 │    │   Alt+4                        Jump to tab 4 of the focused pane                                           │    │
 │    │   Alt+5                        Jump to tab 5 of the focused pane                                           │    │
-│    │   Alt+6                        Jump to tab 6 of the focused pane                                           │    │
-│    │   Ctrl+P                       Open the command palette                                                    │    │
 │    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 ╰─── 6                                                                                                              ───╯
  demo                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

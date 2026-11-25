@@ -363,10 +363,40 @@ fn draw_row(
             } else {
                 base
             };
-            let name = truncate(&row.name, maxx.saturating_sub(x) as usize);
+            // A favorite in the tree ends with a star (the Favorites section
+            // needs none).
+            let star = !row.fav && app.tree.is_favorite(&row.rel);
+            let room = (maxx.saturating_sub(x) as usize).saturating_sub(if star { 2 } else { 0 });
+            let name = truncate(&row.name, room);
             let nx = x;
             x = put(buf, x, y, &name, maxx.saturating_sub(x), name_st);
             highlight_match(buf, nx, y, &row.name, filter, maxx, theme);
+            if star {
+                x = put(buf, x, y, " ", 1, base);
+                x = put(
+                    buf,
+                    x,
+                    y,
+                    icons.favorite,
+                    maxx.saturating_sub(x),
+                    base.patch(theme.fg(theme.warn)),
+                );
+            }
+        }
+        RowKind::Section => {
+            if !row.name.is_empty() {
+                let title = format!("{}{}", Icons::pre(icons.favorite), row.name);
+                put(
+                    buf,
+                    x + 1,
+                    y,
+                    &title,
+                    maxx.saturating_sub(x + 1),
+                    theme.bold(theme.dim()).bg(bg),
+                );
+            }
+            app.hits.push((rect, Hit::SidebarArea));
+            return;
         }
     }
     if drop {

@@ -936,8 +936,10 @@ Both files are written owner-only (`0600` on Unix): a draft or a stored request
 can hold a token typed into it.
 
 * `session.toml` — open tabs (path, or the unsaved request as a draft in request
-  format), active tab, layout, expanded folders, active environment and non-secret
-  runtime variables. Restored on start.
+  format; `pinned = true` for a pinned tab), active tab, layout, expanded
+  folders, favorite requests (`favorites`, relative paths in the order they
+  were added), active environment and non-secret runtime variables. Restored
+  on start. Favorites belong to one user: the file is gitignored.
 * `history.jsonl` — one JSON object per sent request:
 
   ```json

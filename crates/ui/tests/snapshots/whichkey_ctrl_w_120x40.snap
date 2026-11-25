@@ -28,7 +28,6 @@ expression: screen
 │                            ││  2 ▾   "items": [                                                                      ┃
 │                            ││  3 ▾     {                                                                             ┃
 │                            ││  4         "id": 1,                                                                    ┃
-│                            ││  5         "name": "Ana",                                                              ┃
 │         ╭─ ^W ──────────────────────────────────────────────────────────────────────────────────────────────────────╮┃
 │         │                                                                                                           │
 │         │  Request           Tabs                   Focus & layout              Open                   App          │
@@ -37,8 +36,9 @@ expression: screen
 │         │  d  end stream     y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
 │         │  m  watch          E  new SSE             b  sidebar                  r  history                          │
 │         │  s  save           M  new MQTT            z  zoom                     i  import                           │
-│         │  u  copy as curl   c  close               > <  sidebar width                                              │
-│         │  f  format body    n p  next / previous   + -  split height                                               │
+│         │  F  favorite       c  close               > <  sidebar width                                              │
+│         │  u  copy as curl   n p  next / previous   + -  split height                                               │
+│         │  f  format body    P  pin                                                                                 │
 │         │                                                                                                           │
 ╰─── 6 req╰────────────────────────────────────────────────────────────────────────────────────────────── Esc cancel ─╯
  demo                                                                                                     ^W … next key

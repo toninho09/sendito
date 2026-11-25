@@ -148,6 +148,24 @@ impl Harness {
         h
     }
 
+    /// Saves the session and starts the app again on the same collection,
+    /// as a restart does.
+    #[allow(dead_code)]
+    pub fn reopen(&mut self) {
+        self.app.save_session();
+        let cfg = self.dir.path().join(".config/sendito");
+        let project = Project::open_with(
+            self.dir.path(),
+            Arc::new(MemoryKeychain::default()),
+            Some(cfg.join("config.toml")),
+        );
+        let (session, _) =
+            sendito_store::session::load(&sendito_store::session::session_path(self.dir.path()));
+        self.app = App::new(project, session, self.rt.handle().clone());
+        self.app.home = Some(self.dir.path().to_path_buf());
+        self.draw();
+    }
+
     pub fn draw(&mut self) {
         let app = &mut self.app;
         self.term.draw(|f| sendito_ui::draw::draw(app, f)).must();

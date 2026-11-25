@@ -115,6 +115,8 @@ pub enum Hit {
     HistoryRow(usize),
     /// A recent request on the start screen.
     RecentRow(usize),
+    /// A favorite on the start screen: the request path.
+    FavoriteRow(String),
     Bar(usize),
     ReqTab(usize),
     ReqField(usize),
@@ -519,7 +521,7 @@ impl App {
                 folders: vec![],
                 requests: vec![],
             });
-        let tree = TreeState::new(root, session.expanded.clone());
+        let tree = TreeState::new(root, session.expanded.clone(), session.favorites.clone());
         let env_list = project.envs.list();
         let active_env = session.active_env.clone().filter(|e| env_list.contains(e));
         let runtime: BTreeMap<String, VarValue> = session
@@ -614,41 +616,52 @@ impl App {
 
     fn restore_tabs(&mut self, s: &Session) {
         for t in &s.tabs {
-            if let Some(rel) = &t.folder {
-                self.restore_folder_tab(rel, t.draft.as_deref());
-                continue;
+            let before = self.tabs.len();
+            self.restore_tab(t);
+            if self.tabs.len() > before
+                && let Some(tab) = self.tabs.last_mut()
+            {
+                tab.pinned = t.pinned;
             }
-            let saved = t.path.as_ref().and_then(|p| self.project.coll.load(p).ok());
-            let draft = t
-                .draft
-                .as_ref()
-                .and_then(|d| sendito_store::request_file::parse(d).ok());
-            let req = match (&draft, &saved) {
-                (Some(d), _) => d.clone(),
-                (None, Some(s)) => s.clone(),
-                (None, None) => continue,
-            };
-            let name = t
-                .path
-                .as_deref()
-                .map(|p| name_of(p).to_string())
-                .unwrap_or_else(|| t.name.clone());
-            let id = self.alloc_id();
-            let mut tab = Tab::new(
-                id,
-                t.path.clone().filter(|_| saved.is_some()),
-                name,
-                &req,
-                saved,
-            );
-            tab.ed.set_vim(self.vim);
-            tab.refresh_model();
-            self.tabs.push(tab);
         }
         self.active = s.active_tab.min(self.tabs.len().saturating_sub(1));
         if !self.tabs.is_empty() {
             self.focus = self.top_bar_focus();
         }
+    }
+
+    /// Opens the tab of one session entry; a request that cannot load adds no tab.
+    fn restore_tab(&mut self, t: &SessionTab) {
+        if let Some(rel) = &t.folder {
+            self.restore_folder_tab(rel, t.draft.as_deref());
+            return;
+        }
+        let saved = t.path.as_ref().and_then(|p| self.project.coll.load(p).ok());
+        let draft = t
+            .draft
+            .as_ref()
+            .and_then(|d| sendito_store::request_file::parse(d).ok());
+        let req = match (&draft, &saved) {
+            (Some(d), _) => d.clone(),
+            (None, Some(s)) => s.clone(),
+            (None, None) => return,
+        };
+        let name = t
+            .path
+            .as_deref()
+            .map(|p| name_of(p).to_string())
+            .unwrap_or_else(|| t.name.clone());
+        let id = self.alloc_id();
+        let mut tab = Tab::new(
+            id,
+            t.path.clone().filter(|_| saved.is_some()),
+            name,
+            &req,
+            saved,
+        );
+        tab.ed.set_vim(self.vim);
+        tab.refresh_model();
+        self.tabs.push(tab);
     }
 
     pub fn alloc_id(&mut self) -> u64 {
@@ -700,10 +713,12 @@ impl App {
                         None
                     },
                     folder: t.folder.clone(),
+                    pinned: t.pinned,
                 })
                 .collect(),
             layout: self.layout.clone(),
             expanded: self.tree.expanded_list(),
+            favorites: self.tree.favorites.clone(),
             runtime_vars: self
                 .runtime
                 .iter()

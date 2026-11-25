@@ -243,6 +243,7 @@ impl App {
                     ("N".into(), "new folder".into()),
                     ("m / drag".into(), "move".into()),
                     ("d".into(), "duplicate".into()),
+                    ("f".into(), "favorite".into()),
                 ]);
             }
             Focus::Filter => v.extend([

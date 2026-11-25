@@ -713,6 +713,16 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   tree scrolls, the folders of the top row stay pinned above the list (at most
   half its height, the last one underlined); a click on a pinned folder
   selects it and scrolls the tree to it (`ui.sticky_folders`).
+* **Favorites**: `f` on a request in the tree (or `Ctrl+W F` for the current
+  tab) adds it to the favorites or removes it. A **★ Favorites** section at the
+  top of the tree lists them (hidden while the filter is set); Enter opens one.
+  In the tree, a favorite ends with `★`. A rename or a move keeps the favorite,
+  a delete removes it. Folders and never-saved tabs cannot be favorites.
+  Favorites belong to the user (`session.toml`, gitignored), not to the
+  collection.
+* **Pinned tabs**: `Ctrl+W P` pins or unpins the current tab. Pinned tabs stay
+  before the other tabs and show `◆` before the method; new tabs open after
+  them. A pinned tab closes like any other. The pin stays after a restart.
 * **Request tabs**: HTTP
   `Params · Headers · Body · Auth · Scripts · Options · Docs`; gRPC
   `Message · Metadata · Auth · Scripts · Options · Docs`; MCP
@@ -750,7 +760,8 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   on the bar. A pane narrower than 70 columns hides the list and shows
   `◀ 3/12 ▶` in the bottom border.
 * **Start screen** (no tab open): a pixel wordmark, a collection summary, the
-  getting-started keys and the most recent requests (click one to open).
+  getting-started keys, the favorites (up to 6) and the most recent requests
+  (click one to open).
 * **Footer**: one row. On the left, status segments (vim mode, collection,
   unsaved count, undefined variables, watch state, running/stream state). On
   the right, the key hints for what is focused, with short key names (`^S`,

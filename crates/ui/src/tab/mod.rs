@@ -113,6 +113,8 @@ pub struct Tab {
     pub folder: Option<String>,
     /// jq expressions applied in this tab, oldest first (kept in memory only).
     pub jq_history: Vec<String>,
+    /// The tab is pinned: it stays before the tabs that are not pinned.
+    pub pinned: bool,
 }
 
 /// The largest body (in bytes) that the jq filter runs on at each key press.
@@ -156,6 +158,7 @@ impl Tab {
             origin_path: None,
             folder: None,
             jq_history: Vec::new(),
+            pinned: false,
         }
     }
 

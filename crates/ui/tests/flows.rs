@@ -382,6 +382,102 @@ fn flow_create_folder_and_request() {
     assert!(!h.dir.path().join("Payments/refund.toml").exists());
 }
 
+/// `f` marks a request as a favorite: it shows in the Favorites section and
+/// on the start screen, follows a rename, and survives a restart.
+#[test]
+fn flow_favorites() {
+    let mut h = Harness::new(100, 30);
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("health.toml");
+    h.key("f");
+    assert_eq!(h.app.tree.favorites, vec!["health.toml"]);
+    let sc = h.screen();
+    assert!(sc.contains("★ Favorites"), "{sc}");
+    assert!(sc.contains("added to favorites: health"), "{sc}");
+    // The Favorites section opens the request with Enter.
+    let fav = h
+        .app
+        .tree
+        .rows
+        .iter()
+        .position(|r| r.fav && !r.is_section());
+    h.app.tree.selected = fav.must();
+    h.key("enter");
+    assert_eq!(
+        h.app.tab().and_then(|t| t.path.as_deref()),
+        Some("health.toml")
+    );
+    // A folder cannot be a favorite.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("Users");
+    h.key("f");
+    assert!(h.screen().contains("only requests can be favorites"));
+    // A rename keeps the favorite.
+    h.app.tree.select_rel("health.toml");
+    h.key("r");
+    h.key("ctrl+a");
+    h.type_text("status");
+    h.key("enter");
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    // Ctrl+W F toggles the active tab's request.
+    h.key("ctrl+w l");
+    h.key("ctrl+w F");
+    assert!(h.app.tree.favorites.is_empty());
+    h.key("ctrl+w F");
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    // The favorites survive a restart and show on the start screen.
+    h.key("ctrl+w c");
+    h.reopen();
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    let sc = h.screen();
+    assert!(sc.contains("Favorites") && sc.contains("Recent"), "{sc}");
+    // A delete removes the favorite.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("status.toml");
+    h.key("delete");
+    h.key("left enter");
+    assert!(h.app.tree.favorites.is_empty());
+    assert!(!h.screen().contains("★ Favorites"));
+}
+
+/// A tab that was never saved cannot be a favorite.
+#[test]
+fn flow_favorite_needs_a_saved_request() {
+    let mut h = Harness::new(100, 30);
+    h.key("ctrl+n");
+    h.key("ctrl+w F");
+    assert!(h.screen().contains("save the request first"));
+    assert!(h.app.tree.favorites.is_empty());
+}
+
+/// Ctrl+W P pins a tab: it moves before the others, shows the pin icon, and
+/// stays pinned after a restart. Closing it needs no confirmation.
+#[test]
+fn flow_pin_tab() {
+    let mut h = Harness::new(120, 30);
+    open(&mut h, "health");
+    open(&mut h, "get order");
+    assert_eq!(h.app.active, 1);
+    h.key("ctrl+w P");
+    let names: Vec<&str> = h.app.tabs.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["get order", "health"]);
+    assert!(h.app.tabs[0].pinned && h.app.active == 0);
+    assert!(h.screen().contains("◆ GET get order"));
+    // A new tab opens after the pinned ones.
+    open(&mut h, "list users");
+    assert_eq!(h.app.tabs[0].name, "get order");
+    h.reopen();
+    assert!(h.app.tabs[0].pinned && h.app.tabs[0].name == "get order");
+    assert!(h.app.tabs[1..].iter().all(|t| !t.pinned));
+    // Unpinning moves the tab to the start of the others.
+    h.app.active = 0;
+    h.key("ctrl+w P");
+    assert!(h.app.tabs.iter().all(|t| !t.pinned));
+    h.key("ctrl+w P");
+    h.key("ctrl+w c");
+    assert!(h.app.tabs.iter().all(|t| t.name != "get order"));
+}
+
 /// A large tree can be browsed with the mouse wheel without snapping back
 /// to the selection; moving the selection still scrolls it into view.
 #[test]

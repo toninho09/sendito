@@ -32,6 +32,8 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
+| `toggle_pin` | `Ctrl+W P` | `Ctrl+W P` | Pin or unpin the current tab (pinned tabs stay first) |
+| `toggle_favorite` | `Ctrl+W F` | `Ctrl+W F` | Add or remove the request from the favorites |
 | `focus_left` | `Ctrl+W h`, `Ctrl+W Left` | `Ctrl+W h`, `Ctrl+W Left` | Focus the pane to the left |
 | `focus_down` | `Ctrl+W j`, `Ctrl+W Down` | `Ctrl+W j`, `Ctrl+W Down` | Focus the pane below |
 | `focus_up` | `Ctrl+W k`, `Ctrl+W Up` | `Ctrl+W k`, `Ctrl+W Up` | Focus the pane above |
@@ -79,6 +81,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `tree_delete` | `Delete`, `x` | `Delete`, `x` | Delete the selected item (asks first) |
 | `tree_move` | `m` | `m` | Move the selected item to another folder |
 | `tree_filter` | `/` | `/` | Filter the tree by name |
+| `toggle_favorite` | `f` | `f` | Add or remove the request from the favorites |
 | `up` | `Up` | `k`, `Up` | Move up |
 | `down` | `Down` | `j`, `Down` | Move down |
 | `page_up` | `PageUp` | `PageUp` | Page up |

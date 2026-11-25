@@ -36,6 +36,10 @@ pub struct Icons {
     pub close: &'static str,
     pub expanded: &'static str,
     pub collapsed: &'static str,
+    /// A favorite request.
+    pub favorite: &'static str,
+    /// A pinned tab.
+    pub pin: &'static str,
     /// Rounded ends of chips and tabs (empty: square ends).
     pub cap_left: &'static str,
     pub cap_right: &'static str,
@@ -69,6 +73,8 @@ impl Icons {
             close: "×",
             expanded: "▾",
             collapsed: "▸",
+            favorite: "★",
+            pin: "◆",
             cap_left: "",
             cap_right: "",
         }
@@ -99,6 +105,8 @@ impl Icons {
             close: "\u{f00d}",
             expanded: "▾",
             collapsed: "▸",
+            favorite: "\u{f005}",
+            pin: "\u{f435}",
             cap_left: "\u{e0b6}",
             cap_right: "\u{e0b4}",
         }
@@ -122,7 +130,7 @@ impl Icons {
     }
 
     #[cfg(test)]
-    fn all(&self) -> [&'static str; 23] {
+    fn all(&self) -> [&'static str; 25] {
         [
             self.folder_closed,
             self.folder_open,
@@ -146,6 +154,8 @@ impl Icons {
             self.close,
             self.expanded,
             self.collapsed,
+            self.favorite,
+            self.pin,
             self.cap_left,
         ]
     }

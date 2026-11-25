@@ -595,7 +595,10 @@ edits a server's env, headers and OAuth fields. See
   follow, by group. Press the key or click the entry.
 
 With no request open, the start screen shows what the collection holds, the keys
-to get going and the most recent requests (click one to open it).
+to get going, your favorites and the most recent requests (click one to open it).
+
+`f` in the tree marks a request as a favorite: it shows in a ★ Favorites section
+at the top of the tree. `Ctrl+W P` pins the current tab before the others.
 
 ![The start screen](docs/media/screenshots/200x60-dusk-welcome.png)
 

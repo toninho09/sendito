@@ -65,6 +65,7 @@ actions! {
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
+    TogglePin => "toggle_pin", "Pin or unpin the current tab (pinned tabs stay first)";
     FocusLeft => "focus_left", "Focus the pane to the left";
     FocusDown => "focus_down", "Focus the pane below";
     FocusUp => "focus_up", "Focus the pane above";
@@ -106,6 +107,7 @@ actions! {
     TreeDelete => "tree_delete", "Delete the selected item (asks first)";
     TreeMove => "tree_move", "Move the selected item to another folder";
     TreeFilter => "tree_filter", "Filter the tree by name";
+    ToggleFavorite => "toggle_favorite", "Add or remove the request from the favorites";
     CursorUp => "up", "Move up";
     CursorDown => "down", "Move down";
     PageUp => "page_up", "Page up";
@@ -336,6 +338,8 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
+        (TogglePin, Global, Both, &["ctrl+w P"]),
+        (ToggleFavorite, Global, Both, &["ctrl+w F"]),
         (FocusLeft, Global, Both, &["ctrl+w h", "ctrl+w left"]),
         (FocusDown, Global, Both, &["ctrl+w j", "ctrl+w down"]),
         (FocusUp, Global, Both, &["ctrl+w k", "ctrl+w up"]),
@@ -379,6 +383,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (TreeDelete, Tree, Both, &["delete", "x"]),
         (TreeMove, Tree, Both, &["m"]),
         (TreeFilter, Tree, Both, &["/"]),
+        (ToggleFavorite, Tree, Both, &["f"]),
         (CursorUp, Tree, Conventional, &["up"]),
         (CursorUp, Tree, Vim, &["k", "up"]),
         (CursorDown, Tree, Conventional, &["down"]),
@@ -690,6 +695,8 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         NewMqttRequest => (G::Tabs, "new MQTT"),
         NextTab | PrevTab => (G::Tabs, "next / previous"),
         CloseTab => (G::Tabs, "close"),
+        TogglePin => (G::Tabs, "pin"),
+        ToggleFavorite => (G::Request, "favorite"),
         FocusLeft | FocusDown | FocusUp | FocusRight => (G::Layout, "focus"),
         FocusNext | FocusPrev => (G::Layout, "next / previous pane"),
         NextSubTab | PrevSubTab => (G::Layout, "pane tab"),

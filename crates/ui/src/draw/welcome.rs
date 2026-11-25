@@ -3,9 +3,11 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
+use crate::icons::Icons;
 use crate::keymap::Action;
 use crate::theme::Theme;
 
@@ -112,6 +114,15 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
                 .collect()
         })
         .unwrap_or_default();
+    // Favorites go above Recent, in the same column.
+    let favorites: Vec<(String, String, String)> = app
+        .tree
+        .favorites
+        .iter()
+        .filter_map(|rel| app.tree.root.find_request(rel))
+        .take(6)
+        .map(|r| (r.rel.clone(), r.badge.clone(), r.name.clone()))
+        .collect();
     // Layout: Recent beside Start on wide screens, below it when there is
     // height for it, and the wordmark only when there is room for everything.
     let col_w_wide: u16 = 68;
@@ -119,7 +130,13 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
     let two_cols = inner.width >= col_w_wide + recent_w_wide + 4 + 4;
     let list_h = start.len() as u16;
     // Title, rows (or the empty line), a blank line and the "all history" line.
-    let recent_h = 1 + (recent.len() as u16).max(1) + 2;
+    // Favorites: the title, the rows and a blank line.
+    let fav_h = if favorites.is_empty() {
+        0
+    } else {
+        favorites.len() as u16 + 2
+    };
+    let recent_h = fav_h + 1 + (recent.len() as u16).max(1) + 2;
     let small_head: u16 = 1 + 1 + 2;
     let big_head: u16 = 3 + 1 + 1 + 1 + 2;
     let stacked = !two_cols && inner.height >= small_head + 1 + list_h + 1 + recent_h;
@@ -194,9 +211,6 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         put(buf, x, y, text, w, theme.title_style());
     };
     heading(buf, x0, y, "Start", col_w);
-    if two_cols {
-        heading(buf, x0 + col_w + 4, y, "Recent", recent_w);
-    }
     y += 1;
     let ys = y;
     let kw = start
@@ -219,16 +233,42 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         );
         y += 1;
     }
-    let (rx, ry) = if two_cols {
-        (x0 + col_w + 4, ys)
+    // The column's first row: its title.
+    let (rx, mut y) = if two_cols {
+        (x0 + col_w + 4, ys - 1)
     } else if stacked {
-        let ry = y + 1;
-        heading(buf, x0, ry, "Recent", recent_w);
-        (x0, ry + 1)
+        (x0, y + 1)
     } else {
         return;
     };
-    let mut y = ry;
+    if !favorites.is_empty() {
+        heading(
+            buf,
+            rx,
+            y,
+            &format!("{}Favorites", Icons::pre(app.icons.favorite)),
+            recent_w,
+        );
+        y += 1;
+        for (rel, badge, name) in &favorites {
+            if y >= bottom {
+                break;
+            }
+            let r = Rect::new(rx, y, recent_w, 1);
+            let base = list_row(app, buf, r, theme);
+            let mut x = method_cell(buf, rx, y, badge, base, false, theme);
+            x = put(buf, x, y, " ", 1, base);
+            let w = recent_w.saturating_sub(8);
+            put(buf, x, y, &truncate(name, w as usize), w, base);
+            app.hits.push((r, Hit::FavoriteRow(rel.clone())));
+            y += 1;
+        }
+        y += 1;
+    }
+    if y < bottom {
+        heading(buf, rx, y, "Recent", recent_w);
+    }
+    y += 1;
     if recent.is_empty() && y < bottom {
         put(
             buf,
@@ -245,13 +285,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
             break;
         }
         let r = Rect::new(rx, y, recent_w, 1);
-        let state = if hovered(app, r) {
-            RowState::Hover
-        } else {
-            RowState::Plain
-        };
-        let base = row_style(state, theme.surface(), theme);
-        fill(buf, r, base);
+        let base = list_row(app, buf, r, theme);
         let mut x = method_cell(buf, rx, y, badge, base, false, theme);
         x = put(buf, x, y, " ", 1, base);
         let tw = time.width() as u16;
@@ -280,4 +314,16 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
         let x = keycap(buf, rx, y, &hk, rx + recent_w, theme);
         put(buf, x, y, " all history", recent_w, theme.dim());
     }
+}
+
+/// Fills a start-screen list row (hover aware) and returns its style.
+fn list_row(app: &App, buf: &mut Buffer, r: Rect, theme: &Theme) -> Style {
+    let state = if hovered(app, r) {
+        RowState::Hover
+    } else {
+        RowState::Plain
+    };
+    let base = row_style(state, theme.surface(), theme);
+    fill(buf, r, base);
+    base
 }

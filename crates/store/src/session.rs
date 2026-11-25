@@ -20,6 +20,8 @@ pub struct Session {
     pub layout: Layout,
     /// Folders expanded in the tree.
     pub expanded: Vec<String>,
+    /// Favorite requests (relative paths), in the order they were added.
+    pub favorites: Vec<String>,
     /// Non-secret runtime variables set by scripts.
     pub runtime_vars: BTreeMap<String, String>,
 }
@@ -38,6 +40,9 @@ pub struct SessionTab {
     /// absent for a request tab.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// The tab is pinned: it stays before the tabs that are not pinned.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +118,7 @@ mod tests {
                     name: "a".into(),
                     draft: Some("kind = \"http\"\nurl = '''\nx'''\n".into()),
                     folder: None,
+                    pinned: true,
                 },
                 SessionTab {
                     name: "Users".into(),
@@ -120,6 +126,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            favorites: vec!["a.toml".into()],
             ..Default::default()
         };
         s.runtime_vars.insert("k".into(), "v".into());

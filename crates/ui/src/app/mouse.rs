@@ -305,6 +305,7 @@ impl App {
                 }
             }
             Hit::RecentRow(i) => self.open_history(i, false),
+            Hit::FavoriteRow(rel) => self.open_request(&rel),
             Hit::Bar(p) => {
                 // The stop button (3) of an open stream is mouse-only: it stays
                 // out of the keyboard focus cycle (ctrl+w x cancels).

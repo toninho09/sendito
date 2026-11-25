@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Favorites and pinned tabs
+
+* Add favorite requests: `f` in the tree (or `Ctrl+W F` for the current tab)
+  adds the request to the favorites or removes it. The favorites show in a
+  Favorites section at the top of the tree, with `★` after the name in the
+  tree, and on the start screen. A rename or a move keeps a favorite; a delete
+  removes it. Favorites are kept per user in `session.toml`.
+* Add pinned tabs: `Ctrl+W P` pins or unpins the current tab. Pinned tabs stay
+  before the others, show `◆` before the method, and stay pinned after a
+  restart.
+
 ### Process environment variables
 
 * Add `{{$processEnv.NAME}}`: it reads `NAME` from the environment of the
