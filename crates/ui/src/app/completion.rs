@@ -23,6 +23,17 @@ impl App {
             Field::Message if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp) => {
                 Some(CompleteKind::Fields)
             }
+            Field::BodyText if t.ed.body_kind == BodyKind::GraphQL && t.ed.graphql_section == 0 => {
+                let ctx = crate::complete::graphql_context(
+                    &t.ed.body_text.text(),
+                    t.ed.body_text.cursor,
+                )?;
+                Some(match ctx.position {
+                    sendito_core::graphql::GqlPosition::Field => CompleteKind::GraphqlField,
+                    sendito_core::graphql::GqlPosition::Argument => CompleteKind::GraphqlArgument,
+                    sendito_core::graphql::GqlPosition::OnType => CompleteKind::GraphqlOnType,
+                })
+            }
             Field::McpServer => Some(CompleteKind::McpServer),
             Field::McpTool => Some(CompleteKind::McpTool),
             _ => None,
@@ -49,7 +60,7 @@ impl App {
                     .find(|tool| tool.name == t.ed.mcp_tool.text())
                     .map(|tool| crate::complete::schema_node(&tool.input_schema, &tool.name))
             }
-            Kind::Http => None,
+            Kind::Http | Kind::Sse | Kind::Mqtt => None,
         }
     }
 
@@ -113,7 +124,11 @@ impl App {
                     )
                 }
             }
-            CompleteKind::Fields | CompleteKind::JqKey => None,
+            CompleteKind::Fields
+            | CompleteKind::JqKey
+            | CompleteKind::GraphqlField
+            | CompleteKind::GraphqlArgument
+            | CompleteKind::GraphqlOnType => None,
         }
     }
 
@@ -134,6 +149,33 @@ impl App {
             return;
         };
         let (id, field) = (t.id, t.current_field());
+        if kind.is_graphql() {
+            let Some(ctx) =
+                crate::complete::graphql_context(&t.ed.body_text.text(), t.ed.body_text.cursor)
+            else {
+                return;
+            };
+            let mut c = Completion::new(kind, id, field);
+            c.start = Pos {
+                row: t.ed.body_text.cursor.row,
+                col: t.ed.body_text.cursor.col.saturating_sub(ctx.prefix.len()),
+            };
+            if t.graphql_source == self.graphql_source(t)
+                && let Some(schema) = &t.graphql_schema
+            {
+                c.set_pool(
+                    crate::complete::graphql_candidates(schema, &ctx),
+                    ctx.prefix,
+                );
+                self.complete = Some(c);
+            } else {
+                c.loading = loading;
+                c.failed = failed;
+                self.complete = Some(c);
+                self.start_complete_fetch(kind);
+            }
+            return;
+        }
         if kind == CompleteKind::Fields {
             let Some(ctx) =
                 crate::complete::json_context(&t.ed.message.text(), t.ed.message.cursor)
@@ -206,6 +248,11 @@ impl App {
                     t.mcp_tools_error.is_some() && t.mcp_tools_server == t.ed.mcp_server.text(),
                 ))
             }
+            kind if kind.is_graphql() => Some((
+                "graphql",
+                self.schema_job.is_some(),
+                t.graphql_source == self.graphql_source(t) && t.schema_error.is_some(),
+            )),
             _ => None,
         };
         let Some((what, busy, failed)) = wait else {
@@ -227,6 +274,7 @@ impl App {
         }
         match what {
             "schema" => self.load_schema(false, false, false),
+            "graphql" => self.load_graphql_schema(false),
             _ => self.load_mcp_tools(false),
         }
     }
@@ -267,6 +315,10 @@ impl App {
         };
         if t.id != tab {
             self.complete = None;
+            return;
+        }
+        if kind.is_graphql() {
+            self.refresh_complete();
             return;
         }
         if kind == CompleteKind::JqKey {
@@ -329,6 +381,9 @@ impl App {
         }
         let ed = match c.kind {
             CompleteKind::JqKey => None,
+            CompleteKind::GraphqlField
+            | CompleteKind::GraphqlArgument
+            | CompleteKind::GraphqlOnType => Some(&mut t.ed.body_text),
             CompleteKind::Fields => t.ed.text_mut(Field::Message),
             CompleteKind::GrpcMethod => Some(&mut t.ed.grpc_method_text),
             CompleteKind::McpServer => Some(&mut t.ed.mcp_server),
@@ -338,6 +393,34 @@ impl App {
             return false;
         };
         match c.kind {
+            kind if kind.is_graphql() => {
+                let line: Vec<char> = ed
+                    .lines()
+                    .get(ed.cursor.row)
+                    .map(|s| s.chars().collect())
+                    .unwrap_or_default();
+                let mut end = ed.cursor.col;
+                while line
+                    .get(end)
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                {
+                    end += 1;
+                }
+                let after = line[end..].iter().find(|ch| !ch.is_whitespace()).copied();
+                let suffix = if kind == CompleteKind::GraphqlArgument && after != Some(':') {
+                    ": "
+                } else {
+                    ""
+                };
+                ed.replace_span(
+                    c.start,
+                    Pos {
+                        row: ed.cursor.row,
+                        col: end,
+                    },
+                    &format!("{}{suffix}", cand.name),
+                );
+            }
             // The key is replaced in place; the rest of the JSON stays.
             CompleteKind::Fields => {
                 // The rest of the key after the cursor is replaced too, and an

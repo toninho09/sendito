@@ -4,7 +4,11 @@ pub const HTTP_TABS: &[&str] = &["Params", "Headers", "Body", "Auth", "Scripts",
 
 pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options"];
 
+pub const SSE_TABS: &[&str] = &["Params", "Headers", "Auth", "Scripts", "Options"];
+
 pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options"];
+
+pub const MQTT_TABS: &[&str] = &["Topics", "Publish", "Will", "Auth", "Scripts", "Options"];
 
 pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
 
@@ -19,8 +23,10 @@ pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     match kind {
         Kind::Http | Kind::Folder => ["Body", "Headers", "Timing", "Results"],
         Kind::Grpc => ["Body", "Metadata", "Timing", "Log"],
+        Kind::Sse => ["Body", "Headers", "Timing", "Log"],
         Kind::Ws => ["Body", "Handshake", "Timing", "Log"],
         Kind::Mcp => ["Body", "Request", "Timing", "Log"],
+        Kind::Mqtt => ["Messages", "Connection", "Timing", "Log"],
     }
 }
 
@@ -43,6 +49,9 @@ pub const OPS: &[&str] = &[
 
 pub const PART_KINDS: &[&str] = &["text", "file"];
 
+/// MQTT QoS levels as shown in the tables and the Last Will choice.
+pub const QOS: &[&str] = &["0", "1", "2"];
+
 /// A focusable field in the request editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Field {
@@ -50,6 +59,7 @@ pub enum Field {
     Headers,
     BodyKind,
     BodyText,
+    GraphqlSection,
     RawContentType,
     FormFields,
     Parts,
@@ -79,6 +89,7 @@ pub enum Field {
     Tls,
     GrpcVerify,
     Deadline,
+    MaxEvents,
     McpServer,
     McpTool,
     WsSubprotocols,
@@ -95,6 +106,19 @@ pub enum Field {
     JwtPrivateKey,
     JwtClaims,
     JwtExpires,
+    MqttSubscriptions,
+    MqttPublish,
+    MqttWillTopic,
+    MqttWillPayload,
+    MqttWillQos,
+    MqttWillRetain,
+    MqttWillBase64,
+    MqttUser,
+    MqttPass,
+    MqttClientId,
+    MqttProtocol,
+    MqttCleanSession,
+    MqttKeepAlive,
 }
 
 impl Field {
@@ -104,6 +128,7 @@ impl Field {
             Field::Headers => "Headers",
             Field::BodyKind => "Body type",
             Field::BodyText => "Body",
+            Field::GraphqlSection => "GraphQL section",
             Field::RawContentType => "Content-Type",
             Field::FormFields => "Fields",
             Field::Parts => "Parts",
@@ -134,6 +159,7 @@ impl Field {
             Field::ImportPaths => "Import paths (comma-separated)",
             Field::Tls => "Use TLS",
             Field::GrpcVerify => "Verify TLS certificates",
+            Field::MaxEvents => "Maximum events (empty = none)",
             Field::Deadline => "Deadline (ms, empty = none)",
             Field::McpServer => "Server (a [mcp.servers] entry of the config)",
             Field::McpTool => "Tool",
@@ -152,6 +178,21 @@ impl Field {
             Field::JwtPrivateKey => "Private key PEM file (relative to the collection)",
             Field::JwtClaims => "Claims (JSON object)",
             Field::JwtExpires => "Expires in (seconds, adds iat and exp; empty = none)",
+            Field::MqttSubscriptions => "Subscriptions (topic filters, + and # wildcards)",
+            Field::MqttPublish => {
+                "Publishes sent after subscribing (Send publishes the selected row live)"
+            }
+            Field::MqttWillTopic => "Last Will topic (empty = no Last Will)",
+            Field::MqttWillPayload => "Last Will payload",
+            Field::MqttWillQos => "Last Will QoS",
+            Field::MqttWillRetain => "Last Will retain",
+            Field::MqttWillBase64 => "Last Will payload is base64",
+            Field::MqttUser => "MQTT user name (empty = from Basic auth)",
+            Field::MqttPass => "MQTT password",
+            Field::MqttClientId => "Client ID (empty = sendito-<8 hex>)",
+            Field::MqttProtocol => "Protocol version",
+            Field::MqttCleanSession => "Clean session",
+            Field::MqttKeepAlive => "Keep alive (seconds)",
         }
     }
 
@@ -167,13 +208,19 @@ impl Field {
                 | Field::ScriptAssert
                 | Field::Metadata
                 | Field::Vars
+                | Field::MqttSubscriptions
+                | Field::MqttPublish
         )
     }
 
     pub fn is_multiline(self) -> bool {
         matches!(
             self,
-            Field::BodyText | Field::Message | Field::WsMessages | Field::JwtClaims
+            Field::BodyText
+                | Field::Message
+                | Field::WsMessages
+                | Field::JwtClaims
+                | Field::MqttWillPayload
         )
     }
 
@@ -194,6 +241,7 @@ impl Field {
                 | Field::Message
                 | Field::ProtoFiles
                 | Field::ImportPaths
+                | Field::MaxEvents
                 | Field::Deadline
                 | Field::McpServer
                 | Field::McpTool
@@ -208,6 +256,12 @@ impl Field {
                 | Field::JwtPrivateKey
                 | Field::JwtClaims
                 | Field::JwtExpires
+                | Field::MqttWillTopic
+                | Field::MqttWillPayload
+                | Field::MqttUser
+                | Field::MqttPass
+                | Field::MqttClientId
+                | Field::MqttKeepAlive
         )
     }
 
@@ -216,19 +270,28 @@ impl Field {
         matches!(
             self,
             Field::BodyKind
+                | Field::GraphqlSection
                 | Field::AuthKind
                 | Field::AuthIn
                 | Field::SchemaSource
                 | Field::ScriptSection
                 | Field::Cookies
                 | Field::JwtAlgorithm
+                | Field::MqttWillQos
+                | Field::MqttProtocol
         )
     }
 
     pub fn is_toggle(self) -> bool {
         matches!(
             self,
-            Field::FollowRedirects | Field::VerifyTls | Field::Tls | Field::GrpcVerify
+            Field::FollowRedirects
+                | Field::VerifyTls
+                | Field::Tls
+                | Field::GrpcVerify
+                | Field::MqttWillRetain
+                | Field::MqttWillBase64
+                | Field::MqttCleanSession
         )
     }
 }
@@ -238,6 +301,8 @@ pub enum Kind {
     Http,
     Grpc,
     Ws,
+    Sse,
+    Mqtt,
     Mcp,
     /// The settings of a folder, not a request.
     Folder,

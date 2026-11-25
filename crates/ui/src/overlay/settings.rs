@@ -30,6 +30,8 @@ pub enum SettingId {
     HttpTimeout,
     GrpcDeadline,
     WsTimeout,
+    SseTimeout,
+    MqttTimeout,
     McpTimeout,
     MaxBody,
     CookieJar,
@@ -65,6 +67,8 @@ impl SettingId {
             HttpTimeout => ("http", "timeout_ms"),
             GrpcDeadline => ("grpc", "deadline_ms"),
             WsTimeout => ("websocket", "timeout_ms"),
+            SseTimeout => ("sse", "timeout_ms"),
+            MqttTimeout => ("mqtt", "timeout_ms"),
             McpTimeout => ("mcp", "timeout_ms"),
             MaxBody => ("http", "max_body_mb"),
             CookieJar => ("http", "cookie_jar"),
@@ -89,6 +93,8 @@ impl SettingId {
                 | HttpTimeout
                 | GrpcDeadline
                 | WsTimeout
+                | SseTimeout
+                | MqttTimeout
                 | McpTimeout
                 | MaxBody
                 | Proxy
@@ -109,8 +115,9 @@ impl SettingId {
     pub fn min(self) -> Option<u64> {
         use SettingId::*;
         match self {
-            GrpcDeadline | WsTimeout => Some(0),
-            HistoryMax | WatchInterval | StreamKept | HttpTimeout | McpTimeout | MaxBody => Some(1),
+            GrpcDeadline | WsTimeout | MqttTimeout => Some(0),
+            HistoryMax | WatchInterval | StreamKept | HttpTimeout | SseTimeout | McpTimeout
+            | MaxBody => Some(1),
             _ => None,
         }
     }
@@ -151,6 +158,8 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::HttpTimeout, "HTTP request timeout"),
     (SettingId::GrpcDeadline, "gRPC deadline"),
     (SettingId::WsTimeout, "WebSocket handshake timeout"),
+    (SettingId::SseTimeout, "SSE opening timeout"),
+    (SettingId::MqttTimeout, "MQTT timeout"),
     (SettingId::McpTimeout, "MCP call timeout"),
     (SettingId::MaxBody, "Largest response body"),
     (SettingId::CookieJar, "Cookie jar"),

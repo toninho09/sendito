@@ -218,6 +218,87 @@ fn fake_stream(h: &mut Harness) {
 }
 
 #[test]
+fn request_body_graphql() {
+    each(|h| {
+        open(h, "create user");
+        let t = h.app.tab_mut().must();
+        t.ed.set_body_kind(sendito_core::BodyKind::GraphQL);
+        t.ed.body_text
+            .set_text("query Lookup($id: ID!) {\n  hero(id: $id) {\n    name\n  }\n}");
+        t.ed.graphql_variables.set_text("{\"id\": \"42\"}");
+        t.ed.graphql_operation.set_text("Lookup");
+        t.req_tab = 2;
+        t.field = 2;
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        snap("req_body_graphql", h);
+        let t = h.app.tab_mut().must();
+        t.ed.set_choice(sendito_ui::tab::Field::GraphqlSection, 1);
+        snap("req_body_graphql_variables", h);
+    });
+}
+
+#[test]
+fn graphql_completion() {
+    each(|h| {
+        open(h, "create user");
+        let env = h.app.active_env.clone();
+        let t = h.app.tab_mut().must();
+        t.ed.method = "POST".into();
+        t.ed.url.set_text("https://example.test/graphql");
+        t.ed.set_body_kind(sendito_core::BodyKind::GraphQL);
+        t.ed.body_text.set_text("query Lookup {\n  hero(");
+        t.ed.body_text.move_to_end();
+        t.req_tab = 2;
+        t.field = 2;
+        t.graphql_schema = Some(
+            sendito_pipeline::http::graphql::GraphqlSchema::from_json(include_bytes!(
+                "fixtures/graphql-schema.json"
+            ))
+            .must(),
+        );
+        t.graphql_source = format!("{env:?}:graphql:POST https://example.test/graphql");
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        h.key("ctrl+space");
+        assert_eq!(h.app.complete.as_ref().must().items.len(), 2);
+        snap("graphql_completion", h);
+    });
+}
+
+#[test]
+fn sse_session() {
+    each(|h| {
+        common::sse::demo(h);
+        snap("sse_options", h);
+        h.key("ctrl+w j");
+        snap("sse_events", h);
+        h.key("alt+2");
+        snap("sse_headers", h);
+        h.key("alt+3");
+        snap("sse_timing", h);
+        h.key("alt+4");
+        snap("sse_log", h);
+    });
+}
+
+#[test]
+fn mqtt_session() {
+    each(|h| {
+        common::mqtt::demo(h);
+        snap("mqtt_topics", h);
+        h.key("ctrl+w j");
+        snap("mqtt_messages", h);
+        h.key("alt+2");
+        snap("mqtt_connection", h);
+        h.key("alt+3");
+        snap("mqtt_timing", h);
+        h.key("alt+4");
+        snap("mqtt_log", h);
+    });
+}
+
+#[test]
 fn response_stream() {
     each(|h| {
         open(h, "echo unary");

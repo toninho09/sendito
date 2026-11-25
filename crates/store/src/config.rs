@@ -20,6 +20,8 @@ pub struct Config {
     pub http: HttpConfig,
     pub grpc: GrpcConfig,
     pub websocket: WsConfig,
+    pub sse: SseConfig,
+    pub mqtt: MqttConfig,
     pub mcp: McpConfig,
     /// Named OAuth identities for ordinary HTTP requests.
     pub oauth: BTreeMap<String, OAuthIdentity>,
@@ -147,6 +149,31 @@ pub struct HttpTlsConfig {
 pub struct GrpcConfig {
     /// Default deadline when a request sets none (0 = none).
     pub deadline_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SseConfig {
+    pub timeout_ms: u64,
+}
+impl Default for SseConfig {
+    fn default() -> Self {
+        Self { timeout_ms: 30_000 }
+    }
+}
+
+/// MQTT settings (`[mqtt]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MqttConfig {
+    /// The time to wait for CONNACK when a request sets none (0 = none).
+    pub timeout_ms: u64,
+}
+
+impl Default for MqttConfig {
+    fn default() -> Self {
+        Self { timeout_ms: 30_000 }
+    }
 }
 
 /// WebSocket settings (`[websocket]`).
@@ -435,8 +462,8 @@ fn edit_doc(path: &Path, f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<(
         let mut doc = read_doc(path)?;
         f(&mut doc)?;
         let text = doc.to_string();
-        // A literal OAuth client secret: the file is readable by its owner
-        // only. A `{{variable}}` reference is not a secret.
+        // A literal OAuth client secret or password: the file is readable
+        // by its owner only. A `{{variable}}` reference is not a secret.
         let literal_secret = doc_has_literal_secret(doc.as_item());
         if literal_secret {
             crate::fsio::write_private(path, text.as_bytes())
@@ -451,7 +478,7 @@ fn doc_has_literal_secret(item: &toml_edit::Item) -> bool {
         return false;
     };
     t.iter().any(|(k, v)| {
-        (k == "client_secret"
+        (matches!(k, "client_secret" | "password")
             && v.as_str()
                 .is_some_and(|s| !s.trim_start().starts_with("{{")))
             || doc_has_literal_secret(v)
@@ -838,6 +865,34 @@ scopes = ["read"]
         set_value(&p, "oauth.api", "client_secret", Some("{{secret}}".into())).unwrap();
         assert_ne!(mode(&p), 0, "a variable reference is not a secret");
         set_value(&p, "oauth.api", "client_secret", Some("s3cr3t".into())).unwrap();
+        assert_eq!(mode(&p), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_literal_oauth_password_makes_the_config_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("c.toml");
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o077;
+        let identity = |password: &str| {
+            let mut ids = BTreeMap::new();
+            ids.insert(
+                "robot".to_string(),
+                OAuthIdentity {
+                    grant: OAuthGrant::Password,
+                    token_url: "https://t".into(),
+                    client_id: "id".into(),
+                    username: Some("bot".into()),
+                    password: Some(password.into()),
+                    ..Default::default()
+                },
+            );
+            ids
+        };
+        set_table(&p, &["oauth"], &identity("{{pw}}")).unwrap();
+        assert_ne!(mode(&p), 0, "a variable reference is not a secret");
+        set_table(&p, &["oauth"], &identity("hunter2")).unwrap();
         assert_eq!(mode(&p), 0);
     }
 

@@ -1,0 +1,2 @@
+kind = "sse"
+url = "{{base_url}}/sse/utf8"

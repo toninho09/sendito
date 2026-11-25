@@ -9,7 +9,7 @@ fn export_input(
     env: &Option<String>,
     include_secrets: bool,
     what: &str,
-) -> Result<(Project, String, HttpRequest, Scope), ExitCode> {
+) -> Result<(Project, String, HttpRequest, Scope, bool), ExitCode> {
     let (project, rel, req) = load(request, env).map_err(|(e, code)| {
         eprintln!("sendito: {e}");
         ExitCode::from(code)
@@ -23,27 +23,33 @@ fn export_input(
         eprintln!("sendito: {e}");
         ExitCode::from(3)
     })?;
-    let Request::Http(h) = runner::with_folders(&req, &chain, &mut scope) else {
-        eprintln!("sendito: {what} export is only available for HTTP requests");
+    let effective = runner::with_folders(&req, &chain, &mut scope);
+    let sse = matches!(effective, Request::Sse(_));
+    let Some(h) = sendito_import::http_export_request(&effective, &scope) else {
+        eprintln!(
+            "sendito: {what} export is only available for HTTP and SSE requests, not {}",
+            effective.badge()
+        );
         return Err(ExitCode::from(3));
     };
-    Ok((project, rel, h, scope))
+    Ok((project, rel, h, scope, sse))
 }
 
 pub(crate) fn curl(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
-    let (project, _, h, scope) = match export_input(request, &env, include_secrets, "curl") {
+    let (project, _, h, scope, sse) = match export_input(request, &env, include_secrets, "curl") {
         Ok(v) => v,
         Err(code) => return code,
     };
-    println!(
-        "{}",
-        sendito_import::curl::export(&h, &scope, include_secrets, &project.root)
-    );
+    let mut command = sendito_import::curl::export(&h, &scope, include_secrets, &project.root);
+    if sse {
+        command = command.replacen("curl", "curl -N", 1);
+    }
+    println!("{command}");
     ExitCode::SUCCESS
 }
 
 pub(crate) fn http_export(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
-    let (project, rel, h, scope) = match export_input(request, &env, include_secrets, ".http") {
+    let (project, rel, h, scope, _) = match export_input(request, &env, include_secrets, ".http") {
         Ok(v) => v,
         Err(code) => return code,
     };

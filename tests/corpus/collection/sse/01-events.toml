@@ -1,0 +1,5 @@
+kind = "sse"
+url = "{{base_url}}/sse/events"
+
+[options]
+max_events = 2

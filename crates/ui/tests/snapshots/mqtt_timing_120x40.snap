@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   MQTT untitled ● ×    +                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ MQTT ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  mqtts://broker.example.test                                               ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Topics 1  Publish  Will  Auth  Scripts  Options ──────────────────────────────────────╮
+│  GET   health              ││     Topic filter                                                                QoS    │
+│                            ││ [✓] sensors/+/temperature                                                      │‹1› │× │
+│                            ││  +  add topic filter                                                           │       │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            │╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯
+│                            │╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│                            ││ Connected after Some(12ms)                                                             │
+│                            ││ Messages received 3                                                                    │
+│                            ││ Bytes received 91                                                                      │
+│                            ││ Published 0                                                                            │
+│                            ││ First message Some(100ms)                                                              │
+│                            ││ Duration Some(5s)                                                                      │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰─────────────────────────────────────────────────────────────────────────────── Ln 1/7 ─╯
+ demo   ● 1 unsaved                                         Alt+1-4 tabs · y copy · ^P commands · ^W menu · F1 all keys

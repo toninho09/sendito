@@ -21,6 +21,8 @@ impl App {
             Action::Quit => self.request_quit(),
             Action::NewRequest => self.new_tab(Request::new_http()),
             Action::NewGrpcRequest => self.new_tab(Request::new_grpc()),
+            Action::NewSseRequest => self.new_tab(Request::new_sse()),
+            Action::NewMqttRequest => self.new_tab(Request::new_mqtt()),
             Action::NewWsRequest => self.new_tab(Request::new_ws()),
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
@@ -218,7 +220,7 @@ impl App {
     /// part 0 is a static badge), the method or tool chip for gRPC and MCP.
     pub(super) fn open_focus(kind: Kind) -> Focus {
         match kind {
-            Kind::Http | Kind::Ws => Focus::Bar(1),
+            Kind::Http | Kind::Ws | Kind::Sse | Kind::Mqtt => Focus::Bar(1),
             // A folder tab has no request bar.
             Kind::Folder => Focus::ReqTabs,
             _ => Focus::Bar(0),
@@ -244,7 +246,7 @@ impl App {
                     v.push(Focus::Bar(1));
                     v.push(Focus::Bar(0));
                 }
-                Some(Kind::Ws) => v.push(Focus::Bar(1)),
+                Some(Kind::Ws | Kind::Sse | Kind::Mqtt) => v.push(Focus::Bar(1)),
                 Some(Kind::Folder) => {}
                 _ => {
                     v.push(Focus::Bar(0));
@@ -318,7 +320,10 @@ impl App {
                 self.focus = Focus::Bar(1);
             } else if let Focus::Bar(p) = self.focus {
                 // WebSocket has no chip to focus; its strip starts at the URL.
-                let min = if self.tab().is_some_and(|t| t.ed.kind == Kind::Ws) {
+                let min = if self
+                    .tab()
+                    .is_some_and(|t| matches!(t.ed.kind, Kind::Ws | Kind::Sse | Kind::Mqtt))
+                {
                     1
                 } else {
                     0

@@ -15,6 +15,8 @@ requests as plain TOML files that you can version in git.
 |---|---|---|---|
 | HTTP requests | yes | `sendito run` | [HTTP](#http) |
 | gRPC calls | yes | `sendito run` | [gRPC](#grpc) |
+| SSE sessions | yes | `sendito run` | [SSE](#sse) |
+| MQTT sessions | yes | `sendito run` | [MQTT](#mqtt) |
 | WebSocket sessions | yes | `sendito run` | [WebSocket](#websocket) |
 | MCP tool calls | yes | `sendito run` | [MCP](#mcp) |
 | Environments and secrets | yes | `--env`, `run` | [Variables and secrets](#variables-and-secrets) |
@@ -58,6 +60,15 @@ The wire rules are exact and spelled out in
   * `none`;
   * `raw` with a `content_type`;
   * `json` (sent as `application/json`);
+  * `graphql`: separate Query, Variables and Operation name editors. Sends a JSON
+    object with `query`, optional `variables` and optional `operationName`.
+    Variables must be a JSON object. Postman and Bruno GraphQL imports keep
+    these fields separate. `:graphqlschema` loads introspection in the background.
+    It uses the request's auth, cookies, TLS and proxy settings. The Query editor
+    completes fields, unused arguments (`name: `) and inline-fragment types.
+    It skips fields already selected at that level. Completion loads a missing
+    schema in the background. A failed load requires `:graphqlschema` to retry.
+    Query parsing is heuristic, not GraphQL validation;
   * `form` (`application/x-www-form-urlencoded`, `space → +`, `*-._` literal,
     everything else `%XX`);
   * `multipart` with text and file parts (filename and content type guessed from
@@ -225,6 +236,78 @@ A request is one TOML file with `kind = "grpc"` ([FORMAT.md](../FORMAT.md#grpc-r
 ![A gRPC request at 200×60](media/screenshots/200x60-dusk-grpc-unary.png)
 
 ---
+
+## SSE
+
+* **A separate request kind** — `kind = "sse"`, not an HTTP body type.
+  GET URL, query parameters, headers, inherited HTTP authentication and cookies.
+* **Live sessions** — `:newsse` or Ctrl+W E creates a request. The response has
+  an event list, data payload, jq, headers, timing and log views.
+  `[` / `]` selects older events or returns to the latest event.
+* **Bounds** — event storage follows `ui.stream_messages_kept`. UI delivery uses
+  a bounded channel with acknowledgement; a slow screen does not accumulate events.
+  The event log also has a size bound.
+* **Controls** — `:end` ends a session; Cancel stops it. Optional `max_events`
+  and `deadline_ms` finish a session successfully. Server EOF also finishes it.
+* **Timeout** — `[sse] timeout_ms = 30000` controls opening only, including redirects.
+  A request can override it. The open stream has no total request timeout.
+* **HTTP rules** — auth, proxy, TLS, cookie storage and redirect credential removal
+  use the HTTP pipeline, including OAuth and Digest 401 retries.
+  The client adds Accept only when absent.
+* **Scripts and history** — pre-request sets run before opening. Extractions and
+  assertions run at the end, against the HTTP status/headers and last event data.
+  History contains one session entry. Secret values stay masked in the UI/history.
+* **CLI** — data lines go to stdout; progress goes to stderr. JSON reports include
+  `events`. Folder runs chain extracted variables. curl exports add `-N`;
+  .http exports use GET and `Accept: text/event-stream`.
+* **Limits** — no automatic reconnect or Last-Event-ID, retry is display-only,
+  compressed streams are refused, and each event is limited to 1 MiB.
+  Saved response examples and watch mode do not apply to SSE.
+
+## MQTT
+
+* **A separate request kind** — `kind = "mqtt"`. One session per send: connect,
+  subscribe, publish, then receive messages. Protocol 3.1.1 or 5, TCP
+  (`mqtt://`, port 1883) or TLS (`mqtts://`, port 8883), QoS 0 to 2, retained
+  publishes and an optional Last Will. Schema in `FORMAT.md`.
+* **Editor** — `:newmqtt` or Ctrl+W M creates a request; the new-request dialog
+  also offers MQTT. Tabs: Topics (subscriptions with `+` and `#` wildcards and
+  a QoS each), Publish (topic, payload, QoS, retain, base64), Will (the Last
+  Will), Auth (user name and password, or Basic auth), Scripts and Options
+  (client ID, protocol, clean session, keep-alive, CONNACK timeout, deadline,
+  TLS verification).
+* **Refused subscriptions** — when the broker refuses a subscription, the Log
+  and the status bar show "subscription refused" with the topic filter, and
+  the CLI prints it to stderr. The session continues.
+* **Client ID** — an empty client ID sends `sendito-` and 8 random hex digits.
+* **Credentials** — the user name and password fields win; when they are
+  empty, a Basic auth (own or from a folder) gives them. Other auth kinds stop
+  the session before it connects.
+* **Live sessions** — the response has Messages (a list and the selected
+  payload, with jq), Connection (broker, client ID, CONNACK), Timing and Log.
+  `[` / `]` selects older messages. Send on an open session publishes the
+  selected row of the Publish tab; the button reads "Publish". `:end` (Ctrl+W d)
+  disconnects; Cancel (Ctrl+W x) aborts without DISCONNECT, so the broker sends
+  the Last Will.
+* **Bounds** — message storage follows `ui.stream_messages_kept`. UI delivery
+  uses a bounded channel with acknowledgement. The log also has a size bound.
+* **Timeout** — `[mqtt] timeout_ms = 30000` is the time to wait for CONNACK
+  (0 = no limit). A request can override it. The setting is "MQTT timeout".
+  An optional `deadline_ms` ends a session successfully.
+* **Scripts and history** — pre-request sets run before the connection.
+  Extractions and assertions run at the end when the broker accepted the
+  connection: `status` is 0, the headers are `connack` and `session-present`,
+  and the body is the last payload. History has one session entry. Secret
+  values stay masked in topics and payloads on screen and in history.
+* **Folders** — folder scripts and auth apply; folder headers do not, and a
+  note says so.
+* **CLI** — each payload goes to stdout as one block (`--include` adds a
+  `# topic qos=N` line); progress goes to stderr. A deadline ends with exit 0;
+  a refused CONNACK or a transport error ends with exit 2; Ctrl+C cancels.
+  JSON reports include `messages`.
+* **Limits** — no curl or `.http` export, no MQTT over WebSocket, no proxy, no
+  automatic reconnect, v5 properties and enhanced auth are not exposed.
+  Saved response examples and watch mode do not apply to MQTT.
 
 ## WebSocket
 

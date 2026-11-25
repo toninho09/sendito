@@ -33,10 +33,12 @@ library. The non-UI crates build and test without a terminal.
 
 | Crate | Owns |
 |---|---|
-| `sendito-core` | `Request` / `HttpRequest` / `GrpcRequest` / `WebSocketRequest` / `McpRequest` model, `{{template}}` parsing, variable scope and precedence, placeholder resolution, dynamic values, declarative scripts (pre / extract / assert), secret tainting and scrubbing |
+| `sendito-core` | `Request` / `HttpRequest` / `GrpcRequest` / `WebSocketRequest` / `SseRequest` / `MqttRequest` / `McpRequest` model, `{{template}}` parsing, variable scope and precedence, placeholder resolution, dynamic values, declarative scripts (pre / extract / assert), secret tainting and scrubbing |
 | `sendito-http` | Sending HTTP with reqwest + rustls, header and body assembly, response decompression, proxy, `[http.tls]`, the DNS/connect/TLS/TTFB/download timing breakdown |
 | `sendito-grpc` | Schema from reflection or `.proto` (protox), proto3 JSON ↔ protobuf, all four call kinds, metadata, deadlines, the streaming session |
+| SSE (in `sendito-http`) | Incremental event parser and live HTTP body; `runner::exec_sse` shares HTTP auth, cookies and 401 retries. Bounded event delivery and UI storage. |
 | `sendito-ws` | The WebSocket handshake (headers, subprotocols, `wss://` TLS, HTTP CONNECT proxy and an `https://` proxy's own TLS), the frame loop, the close handshake with its bound and the session deadline |
+| `sendito-mqtt` | MQTT v3.1.1 and v5 over TCP or TLS (shared `[http.tls]` material), QoS 0 to 2, subscriptions with wildcards, retained publishes, Last Will, one session deadline and no automatic reconnect. `runner::exec_mqtt` runs the pre-request script, connects with `[mqtt] timeout_ms` for CONNACK, forwards messages and runs the end scripts on the last payload |
 | `sendito-mcp` | JSON-RPC 2.0, stdio and Streamable HTTP transports, `tools/list` / `tools/call`, OAuth 2.1 with metadata discovery, PKCE and dynamic registration |
 | `sendito-store` | The collection tree on disk, canonical request files, layered config, environments and the four secret sources, cookie jar, history, session restore, themes, `init` |
 | `sendito-import` | Postman v2.1, Insomnia v4/v5, Bruno, curl (import and export), `.http` export, importing into a folder |
@@ -56,7 +58,7 @@ file (.toml)
   → core        build the variable scope (collection → env → runtime)
   → core        resolve {{placeholders}} in URL, headers, body, metadata, auth
   → core        run pre-request scripts (set runtime variables)
-  → http / grpc / mcp            send
+  → http / grpc / ws / mqtt / mcp   send
   → core        run extract scripts (store values, possibly secret)
   → core        run assertions
   → pipeline     append to history (masked)
@@ -82,7 +84,7 @@ Consequences worth knowing:
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in each crate | `make test` |
-| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (54 HTTP, 15 gRPC, 12 WebSocket, 5 MCP) | `make corpus` |
+| Wire corpus — exact bytes | `tests/corpus.rs` + `tests/corpus/expected` (57 HTTP, 15 gRPC, 12 WebSocket, 13 SSE, 13 MQTT, 5 MCP) | `make corpus` |
 | Rewrite corpus goldens | same | `make corpus-update` |
 | Integration (HTTP, TLS, proxy) | `tests/integration.rs`, `tests/tls.rs`, `tests/proxy.rs` | `make test` |
 | gRPC calls, MCP client and OAuth | `crates/{grpc,mcp}/tests/` | `make test` |

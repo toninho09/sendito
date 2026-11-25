@@ -1,0 +1,8 @@
+GET /sse/ids HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### event {"event":"message","data":"one","id":"42","retry_ms":null}
+### event {"event":"message","data":"two","id":"42","retry_ms":null}
+### event {"event":"message","data":"three","id":"","retry_ms":null}
+### done: 3 events, server closed

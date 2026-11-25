@@ -4,7 +4,7 @@ expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
 ╭ Req╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮────╮
-│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/243 · ↑↓ PgUp PgDn   ┃    │
+│▸ Or│ Search ▍  (type to filter the keys)                                            line 1/248 · ↑↓ PgUp PgDn   ┃    │
 │▸ Us│                                                                                                            ┃    │
 │  GR│ All keys, including any you changed in the config.                                                         ┃    │
 │  GE│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃    │
@@ -19,6 +19,8 @@ expression: screen
 │    │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                                         │    │
 │    │   Ctrl+W g                     Open a new unsaved gRPC request tab                                         │    │
 │    │   Ctrl+W y                     Open a new unsaved WebSocket request tab                                    │    │
+│    │   Ctrl+W E                     Open a new unsaved SSE request tab                                          │    │
+│    │   Ctrl+W M                     Open a new unsaved MQTT request tab                                         │    │
 │    │   Ctrl+W c                     Close the current tab                                                       │    │
 │    │   Ctrl+W n, Ctrl+PageDown      Next open request tab                                                       │    │
 │    │   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                                   │    │
@@ -37,8 +39,6 @@ expression: screen
 │    │   Alt+5                        Jump to tab 5 of the focused pane                                           │    │
 │    │   Alt+6                        Jump to tab 6 of the focused pane                                           │    │
 │    │   Ctrl+P                       Open the command palette                                                    │    │
-│    │   F1, Ctrl+W ?                 Show all keys and actions                                                   │    │
-│    │   Ctrl+W ,                     Open settings                                                               │    │
 │    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 ╰─── 6                                                                                                              ───╯
  demo                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

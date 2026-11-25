@@ -61,6 +61,8 @@ pub enum ResolvedBody {
     Bytes(Vec<u8>),
     File(PathBuf),
     Multipart(Vec<ResolvedPart>),
+    /// A body that cannot be sent, with the reason. The send stops with it.
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,6 +373,24 @@ pub fn resolve_http(req: &HttpRequest, scope: &Scope, base_dir: &Path) -> Resolv
             );
             ResolvedBody::Bytes(ctx.r(text).into_bytes())
         }
+        Body::GraphQL {
+            query,
+            variables,
+            operation_name,
+        } => {
+            auto_ct(
+                &mut headers,
+                &mut origins,
+                BodyKind::GraphQL.content_type().unwrap_or_default(),
+            );
+            let query = ctx.r(query);
+            let variables = ctx.r(variables);
+            let operation_name = ctx.r(operation_name);
+            match graphql_document_json(&query, &variables, &operation_name) {
+                Ok(doc) => ResolvedBody::Bytes(doc.into_bytes()),
+                Err(e) => ResolvedBody::Invalid(format!("GraphQL body: {e}")),
+            }
+        }
         Body::Form { fields } => {
             auto_ct(
                 &mut headers,
@@ -672,12 +692,247 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ResolvedSse {
+    pub http: ResolvedHttp,
+    pub deadline_ms: Option<u64>,
+    pub max_events: Option<u64>,
+}
+pub fn resolve_sse(req: &SseRequest, scope: &Scope) -> ResolvedSse {
+    let http = resolve_http(&req.http_request(), scope, Path::new("."));
+    ResolvedSse {
+        http,
+        deadline_ms: req.options.deadline_ms,
+        max_events: req.options.max_events,
+    }
+}
+
+/// Where an MQTT session connects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MqttTarget {
+    pub host: String,
+    pub port: u16,
+    pub tls: bool,
+}
+
+/// The default port of `mqtt://`.
+pub const MQTT_PORT: u16 = 1883;
+/// The default port of `mqtts://`.
+pub const MQTTS_PORT: u16 = 8883;
+
+/// A publish or a Last Will, with its payload as the bytes on the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedMqttMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: u8,
+    pub retain: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedMqtt {
+    /// The URL with its variables rendered.
+    pub url: String,
+    /// `None` when [`ResolvedMqtt::error`] tells why.
+    pub target: Option<MqttTarget>,
+    pub client_id: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub protocol: MqttProtocol,
+    pub clean_session: bool,
+    pub keep_alive_s: u64,
+    pub verify_tls: bool,
+    pub timeout_ms: Option<u64>,
+    pub deadline_ms: Option<u64>,
+    /// Enabled subscriptions: topic filter and maximum QoS.
+    pub subscriptions: Vec<(String, u8)>,
+    pub publish: Vec<ResolvedMqttMessage>,
+    pub last_will: Option<ResolvedMqttMessage>,
+    pub unresolved: Vec<String>,
+    /// The first problem that stops the connection: the URL, an auth kind
+    /// MQTT does not support, or a payload that is not valid base64.
+    pub error: Option<String>,
+}
+
+/// Parses `mqtt://host[:port]` or `mqtts://host[:port]`. A URL without a
+/// scheme uses `mqtt://`.
+pub fn mqtt_target(url: &str) -> Result<MqttTarget, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("choose a broker URL first".into());
+    }
+    let (tls, rest) = if let Some(rest) = strip_scheme(url, "mqtts://") {
+        (true, rest)
+    } else if let Some(rest) = strip_scheme(url, "mqtt://") {
+        (false, rest)
+    } else if url.contains("://") {
+        return Err(format!(
+            "the broker URL must start with mqtt:// or mqtts://, not \"{url}\""
+        ));
+    } else {
+        (false, url)
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.contains(['/', '?', '#']) {
+        return Err("the broker URL must not have a path, a query or a fragment".into());
+    }
+    if authority.contains('@') {
+        return Err("put the credentials in username and password, not in the URL".into());
+    }
+    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
+        let (host, after) = inner
+            .split_once(']')
+            .ok_or_else(|| format!("the broker host \"{authority}\" is not valid"))?;
+        (host, after.strip_prefix(':'))
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        }
+    };
+    if host.is_empty() {
+        return Err("the broker URL has no host".into());
+    }
+    let port = match port {
+        None => {
+            if tls {
+                MQTTS_PORT
+            } else {
+                MQTT_PORT
+            }
+        }
+        Some(p) => p
+            .parse::<u16>()
+            .ok()
+            .filter(|p| *p > 0)
+            .ok_or_else(|| format!("the broker port \"{p}\" is not valid"))?,
+    };
+    Ok(MqttTarget {
+        host: host.to_string(),
+        port,
+        tls,
+    })
+}
+
+/// A client ID for a request that leaves it empty: `sendito-` and 8 hex digits.
+pub fn generated_client_id() -> String {
+    format!("sendito-{:08x}", fastrand::u32(..))
+}
+
+/// Renders one message. A payload that is not valid base64 gives the error
+/// and the message with an empty payload.
+fn mqtt_message(
+    ctx: &mut Ctx,
+    m: &MqttMessage,
+    what: &str,
+) -> Result<ResolvedMqttMessage, (String, ResolvedMqttMessage)> {
+    let text = ctx.r(&m.payload.text);
+    let mut out = ResolvedMqttMessage {
+        topic: ctx.r(m.topic.trim()),
+        payload: Vec::new(),
+        qos: m.qos,
+        retain: m.retain,
+    };
+    if !m.payload.base64 {
+        out.payload = text.into_bytes();
+        return Ok(out);
+    }
+    match base64::engine::general_purpose::STANDARD.decode(text.trim()) {
+        Ok(bytes) => {
+            out.payload = bytes;
+            Ok(out)
+        }
+        Err(e) => Err((format!("{what} payload is not valid base64: {e}"), out)),
+    }
+}
+
+/// Renders one live publish with the session scope.
+pub fn resolve_mqtt_message(m: &MqttMessage, scope: &Scope) -> Result<ResolvedMqttMessage, String> {
+    let mut ctx = Ctx {
+        scope,
+        unresolved: Vec::new(),
+    };
+    mqtt_message(&mut ctx, m, "the publish").map_err(|(e, _)| e)
+}
+
+/// Resolves an MQTT request. Problems found here are in `error`; the sender
+/// reports them before it opens the connection.
+pub fn resolve_mqtt(req: &MqttRequest, scope: &Scope) -> ResolvedMqtt {
+    let mut ctx = Ctx {
+        scope,
+        unresolved: Vec::new(),
+    };
+    let mut errors: Vec<String> = Vec::new();
+    let url = ctx.r(req.url.trim());
+    let target = mqtt_target(&url).map_err(|e| errors.push(e)).ok();
+    if !matches!(req.auth, Auth::Inherit | Auth::None | Auth::Basic { .. }) {
+        errors.push(format!(
+            "{} authentication is not supported for MQTT requests; use Basic or none",
+            req.auth.kind().label()
+        ));
+    }
+    let mut client_id = ctx.r(req.client_id.trim());
+    if client_id.is_empty() {
+        client_id = generated_client_id();
+    }
+    let (username, password) = if !req.username.trim().is_empty() {
+        (ctx.r(req.username.trim()), ctx.r(&req.password))
+    } else if let Auth::Basic { username, password } = &req.auth {
+        (ctx.r(username.trim()), ctx.r(password))
+    } else {
+        (String::new(), String::new())
+    };
+    let username = (!username.is_empty()).then_some(username);
+    let password = username.as_ref().map(|_| password);
+    let mut message = |m: &MqttMessage, what: &str, ctx: &mut Ctx| {
+        mqtt_message(ctx, m, what).unwrap_or_else(|(e, m)| {
+            errors.push(e);
+            m
+        })
+    };
+    let publish = req
+        .publish
+        .iter()
+        .map(|m| message(m, "a publish", &mut ctx))
+        .collect();
+    let last_will = req
+        .last_will
+        .as_ref()
+        .map(|m| message(m, "the Last Will", &mut ctx));
+    let subscriptions = req
+        .subscriptions
+        .iter()
+        .filter(|s| s.enabled && !s.topic.trim().is_empty())
+        .map(|s| (ctx.r(s.topic.trim()), s.qos))
+        .collect();
+    ResolvedMqtt {
+        url,
+        target,
+        client_id,
+        username,
+        password,
+        protocol: req.protocol,
+        clean_session: req.clean_session,
+        keep_alive_s: req.keep_alive_s,
+        verify_tls: req.options.verify_tls,
+        timeout_ms: req.options.timeout_ms,
+        deadline_ms: req.options.deadline_ms,
+        subscriptions,
+        publish,
+        last_will,
+        unresolved: ctx.unresolved,
+        error: errors.into_iter().next(),
+    }
+}
+
 /// Unresolved variables of any request (for highlighting before send).
 pub fn unresolved_vars(req: &Request, scope: &Scope) -> Vec<String> {
     match req {
         Request::Http(h) => resolve_http(h, scope, Path::new(".")).unresolved,
         Request::Grpc(g) => resolve_grpc(g, scope).unresolved,
         Request::Ws(w) => resolve_ws(w, scope).unresolved,
+        Request::Sse(s) => resolve_sse(s, scope).http.unresolved,
+        Request::Mqtt(m) => resolve_mqtt(m, scope).unresolved,
         Request::Mcp(m) => resolve_mcp(m, scope).unresolved,
     }
 }
@@ -762,6 +1017,15 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
                 Body::Json { text } => Body::Json {
                     text: s.render_masked(text),
                 },
+                Body::GraphQL {
+                    query,
+                    variables,
+                    operation_name,
+                } => Body::GraphQL {
+                    query: s.render_masked(query),
+                    variables: s.render_masked(variables),
+                    operation_name: s.render_masked(operation_name),
+                },
                 Body::Form { fields } => Body::Form {
                     fields: mask_kv(fields, s),
                 },
@@ -813,6 +1077,42 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             schema: g.schema.clone(),
             scripts: g.scripts.clone(),
         }),
+        Request::Sse(r) => Request::Sse(SseRequest {
+            url: s.render_masked(&r.url),
+            params: mask_kv(&r.params, s),
+            headers: mask_kv(&r.headers, s),
+            auth: mask_auth(&r.auth, s),
+            options: r.options.clone(),
+            scripts: r.scripts.clone(),
+        }),
+        Request::Mqtt(m) => {
+            let message = |msg: &MqttMessage| MqttMessage {
+                topic: s.render_masked(&msg.topic),
+                payload: MqttPayload {
+                    text: s.render_masked(&msg.payload.text),
+                    base64: msg.payload.base64,
+                },
+                ..msg.clone()
+            };
+            Request::Mqtt(MqttRequest {
+                url: s.render_masked(&m.url),
+                client_id: s.render_masked(&m.client_id),
+                username: s.render_masked(&m.username),
+                password: s.render_masked(&m.password),
+                subscriptions: m
+                    .subscriptions
+                    .iter()
+                    .map(|sub| MqttSubscription {
+                        topic: s.render_masked(&sub.topic),
+                        ..sub.clone()
+                    })
+                    .collect(),
+                publish: m.publish.iter().map(message).collect(),
+                last_will: m.last_will.as_ref().map(message),
+                auth: mask_auth(&m.auth, s),
+                ..m.clone()
+            })
+        }
         Request::Ws(w) => Request::Ws(WebSocketRequest {
             url: s.render_masked(&w.url),
             headers: mask_kv(&w.headers, s),
@@ -1049,6 +1349,54 @@ mod tests {
                 filename: "renamed.txt".into()
             }
         );
+    }
+
+    #[test]
+    fn graphql_body_resolution() {
+        let s = scope();
+        let mut req = HttpRequest {
+            method: "POST".into(),
+            url: "x".into(),
+            body: Body::GraphQL {
+                query: "query {{user}} {{missing}} { me { id } }".into(),
+                variables: "{\"n\": 1, \"who\": \"{{user}}\"}".into(),
+                operation_name: "Me".into(),
+            },
+            ..Default::default()
+        };
+        let r = resolve_http(&req, &s, Path::new("."));
+        assert_eq!(
+            r.body,
+            ResolvedBody::Bytes(
+                br#"{"query":"query ana {{missing}} { me { id } }","variables":{"n":1,"who":"ana"},"operationName":"Me"}"#.to_vec()
+            )
+        );
+        assert_eq!(r.header("content-type"), Some("application/json"));
+        assert_eq!(r.unresolved, vec!["missing".to_string()]);
+        // Only the query: one key.
+        req.body = graphql_body("{ hero { name } }");
+        let r = resolve_http(&req, &s, Path::new("."));
+        assert_eq!(
+            r.body,
+            ResolvedBody::Bytes(br#"{"query":"{ hero { name } }"}"#.to_vec())
+        );
+        // Variables that are not a JSON object stop the send.
+        req.body = Body::GraphQL {
+            query: "{ a }".into(),
+            variables: "[1]".into(),
+            operation_name: String::new(),
+        };
+        let r = resolve_http(&req, &s, Path::new("."));
+        assert!(
+            matches!(&r.body, ResolvedBody::Invalid(e) if e.contains("variables must be a JSON object"))
+        );
+        // Secrets in every field stay as placeholders in the masked copy.
+        req.body = Body::GraphQL {
+            query: "{ a(token: \"{{tok}}\") }".into(),
+            variables: "{\"p\": \"{{tok}}\"}".into(),
+            operation_name: "{{tok}}".into(),
+        };
+        assert!(!format!("{:?}", mask_request(&Request::Http(req), &s)).contains("abc"));
     }
 
     #[test]

@@ -1,0 +1,5 @@
+protocol 3.1.1 client-id corpus-10
+< CONNECT protocol 3.1.1 client-id corpus-10 clean true keep-alive 60 user bad will 
+> CONNACK code 134
+### done: 0 messages, error
+### error: Connection refused, return code: `NotAuthorized`

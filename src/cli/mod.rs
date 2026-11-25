@@ -3,8 +3,10 @@
 mod args;
 mod auth;
 mod convert;
+mod mqtt;
 mod project;
 mod run;
+mod sse;
 mod theme;
 
 pub(crate) use args::*;

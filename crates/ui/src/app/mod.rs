@@ -46,11 +46,13 @@ mod ingest;
 mod keys;
 mod mcp;
 mod mouse;
+mod mqtt;
 mod overlay_keys;
 mod query;
 mod schema;
 mod send;
 mod settings;
+mod sse;
 mod text;
 mod tree_ops;
 
@@ -241,6 +243,16 @@ pub enum AppMsg {
         tab: u64,
         update: runner::WsUpdate,
     },
+    Sse {
+        tab: u64,
+        update: runner::SseUpdate,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
+    Mqtt {
+        tab: u64,
+        update: runner::MqttUpdate,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
     Mcp {
         tab: u64,
         update: runner::McpUpdate,
@@ -275,6 +287,12 @@ pub enum AppMsg {
         open_picker: bool,
         template: Option<String>,
     },
+    GraphqlSchema {
+        tab: u64,
+        job: u64,
+        source: String,
+        result: Result<sendito_pipeline::http::graphql::GraphqlSchema, String>,
+    },
     History(Vec<HistoryEntry>),
     Scope {
         /// The scope, its errors and the names whose value did not load.
@@ -297,6 +315,12 @@ pub enum CookiesOutcome {
 
 /// What to do once a full scope (with secrets) is ready.
 pub enum ScopeThen {
+    Sse {
+        tab: u64,
+        req: Box<SseRequest>,
+        name: String,
+        path: Option<String>,
+    },
     Http {
         tab: u64,
         req: Box<HttpRequest>,
@@ -316,6 +340,12 @@ pub enum ScopeThen {
         name: String,
         path: Option<String>,
     },
+    Mqtt {
+        tab: u64,
+        req: Box<MqttRequest>,
+        name: String,
+        path: Option<String>,
+    },
     Mcp {
         tab: u64,
         req: Box<McpRequest>,
@@ -330,7 +360,9 @@ impl ScopeThen {
         match self {
             ScopeThen::Http { tab, req, .. } => (*tab, Request::Http((**req).clone())),
             ScopeThen::Grpc { tab, req, .. } => (*tab, Request::Grpc((**req).clone())),
+            ScopeThen::Sse { tab, req, .. } => (*tab, Request::Sse((**req).clone())),
             ScopeThen::Ws { tab, req, .. } => (*tab, Request::Ws((**req).clone())),
+            ScopeThen::Mqtt { tab, req, .. } => (*tab, Request::Mqtt((**req).clone())),
             ScopeThen::Mcp { tab, req, .. } => (*tab, Request::Mcp((**req).clone())),
         }
     }
@@ -406,6 +438,7 @@ pub struct App {
     pub last_session_save: Instant,
     pub next_id: u64,
     pub schemas: SchemaCache,
+    pub graphql_schemas: runner::GraphqlSchemaCache,
     schema_job: Option<(u64, tokio::task::JoinHandle<()>)>,
     schema_seq: u64,
     mcp_discovery: Option<(u64, tokio::task::JoinHandle<()>)>,
@@ -541,6 +574,7 @@ impl App {
             last_session_save: Instant::now(),
             next_id: 1,
             schemas: SchemaCache::default(),
+            graphql_schemas: runner::GraphqlSchemaCache::default(),
             schema_job: None,
             schema_seq: 0,
             mcp_discovery: None,

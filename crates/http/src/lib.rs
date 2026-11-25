@@ -23,8 +23,10 @@ use sendito_core::resolve::{HeaderOrigin, PartData, ResolvedBody, ResolvedHttp};
 
 pub mod auth;
 mod body;
+pub mod graphql;
 mod proxy;
 mod redirect;
+pub mod sse;
 mod timing;
 mod tls;
 pub use body::*;
@@ -180,6 +182,7 @@ async fn build_request(
         }
     };
     rb = match body {
+        ResolvedBody::Invalid(msg) => return Err(HttpError::Send(msg.clone())),
         ResolvedBody::None if wants_length => empty_len(rb),
         ResolvedBody::None => rb,
         ResolvedBody::Bytes(b) if b.is_empty() => empty_len(rb),
@@ -240,6 +243,33 @@ pub async fn send_with(
     opts: &SendOptions,
     cookies: Option<&dyn RedirectCookies>,
 ) -> Result<HttpResponse, HttpError> {
+    open(req, opts, cookies).await?.read_body().await
+}
+
+/// Opens an HTTP response with the usual whole-response timeout.
+pub async fn open(
+    req: &ResolvedHttp,
+    opts: &SendOptions,
+    cookies: Option<&dyn RedirectCookies>,
+) -> Result<Opened, HttpError> {
+    open_with(req, opts, cookies, false).await
+}
+
+/// Opens a live response. The timeout ends when the final headers arrive.
+pub async fn open_stream(
+    req: &ResolvedHttp,
+    opts: &SendOptions,
+    cookies: Option<&dyn RedirectCookies>,
+) -> Result<Opened, HttpError> {
+    open_with(req, opts, cookies, true).await
+}
+
+async fn open_with(
+    req: &ResolvedHttp,
+    opts: &SendOptions,
+    cookies: Option<&dyn RedirectCookies>,
+    streaming: bool,
+) -> Result<Opened, HttpError> {
     let url = reqwest::Url::parse(&req.url).map_err(|e| HttpError::Url {
         url: req.url.clone(),
         msg: e.to_string(),
@@ -279,12 +309,14 @@ pub async fn send_with(
         .connector_layer(TimingLayer(marks.clone()))
         // Redirects are followed by `follow_redirects`.
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(timeout)
         // No implicit Referer on redirect hops.
         .referer(false)
         // HTTP/1 header names are written in Title-Case (`x-api-key` is sent as
         // `X-Api-Key`); names are case-insensitive. HTTP/2 always sends lowercase.
         .http1_title_case_headers();
+    if !streaming {
+        builder = builder.timeout(timeout);
+    }
     if let Some(spec) = &opts.proxy {
         builder = spec.apply(builder).map_err(HttpError::Send)?;
     }
@@ -295,61 +327,134 @@ pub async fn send_with(
     let request = build_request(&client, method, url, headers, &req.body).await?;
     let start = Instant::now();
     let deadline = start.checked_add(timeout);
-    let mut resp = client
-        .execute(request)
-        .await
-        .map_err(|e| send_error(e, timeout))?;
-    if req.follow_redirects {
-        resp = follow_redirects(&client, req, resp, deadline, timeout, cookies).await?;
-    }
+    let opening = async {
+        let mut resp = client
+            .execute(request)
+            .await
+            .map_err(|e| send_error(e, timeout))?;
+        if req.follow_redirects {
+            resp = if streaming {
+                redirect::follow_redirects_with_mode(
+                    &client, req, resp, deadline, timeout, cookies, true,
+                )
+                .await?
+            } else {
+                follow_redirects(&client, req, resp, deadline, timeout, cookies).await?
+            };
+        }
+        Ok::<_, HttpError>(resp)
+    };
+    let resp = if streaming {
+        tokio::time::timeout(timeout, opening)
+            .await
+            .map_err(|_| HttpError::Timeout(timeout.as_millis()))??
+    } else {
+        opening.await?
+    };
     let headers_at = Instant::now();
-    let status = resp.status();
-    let version = format!("{:?}", resp.version());
-    let final_url = resp.url().to_string();
-    let remote_addr = resp.remote_addr();
-    let headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .map(|(n, v)| {
-            (
-                n.as_str().to_string(),
-                String::from_utf8_lossy(v.as_bytes()).into_owned(),
-            )
-        })
-        .collect();
-    let mut body = Vec::new();
-    let mut truncated = false;
-    loop {
-        match resp.chunk().await {
-            Ok(Some(c)) => {
-                if body.len() + c.len() > opts.max_body {
-                    let room = opts.max_body.saturating_sub(body.len());
-                    body.extend_from_slice(&c[..room]);
-                    truncated = true;
-                    break;
+    Ok(Opened {
+        resp,
+        marks,
+        start,
+        headers_at,
+        timeout,
+        max_body: opts.max_body,
+    })
+}
+
+/// An HTTP response whose body is still available for reading.
+pub struct Opened {
+    resp: reqwest::Response,
+    marks: Shared,
+    start: Instant,
+    headers_at: Instant,
+    timeout: Duration,
+    max_body: usize,
+}
+
+impl Opened {
+    /// Reads the response with the normal HTTP size and decoding rules.
+    pub async fn read_body(self) -> Result<HttpResponse, HttpError> {
+        let Self {
+            mut resp,
+            marks,
+            start,
+            headers_at,
+            timeout,
+            max_body,
+        } = self;
+        let status = resp.status();
+        let version = format!("{:?}", resp.version());
+        let final_url = resp.url().to_string();
+        let remote_addr = resp.remote_addr();
+        let headers: Vec<(String, String)> = resp
+            .headers()
+            .iter()
+            .map(|(n, v)| {
+                (
+                    n.as_str().to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                )
+            })
+            .collect();
+        let mut body = Vec::new();
+        let mut truncated = false;
+        loop {
+            match resp.chunk().await {
+                Ok(Some(c)) => {
+                    if body.len() + c.len() > max_body {
+                        let room = max_body.saturating_sub(body.len());
+                        body.extend_from_slice(&c[..room]);
+                        truncated = true;
+                        break;
+                    }
+                    body.extend_from_slice(&c);
                 }
-                body.extend_from_slice(&c);
-            }
-            Ok(None) => break,
-            Err(e) => {
-                return Err(if e.is_timeout() {
-                    HttpError::Timeout(timeout.as_millis())
-                } else {
-                    HttpError::Send(format!("reading body: {}", err_chain(&e)))
-                });
+                Ok(None) => break,
+                Err(e) => {
+                    return Err(if e.is_timeout() {
+                        HttpError::Timeout(timeout.as_millis())
+                    } else {
+                        HttpError::Send(format!("reading body: {}", err_chain(&e)))
+                    });
+                }
             }
         }
-    }
-    let end = Instant::now();
-    // A body cut at the size limit is kept as received: decompressing half a
-    // stream would fail or lie.
-    let (body, decoded, decoded_truncated) = if truncated {
-        (body, None, false)
-    } else {
-        decode_body(&headers, body, opts.max_body)
-    };
-    truncated |= decoded_truncated;
+        let end = Instant::now();
+        // A body cut at the size limit is kept as received: decompressing half a
+        // stream would fail or lie.
+        let (body, decoded, decoded_truncated) = if truncated {
+            (body, None, false)
+        } else {
+            decode_body(&headers, body, max_body)
+        };
+        truncated |= decoded_truncated;
 
+        let timing = measured_timing(&marks, start, headers_at, end);
+        Ok(HttpResponse {
+            status: status.as_u16(),
+            reason: status.canonical_reason().unwrap_or("").to_string(),
+            version,
+            url: final_url,
+            remote_addr,
+            headers,
+            body,
+            truncated,
+            decoded,
+            timing,
+        })
+    }
+
+    /// Gives the body to a live consumer without collecting it.
+    pub fn into_stream(self) -> HttpStream {
+        HttpStream {
+            response: self.resp,
+            timing: measured_timing(&self.marks, self.start, self.headers_at, self.headers_at),
+        }
+    }
+}
+
+fn measured_timing(marks: &Shared, start: Instant, headers_at: Instant, end: Instant) -> Timing {
     let m = marks.lock().map(|m| Marks { ..*m }).unwrap_or_default();
     let dns = match (m.dns_start, m.dns_end) {
         (Some(a), Some(b)) => Some(b.saturating_duration_since(a)),
@@ -366,26 +471,66 @@ pub async fn send_with(
         _ => None,
     };
     let ready = m.connect_end.unwrap_or(start).max(start);
-    let timing = Timing {
+    Timing {
         dns,
         connect,
         tls: tls_d,
         ttfb: headers_at.saturating_duration_since(ready),
         download: end.saturating_duration_since(headers_at),
         total: end.saturating_duration_since(start),
-    };
-    Ok(HttpResponse {
-        status: status.as_u16(),
-        reason: status.canonical_reason().unwrap_or("").to_string(),
-        version,
-        url: final_url,
-        remote_addr,
-        headers,
-        body,
-        truncated,
-        decoded,
-        timing,
-    })
+    }
+}
+
+/// A live HTTP body. Dropping it closes the response.
+pub struct HttpStream {
+    response: reqwest::Response,
+    pub timing: Timing,
+}
+
+impl HttpStream {
+    pub fn head(&self) -> HttpResponse {
+        HttpResponse {
+            status: self.status(),
+            reason: self
+                .response
+                .status()
+                .canonical_reason()
+                .unwrap_or("")
+                .into(),
+            version: format!("{:?}", self.response.version()),
+            url: self.url().into(),
+            remote_addr: self.response.remote_addr(),
+            headers: self.headers(),
+            body: Vec::new(),
+            truncated: false,
+            decoded: None,
+            timing: self.timing,
+        }
+    }
+    pub fn status(&self) -> u16 {
+        self.response.status().as_u16()
+    }
+    pub fn url(&self) -> &str {
+        self.response.url().as_str()
+    }
+    pub fn headers(&self) -> Vec<(String, String)> {
+        self.response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect()
+    }
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, HttpError> {
+        self.response
+            .chunk()
+            .await
+            .map_err(|e| HttpError::Send(format!("reading stream: {}", err_chain(&e))))
+    }
 }
 
 #[cfg(test)]

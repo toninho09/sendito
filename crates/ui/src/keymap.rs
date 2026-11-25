@@ -59,6 +59,8 @@ actions! {
     Quit => "quit", "Quit Sendito";
     NewRequest => "new_request", "Open a new unsaved HTTP request tab";
     NewGrpcRequest => "new_grpc_request", "Open a new unsaved gRPC request tab";
+    NewSseRequest => "new_sse_request", "Open a new unsaved SSE request tab";
+    NewMqttRequest => "new_mqtt_request", "Open a new unsaved MQTT request tab";
     NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
@@ -329,6 +331,8 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (NewRequest, Global, Both, &["ctrl+n", "ctrl+w t"]),
         (NewGrpcRequest, Global, Both, &["ctrl+w g"]),
         (NewWsRequest, Global, Both, &["ctrl+w y"]),
+        (NewSseRequest, Global, Both, &["ctrl+w E"]),
+        (NewMqttRequest, Global, Both, &["ctrl+w M"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
@@ -682,6 +686,8 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         NewRequest => (G::Tabs, "new HTTP"),
         NewGrpcRequest => (G::Tabs, "new gRPC"),
         NewWsRequest => (G::Tabs, "new WebSocket"),
+        NewSseRequest => (G::Tabs, "new SSE"),
+        NewMqttRequest => (G::Tabs, "new MQTT"),
         NextTab | PrevTab => (G::Tabs, "next / previous"),
         CloseTab => (G::Tabs, "close"),
         FocusLeft | FocusDown | FocusUp | FocusRight => (G::Layout, "focus"),

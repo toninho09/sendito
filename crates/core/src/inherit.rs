@@ -30,6 +30,10 @@ pub fn apply(req: &Request, chain: &[ChainItem]) -> Request {
             h.headers = merge_rows(folder_headers(), &h.headers, false);
             h.scripts = merge_scripts(chain, &h.scripts);
         }
+        Request::Sse(s) => {
+            s.headers = merge_rows(folder_headers(), &s.headers, false);
+            s.scripts = merge_scripts(chain, &s.scripts);
+        }
         Request::Ws(w) => {
             w.headers = merge_rows(folder_headers(), &w.headers, false);
             w.scripts = merge_scripts(chain, &w.scripts);
@@ -38,9 +42,40 @@ pub fn apply(req: &Request, chain: &[ChainItem]) -> Request {
             g.metadata = merge_rows(folder_headers(), &g.metadata, true);
             g.scripts = merge_scripts(chain, &g.scripts);
         }
+        // Folder headers do not apply to MQTT: the protocol has no headers.
+        Request::Mqtt(m) => m.scripts = merge_scripts(chain, &m.scripts),
         Request::Mcp(m) => m.scripts = merge_scripts(chain, &m.scripts),
     }
     resolve_auth(out, chain)
+}
+
+/// A note for an MQTT request when a folder of the chain sets headers: MQTT
+/// has no headers, so they are not sent. Other kinds get `None`.
+pub fn ignored_headers_note(req: &Request, chain: &[ChainItem]) -> Option<String> {
+    if !matches!(req, Request::Mqtt(_)) {
+        return None;
+    }
+    let folders: Vec<&str> = chain
+        .iter()
+        .filter(|(_, f)| {
+            f.headers
+                .iter()
+                .any(|h| h.enabled && !h.name.trim().is_empty())
+        })
+        .map(|(rel, _)| {
+            if rel.is_empty() {
+                "the collection root"
+            } else {
+                rel.as_str()
+            }
+        })
+        .collect();
+    (!folders.is_empty()).then(|| {
+        format!(
+            "folder headers do not apply to MQTT and are not sent (set in {})",
+            folders.join(", ")
+        )
+    })
 }
 
 /// Replaces `Auth::Inherit` with the auth it stands for.

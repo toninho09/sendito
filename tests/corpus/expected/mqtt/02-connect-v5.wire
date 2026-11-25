@@ -1,0 +1,5 @@
+protocol 5 client-id corpus-02
+< CONNECT protocol 5 client-id corpus-02 clean false keep-alive 30 user  will 
+> CONNACK code 0
+< DISCONNECT 
+### done: 0 messages, deadline

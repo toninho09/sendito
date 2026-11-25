@@ -8,6 +8,7 @@ pub mod runner;
 /// The protocol types that callers of the pipeline (the TUI) read.
 pub mod http {
     pub use sendito_http::{HttpResponse, ProxySpec, Timing, guess_mime};
+    pub use sendito_http::{graphql, sse};
 }
 
 /// The gRPC types that callers of the pipeline read.

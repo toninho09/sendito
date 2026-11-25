@@ -47,6 +47,7 @@ impl ScriptResults {
     }
 }
 
+#[derive(Clone)]
 pub struct RunCtx {
     pub root: PathBuf,
     pub send: SendOptions,
@@ -58,6 +59,9 @@ pub struct RunCtx {
     pub grpc_deadline_ms: u64,
     /// `[websocket] timeout_ms`: the default handshake timeout (0 = none).
     pub ws_timeout_ms: u64,
+    pub sse_timeout_ms: u64,
+    /// `[mqtt] timeout_ms`: the default time to wait for CONNACK (0 = none).
+    pub mqtt_timeout_ms: u64,
     /// Mask secret values the server echoes back (the TUI); `sendito run`
     /// writes the body unchanged.
     pub mask_echoed_secrets: bool,
@@ -73,6 +77,8 @@ pub struct RunCtx {
 pub enum Control {
     Grpc(GrpcControl),
     Ws(WsControl),
+    Sse(SseControl),
+    Mqtt(MqttControl),
 }
 
 // ----- WebSocket -----------------------------------------------------
@@ -86,21 +92,27 @@ pub use sendito_mcp::Event as McpEvent;
 /// are masked like other secrets.
 pub(super) const SIGNED_LAYER: &str = "signed";
 
+mod graphql;
 mod grpc;
 mod http;
 mod mcp;
+mod mqtt;
 mod oauth;
 mod project;
 mod record;
 mod scope;
+mod sse;
 mod ws;
+pub use graphql::*;
 pub use grpc::*;
 pub use http::*;
 pub use mcp::*;
+pub use mqtt::*;
 pub use oauth::*;
 pub use project::*;
 use record::*;
 pub use scope::*;
+pub use sse::*;
 pub use ws::*;
 
 #[cfg(test)]

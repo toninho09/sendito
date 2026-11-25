@@ -493,10 +493,15 @@ fn draw_stream_split(
     } else {
         String::new()
     };
-    let head = if live {
-        format!("{total} messages{kept} · live")
+    let unit = if tab.ed.kind == Kind::Sse {
+        "events"
     } else {
-        format!("{total} messages{kept} · {}/{total}", first + cur + 1)
+        "messages"
+    };
+    let head = if live {
+        format!("{total} {unit}{kept} · live")
+    } else {
+        format!("{total} {unit}{kept} · {}/{total}", first + cur + 1)
     };
     put(
         buf,

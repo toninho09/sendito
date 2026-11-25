@@ -1,0 +1,6 @@
+GET /sse/events HTTP/1.1
+Accept: custom/type
+Host: 127.0.0.1:<port>
+
+### event {"event":"message","data":"{\"n\":1}","id":"1","retry_ms":null}
+### done: 1 events, max events

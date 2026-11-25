@@ -52,6 +52,8 @@ impl App {
                         "gRPC".into(),
                         "WebSocket".into(),
                         "MCP".into(),
+                        "SSE".into(),
+                        "MQTT".into(),
                     ],
                     0,
                 ),

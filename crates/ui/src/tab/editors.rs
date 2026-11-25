@@ -12,6 +12,9 @@ pub struct Editors {
     pub headers: Table,
     pub body_kind: BodyKind,
     pub body_text: TextEditor,
+    pub graphql_variables: TextEditor,
+    pub graphql_operation: TextEditor,
+    pub graphql_section: usize,
     pub raw_ct: TextEditor,
     pub form: Table,
     pub parts: Table,
@@ -41,6 +44,7 @@ pub struct Editors {
     pub tls: bool,
     pub grpc_verify: bool,
     pub deadline: TextEditor,
+    pub max_events: TextEditor,
     pub schema_files: bool,
     pub proto_files: TextEditor,
     pub import_paths: TextEditor,
@@ -61,6 +65,21 @@ pub struct Editors {
     pub jwt_expires: TextEditor,
     /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
     pub script_section: usize,
+    /// MQTT subscriptions: topic filter and QoS.
+    pub mqtt_subs: Table,
+    /// MQTT publishes: topic, payload, QoS, retain and base64.
+    pub mqtt_publish: Table,
+    pub will_topic: TextEditor,
+    pub will_payload: TextEditor,
+    pub will_qos: u8,
+    pub will_retain: bool,
+    pub will_base64: bool,
+    pub mqtt_user: TextEditor,
+    pub mqtt_pass: TextEditor,
+    pub mqtt_client_id: TextEditor,
+    pub mqtt_protocol: MqttProtocol,
+    pub clean_session: bool,
+    pub keep_alive: TextEditor,
 }
 
 /// A folder tab keeps its settings in an HTTP request, so the tab's model,
@@ -153,6 +172,70 @@ pub(super) fn t(s: &str) -> Cell {
     Cell::Text(TextEditor::single(s))
 }
 
+fn qos_column() -> Column {
+    Column {
+        title: "QoS",
+        kind: ColKind::Choice(QOS),
+        weight: 1,
+    }
+}
+
+fn mqtt_subs_table() -> Table {
+    Table::new(
+        vec![
+            Column {
+                title: "Topic filter",
+                kind: ColKind::Text,
+                weight: 5,
+            },
+            qos_column(),
+        ],
+        true,
+    )
+}
+
+fn mqtt_publish_table() -> Table {
+    Table::new(
+        vec![
+            Column {
+                title: "Topic",
+                kind: ColKind::Text,
+                weight: 3,
+            },
+            Column {
+                title: "Payload",
+                kind: ColKind::Text,
+                weight: 5,
+            },
+            qos_column(),
+            Column {
+                title: "Retain",
+                kind: ColKind::Toggle,
+                weight: 1,
+            },
+            Column {
+                title: "Base64",
+                kind: ColKind::Toggle,
+                weight: 1,
+            },
+        ],
+        false,
+    )
+}
+
+/// The message of one Publish table row.
+pub fn mqtt_publish_row(r: &Row) -> MqttMessage {
+    MqttMessage {
+        topic: r.cells[0].text(),
+        payload: MqttPayload {
+            text: r.cells[1].text(),
+            base64: r.cells[4].toggle(),
+        },
+        qos: r.cells[2].choice().min(2) as u8,
+        retain: r.cells[3].toggle(),
+    }
+}
+
 impl Editors {
     /// The request bar's text editor. Every kind draws the same strip
     /// `[picker chip][endpoint input]` (gRPC and MCP draw `[input][chip]`):
@@ -160,7 +243,9 @@ impl Editors {
     /// inline-editable chip (gRPC method, MCP tool).
     pub fn bar_text(&mut self, part: usize) -> Option<&mut TextEditor> {
         match (self.kind, part) {
-            (Kind::Http, 1) | (Kind::Ws, 1) => Some(&mut self.url),
+            (Kind::Http, 1) | (Kind::Ws, 1) | (Kind::Sse, 1) | (Kind::Mqtt, 1) => {
+                Some(&mut self.url)
+            }
             (Kind::Grpc, 1) => Some(&mut self.target),
             (Kind::Mcp, 1) => Some(&mut self.mcp_server),
             (Kind::Grpc, 0) => Some(&mut self.grpc_method_text),
@@ -179,6 +264,9 @@ impl Editors {
             headers: Table::kv("Header", "Value"),
             body_kind: BodyKind::None,
             body_text: TextEditor::multi("").with_highlight(Highlight::Json),
+            graphql_variables: TextEditor::multi("").with_highlight(Highlight::Json),
+            graphql_operation: TextEditor::single(""),
+            graphql_section: 0,
             raw_ct: TextEditor::single("text/plain"),
             form: Table::kv("Field", "Value"),
             parts: Table::new(
@@ -299,6 +387,7 @@ impl Editors {
             tls: false,
             grpc_verify: true,
             deadline: TextEditor::single("").with_placeholder("none"),
+            max_events: TextEditor::single("").with_placeholder("none"),
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
@@ -318,6 +407,19 @@ impl Editors {
             jwt_claims: TextEditor::multi("{}").with_highlight(Highlight::Json),
             jwt_expires: TextEditor::single("").with_placeholder("none"),
             script_section: 0,
+            mqtt_subs: mqtt_subs_table(),
+            mqtt_publish: mqtt_publish_table(),
+            will_topic: TextEditor::single("").with_placeholder("none"),
+            will_payload: TextEditor::multi(""),
+            will_qos: 0,
+            will_retain: false,
+            will_base64: false,
+            mqtt_user: TextEditor::single("").with_placeholder("from Basic auth"),
+            mqtt_pass: TextEditor::single(""),
+            mqtt_client_id: TextEditor::single("").with_placeholder("sendito-<8 hex>"),
+            mqtt_protocol: MqttProtocol::default(),
+            clean_session: true,
+            keep_alive: TextEditor::single(&MQTT_KEEP_ALIVE_S.to_string()),
         };
         let scripts = req.scripts();
         for s in &scripts.pre {
@@ -369,6 +471,16 @@ impl Editors {
                         e.body_text.highlight = Highlight::None;
                     }
                     Body::Json { text } => e.body_text.set_text(text),
+                    Body::GraphQL {
+                        query,
+                        variables,
+                        operation_name,
+                    } => {
+                        e.body_text.set_text(query);
+                        e.body_text.highlight = Highlight::None;
+                        e.graphql_variables.set_text(variables);
+                        e.graphql_operation.set_text(operation_name);
+                    }
                     Body::Form { fields } => e.form = kv_table("Field", "Value", fields),
                     Body::Multipart { parts } => {
                         for p in parts {
@@ -420,6 +532,12 @@ impl Editors {
                     e.import_paths.set_text(&list_text(import_paths));
                 }
             }
+            Request::Sse(s) => {
+                e = Self::from_request(&Request::Http(s.http_request()));
+                e.kind = Kind::Sse;
+                e.deadline.set_text(&ms_text(s.options.deadline_ms));
+                e.max_events.set_text(&ms_text(s.options.max_events));
+            }
             Request::Ws(w) => {
                 e.kind = Kind::Ws;
                 e.url.placeholder = "ws://host:port/path  (wss:// for TLS)".into();
@@ -432,6 +550,45 @@ impl Editors {
                 e.tls = w.options.tls;
                 e.grpc_verify = w.options.verify_tls;
                 e.cookies = w.options.cookies;
+            }
+            Request::Mqtt(m) => {
+                e.kind = Kind::Mqtt;
+                e.url.placeholder = "mqtt://host:1883  (mqtts:// for TLS)".into();
+                e.url.set_text(&m.url);
+                for sub in &m.subscriptions {
+                    e.mqtt_subs.push(
+                        sub.enabled,
+                        vec![t(&sub.topic), Cell::Choice(usize::from(sub.qos.min(2)))],
+                    );
+                }
+                for p in &m.publish {
+                    e.mqtt_publish.push(
+                        true,
+                        vec![
+                            t(&p.topic),
+                            t(&p.payload.text),
+                            Cell::Choice(usize::from(p.qos.min(2))),
+                            Cell::Toggle(p.retain),
+                            Cell::Toggle(p.payload.base64),
+                        ],
+                    );
+                }
+                if let Some(w) = &m.last_will {
+                    e.will_topic.set_text(&w.topic);
+                    e.will_payload.set_text(&w.payload.text);
+                    e.will_qos = w.qos.min(2);
+                    e.will_retain = w.retain;
+                    e.will_base64 = w.payload.base64;
+                }
+                e.mqtt_user.set_text(&m.username);
+                e.mqtt_pass.set_text(&m.password);
+                e.mqtt_client_id.set_text(&m.client_id);
+                e.mqtt_protocol = m.protocol;
+                e.clean_session = m.clean_session;
+                e.keep_alive.set_text(&m.keep_alive_s.to_string());
+                e.timeout.set_text(&ms_text(m.options.timeout_ms));
+                e.deadline.set_text(&ms_text(m.options.deadline_ms));
+                e.verify = m.options.verify_tls;
             }
             Request::Mcp(m) => {
                 e.kind = Kind::Mcp;
@@ -600,6 +757,11 @@ impl Editors {
                     BodyKind::Json => Body::Json {
                         text: self.body_text.text(),
                     },
+                    BodyKind::GraphQL => Body::GraphQL {
+                        query: self.body_text.text(),
+                        variables: self.graphql_variables.text(),
+                        operation_name: self.graphql_operation.text(),
+                    },
                     BodyKind::Raw => Body::Raw {
                         content_type: self.raw_ct.text(),
                         text: self.body_text.text(),
@@ -656,6 +818,21 @@ impl Editors {
                     scripts: self.scripts(),
                 })
             }
+            Kind::Sse => Request::Sse(SseRequest {
+                url: self.url.text(),
+                params: kv_rows(&self.params),
+                headers: kv_rows(&self.headers),
+                auth: self.auth(),
+                scripts: self.scripts(),
+                options: SseOptions {
+                    timeout_ms: parse_ms(&self.timeout.text()),
+                    deadline_ms: parse_ms(&self.deadline.text()),
+                    max_events: parse_ms(&self.max_events.text()),
+                    follow_redirects: self.follow,
+                    verify_tls: self.verify,
+                    cookies: self.cookies,
+                },
+            }),
             Kind::Grpc => Request::Grpc(GrpcRequest {
                 target: self.target.text(),
                 service: self.service(),
@@ -691,6 +868,53 @@ impl Editors {
                 },
                 scripts: self.scripts(),
             }),
+            Kind::Mqtt => {
+                let will_topic = self.will_topic.text();
+                let will_payload = self.will_payload.text();
+                Request::Mqtt(MqttRequest {
+                    url: self.url.text(),
+                    client_id: self.mqtt_client_id.text(),
+                    username: self.mqtt_user.text(),
+                    password: self.mqtt_pass.text(),
+                    protocol: self.mqtt_protocol,
+                    clean_session: self.clean_session,
+                    keep_alive_s: parse_ms(&self.keep_alive.text()).unwrap_or(MQTT_KEEP_ALIVE_S),
+                    options: MqttOptions {
+                        timeout_ms: parse_ms(&self.timeout.text()),
+                        deadline_ms: parse_ms(&self.deadline.text()),
+                        verify_tls: self.verify,
+                    },
+                    subscriptions: self
+                        .mqtt_subs
+                        .values()
+                        .into_iter()
+                        .map(|r| MqttSubscription {
+                            topic: r.cells[0].text(),
+                            qos: r.cells[1].choice().min(2) as u8,
+                            enabled: r.enabled,
+                        })
+                        .collect(),
+                    publish: self
+                        .mqtt_publish
+                        .values()
+                        .into_iter()
+                        .map(mqtt_publish_row)
+                        .collect(),
+                    last_will: (!will_topic.is_empty() || !will_payload.is_empty()).then_some(
+                        MqttMessage {
+                            topic: will_topic,
+                            payload: MqttPayload {
+                                text: will_payload,
+                                base64: self.will_base64,
+                            },
+                            qos: self.will_qos,
+                            retain: self.will_retain,
+                        },
+                    ),
+                    auth: self.auth(),
+                    scripts: self.scripts(),
+                })
+            }
             Kind::Mcp => Request::Mcp(McpRequest {
                 server: self.mcp_server.text(),
                 tool: self.mcp_tool.text(),
@@ -747,6 +971,7 @@ impl Editors {
                     match self.body_kind {
                         BodyKind::None => {}
                         BodyKind::Json => v.push(Field::BodyText),
+                        BodyKind::GraphQL => v.extend([Field::GraphqlSection, Field::BodyText]),
                         BodyKind::Raw => v.extend([Field::RawContentType, Field::BodyText]),
                         BodyKind::Form => v.push(Field::FormFields),
                         BodyKind::Multipart => v.push(Field::Parts),
@@ -757,6 +982,20 @@ impl Editors {
                 4 => v.extend([Field::ScriptSection, self.script_table()]),
                 _ => v.extend([
                     Field::Timeout,
+                    Field::FollowRedirects,
+                    Field::VerifyTls,
+                    Field::Cookies,
+                ]),
+            },
+            Kind::Sse => match tab {
+                0 => v.push(Field::Params),
+                1 => v.push(Field::Headers),
+                2 => auth_fields(&mut v),
+                3 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::Timeout,
+                    Field::Deadline,
+                    Field::MaxEvents,
                     Field::FollowRedirects,
                     Field::VerifyTls,
                     Field::Cookies,
@@ -787,6 +1026,31 @@ impl Editors {
                     Field::Tls,
                     Field::GrpcVerify,
                     Field::Cookies,
+                ]),
+            },
+            Kind::Mqtt => match tab {
+                0 => v.push(Field::MqttSubscriptions),
+                1 => v.push(Field::MqttPublish),
+                2 => v.extend([
+                    Field::MqttWillTopic,
+                    Field::MqttWillQos,
+                    Field::MqttWillRetain,
+                    Field::MqttWillBase64,
+                    Field::MqttWillPayload,
+                ]),
+                3 => {
+                    v.extend([Field::MqttUser, Field::MqttPass]);
+                    auth_fields(&mut v);
+                }
+                4 => v.extend([Field::ScriptSection, self.script_table()]),
+                _ => v.extend([
+                    Field::MqttClientId,
+                    Field::MqttProtocol,
+                    Field::MqttCleanSession,
+                    Field::MqttKeepAlive,
+                    Field::Timeout,
+                    Field::Deadline,
+                    Field::VerifyTls,
                 ]),
             },
             Kind::Mcp => match tab {
@@ -827,8 +1091,10 @@ impl Editors {
     pub fn tab_names(&self) -> &'static [&'static str] {
         match self.kind {
             Kind::Http => HTTP_TABS,
+            Kind::Sse => SSE_TABS,
             Kind::Grpc => GRPC_TABS,
             Kind::Ws => WS_TABS,
+            Kind::Mqtt => MQTT_TABS,
             Kind::Mcp => MCP_TABS,
             Kind::Folder => FOLDER_TABS,
         }
@@ -836,6 +1102,11 @@ impl Editors {
 
     pub fn text_mut(&mut self, f: Field) -> Option<&mut TextEditor> {
         Some(match f {
+            Field::BodyText if self.body_kind == BodyKind::GraphQL => match self.graphql_section {
+                1 => &mut self.graphql_variables,
+                2 => &mut self.graphql_operation,
+                _ => &mut self.body_text,
+            },
             Field::BodyText => &mut self.body_text,
             Field::RawContentType => &mut self.raw_ct,
             Field::FilePath => &mut self.file_path,
@@ -851,6 +1122,7 @@ impl Editors {
             Field::ProtoFiles => &mut self.proto_files,
             Field::ImportPaths => &mut self.import_paths,
             Field::Deadline => &mut self.deadline,
+            Field::MaxEvents => &mut self.max_events,
             Field::McpServer => &mut self.mcp_server,
             Field::McpTool => &mut self.mcp_tool,
             Field::WsSubprotocols => &mut self.ws_subprotocols,
@@ -864,6 +1136,12 @@ impl Editors {
             Field::JwtPrivateKey => &mut self.jwt_key,
             Field::JwtClaims => &mut self.jwt_claims,
             Field::JwtExpires => &mut self.jwt_expires,
+            Field::MqttWillTopic => &mut self.will_topic,
+            Field::MqttWillPayload => &mut self.will_payload,
+            Field::MqttUser => &mut self.mqtt_user,
+            Field::MqttPass => &mut self.mqtt_pass,
+            Field::MqttClientId => &mut self.mqtt_client_id,
+            Field::MqttKeepAlive => &mut self.keep_alive,
             _ => return None,
         })
     }
@@ -879,6 +1157,8 @@ impl Editors {
             Field::ScriptAssert => &mut self.asserts,
             Field::Metadata => &mut self.metadata,
             Field::Vars => &mut self.vars,
+            Field::MqttSubscriptions => &mut self.mqtt_subs,
+            Field::MqttPublish => &mut self.mqtt_publish,
             _ => return None,
         })
     }
@@ -886,6 +1166,9 @@ impl Editors {
     /// Current value label of a choice or toggle field.
     pub fn choice_label(&self, f: Field) -> String {
         match f {
+            Field::GraphqlSection => {
+                ["Query", "Variables", "Operation name"][self.graphql_section].into()
+            }
             Field::BodyKind => self.body_kind.label().into(),
             Field::AuthKind => self.auth_kind.label().into(),
             Field::AuthIn => match self.auth_in {
@@ -914,12 +1197,21 @@ impl Editors {
             Field::Tls => onoff(self.tls),
             Field::GrpcVerify => onoff(self.grpc_verify),
             Field::JwtAlgorithm => self.jwt_alg.as_str().into(),
+            Field::MqttWillQos => self.will_qos.to_string(),
+            Field::MqttProtocol => self.mqtt_protocol.as_str().into(),
+            Field::MqttWillRetain => onoff(self.will_retain),
+            Field::MqttWillBase64 => onoff(self.will_base64),
+            Field::MqttCleanSession => onoff(self.clean_session),
             _ => String::new(),
         }
     }
 
     pub fn choice_options(&self, f: Field) -> Vec<String> {
         match f {
+            Field::GraphqlSection => ["Query", "Variables", "Operation name"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             Field::BodyKind => BodyKind::ALL
                 .iter()
                 .map(|k| k.label().to_string())
@@ -937,6 +1229,11 @@ impl Editors {
             Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
             Field::ScriptSection => self.script_options(),
             Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
+            Field::MqttWillQos => QOS.iter().map(|q| q.to_string()).collect(),
+            Field::MqttProtocol => MqttProtocol::ALL
+                .iter()
+                .map(|p| p.as_str().to_string())
+                .collect(),
             _ => vec![],
         }
     }
@@ -969,6 +1266,7 @@ impl Editors {
                 }
             }
             Field::SchemaSource => self.schema_files = !self.schema_files,
+            Field::GraphqlSection => self.graphql_section = step(self.graphql_section, 3),
             Field::ScriptSection => self.script_section = step(self.script_section, 3),
             Field::FollowRedirects => self.follow = !self.follow,
             Field::VerifyTls => self.verify = !self.verify,
@@ -986,6 +1284,18 @@ impl Editors {
             }
             Field::Tls => self.tls = !self.tls,
             Field::GrpcVerify => self.grpc_verify = !self.grpc_verify,
+            Field::MqttWillQos => self.will_qos = step(usize::from(self.will_qos), 3) as u8,
+            Field::MqttProtocol => {
+                let all = MqttProtocol::ALL;
+                let i = all
+                    .iter()
+                    .position(|p| *p == self.mqtt_protocol)
+                    .unwrap_or(0);
+                self.mqtt_protocol = all[step(i, all.len())];
+            }
+            Field::MqttWillRetain => self.will_retain = !self.will_retain,
+            Field::MqttWillBase64 => self.will_base64 = !self.will_base64,
+            Field::MqttCleanSession => self.clean_session = !self.clean_session,
             _ => return false,
         }
         true
@@ -1016,6 +1326,7 @@ impl Editors {
                 }
             }
             Field::SchemaSource => self.schema_files = index == 1,
+            Field::GraphqlSection => self.graphql_section = index.min(2),
             Field::ScriptSection => self.script_section = index.min(2),
             Field::Cookies => {
                 self.cookies = match index {
@@ -1024,14 +1335,24 @@ impl Editors {
                     _ => None,
                 }
             }
+            Field::MqttWillQos => self.will_qos = index.min(2) as u8,
+            Field::MqttProtocol => {
+                if let Some(p) = MqttProtocol::ALL.get(index) {
+                    self.mqtt_protocol = *p;
+                }
+            }
             _ => {}
         }
     }
 
     /// The auth kinds this tab offers: the HTTP-only ones for HTTP and for a
-    /// folder (whose HTTP requests may use them).
+    /// folder (whose HTTP requests may use them); MQTT offers inherit, none
+    /// and basic only.
     fn auth_kinds(&self) -> Vec<AuthKind> {
-        let http = matches!(self.kind, Kind::Http | Kind::Folder);
+        if self.kind == Kind::Mqtt {
+            return vec![AuthKind::Inherit, AuthKind::None, AuthKind::Basic];
+        }
+        let http = matches!(self.kind, Kind::Http | Kind::Sse | Kind::Folder);
         AuthKind::ALL
             .into_iter()
             .filter(|k| http || !k.http_only())
@@ -1039,6 +1360,25 @@ impl Editors {
     }
 
     pub fn set_body_kind(&mut self, k: BodyKind) {
+        if (k == BodyKind::GraphQL || self.body_kind == BodyKind::GraphQL)
+            && k != self.body_kind
+            && let Request::Http(request) = self.to_request()
+        {
+            match request.body.convert(k) {
+                Body::GraphQL {
+                    query,
+                    variables,
+                    operation_name,
+                } => {
+                    self.body_text.set_text(&query);
+                    self.graphql_variables.set_text(&variables);
+                    self.graphql_operation.set_text(&operation_name);
+                    self.graphql_section = 0;
+                }
+                Body::Json { text } | Body::Raw { text, .. } => self.body_text.set_text(&text),
+                _ => {}
+            }
+        }
         self.body_kind = k;
         self.body_text.highlight = if k == BodyKind::Json {
             Highlight::Json
@@ -1056,7 +1396,7 @@ impl Editors {
                 .any(|h| h.enabled && h.name.eq_ignore_ascii_case(n))
         };
         let ct = match self.body_kind {
-            BodyKind::Json => Some("application/json".to_string()),
+            BodyKind::Json | BodyKind::GraphQL => Some("application/json".to_string()),
             BodyKind::Raw => Some(self.raw_ct.text()).filter(|s| !s.is_empty()),
             BodyKind::Form => Some("application/x-www-form-urlencoded".to_string()),
             BodyKind::Multipart => Some("multipart/form-data; boundary=…".to_string()),
@@ -1107,6 +1447,9 @@ impl Editors {
             )),
             _ => {}
         }
+        if self.kind == Kind::Sse && !has("accept") {
+            v.push(("Accept".into(), "text/event-stream".into()));
+        }
         v
     }
 
@@ -1120,6 +1463,8 @@ impl Editors {
         for e in [
             &mut self.url,
             &mut self.body_text,
+            &mut self.graphql_variables,
+            &mut self.graphql_operation,
             &mut self.raw_ct,
             &mut self.file_path,
             &mut self.file_ct,
@@ -1133,6 +1478,7 @@ impl Editors {
             &mut self.target,
             &mut self.message,
             &mut self.deadline,
+            &mut self.max_events,
             &mut self.proto_files,
             &mut self.import_paths,
             &mut self.ws_subprotocols,
@@ -1145,6 +1491,12 @@ impl Editors {
             &mut self.jwt_key,
             &mut self.jwt_claims,
             &mut self.jwt_expires,
+            &mut self.will_topic,
+            &mut self.will_payload,
+            &mut self.mqtt_user,
+            &mut self.mqtt_pass,
+            &mut self.mqtt_client_id,
+            &mut self.keep_alive,
         ] {
             e.vim = mode;
         }
@@ -1158,6 +1510,8 @@ impl Editors {
             &mut self.asserts,
             &mut self.metadata,
             &mut self.vars,
+            &mut self.mqtt_subs,
+            &mut self.mqtt_publish,
         ] {
             for r in &mut t.rows {
                 for c in &mut r.cells {

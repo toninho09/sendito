@@ -1,0 +1,5 @@
+protocol 3.1.1 client-id corpus-01
+< CONNECT protocol 3.1.1 client-id corpus-01 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< DISCONNECT 
+### done: 0 messages, deadline

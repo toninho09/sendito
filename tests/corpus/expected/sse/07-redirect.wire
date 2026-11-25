@@ -1,0 +1,12 @@
+GET /sse/redirect HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+GET /sse/events HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### event {"event":"message","data":"{\"n\":1}","id":"1","retry_ms":null}
+### event {"event":"message","data":"{\"n\":2}","id":"2","retry_ms":null}
+### event {"event":"message","data":"{\"n\":3}","id":"3","retry_ms":null}
+### done: 3 events, server closed

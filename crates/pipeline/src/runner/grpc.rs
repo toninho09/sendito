@@ -288,7 +288,7 @@ pub async fn exec_grpc(
             cmd = control.recv(), if control_open => {
                 let cmd = cmd.and_then(|c| match c {
                     Control::Grpc(g) => Some(g),
-                    Control::Ws(_) => None,
+                    Control::Ws(_) | Control::Sse(_) | Control::Mqtt(_) => None,
                 });
                 match cmd {
                     Some(GrpcControl::Send(json)) => {

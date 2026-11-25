@@ -7,8 +7,7 @@ expression: screen
 │▸ Orders/                   ││                                                                                                                                                                        │
 │▸ Users/                    ││                                                                                                                                                                        │
 │  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
-│                            ││                                  ╭─ Settings ─────────────────────────────────────────────────────────╮                                                                │
+│  GET   health              ││                                  ╭─ Settings ─────────────────────────────────────────────────────────╮                                                                │
 │                            ││                                  │                                                                    │                                                                │
 │                            ││                                  │  Saving                                                            │                                                                │
 │                            ││                                  │    Save changes to                                    ‹ global ›   │                                                                │
@@ -29,17 +28,19 @@ expression: screen
 │                            ││                                  │    History entries kept                                ‹ 10000 ›   │                                                                │
 │                            ││                                  │    Watch interval                                        ‹ 5 s ›   │                                                                │
 │                            ││                                  │    Stream messages kept                                ‹ 10000 ›   │                                                                │
-│                            ││                            Start │  Timeouts                                                          │ t                                                              │
-│                            ││                             Ctrl+│    HTTP request timeout                             ‹ 30000 ms ›   │ sts you send appear here.                                      │
-│                            ││                             n / N│    gRPC deadline                                        ‹ none ›   │                                                                │
-│                            ││                             Enter│    WebSocket handshake timeout                          ‹ none ›   │ all history                                                    │
+│                            ││                                  │  Timeouts                                                          │                                                                │
+│                            ││                            Start │    HTTP request timeout                             ‹ 30000 ms ›   │ t                                                              │
+│                            ││                             Ctrl+│    gRPC deadline                                        ‹ none ›   │ sts you send appear here.                                      │
+│                            ││                             n / N│    WebSocket handshake timeout                          ‹ none ›   │                                                                │
+│                            ││                             Enter│    SSE opening timeout                              ‹ 30000 ms ›   │ all history                                                    │
+│                            ││                             Ctrl+│    MQTT timeout                                     ‹ 30000 ms ›   │                                                                │
 │                            ││                             Ctrl+│    MCP call timeout                                 ‹ 30000 ms ›   │                                                                │
-│                            ││                             Ctrl+│  HTTP                                                              │                                                                │
-│                            ││                             F4   │    Largest response body                              ‹ 100 MB ›   │                                                                │
-│                            ││                             m    │    Cookie jar                                            ‹ Off ›   │                                                                │
-│                            ││                             Ctrl+│    Proxy                                             ‹ not set ›   │                                                                │
-│                            ││                             F1   │    OAuth identities                             ‹ 0 identities ›   │                                                                │
-│                            ││                             Ctrl+│  TLS                                                               │                                                                │
+│                            ││                             F4   │  HTTP                                                              │                                                                │
+│                            ││                             m    │    Largest response body                              ‹ 100 MB ›   │                                                                │
+│                            ││                             Ctrl+│    Cookie jar                                            ‹ Off ›   │                                                                │
+│                            ││                             F1   │    Proxy                                             ‹ not set ›   │                                                                │
+│                            ││                             Ctrl+│    OAuth identities                             ‹ 0 identities ›   │                                                                │
+│                            ││                                  │  TLS                                                               │                                                                │
 │                            ││                                  │    CA certificates (PEM)                             ‹ not set ›   │                                                                │
 │                            ││                                  │    Client certificate (PEM)                          ‹ not set ›   │                                                                │
 │                            ││                                  │    Client key (PEM)                                  ‹ not set ›   │                                                                │
@@ -54,7 +55,6 @@ expression: screen
 │                            ││                                  │  Changes apply at once and are saved to                            │                                                                │
 │                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
 │                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
-│                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

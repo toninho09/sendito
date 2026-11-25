@@ -17,15 +17,16 @@ Instructions for AI coding agents working in this repository.
 
 ## Project
 
-Sendito is a terminal API client for HTTP, gRPC, WebSocket and MCP tools (Rust,
+Sendito is a terminal API client for HTTP, gRPC, WebSocket, SSE, MQTT and MCP tools (Rust,
 edition 2024). Each crate lives in `crates/<name>` and is `sendito-<name>` to
 cargo (`-p sendito-core`): `core` (model, variables, scripts), `http`, `grpc`,
-`ws`, `mcp` (MCP client: stdio and Streamable HTTP, OAuth), `store` (files,
+`ws`, `mqtt` (MQTT client: v3.1.1 and v5 over TCP or TLS), `mcp` (MCP client:
+stdio and Streamable HTTP, OAuth), `store` (files,
 request format, environments, secrets, config, history, cookies, session,
 themes), `import` (Postman, Insomnia, Bruno, curl, `.http`), `pipeline` (the
 send pipeline the UI and the CLI share, and the response document model), `ui`
 (ratatui TUI), `widgets` (editor, table, list, icons and themes with no app
-state) and `testkit` (echo servers). The `sendito` binary is `src/main.rs`; its
+state) and `testkit` (echo servers and the test MQTT broker). The `sendito` binary is `src/main.rs`; its
 commands are in `src/cli/`. `ui` reaches the protocol crates only through
 `sendito-pipeline`.
 
@@ -98,12 +99,18 @@ and coverage must not run together.
 
 ## Verify before you report work done
 
-1. While iterating, stay narrow: `make check P=<package>` after an edit, then
-   `make test P=<package> F=<name>` for the tests you touched. Both take seconds.
-2. Finish with `make fmt` and `make ci`. On a warm build the gate takes about a
-   minute; a cold one takes longer, so allow the timeout. A change that touches
-   only documentation needs `make docs` alone.
-3. Regenerate whatever your change made stale (next table) and read its diff.
+The check commands are heavy: `make check`, `make lint`, `make test` and
+`make ci` compile the workspace. Make as many edits as you can before you run
+one. Do not run a check after each edit.
+
+1. Group the edits of a task and check the group, not each file. While
+   iterating, stay narrow: `make check P=<package>`, then
+   `make test P=<package> F=<name>` for the tests you touched.
+2. Before you report the task as done, run at least one check on the code you
+   changed. A change that touches only documentation needs `make docs` alone.
+3. When the change is ready, run `make fmt` and `make ci`. On a warm build the
+   gate takes about a minute; a cold one takes longer, so allow the timeout.
+4. Regenerate whatever your change made stale (next table) and read its diff.
 
 ## Generated files
 
@@ -117,7 +124,7 @@ Never edit these by hand; regenerate them and read the diff:
 | `docs/media/` | A visible UI change | `make media`, then `make render` |
 
 The wire corpus (`tests/corpus.rs`) sends every case in
-`tests/corpus/collection/` (HTTP, gRPC, WebSocket, MCP) to the echo servers and
+`tests/corpus/collection/` (HTTP, gRPC, WebSocket, SSE, MQTT, MCP) to the test servers and
 compares the exact bytes with the goldens.
 
 ## Documentation

@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   MQTT untitled ● ×    +                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ MQTT ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  mqtts://broker.example.test                                               ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Topics 1  Publish  Will  Auth  Scripts  Options ──────────────────────────────────────╮
+│  GET   health              ││     Topic filter                                                                QoS    │
+│                            ││ [✓] sensors/+/temperature                                                      │‹1› │× │
+│                            ││  +  add topic filter                                                           │       │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            │╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯
+│                            │╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│                            ││ 3 messages · live                 │  1 ▾ {                                             │
+│                            ││ #1 +0.100s   31 B sensors/kitchen…│  2     "room": "garage",                           │
+│                            ││ #2 +0.200s   30 B sensors/office/…│  3     "celsius": 22                               │
+│                            ││ #3 +0.300s   30 B sensors/garage/…│  4   }                                             │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+│                            ││                                   │                                                    │
+╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ──────────────────────────────────────────────────────────── Ln 1/4 ─╯
+ demo   ● 1 unsaved                                         Alt+1-4 tabs · [ ] message · y copy · ^W menu · F1 all keys

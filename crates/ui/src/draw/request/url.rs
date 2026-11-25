@@ -13,6 +13,8 @@ pub(super) fn draw_url_card(app: &App, buf: &mut Buffer, area: Rect, theme: &The
         Kind::Http => ("HTTP".to_string(), theme.method_color(&tab.ed.method)),
         Kind::Grpc => ("GRPC".to_string(), theme.grpc),
         Kind::Ws => ("WS".to_string(), theme.grpc),
+        Kind::Sse => ("SSE".to_string(), theme.grpc),
+        Kind::Mqtt => ("MQTT".to_string(), theme.grpc),
         Kind::Mcp => ("MCP".to_string(), theme.grpc),
         Kind::Folder => ("FOLDER".to_string(), theme.accent),
     };
@@ -150,6 +152,8 @@ pub(in crate::draw) fn draw_url_strip(
         sendito_core::Request::Grpc(g) => !g.service.is_empty() && !g.method.is_empty(),
         sendito_core::Request::Ws(w) => !w.url.trim().is_empty(),
         sendito_core::Request::Mcp(m) => !m.server.is_empty() && !m.tool.is_empty(),
+        sendito_core::Request::Sse(_) => false,
+        sendito_core::Request::Mqtt(m) => !m.url.trim().is_empty(),
         sendito_core::Request::Http(_) => true,
     };
     // One action button: Send, or Cancel while a call runs. An open stream
@@ -169,6 +173,8 @@ pub(in crate::draw) fn draw_url_strip(
             " {stop_icon} Cancel {} {elapsed:.1}s ",
             spinner(app.anim_frame)
         )
+    } else if streaming && app.tabs[app.active].ed.kind == Kind::Mqtt {
+        format!(" {send_icon} Publish ")
     } else if streaming {
         format!(" {send_icon} Send message ")
     } else if row.width >= 80 {
@@ -281,13 +287,20 @@ pub(in crate::draw) fn draw_url_strip(
         }
         // Drawn by `draw_folder_strip`.
         Kind::Folder => {}
-        Kind::Ws => {
+        Kind::Ws | Kind::Sse | Kind::Mqtt => {
             // The card's title names the kind; a single row keeps a static
             // badge where the other kinds have their picker chip.
             let mw = if card {
                 0
             } else {
-                let ml = format!(" {:<8}", "WS");
+                let ml = format!(
+                    " {:<8}",
+                    match app.tabs[app.active].ed.kind {
+                        Kind::Sse => "SSE",
+                        Kind::Mqtt => "MQTT",
+                        _ => "WS",
+                    }
+                );
                 let mw = ml.width() as u16 + 1;
                 put(buf, x0, y, &ml, mw - 1, theme.badge(theme.grpc));
                 mw

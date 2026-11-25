@@ -26,6 +26,7 @@ the file, so you can jump straight to it.
 | `sendito-http` | `crates/http/` | The HTTP client (`lib.rs`), TLS material (`tls.rs`), proxy (`proxy.rs`), timing (`timing.rs`), body decoding (`body.rs`), redirects (`redirect.rs`) | `crates/http/src/lib.rs::send` |
 | `sendito-grpc` | `crates/grpc/` | Dynamic gRPC calls and schema loading | `crates/grpc/src/lib.rs::start_call` |
 | `sendito-ws` | `crates/ws/` | WebSocket handshake (`lib.rs`), proxy tunnel (`proxy.rs`), frames and close (`session.rs`) | `crates/ws/src/lib.rs::open` |
+| `sendito-mqtt` | `crates/mqtt/` | MQTT v3.1.1 and v5 sessions, subscriptions, publishes, Last Will | `crates/mqtt/src/lib.rs::open` |
 | `sendito-mcp` | `crates/mcp/` | JSON-RPC client, transports, MCP OAuth | `crates/mcp/src/lib.rs::call_tool` |
 | `sendito-store` | `crates/store/` | Everything on disk: collection, config, env, history, cookies, session, themes | `crates/store/src/lib.rs` |
 | `sendito-import` | `crates/import/` | Postman, Insomnia, Bruno, curl, `.http` | `crates/import/src/lib.rs` |
@@ -41,7 +42,7 @@ model carries no serialization logic on purpose.
 
 | What | File |
 |---|---|
-| `Request`, `HttpRequest`, `GrpcRequest`, `WebSocketRequest`, `McpRequest`, auth kinds, body kinds, rows | `crates/core/src/model.rs` |
+| `Request`, `HttpRequest`, `GrpcRequest`, `WebSocketRequest`, `SseRequest`, `MqttRequest`, `McpRequest`, auth kinds, body kinds, rows | `crates/core/src/model.rs` |
 | Parse and canonical write of `<name>.toml` | `crates/store/src/request_file.rs` |
 | Folder settings: parse and write `folder.toml`, the chain of a request | `crates/store/src/folder.rs`, `crates/store/src/collection.rs::chain` |
 | Saved examples: `<name>.examples/<example>.toml` | `crates/store/src/examples.rs` |
@@ -78,6 +79,10 @@ here.
 | What | Entry point | Supporting |
 |---|---|---|
 | Sending a resolved request | `crates/http/src/lib.rs::send` | `SendOptions`, `HttpResponse` |
+| SSE transport and parser | `crates/http/src/sse.rs::open`, `crates/http/src/sse.rs::Parser` | `crates/http/src/lib.rs::open_stream`; `crates/http/tests/sse.rs` |
+| GraphQL completion | `crates/core/src/graphql.rs::graphql_context` | `crates/ui/src/complete.rs::graphql_candidates`; `crates/ui/src/app/completion.rs`; `crates/ui/tests/graphql_schema.rs` |
+| GraphQL introspection | `crates/http/src/graphql.rs::GraphqlSchema` | `crates/pipeline/src/runner/graphql.rs::fetch_schema`; `crates/ui/src/app/schema.rs::App::load_graphql_schema`; `crates/ui/tests/graphql_schema.rs` |
+| GraphQL body assembly | `crates/core/src/model.rs::graphql_document_json` | `crates/core/src/resolve.rs::resolve_http`; editor sections in `crates/ui/src/tab/editors.rs` |
 | Header and body assembly, multipart boundary, file bodies | `crates/core/src/resolve.rs::resolve_http` | `ResolvedBody`, `ResolvedPart`, `PartData` |
 | MIME guess for multipart file parts | `crates/http/src/body.rs::guess_mime` | Used by resolve and by the request pane |
 | Response decoding (gzip, deflate, br) and display size vs wire size | `crates/http/src/lib.rs::Decoded` | `wire_body_len`, `headers_size` |
@@ -92,7 +97,7 @@ here.
 | JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app/import_export.rs::filter_here` |
 | Watch (repeat the active request) | `crates/ui/src/app/mod.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
 
-Tests: `tests/corpus.rs` (54 HTTP cases under
+Tests: `tests/corpus.rs` (57 HTTP cases under
 `tests/corpus/collection/http/`), `tests/integration.rs`, `tests/tls.rs`,
 `tests/proxy.rs`.
 
@@ -128,6 +133,31 @@ Tests: `crates/mcp/tests/oauth.rs`, corpus case `http/47-oauth-http.toml`,
 
 Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 `tests/corpus/collection/grpc/`.
+
+## SSE
+
+| Feature | Main code | Wiring and tests |
+|---|---|---|
+| Saved request and resolution | `crates/core/src/model.rs::SseRequest`, `crates/core/src/resolve.rs::resolve_sse` | `crates/store/src/request_file.rs`; `tests/sse.rs` |
+| Authenticated live session | `crates/pipeline/src/runner/sse.rs::exec_sse` | Shared HTTP auth in `crates/pipeline/src/runner/http.rs`; `tests/sse_pipeline.rs` |
+| Headless output and report | `src/cli/sse.rs::run_sse` | `src/cli/run.rs`; `tests/sse.rs` |
+| Live UI response | `crates/ui/src/app/sse.rs::App::on_sse` | `crates/ui/src/tab/response.rs`; `crates/ui/tests/sse.rs` |
+| Echo routes | `crates/testkit/src/sse_echo.rs` | `crates/testkit/src/http_echo.rs`; `tests/corpus/sse.rs` |
+| Screens and recordings | `crates/ui/tests/common/sse.rs` | `crates/ui/tests/snapshots.rs`, `crates/ui/tests/media.rs` |
+
+## MQTT
+
+| Feature | Main code | Wiring and tests |
+|---|---|---|
+| Client sessions (v3.1.1, v5, QoS 0 to 2, Last Will, TLS) | `crates/mqtt/src/lib.rs::open`, `crates/mqtt/src/run.rs` | `crates/mqtt/tests/client.rs` |
+| Saved request and resolution | `crates/core/src/model.rs::MqttRequest`, `crates/core/src/resolve.rs::resolve_mqtt` | `crates/core/src/resolve.rs::mqtt_target`; `crates/store/src/request_file.rs`; `tests/mqtt.rs` |
+| Folder headers note | `crates/core/src/inherit.rs::ignored_headers_note` | `src/cli/run.rs`, `crates/ui/src/app/send.rs` |
+| Live session | `crates/pipeline/src/runner/mqtt.rs::exec_mqtt` | `MqttControl`, `MqttUpdate`; `tests/mqtt_pipeline.rs` |
+| Headless output and report | `src/cli/mqtt.rs::run_mqtt` | `src/cli/run.rs`; `tests/mqtt.rs` |
+| Editor | `crates/ui/src/tab/editors.rs::Editors` (`Kind::Mqtt`, `MQTT_TABS`) | `crates/ui/src/tab/fields.rs` |
+| Live UI response and live publish | `crates/ui/src/app/mqtt.rs::App::on_mqtt` | `crates/ui/src/app/mqtt.rs::App::mqtt_publish_selected`; `crates/ui/src/tab/response.rs::MqttMsg`; `crates/ui/tests/mqtt.rs` |
+| Test broker (TCP and TLS) | `crates/testkit/src/mqtt_broker.rs::MqttBroker` | `tests/corpus/mqtt.rs` |
+| Screens and recordings | `crates/ui/tests/common/mqtt.rs` | `crates/ui/tests/snapshots.rs`, `crates/ui/tests/media.rs` |
 
 ## WebSocket
 
@@ -291,7 +321,7 @@ binary in a child process), `tests/corpus.rs`.
 | Layer | Where | Command |
 |---|---|---|
 | Unit tests | beside the code in every crate | `make test`; `P=<package>` and `F=<name>` narrow it |
-| Wire corpus (exact bytes; 54 HTTP, 15 gRPC, 12 WS, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
+| Wire corpus (exact bytes; 57 HTTP, 15 gRPC, 12 WS, 13 SSE, 13 MQTT, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
 | Corpus golden rewrite | same, `UPDATE_CORPUS=1` | `make corpus-update` |
 | Import, format stability, secret hygiene | `tests/integration.rs`, `tests/fixtures/` | `make test` |
 | TLS and mutual TLS | `tests/tls.rs` | `make test` |

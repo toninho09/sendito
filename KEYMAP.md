@@ -27,6 +27,8 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `new_request` | `Ctrl+N`, `Ctrl+W t` | `Ctrl+N`, `Ctrl+W t` | Open a new unsaved HTTP request tab |
 | `new_grpc_request` | `Ctrl+W g` | `Ctrl+W g` | Open a new unsaved gRPC request tab |
 | `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
+| `new_sse_request` | `Ctrl+W E` | `Ctrl+W E` | Open a new unsaved SSE request tab |
+| `new_mqtt_request` | `Ctrl+W M` | `Ctrl+W M` | Open a new unsaved MQTT request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
@@ -219,6 +221,8 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:q!` | Quit without saving |
 | `:new` | New HTTP request (Ctrl+N) |
 | `:newgrpc` | New gRPC request (Ctrl+W g) |
+| `:newsse` | New SSE request (Ctrl+W E) |
+| `:newmqtt` | New MQTT request (Ctrl+W M) |
 | `:newws` | New WebSocket request (Ctrl+W y) |
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
@@ -248,6 +252,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
+| `:graphqlschema` | Reload the GraphQL schema for the HTTP request |
 | `:settings` | Open settings |
 | `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
 | `:keymap` | Edit your key bindings (the file Settings saves to) |

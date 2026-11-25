@@ -178,6 +178,15 @@ fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpReq
         "json" => Body::Json {
             text: b.get("body:json").to_string(),
         },
+        "graphql" => Body::GraphQL {
+            query: if b.get("body:graphql:query").is_empty() {
+                b.get("body:graphql").to_string()
+            } else {
+                b.get("body:graphql:query").to_string()
+            },
+            variables: b.get("body:graphql:variables").to_string(),
+            operation_name: String::new(),
+        },
         "text" | "xml" | "sparql" => Body::Raw {
             text: b.get(&format!("body:{body_kind}")).to_string(),
             content_type: match body_kind.as_str() {
@@ -249,6 +258,9 @@ fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpReq
         "params:path",
         "body",
         "body:json",
+        "body:graphql",
+        "body:graphql:query",
+        "body:graphql:variables",
         "body:text",
         "body:xml",
         "body:sparql",
@@ -529,6 +541,54 @@ mod tests {
                 .iter()
                 .any(|s| s.reason.contains("script:pre-request"))
         );
+    }
+
+    #[test]
+    fn graphql_body_blocks() {
+        let b = blocks(
+            "meta {
+  name: Me
+  type: http
+}
+post {
+  url: {{base}}/graphql
+  body: graphql
+}
+body:graphql:query {
+  query Me { me { id } }
+}
+body:graphql:variables {\n  {\"limit\": 2}\n}\n",
+        )
+        .unwrap();
+        let mut skipped = Vec::new();
+        let req = request(&b, "Me", &mut skipped).unwrap();
+        assert_eq!(
+            req.body,
+            Body::GraphQL {
+                query: "query Me { me { id } }".into(),
+                variables: "{\"limit\": 2}".into(),
+                operation_name: String::new(),
+            }
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        // Without blocks of its own, the `body:graphql` block is the query.
+        let b = blocks(
+            "meta {
+  name: Me
+  type: http
+}
+post {
+  url: x
+  body: graphql
+}
+body:graphql {
+  { hero { name } }
+}
+",
+        )
+        .unwrap();
+        let req = request(&b, "Me", &mut Vec::new()).unwrap();
+        assert!(matches!(req.body, Body::GraphQL { query, .. } if query == "{ hero { name } }"));
     }
 
     #[test]

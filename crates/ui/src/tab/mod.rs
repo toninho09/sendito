@@ -7,7 +7,7 @@ use sendito_core::model::*;
 use sendito_pipeline::grpc::ServiceInfo;
 
 use crate::editor::{Highlight, TextEditor};
-use crate::form::{Cell, ColKind, Column, Table};
+use crate::form::{Cell, ColKind, Column, Row, Table};
 use crate::viewer::{Doc, Viewer};
 
 mod editors;
@@ -98,6 +98,8 @@ pub struct Tab {
     /// retry a dead server by itself.
     pub mcp_tools_error: Option<String>,
     pub schema_error: Option<String>,
+    pub graphql_schema: Option<sendito_pipeline::http::graphql::GraphqlSchema>,
+    pub graphql_source: String,
     /// Cached model built from the editors (refreshed after each change).
     pub model: Request,
     /// Where an unsaved tab came from, shown in the request header
@@ -147,6 +149,8 @@ impl Tab {
             mcp_tools_server: String::new(),
             mcp_tools_error: None,
             schema_error: None,
+            graphql_schema: None,
+            graphql_source: String::new(),
             model: req.clone(),
             origin: None,
             origin_path: None,

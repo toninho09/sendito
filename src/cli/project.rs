@@ -228,6 +228,8 @@ pub(crate) fn ctx_for(
         schemas,
         grpc_deadline_ms: project.config.grpc.deadline_ms,
         ws_timeout_ms: project.config.websocket.timeout_ms,
+        sse_timeout_ms: project.config.sse.timeout_ms,
+        mqtt_timeout_ms: project.config.mqtt.timeout_ms,
         mask_echoed_secrets: false,
         cookie_jar: project.config.http.cookie_jar && !no_cookies,
         oauth: Some(runner::OAuthRunInfo::of(project)),

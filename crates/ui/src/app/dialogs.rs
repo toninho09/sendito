@@ -306,6 +306,8 @@ impl App {
                 let req = match choice {
                     1 => Request::new_grpc(),
                     2 => Request::new_ws(),
+                    4 => Request::new_sse(),
+                    5 => Request::new_mqtt(),
                     3 => Request::new_mcp(),
                     _ => Request::new_http(),
                 };

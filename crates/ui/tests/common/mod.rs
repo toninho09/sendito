@@ -40,6 +40,9 @@ impl<T> Must<T> for Option<T> {
     }
 }
 
+pub mod mqtt;
+pub mod sse;
+
 pub struct Harness {
     pub app: App,
     pub term: Terminal<TestBackend>,

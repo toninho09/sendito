@@ -1,0 +1,8 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/graphql"
+
+[body]
+type = "graphql"
+query = "{ hero { name } }"
+variables = "[]"

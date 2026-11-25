@@ -135,9 +135,24 @@ pub(super) fn draw_request(
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
             ],
+            Kind::Sse => vec![
+                table_count(&e.params),
+                table_count(&e.headers),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
+                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                0,
+            ],
             Kind::Ws => vec![
                 table_count(&e.headers),
                 usize::from(!e.message.trimmed_is("[]") && !e.message.trimmed_is("")),
+                usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
+                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                0,
+            ],
+            Kind::Mqtt => vec![
+                table_count(&e.mqtt_subs),
+                table_count(&e.mqtt_publish),
+                usize::from(!e.will_topic.text().is_empty()),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
                 0,
@@ -165,7 +180,7 @@ pub(super) fn draw_request(
             .enumerate()
             .map(|(i, name)| {
                 let set = counts[i] > 0;
-                let counted = set && !matches!(*name, "Body" | "Auth");
+                let counted = set && !matches!(*name, "Body" | "Auth" | "Will");
                 match style {
                     0 if counted => format!("{name} {}", counts[i]),
                     1 if counted => format!("{name}{}", counts[i]),

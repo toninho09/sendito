@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/159   ┃                                                 │
+│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/166   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -20,6 +20,8 @@ expression: screen
 │                            ││                   │  Quit Sendito                                                                 Ctrl+W q / Ctrl+Q  │                                                 │
 │                            ││                   │  Open a new unsaved HTTP request tab                                          Ctrl+N / Ctrl+W t  │                                                 │
 │                            ││                   │  Open a new unsaved gRPC request tab                                                   Ctrl+W g  │                                                 │
+│                            ││                   │  Open a new unsaved SSE request tab                                                    Ctrl+W E  │                                                 │
+│                            ││                   │  Open a new unsaved MQTT request tab                                                   Ctrl+W M  │                                                 │
 │                            ││                   │  Open a new unsaved WebSocket request tab                                              Ctrl+W y  │                                                 │
 │                            ││                   │  Close the current tab                                                                 Ctrl+W c  │                                                 │
 │                            ││                   │  Next open request tab                                                 Ctrl+W n / Ctrl+PageDown  │                                                 │
@@ -28,9 +30,9 @@ expression: screen
 │                            ││                   │  Focus the pane below                                                    Ctrl+W j / Ctrl+W Down  │                                                 │
 │                            ││                   │  Focus the pane above                                                      Ctrl+W k / Ctrl+W Up  │                                                 │
 │                            ││                   │  Focus the pane to the right                                            Ctrl+W l / Ctrl+W Right  │                                                 │
-│                            ││                   │  Next tab of the focused pane (e.g. Params → Headers)                                  Ctrl+W ]  │                                                 │
+│                            ││                   │  Next tab of the focused pane (e.g. Params → Headers)                                  Ctrl+W ]  │ pear here.                                      │
 │                            ││                   │  Previous tab of the focused pane                                                      Ctrl+W [  │                                                 │
-│                            ││                   │  Jump to tab 1 of the focused pane                                                        Alt+1  │ pear here.                                      │
+│                            ││                   │  Jump to tab 1 of the focused pane                                                        Alt+1  │                                                 │
 │                            ││                   │  Jump to tab 2 of the focused pane                                                        Alt+2  │                                                 │
 │                            ││                   │  Jump to tab 3 of the focused pane                                                        Alt+3  │                                                 │
 │                            ││                   │  Jump to tab 4 of the focused pane                                                        Alt+4  │                                                 │
@@ -45,9 +47,7 @@ expression: screen
 │                            ││                   │  Show or hide the sidebar                                                     Ctrl+B / Ctrl+W b  │                                                 │
 │                            ││                   │  Import a collection or a curl command                                                 Ctrl+W i  │                                                 │
 │                            ││                   │  Copy the request as curl (secrets stay {{placeholders}})                              Ctrl+W u  │                                                 │
-│                            ││                   │  Pretty-print the JSON body / message                                                  Ctrl+W f  │                                                 │
-│                            ││                   │  Maximize or restore the focused pane                                                  Ctrl+W z  │                                                 │
-│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 123 more ─╯                                                 │
+│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 130 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

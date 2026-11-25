@@ -115,6 +115,7 @@ impl App {
             Request::Grpc(g) if tab.folder.is_none() => g.metadata.clone(),
             Request::Http(h) => h.headers.clone(),
             Request::Ws(w) => w.headers.clone(),
+            Request::Sse(s) => s.headers.clone(),
             _ => return Vec::new(),
         };
         let rows = sendito_core::inherit::inherited_rows(&chain, &own);

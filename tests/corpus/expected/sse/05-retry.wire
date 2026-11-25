@@ -1,0 +1,7 @@
+GET /sse/retry HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### event {"event":"message","data":"one","id":"","retry_ms":123}
+### event {"event":"message","data":"two","id":"","retry_ms":123}
+### done: 2 events, server closed

@@ -12,11 +12,23 @@ use crate::tab::Field;
 pub enum CompleteKind {
     /// Object keys of the message/arguments editor.
     Fields,
+    GraphqlField,
+    GraphqlArgument,
+    GraphqlOnType,
     GrpcMethod,
     McpServer,
     McpTool,
     /// Object keys in the response query bar's jq expression.
     JqKey,
+}
+
+impl CompleteKind {
+    pub fn is_graphql(self) -> bool {
+        matches!(
+            self,
+            Self::GraphqlField | Self::GraphqlArgument | Self::GraphqlOnType
+        )
+    }
 }
 
 /// One step into the input tree: an object key, or an element of a repeated or
@@ -623,6 +635,71 @@ pub fn jq_key_text(name: &str) -> String {
     } else {
         serde_json::to_string(name).unwrap_or_default()
     }
+}
+
+/// Query context at the editor cursor.
+pub fn graphql_context(text: &str, at: Pos) -> Option<sendito_core::graphql::GraphqlContext> {
+    sendito_core::graphql::graphql_context(&text[..byte_at(text, at)])
+}
+
+pub fn graphql_candidates(
+    schema: &sendito_pipeline::http::graphql::GraphqlSchema,
+    context: &sendito_core::graphql::GraphqlContext,
+) -> Vec<Candidate> {
+    use sendito_core::graphql::{GqlPosition, GqlStep};
+    let Some(mut ty) = schema.root(&context.operation) else {
+        return Vec::new();
+    };
+    for step in &context.path {
+        let next = match step {
+            GqlStep::Field(name) => ty
+                .fields
+                .as_ref()
+                .and_then(|fields| fields.iter().find(|f| f.name == *name))
+                .and_then(|f| f.ty.named()),
+            GqlStep::OnType(name) => Some(name.as_str()),
+        };
+        let Some(next) = next.and_then(|name| schema.types.get(name)) else {
+            return Vec::new();
+        };
+        ty = next;
+    }
+    if context.position == GqlPosition::OnType {
+        return ty
+            .possible_types
+            .iter()
+            .flatten()
+            .map(|t| Candidate {
+                name: t.name.clone(),
+                detail: "type".into(),
+                example: String::new(),
+                cursor_back: 0,
+            })
+            .collect();
+    }
+    let fields = if context.position == GqlPosition::Argument {
+        ty.fields
+            .as_ref()
+            .and_then(|fields| {
+                fields
+                    .iter()
+                    .find(|f| Some(&f.name) == context.field.as_ref())
+            })
+            .map(|f| &f.args)
+    } else {
+        ty.fields.as_ref()
+    };
+    fields
+        .into_iter()
+        .flatten()
+        .filter(|f| !context.siblings.contains(&f.name))
+        .map(|f| Candidate {
+            name: f.name.clone(),
+            detail: f.ty.label(),
+            example: String::new(),
+            cursor_back: 0,
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -63,20 +63,25 @@ impl Recorder {
 struct Servers {
     http: http_echo::HttpEcho,
     grpc: grpc_echo::GrpcEcho,
+    mqtt: sendito_testkit::mqtt_broker::MqttBroker,
     _rt: tokio::runtime::Runtime,
 }
 
 fn servers() -> Servers {
     let rt = tokio::runtime::Runtime::new().must();
-    let (http, grpc) = rt.block_on(async {
+    let (http, grpc, mqtt) = rt.block_on(async {
         (
             http_echo::start().await.must(),
             grpc_echo::start().await.must(),
+            sendito_testkit::mqtt_broker::MqttBroker::start()
+                .await
+                .must(),
         )
     });
     Servers {
         http,
         grpc,
+        mqtt,
         _rt: rt,
     }
 }
@@ -140,6 +145,47 @@ fn screenshots() {
             h.key("esc ctrl+w V");
             r.shot(&mut h, "environments", 0);
             h.key("esc");
+            h.app.new_tab(sendito_core::Request::new_http());
+            let t = h.app.tab_mut().must();
+            t.ed.method = "POST".into();
+            t.ed.url.set_text("https://example.test/graphql");
+            t.ed.set_body_kind(sendito_core::BodyKind::GraphQL);
+            t.ed.body_text
+                .set_text("query Lookup($id: ID!) {\n  hero(id: $id) {\n    name\n  }\n}");
+            t.ed.graphql_variables.set_text("{\"id\": \"42\"}");
+            t.ed.graphql_operation.set_text("Lookup");
+            t.req_tab = 2;
+            t.field = 2;
+            t.refresh_model();
+            h.app.focus = sendito_ui::app::Focus::ReqBody;
+            r.shot(&mut h, "graphql-body", 0);
+            let env = h.app.active_env.clone();
+            let t = h.app.tab_mut().must();
+            t.ed.body_text.set_text("query Lookup {\n  hero(");
+            t.ed.body_text.move_to_end();
+            t.graphql_schema = Some(
+                sendito_pipeline::http::graphql::GraphqlSchema::from_json(include_bytes!(
+                    "fixtures/graphql-schema.json"
+                ))
+                .must(),
+            );
+            t.graphql_source = format!("{env:?}:graphql:POST https://example.test/graphql");
+            t.refresh_model();
+            h.key("ctrl+space");
+            r.shot(&mut h, "graphql-completion", 0);
+            h.key("esc");
+            common::sse::demo(&mut h);
+            r.shot(&mut h, "sse-options", 0);
+            h.key("ctrl+w j");
+            r.shot(&mut h, "sse-events", 0);
+            h.key("alt+4");
+            r.shot(&mut h, "sse-log", 0);
+            common::mqtt::demo(&mut h);
+            r.shot(&mut h, "mqtt-topics", 0);
+            h.key("ctrl+w j");
+            r.shot(&mut h, "mqtt-messages", 0);
+            h.key("alt+4");
+            r.shot(&mut h, "mqtt-log", 0);
             r.save();
         }
     }
@@ -175,6 +221,86 @@ fn screenshots() {
         h.key("esc");
         r.save();
     }
+}
+
+#[test]
+#[ignore]
+fn sse_recording() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40, "dusk");
+    let mut r = Recorder::new("13-sse-session");
+    h.app.run_command("newsse");
+    let t = h.app.tab_mut().must();
+    t.ed.url.set_text(&format!("{}/sse/slow", s.http.url()));
+    t.ed.deadline.set_text("5000");
+    t.refresh_model();
+    r.shot(&mut h, "Create an SSE request", 1200);
+    h.key("f5");
+    h.wait_for("streaming", 10);
+    h.key("ctrl+w j");
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        h.pump();
+        r.shot(&mut h, "Receive events in the live feed", 500);
+    }
+    h.key("[");
+    r.shot(&mut h, "Select an earlier event with [", 1200);
+    h.key("]");
+    h.app.run_command("end");
+    h.wait_idle(10);
+    r.shot(&mut h, "End the session with :end", 1800);
+    r.save();
+}
+
+#[test]
+#[ignore]
+fn mqtt_recording() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40, "dusk");
+    let mut r = Recorder::new("14-mqtt-session");
+    h.app.run_command("newmqtt");
+    let text = |s: &str| sendito_ui::form::Cell::Text(sendito_ui::editor::TextEditor::single(s));
+    let t = h.app.tab_mut().must();
+    t.ed.url.set_text(&s.mqtt.url());
+    t.ed.mqtt_client_id.set_text("sendito-demo");
+    t.ed.mqtt_subs.push(
+        true,
+        vec![text("demo/#"), sendito_ui::form::Cell::Choice(1)],
+    );
+    t.ed.mqtt_publish.push(
+        true,
+        vec![
+            text("demo/hello"),
+            text("{\"hello\":\"mqtt\"}"),
+            sendito_ui::form::Cell::Choice(1),
+            sendito_ui::form::Cell::Toggle(false),
+            sendito_ui::form::Cell::Toggle(false),
+        ],
+    );
+    t.refresh_model();
+    r.shot(&mut h, "Create an MQTT request: subscribe to demo/#", 1200);
+    h.key("f5");
+    h.wait_for("connected", 10);
+    h.key("ctrl+w j");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    h.pump();
+    r.shot(
+        &mut h,
+        "The initial publish comes back on the subscription",
+        1200,
+    );
+    for _ in 0..2 {
+        h.app.run_command("send");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        h.pump();
+        r.shot(&mut h, "Send publishes the selected row live", 700);
+    }
+    h.key("alt+4");
+    r.shot(&mut h, "The Log tab lists every packet", 1200);
+    h.app.run_command("end");
+    h.wait_idle(10);
+    r.shot(&mut h, "Disconnect with :end", 1800);
+    r.save();
 }
 
 #[test]

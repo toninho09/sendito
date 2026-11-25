@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### SSE sessions
+
+* Split HTTP response opening from body collection. Normal HTTP keeps its total
+  timeout, decoding, size limit and redirect rules.
+* Add a live SSE transport with an opening-only timeout, including redirects.
+  It rejects non-200 responses, non-event-stream content and compressed streams.
+* Add an incremental SSE parser with UTF-8 replacement, BOM, CR/LF/CRLF, multiline
+  data, persistent IDs, retry values and a 1 MiB event limit. No reconnect.
+* Add `kind = "sse"` request files with query parameters, headers, inherited auth,
+  cookies, scripts, maximum event count and session deadline.
+* Add live event lists, payload/jq views, headers, timing and logs to the TUI.
+  `:newsse` and Ctrl+W E create requests; `:end` and Cancel stop sessions.
+* Headless runs print data lines to stdout and progress to stderr. JSON reports
+  include event counts. Folder runs, history and curl/.http exports support SSE.
+* Add `[sse] timeout_ms = 30000` and its Settings row. Add 13 SSE wire cases.
+
+### MQTT sessions
+
+* Add `kind = "mqtt"` request files: `mqtt://` and `mqtts://` URLs, protocol
+  3.1.1 or 5, client ID (empty generates `sendito-<8 hex>`), user name and
+  password or Basic auth, clean session, keep-alive, subscriptions with QoS,
+  ordered publishes with text or base64 payloads, retain and an optional Last
+  Will.
+* Add a live MQTT session to the pipeline: pre-request scripts, a CONNACK
+  timeout (`[mqtt] timeout_ms = 30000`, the "MQTT timeout" setting), deadline,
+  disconnect, cancel, secret masking, end scripts on the last payload and one
+  history entry.
+* Add MQTT to the TUI: `:newmqtt`, Ctrl+W M and the new-request dialog; Topics,
+  Publish, Will, Auth, Scripts and Options tabs; Messages, Connection, Timing
+  and Log responses. Send on an open session publishes the selected Publish
+  row; `:end` disconnects and Cancel aborts.
+* Headless runs print each payload to stdout and progress to stderr. A deadline
+  ends with exit 0; a refused CONNACK ends with exit 2. JSON reports include
+  `messages`. curl and `.http` exports refuse MQTT requests.
+* The MQTT client sends DISCONNECT before it ends a session on a deadline or a
+  disconnect, so the broker does not send the Last Will.
+* Add a TLS listener to the test broker and 13 MQTT wire cases. The media add
+  `14-mqtt-session.gif` (one recording per feature, not a combined SSE and MQTT
+  recording).
+
+### GraphQL body
+
+* HTTP requests have a GraphQL body with separate Query, Variables and Operation
+  name editors. Variables must be a JSON object. Empty optional fields stay off
+  the wire. Request files preserve drafts and placeholders.
+* Postman and Bruno imports keep GraphQL bodies instead of converting them to JSON.
+* `:graphqlschema` fetches and caches introspection through the HTTP authentication
+  pipeline. It preserves the draft request and refreshes the cache on each command.
+* The Query editor completes GraphQL fields, unused arguments and inline-fragment
+  types from introspection. It loads missing schemas in the background and does
+  not retry a failed load until `:graphqlschema` requests a refresh.
+
 ### Folder settings
 
 * **`folder.toml` in a folder** (or the collection root) holds headers, an

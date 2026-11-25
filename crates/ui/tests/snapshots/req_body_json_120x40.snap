@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   ││  POST   ▾   {{base_url}}/users  → http://127.0.0.1:9/users                 ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
 │├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────╮
-│├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File   → application/json (auto) │
+│├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File   GraphQL            → json │
 │└ GET   list users          ││   1 {                                                                                  │
 │  GRPC  echo unary          ││   2   "name": "Ana",                                                                   │
 │  GET   health              ││   3   "email": "ana@example.com"                                                       │

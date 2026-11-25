@@ -272,7 +272,7 @@ pub async fn exec_ws(
             cmd = control.recv(), if control_open => {
                 let cmd = cmd.and_then(|c| match c {
                     Control::Ws(w) => Some(w),
-                    Control::Grpc(_) => None,
+                    Control::Grpc(_) | Control::Sse(_) | Control::Mqtt(_) => None,
                 });
                 match cmd {
                     Some(WsControl::Text(text)) => {

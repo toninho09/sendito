@@ -1,0 +1,17 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-07"
+
+[options]
+deadline_ms = 300
+
+[[subscriptions]]
+topic = "corpus/hash/#"
+
+[[publish]]
+topic = "corpus/hash/a"
+payload = "first"
+
+[[publish]]
+topic = "corpus/hash/a/b/c"
+payload_base64 = "AAEC/w=="

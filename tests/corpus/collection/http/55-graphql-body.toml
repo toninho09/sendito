@@ -1,0 +1,11 @@
+kind = "http"
+method = "POST"
+url = "{{base_url}}/graphql"
+
+[body]
+type = "graphql"
+query = '''
+query Lookup($user: String!) { user(name: $user) { id } }
+'''
+variables = "{\"user\":\"{{user}}\"}"
+operation_name = "Lookup"

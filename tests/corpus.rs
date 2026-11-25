@@ -76,6 +76,8 @@ struct Env {
     mcp: mcp_echo::McpEcho,
     ws: sendito_testkit::ws_echo::WsEcho,
     ws_tls: sendito_testkit::ws_echo::WsEcho,
+    mqtt: sendito_testkit::mqtt_broker::MqttBroker,
+    mqtt_tls: sendito_testkit::mqtt_broker::MqttBroker,
     keychain: Arc<MemoryKeychain>,
 }
 
@@ -89,6 +91,12 @@ async fn setup() -> Env {
     let ws = sendito_testkit::ws_echo::start().await.must();
     let certs = sendito_testkit::tls::generate().must();
     let ws_tls = sendito_testkit::ws_echo::start_tls(&certs).await.must();
+    let mqtt = sendito_testkit::mqtt_broker::MqttBroker::start()
+        .await
+        .must();
+    let mqtt_tls = sendito_testkit::mqtt_broker::MqttBroker::start_tls(&certs)
+        .await
+        .must();
     let env_path = dir.path().join(".sendito/environments/corpus.toml");
     let text = std::fs::read_to_string(&env_path)
         .must()
@@ -102,10 +110,12 @@ async fn setup() -> Env {
             &format!("grpc_target = \"{}\"", grpc.target()),
         );
     let text = format!(
-        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\n",
+        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\nmqtt_url = \"{}\"\nmqtt_tls_url = \"{}\"\n",
         mcp.url(),
         ws.url("").trim_end_matches('/'),
-        ws_tls.url("").trim_end_matches('/')
+        ws_tls.url("").trim_end_matches('/'),
+        mqtt.url(),
+        mqtt_tls.url()
     );
     std::fs::write(&env_path, text).must();
     let mut secrets = BTreeMap::new();
@@ -146,6 +156,8 @@ async fn setup() -> Env {
         mcp,
         ws,
         ws_tls,
+        mqtt,
+        mqtt_tls,
         keychain,
     }
 }
@@ -165,6 +177,8 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -314,6 +328,11 @@ fn hex(b: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[path = "corpus/mqtt.rs"]
+mod mqtt;
+#[path = "corpus/sse.rs"]
+mod sse;
 
 fn expected_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/expected")
@@ -701,6 +720,21 @@ async fn http_corpus() {
         let mut run = ctx(&e, &p, &rel);
         run.oauth = Some(runner::OAuthRunInfo::of(&p));
         let o = runner::exec_http(&run, &req, scope.clone(), vec![]).await;
+        if case == "57-graphql-variables-not-object" {
+            assert!(matches!(&o.response, Err(e) if e.contains("variables must be a JSON object")));
+            assert!(
+                e.http.take().is_empty(),
+                "invalid variables must not reach the server"
+            );
+            check(
+                "http",
+                case,
+                "### error: GraphQL body: variables must be a JSON object\n",
+                &mut failures,
+            );
+            passed += usize::from(failures.len() == before);
+            continue;
+        }
         if let Err(err) = &o.response {
             failures.push(format!("{case}: request failed: {err}"));
             continue;

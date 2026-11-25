@@ -1,6 +1,6 @@
 # Sendito
 
-A terminal API client for **HTTP**, **gRPC**, **WebSocket** and **MCP tools**. It
+A terminal API client for **HTTP**, **gRPC**, **WebSocket**, **SSE**, **MQTT** and **MCP tools**. It
 runs locally in your terminal,
 works with the mouse, conventional keys or vim keys, and keeps your requests as
 plain TOML files you can version in git.
@@ -24,7 +24,7 @@ plain TOML files you can version in git.
   `Content-Type` from the body type when you define none (JSON → `application/json`,
   form → `application/x-www-form-urlencoded`, file → its content type or
   `application/octet-stream`; multipart file parts → guessed from the extension).
-  A corpus of 54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases is checked byte for
+  A corpus of 57 HTTP, 15 gRPC, 12 WebSocket, 13 SSE, 13 MQTT and 5 MCP cases is checked byte for
   byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 / Digest /
@@ -182,6 +182,8 @@ files are in [`docs/media/recordings/`](docs/media/recordings).
 | **Vim mode editing** | ![Vim mode editing](docs/media/recordings/10-vim-mode-editing.gif) |
 | **Drag a request into a folder** | ![Drag a request into a folder](docs/media/recordings/11-mouse-drag-in-tree.gif) |
 | **Errors, cancel, delete** | ![Errors, cancel, delete](docs/media/recordings/12-errors-cancel-delete.gif) |
+| **An SSE session: receive events, end it** | ![An SSE session](docs/media/recordings/13-sse-session.gif) |
+| **An MQTT session: subscribe, publish live, disconnect** | ![An MQTT session](docs/media/recordings/14-mqtt-session.gif) |
 
 ## HTTP
 
@@ -247,6 +249,63 @@ and protected URLs must use HTTPS except on loopback. See [FORMAT.md](FORMAT.md)
 ![A gRPC request at 200×60](docs/media/screenshots/200x60-dusk-grpc-unary.png)
 
 More: [gRPC features](docs/FEATURES.md#grpc).
+
+## SSE
+
+Press Ctrl+W E or run `:newsse`. Set the URL and optional maximum event count
+or deadline, then press F5. The response shows events, payloads, headers,
+timing and logs. Use `:end` or Cancel to stop the session.
+
+```toml
+kind = "sse"
+url = "https://example.test/events"
+
+[options]
+max_events = 10
+deadline_ms = 5000
+```
+
+`sendito run events` prints event data to stdout and progress to stderr.
+`--report json` prints the event count. The opening timeout defaults to 30 seconds.
+The stream has no total request timeout. SSE does not reconnect automatically.
+
+More: [SSE features](docs/FEATURES.md#sse).
+
+![An SSE session: options, live events and the selected payload](docs/media/screenshots/200x60-dusk-sse-events.png)
+
+## MQTT
+
+Press Ctrl+W M or run `:newmqtt`. Set the broker URL (`mqtt://` or `mqtts://`),
+add topic filters on the Topics tab and optional publishes on the Publish tab,
+then press F5. The response shows the messages, the connection, the timing and
+the log. Send on an open session publishes the selected Publish row; `:end`
+disconnects and Cancel aborts (the broker then sends the Last Will).
+
+```toml
+kind = "mqtt"
+url = "mqtt://localhost:1883"
+protocol = "5"
+
+[options]
+deadline_ms = 10000
+
+[[subscriptions]]
+topic = "sensors/+/temperature"
+qos = 1
+
+[[publish]]
+topic = "sensors/kitchen/set"
+payload = '{"on": true}'
+```
+
+`sendito run sensor` prints each payload to stdout and progress to stderr. A
+deadline ends with exit 0; a refused connection ends with exit 2. MQTT supports
+protocol 3.1.1 and 5, QoS 0 to 2, retained messages and a Last Will. It has no
+WebSocket transport and does not reconnect automatically.
+
+More: [MQTT features](docs/FEATURES.md#mqtt).
+
+![An MQTT session: topics, live messages and the selected payload](docs/media/screenshots/200x60-dusk-mqtt-messages.png)
 
 ## WebSocket
 

@@ -3,6 +3,90 @@
 use super::*;
 
 impl App {
+    pub(super) fn graphql_source(&self, tab: &Tab) -> String {
+        let (request, scope) = self.effective(tab);
+        let Request::Http(request) = request else {
+            return String::new();
+        };
+        let resolved = sendito_core::resolve::resolve_http(&request, &scope, &self.project.root);
+        format!(
+            "{:?}:{}",
+            self.active_env,
+            runner::graphql_schema_key(&resolved)
+        )
+    }
+
+    pub fn load_graphql_schema(&mut self, refresh: bool) {
+        let Some(tab) = self.tab_mut() else { return };
+        tab.refresh_model();
+        if tab.ed.kind != Kind::Http || tab.ed.body_kind != BodyKind::GraphQL {
+            self.set_status(
+                "GraphQL schema requires an HTTP GraphQL body",
+                StatusKind::Info,
+            );
+            return;
+        }
+        let id = tab.id;
+        let request = tab.model.clone();
+        let path = tab.path.clone();
+        let name = tab.name.clone();
+        let ctx = self.run_ctx(name, path.clone());
+        let source = self
+            .tab()
+            .map(|t| self.graphql_source(t))
+            .unwrap_or_default();
+        if let Some(t) = self.tab_mut() {
+            t.graphql_source = source.clone();
+            t.graphql_schema = None;
+            t.schema_error = None;
+        }
+        let envs = self.project.envs.clone();
+        let active = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        let root = self.project.root.clone();
+        let cache = self.graphql_schemas.clone();
+        let tx = self.tx.clone();
+        if let Some((_, task)) = self.schema_job.take() {
+            task.abort();
+        }
+        self.schema_seq = self.schema_seq.wrapping_add(1);
+        let job = self.schema_seq;
+        let task = self.rt.spawn(async move {
+            let result = async {
+                let (request, scope) = tokio::task::spawn_blocking(move || {
+                    let (mut scope, _, failed) =
+                        runner::build_scope_checked(&envs, active.as_deref(), &runtime);
+                    let chain = runner::folder_chain(&root, path.as_deref())?;
+                    let request = runner::with_folders(&request, &chain, &mut scope);
+                    let mut check = request.clone();
+                    if let Request::Http(http) = &mut check {
+                        http.body = Body::None;
+                        http.scripts = Scripts::default();
+                    }
+                    if !runner::unresolved_loaded(&check, &scope, &failed).is_empty() {
+                        return Err("GraphQL introspection has unresolved variables".to_string());
+                    }
+                    Ok((request, scope))
+                })
+                .await
+                .map_err(|_| "GraphQL scope task failed".to_string())??;
+                let Request::Http(request) = request else {
+                    return Err("GraphQL introspection requires HTTP".into());
+                };
+                runner::fetch_schema(&ctx, &request, scope, &cache, refresh).await
+            }
+            .await;
+            let _ = tx.send(AppMsg::GraphqlSchema {
+                tab: id,
+                job,
+                source,
+                result,
+            });
+        });
+        self.schema_job = Some((job, task));
+        self.set_status("loading GraphQL schema", StatusKind::Info);
+    }
+
     // ----- gRPC schema --------------------------------------------------
 
     pub fn load_schema(&mut self, open_picker: bool, template: bool, refresh: bool) {

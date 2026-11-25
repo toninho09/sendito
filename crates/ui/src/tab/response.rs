@@ -90,6 +90,42 @@ pub(super) fn ws_stored(e: &sendito_pipeline::ws::Event) -> bool {
     }
 }
 
+/// One received MQTT message, as the Messages tab keeps it.
+#[derive(Debug, Clone)]
+pub struct MqttMsg {
+    pub at: std::time::Duration,
+    pub size: usize,
+    pub topic: String,
+    /// The payload as text (invalid UTF-8 is replaced).
+    pub text: String,
+    /// `topic qos=N [retain] payload`, on one line.
+    pub preview: String,
+}
+
+impl MqttMsg {
+    pub fn new(
+        at: std::time::Duration,
+        topic: String,
+        qos: u8,
+        retain: bool,
+        payload: &[u8],
+    ) -> Self {
+        let text = String::from_utf8_lossy(payload).into_owned();
+        let retain = if retain { " retain" } else { "" };
+        let preview = format!(
+            "{topic} qos={qos}{retain} {}",
+            text.replace(['\n', '\r'], " ")
+        );
+        Self {
+            at,
+            size: payload.len(),
+            topic,
+            text,
+            preview,
+        }
+    }
+}
+
 impl StreamMsg<'_> {
     pub fn doc(&self) -> Doc {
         Doc::from_bytes(
@@ -142,6 +178,14 @@ pub struct Response {
     pub grpc_events: VecDeque<sendito_pipeline::grpc::Event>,
     pub grpc_kind: Option<sendito_pipeline::grpc::CallKind>,
     pub ws_events: VecDeque<sendito_pipeline::ws::Event>,
+    pub sse_events: VecDeque<(
+        std::time::Duration,
+        sendito_pipeline::http::sse::SseEvent,
+        String,
+        usize,
+    )>,
+    /// MQTT messages: the payload as text (lossy UTF-8) and the list preview.
+    pub mqtt_messages: VecDeque<MqttMsg>,
     pub stream: StreamStats,
     /// Short outcome of the assertions, shown on the Results tab: "2/3 ✗", "3/3 ✓".
     pub results_badge: Option<String>,
@@ -181,6 +225,8 @@ impl Response {
             grpc_events: VecDeque::new(),
             grpc_kind: None,
             ws_events: VecDeque::new(),
+            sse_events: VecDeque::new(),
+            mqtt_messages: VecDeque::new(),
             stream: StreamStats::default(),
             results_badge: None,
             jq: None,
@@ -331,6 +377,40 @@ impl Response {
         }
     }
 
+    pub fn push_sse(
+        &mut self,
+        event: sendito_pipeline::http::sse::SseEvent,
+        at: std::time::Duration,
+        size: usize,
+        keep: usize,
+    ) {
+        self.stream.received(size, at);
+        let preview = format!(
+            "{} id={} retry={:?} {}",
+            event.event,
+            event.id,
+            event.retry_ms,
+            event.data.replace(['\n', '\r'], " ")
+        );
+        self.sse_events.push_back((at, event, preview, size));
+        while self.sse_events.len() > keep.max(1) {
+            self.sse_events.pop_front();
+            self.dropped_one();
+        }
+        self.message_arrived();
+    }
+
+    /// Adds one MQTT message and drops the oldest past `keep`.
+    pub fn push_mqtt(&mut self, msg: MqttMsg, keep: usize) {
+        self.stream.received(msg.size, msg.at);
+        self.mqtt_messages.push_back(msg);
+        while self.mqtt_messages.len() > keep.max(1) {
+            self.mqtt_messages.pop_front();
+            self.dropped_one();
+        }
+        self.message_arrived();
+    }
+
     /// The oldest message left the list: a paused selection keeps pointing
     /// at the same message.
     fn dropped_one(&mut self) {
@@ -374,7 +454,24 @@ impl Response {
             }),
             _ => None,
         });
-        grpc.chain(ws)
+        let sse = self
+            .sse_events
+            .iter()
+            .map(|(at, event, preview, size)| StreamMsg {
+                at: *at,
+                size: *size,
+                text: &event.data,
+                preview,
+                json: true,
+            });
+        let mqtt = self.mqtt_messages.iter().map(|m| StreamMsg {
+            at: m.at,
+            size: m.size,
+            text: &m.text,
+            preview: &m.preview,
+            json: true,
+        });
+        grpc.chain(ws).chain(sse).chain(mqtt)
     }
 
     /// The messages a stream kept, in order.

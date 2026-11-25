@@ -29,8 +29,8 @@ my-api/
 
 * The collection root is the directory that contains `.sendito/`. `sendito` with
   no argument searches upward from the current directory.
-* Every `*.toml` file under the root whose first keys include `kind = "http"` or
-  `kind = "grpc"` or `kind = "mcp"` is a request. Other `.toml` files (e.g. `Cargo.toml`) are ignored.
+* Every `*.toml` file under the root whose first keys include `kind = "http"`,
+  `"grpc"`, `"websocket"`, `"sse"`, `"mqtt"` or `"mcp"` is a request. Other `.toml` files (e.g. `Cargo.toml`) are ignored.
 * Hidden entries (starting with `.`) and the directories listed in
   `[collection] ignore` are skipped. Folders that only contain unrelated files are
   hidden; empty folders are shown (they are folders you created).
@@ -123,6 +123,7 @@ text = '''
 # type = "form"       → [[body.fields]] name, value, enabled
 # type = "multipart"  → [[body.parts]] name, value | file, filename, content_type, enabled
 # type = "file"       → path, content_type
+# type = "graphql"    → query, variables (JSON object text), operation_name
 
 [[scripts.pre]]                 # set a runtime variable before sending
 var = "ts"
@@ -160,7 +161,7 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
   of the rendered text (UTF-8); line breaks are rejected.
 * **Added headers**: `Host` and `Content-Length`/`Transfer-Encoding` (framing), and:
   * `Content-Type` from the body type when no enabled `Content-Type` header is
-    defined: `application/json` (json), the body's `content_type` (raw, if not
+    defined: `application/json` (json, graphql), the body's `content_type` (raw, if not
     empty), `application/x-www-form-urlencoded` (form), the file's `content_type`
     or `application/octet-stream` (file), `multipart/form-data; boundary=…`
     (multipart — this one replaces a user `Content-Type`, because the boundary must
@@ -223,6 +224,50 @@ Sendito sends exactly what the request defines, plus what HTTP framing requires:
   stay behind, as with curl without `--location-trusted`. A multipart body
   cannot be re-sent, so a 307 or 308 that would keep it is shown as received
   instead of being followed.
+
+### SSE transport rules
+
+The SSE transport adds `Accept: text/event-stream` only when no Accept
+header exists. It uses the HTTP TLS, proxy and redirect rules. Its timeout ends
+when the final response headers arrive, including after redirects. It requires
+HTTP 200 and `Content-Type: text/event-stream` (parameters are allowed).
+Only absent or `identity` Content-Encoding is accepted. It does not reconnect,
+send Last-Event-ID or apply the server's retry interval. Events have a 1 MiB
+limit. SSE is a separate request kind, not an HTTP body type.
+
+### GraphQL body
+
+`:graphqlschema` sends a separate POST introspection operation to the same URL.
+It keeps the request's headers, query parameters, authentication and transport
+options. The operation does not run request scripts or add history entries.
+It does not change the draft method or body. The cache key uses the draft method
+and resolved URL. Each command forces a refresh; a failed refresh removes the
+old schema. Introspection includes deprecated fields and six `ofType` levels.
+
+GraphQL uses an HTTP request with `[body] type = "graphql"`. It does not change
+its method, URL, auth or options.
+
+```toml
+kind = "http"
+method = "POST"
+url = "{{base_url}}/graphql"
+
+[body]
+type = "graphql"
+query = '''
+query Lookup($id: ID!) { hero(id: $id) { name } }
+'''
+variables = '{"id":"{{id}}"}'
+operation_name = "Lookup"
+```
+
+Every field supports placeholders. The wire body is compact JSON, in this order:
+`query`, `variables`, `operationName`. Empty variables and operation name fields
+are omitted. Variables must parse as a JSON object; otherwise the request stops
+before any connection or token request. A single CLI run exits `3` for this error.
+A draft can keep invalid variables text and reopen it unchanged.
+`Content-Type: application/json` is added unless an enabled header overrides it.
+The UI Body tab has Query, Variables and Operation name sections.
 
 ### Cookie jar
 
@@ -298,6 +343,145 @@ value = "Ana"
   in `-bin` (then the value is base64 and the decoded bytes are sent). The client
   also sends `content-type: application/grpc`, `te: trailers`,
   `user-agent: sendito/<version> tonic/<version>` and, with a deadline, `grpc-timeout`.
+
+## SSE request
+
+```toml
+kind = "sse"
+url = "{{base_url}}/events"
+
+[options]
+timeout_ms = 30000
+deadline_ms = 5000
+max_events = 10
+follow_redirects = true
+verify_tls = true
+cookies = true
+
+[[params]]
+name = "topic"
+value = "updates"
+
+[[headers]]
+name = "X-Client"
+value = "sendito"
+
+[auth]
+type = "bearer"
+token = "{{token}}"
+```
+
+The method is GET. SSE has no method or body field. Options are optional.
+The opening timeout defaults to `[sse] timeout_ms = 30000`; the deadline starts
+after opening. An absent deadline or event count imposes no such limit.
+The event count is a maximum; zero ends immediately after opening.
+Headers, auth, folder inheritance and scripts use the HTTP rules.
+End scripts use the last event data, the opening status and response headers.
+Session end, deadline, maximum count and server EOF are successful outcomes.
+Transport/validation errors fail the session. A failed assertion fails a run.
+Draft/session/history files preserve the `sse` kind.
+
+curl exports use `-N`. Exports omit the opening timeout because curl's total
+timeout and the .http client's timeout do not have the same meaning.
+
+## MQTT request
+
+```toml
+kind = "mqtt"
+url = "mqtts://{{broker}}"       # mqtt:// = TCP (port 1883), mqtts:// = TLS (port 8883)
+client_id = "sensor-1"           # optional: empty generates sendito-<8 hex>
+username = "{{mqtt_user}}"       # optional: wins over [auth] basic
+password = "{{mqtt_password}}"
+protocol = "5"                   # "3.1.1" (default) or "5"
+clean_session = false            # default true (v5: clean start)
+keep_alive_s = 30                # default 60
+
+[options]
+timeout_ms = 10000               # wait for CONNACK (omit: [mqtt] timeout_ms)
+deadline_ms = 60000              # optional: ends the session
+verify_tls = true                # default true
+
+[[subscriptions]]                # subscribed in file order after CONNACK
+topic = "sensors/+/temperature"  # + and # wildcards
+qos = 1                          # 0 (default), 1 or 2
+enabled = true                   # default true
+
+[[publish]]                      # sent in file order after every SUBACK
+topic = "sensors/kitchen/set"
+payload = '{"on": true}'         # UTF-8 text
+qos = 2
+retain = true                    # default false
+
+[[publish]]
+topic = "raw"
+payload_base64 = "AAEC/w=="      # bytes; set payload or payload_base64, not both
+
+[last_will]                      # optional: the broker sends it on an ungraceful close
+topic = "status/sensor-1"
+payload = "offline"              # or payload_base64
+qos = 1
+retain = true
+
+[auth]                           # inherit (default), none or basic only
+type = "basic"
+username = "ana"
+password = "{{mqtt_password}}"
+
+[[scripts.assert]]               # status = 0 (CONNACK accepted); header = connack,
+from = "jsonpath"                #   session-present; jsonpath = the last payload
+expr = "$.celsius"
+op = "lt"
+value = "30"
+```
+
+* The URL is `mqtt://host[:port]` or `mqtts://host[:port]`. A URL without a
+  scheme uses `mqtt://`. The URL has no path, query, fragment or credentials.
+  IPv6 hosts go in brackets (`mqtt://[::1]:1883`).
+* An empty `client_id` sends `sendito-` and 8 random hex digits, new for each
+  session.
+* Credentials: when `username` is set, `username` and `password` are sent. When
+  it is empty, a Basic auth (the request's own, or the one it inherits from a
+  folder) gives them. Other auth kinds stop the session before it connects; the
+  file still opens, so the auth can be changed.
+* Folder scripts and auth apply. Folder headers do not apply, because MQTT has
+  no headers; the CLI and the Log tab show a note when a folder sets headers.
+* Every text field may hold `{{placeholders}}`. A `payload_base64` value is
+  decoded after its placeholders are rendered.
+* A deadline, a disconnect and a cancel end the session. Without a deadline the
+  session runs until a disconnect or a cancel. A refused CONNACK, a TLS error,
+  a CONNACK timeout and a transport error fail the session.
+* End scripts run only when the broker accepted the connection. They see
+  `status` = 0, the headers `connack: Connection Accepted` and
+  `session-present: true|false`, and the last payload received as the body.
+* In the UI, Send on an open session publishes the selected row of the Publish
+  tab; `Ctrl+W d` disconnects and `Ctrl+W x` cancels.
+* MQTT requests have no curl or `.http` export.
+
+### What goes on the wire
+
+One TCP connection, with TLS for `mqtts://`. TLS uses the same `[http.tls]`
+material as HTTP (custom CA, client certificate) and `[options] verify_tls`.
+No proxy is used and MQTT over WebSocket is not available (`docs/DEBT.md`).
+
+1. CONNECT with the protocol level (4 for 3.1.1, 5 for v5), the clean
+   session (v5: clean start) flag, the keep-alive, the client ID, the Last Will
+   when `[last_will]` is set, and the user name and password when there are
+   credentials. v5 sends no properties.
+2. After CONNACK: one SUBSCRIBE for each enabled subscription, in file order.
+   A topic filter where `+` or `#` does not fill a whole level, or where `#`
+   is not the last level, stops the session before it connects.
+3. After the SUBACK of every subscription: one PUBLISH for each `[[publish]]`,
+   in file order, with the QoS and retain flag of the row. The payload is the
+   UTF-8 text, or the decoded `payload_base64` bytes. A subscription that the
+   broker refuses (SUBACK failure code) shows "subscription refused" in the
+   log and on stderr. The session continues.
+4. The QoS 1 and 2 acknowledgements (PUBACK, PUBREC, PUBREL, PUBCOMP) and
+   PINGREQ follow the protocol.
+5. A deadline or a disconnect sends DISCONNECT, so the broker drops the Last
+   Will. A cancel closes the connection without DISCONNECT, so the broker
+   publishes the Last Will.
+
+There is no automatic reconnect.
 
 ## WebSocket request
 
@@ -626,6 +810,12 @@ deadline_ms = 0          # default deadline when a request sets none; 0 = none
 [websocket]
 timeout_ms = 10000       # default handshake timeout when a request sets none
                          # (0 = no limit: wait for the server)
+
+[sse]
+timeout_ms = 30000       # opening only; the event stream has no total timeout
+
+[mqtt]
+timeout_ms = 30000       # wait for CONNACK when a request sets none (0 = no limit)
 
 [mcp]
 timeout_ms = 30000

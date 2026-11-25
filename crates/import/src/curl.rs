@@ -554,6 +554,9 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
     };
     let mut r = resolve_http(&no_auth, sc, base_dir);
     crate::preserve_export_templates(&no_auth, sc, &mut r);
+    if let ResolvedBody::Invalid(message) = &r.body {
+        return format!("# cannot export: {message}");
+    }
     let own_authorization = r
         .headers
         .iter()
@@ -676,6 +679,7 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
                 }
             }
         }
+        ResolvedBody::Invalid(_) => {}
     }
     if r.follow_redirects {
         args.push("-L".into());

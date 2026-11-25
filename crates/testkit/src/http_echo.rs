@@ -309,6 +309,9 @@ where
         if let Ok(mut c) = captures.lock() {
             c.push(cap.clone());
         }
+        if crate::sse_echo::serve(&mut sock, &cap).await? {
+            return Ok(());
+        }
         let (status, extra, body, delay) = respond(&cap, port);
         if let Some(d) = delay {
             tokio::time::sleep(d).await;
@@ -459,12 +462,12 @@ fn respond(c: &Captured, port: u16) -> Reply {
     }
 }
 
-const DIGEST_REALM: &str = "corpus";
-const DIGEST_NONCE: &str = "corpus-nonce";
+pub(crate) const DIGEST_REALM: &str = "corpus";
+pub(crate) const DIGEST_NONCE: &str = "corpus-nonce";
 
 /// Checks a Digest answer on its own (not with Sendito's code): SHA-256,
 /// `qop=auth`, the nonce this server sent.
-fn digest_ok(header: &str, user: &str, pass: &str, method: &str) -> bool {
+pub(crate) fn digest_ok(header: &str, user: &str, pass: &str, method: &str) -> bool {
     use sha2::{Digest, Sha256};
     let Some(params) = header.strip_prefix("Digest ") else {
         return false;

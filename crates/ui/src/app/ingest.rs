@@ -167,6 +167,14 @@ impl App {
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
             AppMsg::Ws { tab, update } => self.on_ws(tab, update),
+            AppMsg::Sse { tab, update, ack } => {
+                self.on_sse(tab, update);
+                let _ = ack.send(());
+            }
+            AppMsg::Mqtt { tab, update, ack } => {
+                self.on_mqtt(tab, update);
+                let _ = ack.send(());
+            }
             AppMsg::Mcp { tab, update } => self.on_mcp(tab, update),
             AppMsg::OAuthUrl { job, url } => {
                 if self.oauth_login.as_ref().is_some_and(|(id, _)| *id == job) {
@@ -381,6 +389,43 @@ impl App {
                     if open_picker {
                         self.open_grpc_method_picker();
                     }
+                }
+            }
+            AppMsg::GraphqlSchema {
+                tab,
+                job,
+                source,
+                result,
+            } => {
+                if !self.schema_job.as_ref().is_some_and(|(id, _)| *id == job) {
+                    return;
+                }
+                self.schema_job = None;
+                let current = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == tab)
+                    .map(|t| self.graphql_source(t));
+                if current.as_deref() != Some(source.as_str()) {
+                    return;
+                }
+                if let Some(t) = self.tab_by_id(tab) {
+                    t.schema_error = result.as_ref().err().cloned();
+                    t.graphql_schema = result.as_ref().ok().cloned();
+                }
+                if self.complete.is_some() {
+                    if let Some(c) = &mut self.complete {
+                        c.loading = None;
+                        c.failed = result.as_ref().err().map(|_| "schema");
+                    }
+                    self.refresh_complete();
+                }
+                match result {
+                    Ok(schema) => self.set_status(
+                        format!("schema loaded: {} types", schema.types.len()),
+                        StatusKind::Ok,
+                    ),
+                    Err(e) => self.set_status(format!("schema: {e}"), StatusKind::Error),
                 }
             }
             AppMsg::History(h) => {

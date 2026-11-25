@@ -337,9 +337,10 @@ impl App {
                     self.complete = None;
                     match (kind, part) {
                         // Enter on any endpoint input sends.
-                        (Kind::Http | Kind::Ws | Kind::Grpc | Kind::Mcp, 1) => {
-                            self.dispatch(Action::Send)
-                        }
+                        (
+                            Kind::Http | Kind::Ws | Kind::Sse | Kind::Mqtt | Kind::Grpc | Kind::Mcp,
+                            1,
+                        ) => self.dispatch(Action::Send),
                         // Enter on the method chip opens the full list.
                         (Kind::Grpc, 0) => self.open_grpc_method_picker(),
                         // Enter on the tool chip discovers and lists the tools.

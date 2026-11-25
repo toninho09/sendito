@@ -126,16 +126,48 @@ pub(super) fn set_cookie_headers(headers: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+struct Exchange {
+    head: HttpResponse,
+    stream: Option<sendito_http::HttpStream>,
+}
+impl std::ops::Deref for Exchange {
+    type Target = HttpResponse;
+    fn deref(&self) -> &HttpResponse {
+        &self.head
+    }
+}
+impl std::ops::DerefMut for Exchange {
+    fn deref_mut(&mut self) -> &mut HttpResponse {
+        &mut self.head
+    }
+}
+pub(super) struct HttpRun {
+    pub outcome: HttpOutcome,
+    pub stream: Option<sendito_http::HttpStream>,
+    pub secrets: Vec<String>,
+}
 /// Sends one HTTP request; with the cookie jar, each redirect hop goes
 /// through it.
-pub(super) async fn send_http(
+async fn send_http(
     resolved: &sendito_core::resolve::ResolvedHttp,
     ctx: &RunCtx,
     jar: Option<&JarHops<'_>>,
-) -> Result<sendito_http::HttpResponse, sendito_http::HttpError> {
-    match jar {
-        Some(j) => sendito_http::send_with(resolved, &ctx.send, Some(j)).await,
-        None => sendito_http::send(resolved, &ctx.send).await,
+    streaming: bool,
+) -> Result<Exchange, sendito_http::HttpError> {
+    let cookies = jar.map(|j| j as &dyn sendito_http::RedirectCookies);
+    if streaming {
+        let stream = sendito_http::open_stream(resolved, &ctx.send, cookies)
+            .await?
+            .into_stream();
+        Ok(Exchange {
+            head: stream.head(),
+            stream: Some(stream),
+        })
+    } else {
+        Ok(Exchange {
+            head: sendito_http::send_with(resolved, &ctx.send, cookies).await?,
+            stream: None,
+        })
     }
 }
 
@@ -143,14 +175,41 @@ pub(super) async fn send_http(
 pub async fn exec_http(
     ctx: &RunCtx,
     req: &HttpRequest,
-    mut scope: Scope,
+    scope: Scope,
     scope_errors: Vec<String>,
 ) -> HttpOutcome {
+    exec_http_inner(ctx, req, scope, scope_errors, false)
+        .await
+        .outcome
+}
+pub(super) async fn exec_http_inner(
+    ctx: &RunCtx,
+    req: &HttpRequest,
+    mut scope: Scope,
+    scope_errors: Vec<String>,
+    streaming: bool,
+) -> HttpRun {
     let mut results = ScriptResults {
         pre: script::run_pre(&req.scripts.pre, &mut scope),
         ..Default::default()
     };
     let mut resolved = resolve_http(req, &scope, &ctx.root);
+    if let sendito_core::resolve::ResolvedBody::Invalid(message) = &resolved.body {
+        let message = sendito_core::vars::scrub(message, &scope.secret_values());
+        resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message.clone());
+        return HttpRun {
+            stream: None,
+            secrets: Vec::new(),
+            outcome: HttpOutcome {
+                resolved,
+                response: Err(message),
+                doc: Doc::default(),
+                body_size: 0,
+                scripts: results,
+                scope_errors,
+            },
+        };
+    }
     let cookies_on = req.options.cookies.unwrap_or(ctx.cookie_jar);
     let jar_env = ctx.env.as_deref().unwrap_or(COLLECTION_ENV);
     let mut cookie_secrets = Vec::new();
@@ -241,6 +300,7 @@ pub async fn exec_http(
         on: cookies_on,
         env: jar_env,
         hops: &jar_hops,
+        streaming,
     };
     // One timeout covers the first send, a token refresh and the retry.
     let budget = resolved
@@ -249,12 +309,11 @@ pub async fn exec_http(
         .unwrap_or(ctx.send.default_timeout);
     let started = Instant::now();
     let mut sent = match cookie_setup.and(auth_setup) {
-        Ok(()) => send_http(&resolved, ctx, cookies_on.then_some(&jar_hops)).await,
+        Ok(()) => send_http(&resolved, ctx, cookies_on.then_some(&jar_hops), streaming).await,
         Err(e) => Err(e),
     };
     // A 401 from the origin the request was sent to.
-    let unauthorized = |sent: &Result<sendito_http::HttpResponse, sendito_http::HttpError>,
-                        url: &str| {
+    let unauthorized = |sent: &Result<Exchange, sendito_http::HttpError>, url: &str| {
         sent.as_ref().is_ok_and(|r| {
             r.status == 401
                 && url::Url::parse(url)
@@ -278,7 +337,7 @@ pub async fn exec_http(
             Ok(Ok(token)) if !left.is_zero() => {
                 resolved.timeout_ms = Some((left.as_millis() as u64).max(1));
                 cookie_secrets.push(token.clone());
-                let first = first.clone();
+                let first = first.head.clone();
                 retry_401(
                     ctx,
                     &mut resolved,
@@ -322,7 +381,7 @@ pub async fn exec_http(
                         1,
                     );
                     cookie_secrets.push(value.clone());
-                    let first = first.clone();
+                    let first = first.head.clone();
                     sent = retry_401(
                         ctx,
                         &mut resolved,
@@ -348,6 +407,22 @@ pub async fn exec_http(
         {
             resolved.notes.push(format!("cookies not stored: {e}"));
         }
+    }
+    if streaming && let Ok(exchange) = &mut sent {
+        let mut secrets = http_secrets(req, &scope);
+        secrets.extend(cookie_secrets);
+        return HttpRun {
+            stream: exchange.stream.take(),
+            secrets,
+            outcome: HttpOutcome {
+                resolved,
+                response: Ok(exchange.head.clone()),
+                doc: Doc::default(),
+                body_size: 0,
+                scripts: results,
+                scope_errors,
+            },
+        };
     }
     let mut body_size = 0;
     let (response, doc) = match sent {
@@ -409,7 +484,7 @@ pub async fn exec_http(
                 None,
             );
             write_history(ctx, &entry).await;
-            (Ok(resp), doc)
+            (Ok(resp.head), doc)
         }
         Err(e) => {
             let mut secrets = http_secrets(req, &scope);
@@ -438,13 +513,17 @@ pub async fn exec_http(
     for n in &mut resolved.notes {
         *n = sendito_core::vars::scrub(n, &shown);
     }
-    HttpOutcome {
-        resolved,
-        response,
-        doc,
-        body_size,
-        scripts: results,
-        scope_errors,
+    HttpRun {
+        stream: None,
+        secrets: Vec::new(),
+        outcome: HttpOutcome {
+            resolved,
+            response,
+            doc,
+            body_size,
+            scripts: results,
+            scope_errors,
+        },
     }
 }
 
@@ -453,6 +532,7 @@ struct Jar<'a> {
     on: bool,
     env: &'a str,
     hops: &'a JarHops<'a>,
+    streaming: bool,
 }
 
 /// Sends `resolved` again after a `401`, with `authorization` as its
@@ -466,7 +546,7 @@ async fn retry_401(
     jar: &Jar<'_>,
     jar_cookie: &mut Option<usize>,
     secrets: &mut Vec<String>,
-) -> Result<sendito_http::HttpResponse, sendito_http::HttpError> {
+) -> Result<Exchange, sendito_http::HttpError> {
     match resolved
         .headers
         .iter_mut()
@@ -513,7 +593,7 @@ async fn retry_401(
             Err(e) => resolved.notes.push(format!("cookie jar: {e}")),
         }
     }
-    send_http(resolved, ctx, jar.on.then_some(jar.hops)).await
+    send_http(resolved, ctx, jar.on.then_some(jar.hops), jar.streaming).await
 }
 
 /// The path and query of a URL, as the request line has them (Digest `uri`).
@@ -601,6 +681,7 @@ async fn payload_sha256(body: &sendito_core::resolve::ResolvedBody) -> Result<St
              use a file or raw body"
                 .into(),
         ),
+        ResolvedBody::Invalid(msg) => Err(msg.clone()),
     }
 }
 

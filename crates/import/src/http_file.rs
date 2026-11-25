@@ -238,6 +238,7 @@ pub fn export(
             }
             out.push_str(&format!("--{boundary}--\n"));
         }
+        ResolvedBody::Invalid(message) => return format!("# cannot export: {message}\n"),
     }
     out
 }

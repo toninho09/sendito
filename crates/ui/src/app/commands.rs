@@ -297,6 +297,8 @@ impl App {
                     Kind::Http => "HTTP requests",
                     Kind::Grpc => "gRPC requests",
                     Kind::Ws => "WebSocket requests",
+                    Kind::Sse => "SSE requests",
+                    Kind::Mqtt => "MQTT requests",
                     Kind::Mcp => "MCP requests",
                     Kind::Folder => "folder settings",
                 };
@@ -459,6 +461,8 @@ impl App {
             "q!" | "quit!" => self.quit = true,
             "new" => self.new_tab(Request::new_http()),
             "newgrpc" => self.new_tab(Request::new_grpc()),
+            "newsse" => self.new_tab(Request::new_sse()),
+            "newmqtt" => self.new_tab(Request::new_mqtt()),
             "newws" => self.new_tab(Request::new_ws()),
             "newmcp" => self.new_tab(Request::new_mcp()),
             "mcpservers" if arg == "edit" => self.open_mcp_editor(),
@@ -482,7 +486,10 @@ impl App {
                 }
             }
             "authtype" => {
-                if self.tab_kind_in(&[Kind::Http, Kind::Grpc, Kind::Ws], "the auth type") {
+                if self.tab_kind_in(
+                    &[Kind::Http, Kind::Grpc, Kind::Ws, Kind::Sse, Kind::Mqtt],
+                    "the auth type",
+                ) {
                     self.open_choice_picker(Field::AuthKind);
                 }
             }
@@ -534,6 +541,7 @@ impl App {
             }
             "template" => self.load_schema(false, true, false),
             "reload" => self.load_schema(false, false, true),
+            "graphqlschema" => self.load_graphql_schema(true),
             "settings" => self.open_settings(SettingId::Theme),
             "oauth" => self.open_oauth_editor(),
             "keymap" => self.open_keymap_editor(),

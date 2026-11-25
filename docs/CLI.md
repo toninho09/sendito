@@ -97,6 +97,46 @@ after it, so a login followed by its dependent calls runs as one command.
 
 Folder runs honour `[history]` the same way single requests do.
 
+### SSE sessions
+
+For `kind = "sse"`, stdout contains each event's data, one line per data line.
+Connection and end messages go to stderr. `-i` includes opening response headers.
+The client exits successfully on server EOF, maximum event count or session deadline.
+Invalid Content-Type, status, compression and transport errors return exit code 2.
+A failed assertion returns 1; unresolved variables return 3. Ctrl+C cancels the session.
+
+`--report json` also works for a single SSE request. Its result contains `kind`,
+`outcome`, `events`, `status` and `failed_asserts`. Data does not precede the JSON.
+Folder report entries for SSE contain `events`; variables extracted from the last
+event are available to the next request. `--no-cookies` also applies to SSE.
+
+Set `[sse] timeout_ms = 30000` in config for the default opening timeout.
+Use request `[options] deadline_ms` or `max_events` to bound a live session.
+
+### MQTT sessions
+
+For `kind = "mqtt"`, stdout contains each received payload as one block: the
+payload bytes as received, then a line break when the payload does not end with
+one. `-i` adds a `# <topic> qos=<n>[ retain][ dup]` line before each payload.
+Connection, subscription, publish and end messages go to stderr, and a folder
+that sets headers prints a note (MQTT has no headers).
+
+The session ends successfully at the request's `[options] deadline_ms`. Without
+a deadline it runs until Ctrl+C, which cancels it and returns exit code 2 (as
+for SSE). A refused CONNACK, a CONNACK timeout, a TLS error, a transport error
+or an invalid request (URL, auth kind, base64 payload) returns exit code 2 with
+a short message on stderr. A failed assertion returns 1; unresolved variables
+return 3.
+
+`--report json` also works for a single MQTT request. Its result contains
+`kind`, `outcome`, `messages`, `status` and `failed_asserts`. Folder report
+entries for MQTT contain `messages`; variables extracted from the last payload
+are available to the next request.
+
+Set `[mqtt] timeout_ms = 30000` in config for the default CONNACK timeout
+(0 = no limit). `sendito curl` and `sendito http` refuse MQTT requests with exit
+code 3.
+
 ### The JSON report
 
 With `--report json` the summary is printed to stdout:
@@ -252,7 +292,7 @@ available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 |---:|---|
 | `0` | Success: every assertion passed (and, for a folder run, every request succeeded) |
 | `1` | A failed assertion, or an MCP tool returned `isError: true` |
-| `2` | The request failed: network error, a gRPC status other than `OK`, or a WebSocket close other than `1000` |
+| `2` | The request failed: network error, a gRPC status other than `OK`, a WebSocket close other than `1000`, an SSE transport/response validation error, or an MQTT session error (refused CONNACK, CONNACK timeout, transport error) |
 | `3` | Usage error, including unresolved variables |
 
 For a folder run the exit code is the worst of the four over all requests:

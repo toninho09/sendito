@@ -1,0 +1,12 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-08"
+
+[options]
+deadline_ms = 300
+
+[[publish]]
+topic = "corpus/retained"
+payload = "kept by the broker"
+qos = 1
+retain = true

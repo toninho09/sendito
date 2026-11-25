@@ -135,6 +135,33 @@ pub fn import_path(path: &std::path::Path) -> Result<(ImportFormat, ImportResult
     }
 }
 
+/// HTTP fields for curl and .http exports. SSE keeps an unbuffered transport.
+pub fn http_export_request(
+    request: &sendito_core::Request,
+    scope: &sendito_core::Scope,
+) -> Option<sendito_core::HttpRequest> {
+    match request {
+        sendito_core::Request::Http(http) => Some(http.clone()),
+        sendito_core::Request::Sse(sse) => {
+            let mut http = sse.http_request();
+            http.options.timeout_ms = None;
+            if !http.headers.iter().any(|h| {
+                h.enabled
+                    && scope
+                        .render(&h.name)
+                        .text
+                        .trim()
+                        .eq_ignore_ascii_case("accept")
+            }) {
+                http.headers
+                    .push(sendito_core::KeyValue::new("Accept", "text/event-stream"));
+            }
+            Some(http)
+        }
+        _ => None,
+    }
+}
+
 /// Render URL query and form fields while keeping unresolved placeholders
 /// readable instead of percent-encoding their braces in exported commands.
 pub(crate) fn preserve_export_templates(

@@ -161,6 +161,34 @@ allows `accept` as a transport header.
   timeout before the first frame, and terminals that do not answer (or multiplexers
   that swallow the reply) must not delay start-up. Set `theme` explicitly meanwhile.
 
+## SSE transport limits
+
+SSE does not reconnect or send Last-Event-ID. Retry values are informational.
+The transport rejects compressed streams and limits each event to 1 MiB.
+curl and .http exports omit the opening timeout. Their timeout settings do not
+match an SSE opening-only timeout. SSE has no watch mode or saved response examples.
+
+## GraphQL body limits
+
+GraphQL currently sends operations through HTTP POST or the method in the file.
+Query completion uses a heuristic parser, not a GraphQL AST. Subscriptions, GET transport,
+persisted queries, SDL files, a schema tab and schema-based variable validation
+are not implemented.
+
+## MQTT limits
+
+MQTT has no WebSocket transport and no HTTP proxy. It does not reconnect after
+a drop. Version 5 properties and enhanced authentication are not exposed.
+MQTT requests have no curl or `.http` export, because neither format can
+describe a session. In the TUI, the Publish tab edits each payload in a
+one-line table cell; a payload with line breaks is kept, but it shows on one
+line.
+The `rumqttc` crate pins `rustls-webpki` 0.102, which has five advisories
+(`RUSTSEC-2026-0049`, `-0098`, `-0099`, `-0104`, `-0382`). Sendito always
+passes `TlsConfiguration::Rustls` with its own rustls 0.23 configuration, so
+the 0.102 verifier is never used. `deny.toml` ignores those advisories until
+`rumqttc` accepts `rustls-webpki` 0.103.
+
 ## 4. Housekeeping
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a

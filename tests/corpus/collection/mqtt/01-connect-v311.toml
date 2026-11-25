@@ -1,0 +1,6 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-01"
+
+[options]
+deadline_ms = 300

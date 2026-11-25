@@ -27,6 +27,7 @@ sendito-store = { path = "crates/store" }
 sendito-import = { path = "crates/import" }
 sendito-ui = { path = "crates/ui" }
 sendito-ws = { path = "crates/ws" }
+sendito-mqtt = { path = "crates/mqtt" }
 sendito-widgets = { path = "crates/widgets" }
 sendito-testkit = { path = "crates/testkit" }
 
@@ -105,12 +106,13 @@ sendito-http.workspace = true
 sendito-grpc.workspace = true
 sendito-mcp.workspace = true
 sendito-ws.workspace = true
+sendito-mqtt.workspace = true
 sendito-store.workspace = true
 sendito-import.workspace = true
 sendito-ui.workspace = true
 sendito-pipeline.workspace = true
 clap.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 serde_json.workspace = true
 
 [dev-dependencies]

@@ -5,6 +5,17 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+# rumqttc 0.25.1 pins rustls-webpki 0.102.8, which has no fixed 0.102 release.
+# Sendito always passes TlsConfiguration::Rustls with its own rustls 0.23
+# ClientConfig, so the 0.102 verifier is never used. Remove these ignores when
+# rumqttc allows rustls-webpki 0.103. See docs/DEBT.md.
+ignore = [
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0382",
+]
 
 [licenses]
 version = 2

@@ -1,0 +1,11 @@
+protocol 3.1.1 client-id corpus-04
+< CONNECT protocol 3.1.1 client-id corpus-04 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< SUBSCRIBE topic corpus/qos1 qos 1
+> SUBACK granted [1]
+< PUBLISH topic corpus/qos1 qos 1 retain false payload {"n":1}
+> PUBACK pkid 2
+> PUBLISH topic corpus/qos1 qos 1 retain false payload {"n":1}
+< DISCONNECT 
+### message {"topic":"corpus/qos1","qos":1,"retain":false,"payload":"{\"n\":1}"}
+### done: 1 messages, deadline

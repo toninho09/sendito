@@ -41,6 +41,10 @@ impl App {
         // On an open client/bidi stream or WebSocket session, Send pushes the
         // editor content as more input.
         if let Some(r) = &tab.running {
+            if r.streaming_input && tab.ed.kind == Kind::Mqtt {
+                self.mqtt_publish_selected();
+                return;
+            }
             if r.streaming_input {
                 let ws = tab.ed.kind == Kind::Ws;
                 let json = tab.ed.message.text();
@@ -91,6 +95,7 @@ impl App {
             }
         };
         let mut names = self.names.clone();
+        let folder_note = sendito_core::inherit::ignored_headers_note(&tab.model, &chain);
         let req = runner::with_folders(&tab.model, &chain, &mut names);
         if let Request::Grpc(g) = &req
             && (g.service.is_empty() || g.method.is_empty())
@@ -168,6 +173,9 @@ impl App {
             resp.summary.status = String::new();
             tab.response = Some(resp);
         }
+        if let (Some(note), Some(resp)) = (&folder_note, tab.response.as_mut()) {
+            resp.messages.doc.append_text(&format!("note: {note}\n"));
+        }
         // A new request makes earlier messages stale.
         self.status = None;
         if edited && !from_watch {
@@ -182,6 +190,12 @@ impl App {
         let runtime = self.runtime.clone();
         let tx = self.tx.clone();
         let then = match req {
+            Request::Sse(s) => ScopeThen::Sse {
+                tab: id,
+                req: Box::new(s),
+                name,
+                path,
+            },
             Request::Http(h) => ScopeThen::Http {
                 tab: id,
                 req: Box::new(h),
@@ -198,6 +212,12 @@ impl App {
             Request::Ws(w) => ScopeThen::Ws {
                 tab: id,
                 req: Box::new(w),
+                name,
+                path,
+            },
+            Request::Mqtt(m) => ScopeThen::Mqtt {
+                tab: id,
+                req: Box::new(m),
                 name,
                 path,
             },
@@ -297,6 +317,8 @@ impl App {
             schemas: self.schemas.clone(),
             grpc_deadline_ms: self.project.config.grpc.deadline_ms,
             ws_timeout_ms: self.project.config.websocket.timeout_ms,
+            sse_timeout_ms: self.project.config.sse.timeout_ms,
+            mqtt_timeout_ms: self.project.config.mqtt.timeout_ms,
             mask_echoed_secrets: true,
             cookie_jar: self.project.config.http.cookie_jar,
             oauth: Some(runner::OAuthRunInfo::of(&self.project)),
@@ -306,6 +328,74 @@ impl App {
     pub(super) fn start_with_scope(&mut self, scope: Scope, errors: Vec<String>, then: ScopeThen) {
         let tx = self.tx.clone();
         match then {
+            ScopeThen::Sse {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let (utx, mut urx) = mpsc::channel(64);
+                let (control, controls) = mpsc::unbounded_channel();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_sse(&ctx, &req, scope, errors, utx, controls);
+                    let forward = async {
+                        while let Some(update) = urx.recv().await {
+                            let (ack, received) = tokio::sync::oneshot::channel();
+                            if tx.send(AppMsg::Sse { tab, update, ack }).is_err() {
+                                break;
+                            }
+                            if received.await.is_err() {
+                                break;
+                            }
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                    r.control = Some(control);
+                }
+            }
+            ScopeThen::Mqtt {
+                tab,
+                req,
+                name,
+                path,
+            } => {
+                if self.tabs.iter().all(|t| t.id != tab || t.running.is_none()) {
+                    return;
+                }
+                let ctx = self.run_ctx(name, path);
+                let (utx, mut urx) = mpsc::channel(64);
+                let (control, controls) = mpsc::unbounded_channel();
+                let task = self.rt.spawn(async move {
+                    let run = runner::exec_mqtt(&ctx, &req, scope, errors, utx, controls);
+                    let forward = async {
+                        while let Some(update) = urx.recv().await {
+                            let (ack, received) = tokio::sync::oneshot::channel();
+                            if tx.send(AppMsg::Mqtt { tab, update, ack }).is_err() {
+                                break;
+                            }
+                            if received.await.is_err() {
+                                break;
+                            }
+                        }
+                    };
+                    tokio::join!(run, forward);
+                });
+                if let Some(t) = self.tab_by_id(tab)
+                    && let Some(r) = &mut t.running
+                {
+                    r.task = task;
+                    r.control = Some(control);
+                }
+            }
             ScopeThen::Http {
                 tab,
                 req,
@@ -466,6 +556,8 @@ impl App {
         if let Some(c) = &r.control {
             let _ = c.send(match kind {
                 Kind::Ws => Control::Ws(WsControl::Cancel),
+                Kind::Sse => Control::Sse(runner::SseControl::Cancel),
+                Kind::Mqtt => Control::Mqtt(runner::MqttControl::Cancel),
                 _ => Control::Grpc(GrpcControl::Cancel),
             });
             return;
@@ -488,6 +580,24 @@ impl App {
 
     pub(super) fn end_stream(&mut self) {
         let Some(t) = self.tab_mut() else { return };
+        if t.ed.kind == Kind::Mqtt {
+            match t.running.as_ref().and_then(|r| r.control.as_ref()) {
+                Some(control) => {
+                    let _ = control.send(Control::Mqtt(runner::MqttControl::Disconnect));
+                    self.set_status("disconnecting", StatusKind::Info);
+                }
+                None => self.set_status("no open stream or session", StatusKind::Info),
+            }
+            return;
+        }
+        if t.ed.kind == Kind::Sse {
+            if let Some(r) = &t.running
+                && let Some(control) = &r.control
+            {
+                let _ = control.send(Control::Sse(runner::SseControl::End));
+            }
+            return;
+        }
         match t.running.as_mut() {
             Some(r) if r.streaming_input => {
                 let ws = t.ed.kind == Kind::Ws;

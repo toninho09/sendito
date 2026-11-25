@@ -6,7 +6,7 @@ use crate::*;
 #[command(
     name = "sendito",
     version,
-    about = "Terminal API client for HTTP, gRPC, WebSocket and MCP tools",
+    about = "Terminal API client for HTTP, gRPC, WebSocket, SSE and MCP tools",
     args_conflicts_with_subcommands = true
 )]
 pub(crate) struct Cli {

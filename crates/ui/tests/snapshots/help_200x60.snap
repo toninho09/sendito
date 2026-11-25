@@ -4,27 +4,29 @@ expression: screen
 ---
  sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
 ╭ Re╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮───╮
-│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/243 · ↑↓ PgUp PgDn   ┃   │
+│▸ O│ Search ▍  (type to filter the keys)                                                                                                                              line 1/248 · ↑↓ PgUp PgDn   ┃   │
 │▸ U│                                                                                                                                                                                              ┃   │
-│  G│ All keys, including any you changed in the config.                                           │   N                            New folder in the selected folder                              ┃   │
-│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   r, F2                        Rename the selected item                                       ┃   │
-│   │                                                                                              │   s                            Edit the settings of the selected folder (headers, auth,       ┃   │
-│   │ ── Global ──                                                                                 │                                variables and scripts its requests inherit)                    ┃   │
-│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   d                            Duplicate the selected item                                    ┃   │
-│   │   Ctrl+W x                     Cancel the running request or stream                          │   Delete, x                    Delete the selected item (asks first)                          ┃   │
-│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   m                            Move the selected item to another folder                       ┃   │
-│   │   Ctrl+W m                     Re-send the active request on an interval (watch)             │   /                            Filter the tree by name                                        ┃   │
-│   │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   Up                           Move up                                                        ┃   │
-│   │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   Down                         Move down                                                      ┃   │
-│   │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   PageUp                       Page up                                                        ┃   │
-│   │   Ctrl+W g                     Open a new unsaved gRPC request tab                           │   PageDown                     Page down                                                      ┃   │
-│   │   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │   Home                         Go to the first line                                           ┃   │
+│  G│ All keys, including any you changed in the config.                                           │   Left                         Collapse folder or go to parent                                ┃   │
+│  G│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   n                            New request in the selected folder                             ┃   │
+│   │                                                                                              │   N                            New folder in the selected folder                              ┃   │
+│   │ ── Global ──                                                                                 │   r, F2                        Rename the selected item                                       ┃   │
+│   │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   s                            Edit the settings of the selected folder (headers, auth,       ┃   │
+│   │   Ctrl+W x                     Cancel the running request or stream                          │                                variables and scripts its requests inherit)                    ┃   │
+│   │   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   d                            Duplicate the selected item                                    ┃   │
+│   │   Ctrl+W m                     Re-send the active request on an interval (watch)             │   Delete, x                    Delete the selected item (asks first)                          ┃   │
+│   │   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   m                            Move the selected item to another folder                       ┃   │
+│   │   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   /                            Filter the tree by name                                        ┃   │
+│   │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   Up                           Move up                                                        ┃   │
+│   │   Ctrl+W g                     Open a new unsaved gRPC request tab                           │   Down                         Move down                                                      ┃   │
+│   │   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │   PageUp                       Page up                                                        ┃   │
+│   │   Ctrl+W E                     Open a new unsaved SSE request tab                            │   PageDown                     Page down                                                      ┃   │
+│   │   Ctrl+W M                     Open a new unsaved MQTT request tab                           │   Home                         Go to the first line                                           ┃   │
 │   │   Ctrl+W c                     Close the current tab                                         │   End                          Go to the last line                                            ┃   │
 │   │   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │                                                                                               ┃   │
 │   │   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │ ── Text editing (conventional mode) ──                                                        ┃   │
-│   │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Ctrl+Z                       Undo                                                           ┃   │
-│   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+Y                       Redo                                                           ┃   │
-│   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+A                       Select all text                                                ┃   │
+│   │   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Ctrl+Z                       Undo                                                           │   │
+│   │   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Ctrl+Y                       Redo                                                           │   │
+│   │   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Ctrl+A                       Select all text                                                │   │
 │   │   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Ctrl+C                       Copy selection (whole field if nothing selected)               │   │
 │   │   Tab, Ctrl+W w                Move focus to the next field or pane                          │   Ctrl+X                       Cut selection                                                  │   │
 │   │   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │   Ctrl+V                       Paste                                                          │   │
@@ -57,8 +59,6 @@ expression: screen
 │   │ ── Sidebar tree ──                                                                           │   N, Shift+F3                  Previous search match                                          │   │
 │   │   Enter                        Open the selected request / toggle the folder                 │   Enter, Space                 Fold or unfold the JSON block at the cursor                    │   │
 │   │   Right                        Expand folder                                                 │   -                            Fold all JSON blocks                                           │   │
-│   │   Left                         Collapse folder or go to parent                               │   +, =                         Unfold all JSON blocks                                         │   │
-│   │   n                            New request in the selected folder                            │   w                            Wrap long lines on/off                                         │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 ╰───                                                                                                                                                                                                 ──╯
  demo                                                                                                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

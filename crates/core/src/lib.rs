@@ -4,6 +4,7 @@
 //! (except reading file contents referenced by bodies at resolution time).
 
 pub mod complete;
+pub mod graphql;
 pub mod inherit;
 pub mod json_schema;
 pub mod model;

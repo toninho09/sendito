@@ -229,7 +229,15 @@ impl App {
             }
         };
         let (mut scope, warning) = self.export_scope(include_secrets);
-        let Request::Http(h) = runner::with_folders(&model, &chain, &mut scope) else {
+        let effective = runner::with_folders(&model, &chain, &mut scope);
+        if matches!(effective, Request::Mqtt(_)) {
+            self.set_status(
+                format!("{what} export is not available for MQTT requests"),
+                StatusKind::Warn,
+            );
+            return None;
+        }
+        let Some(h) = sendito_import::http_export_request(&effective, &scope) else {
             self.set_status(
                 format!("{what} export is for HTTP requests"),
                 StatusKind::Warn,
@@ -260,10 +268,14 @@ impl App {
     }
 
     pub fn export_curl(&mut self, include_secrets: bool) {
+        let sse = self.tab().is_some_and(|t| t.ed.kind == Kind::Sse);
         let Some((_, h, scope, warning)) = self.export_input(include_secrets, "curl") else {
             return;
         };
-        let cmd = sendito_import::curl::export(&h, &scope, include_secrets, &self.project.root);
+        let mut cmd = sendito_import::curl::export(&h, &scope, include_secrets, &self.project.root);
+        if sse {
+            cmd = cmd.replacen("curl", "curl -N", 1);
+        }
         self.clipboard.set(cmd.clone(), false);
         self.osc52.push(cmd.clone());
         let note = if include_secrets {
@@ -356,7 +368,14 @@ impl App {
         let ed = if matches!(t.ed.kind, Kind::Grpc | Kind::Mcp | Kind::Ws) {
             &mut t.ed.message
         } else {
-            &mut t.ed.body_text
+            if t.ed.body_kind == BodyKind::GraphQL && t.ed.graphql_section != 1 {
+                self.set_status("select Variables to format JSON", StatusKind::Info);
+                return;
+            }
+            match t.ed.text_mut(Field::BodyText) {
+                Some(ed) => ed,
+                None => return,
+            }
         };
         match serde_json::from_str::<serde_json::Value>(&ed.text()) {
             Ok(_) => {

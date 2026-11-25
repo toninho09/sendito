@@ -117,10 +117,22 @@ pub(super) async fn execute_hop(
 pub(super) async fn follow_redirects(
     client: &reqwest::Client,
     req: &ResolvedHttp,
+    resp: reqwest::Response,
+    deadline: Option<Instant>,
+    timeout: Duration,
+    cookies: Option<&dyn RedirectCookies>,
+) -> Result<reqwest::Response, HttpError> {
+    follow_redirects_with_mode(client, req, resp, deadline, timeout, cookies, false).await
+}
+
+pub(super) async fn follow_redirects_with_mode(
+    client: &reqwest::Client,
+    req: &ResolvedHttp,
     mut resp: reqwest::Response,
     deadline: Option<Instant>,
     timeout: Duration,
     cookies: Option<&dyn RedirectCookies>,
+    streaming: bool,
 ) -> Result<reqwest::Response, HttpError> {
     let mut method = reqwest::Method::from_bytes(req.method.as_bytes())
         .map_err(|_| HttpError::Method(req.method.clone()))?;
@@ -166,7 +178,15 @@ pub(super) async fn follow_redirects(
             &req.body
         };
         let request = build_request(client, method.clone(), target, headers, body).await?;
-        resp = execute_hop(client, request, deadline, timeout).await?;
+        resp = if streaming {
+            // The caller bounds opening. No body timeout may survive the hop.
+            client
+                .execute(request)
+                .await
+                .map_err(|e| send_error(e, timeout))?
+        } else {
+            execute_hop(client, request, deadline, timeout).await?
+        };
     }
     Ok(resp)
 }

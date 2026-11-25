@@ -1,5 +1,7 @@
 //! `sendito run`: sends one request or a suite and prints the report.
 
+use super::mqtt::run_mqtt;
+use super::sse::run_sse;
 use crate::*;
 
 /// Routes `run` to one request or a folder: a request file wins over a folder
@@ -42,7 +44,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
     if fail_fast {
         eprintln!("warning: --fail-fast applies to folder runs; ignoring it for a single request");
     }
-    if report == RunReport::Json {
+    if report == RunReport::Json && !matches!(req, Request::Sse(_) | Request::Mqtt(_)) {
         eprintln!(
             "warning: --report json applies to folder runs; ignoring it for a single request"
         );
@@ -52,7 +54,12 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         eprintln!("warning: {e}");
     }
     let req = match project.coll.chain(&rel) {
-        Ok(chain) => runner::with_folders(&req, &chain, &mut scope),
+        Ok(chain) => {
+            if let Some(note) = sendito_core::inherit::ignored_headers_note(&req, &chain) {
+                eprintln!("note: {note}");
+            }
+            runner::with_folders(&req, &chain, &mut scope)
+        }
         Err(e) => {
             eprintln!("sendito: {e}");
             return ExitCode::from(3);
@@ -81,6 +88,59 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
     );
     let mut out = std::io::stdout().lock();
     match req {
+        Request::Sse(mut s) => {
+            if no_cookies {
+                s.options.cookies = Some(false);
+            }
+            let ran = run_sse(
+                &ctx,
+                &s,
+                scope,
+                errors,
+                report != RunReport::Json,
+                include,
+                &mut out,
+            )
+            .await;
+            if report == RunReport::Json {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    serde_json::json!({"kind":"sse", "outcome":ran.outcome, "events":ran.events, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
+                );
+            }
+            print_scripts(&ran.scripts);
+            ExitCode::from(match ran.outcome {
+                "pass" => 0,
+                "fail" => 1,
+                _ => 2,
+            })
+        }
+        Request::Mqtt(m) => {
+            let ran = run_mqtt(
+                &ctx,
+                &m,
+                scope,
+                errors,
+                report != RunReport::Json,
+                include,
+                &mut out,
+            )
+            .await;
+            if report == RunReport::Json {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    serde_json::json!({"kind":"mqtt", "outcome":ran.outcome, "messages":ran.messages, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
+                );
+            }
+            print_scripts(&ran.scripts);
+            ExitCode::from(match ran.outcome {
+                "pass" => 0,
+                "fail" => 1,
+                _ => 2,
+            })
+        }
         Request::Http(mut h) => {
             if no_cookies {
                 h.options.cookies = Some(false);
@@ -128,7 +188,14 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
                 }
                 Err(e) => {
                     eprintln!("sendito: request failed: {e}");
-                    2
+                    if matches!(
+                        o.resolved.body,
+                        sendito_core::resolve::ResolvedBody::Invalid(_)
+                    ) {
+                        3
+                    } else {
+                        2
+                    }
                 }
             };
             let fails = print_scripts(&o.scripts);
@@ -345,10 +412,13 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
 /// One request's result in a folder run.
 pub(crate) struct Ran {
     /// `pass`, `fail` (a failed assertion or a tool `isError`) or `error`.
-    outcome: &'static str,
+    pub(super) outcome: &'static str,
     /// Status text: `201 Created`, `OK`, or the error message.
-    label: String,
-    scripts: runner::ScriptResults,
+    pub(super) label: String,
+    pub(super) scripts: runner::ScriptResults,
+    pub(super) events: Option<u64>,
+    /// MQTT messages received; only MQTT sets it.
+    pub(super) messages: Option<u64>,
 }
 
 /// Runs every request under `folder` in tree order, chaining variables: a
@@ -414,7 +484,12 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             .load(rel)
             .and_then(|r| project.coll.chain(rel).map(|chain| (r, chain)));
         let req = match loaded {
-            Ok((r, chain)) => runner::with_folders(&r, &chain, &mut rscope),
+            Ok((r, chain)) => {
+                if let Some(note) = sendito_core::inherit::ignored_headers_note(&r, &chain) {
+                    eprintln!("note: {rel}: {note}");
+                }
+                runner::with_folders(&r, &chain, &mut rscope)
+            }
             Err(e) => {
                 nerr += 1;
                 // Multi-line parse errors: the first line names the file and
@@ -441,6 +516,8 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             Request::Http(_) => "http",
             Request::Grpc(_) => "grpc",
             Request::Ws(_) => "websocket",
+            Request::Sse(_) => "sse",
+            Request::Mqtt(_) => "mqtt",
             Request::Mcp(_) => "mcp",
         };
         let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
@@ -493,6 +570,16 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             "unresolved": false,
             "error": serde_json::Value::Null,
         }));
+        if let Some(events) = ran.events
+            && let Some(entry) = entries.last_mut()
+        {
+            entry["events"] = events.into();
+        }
+        if let Some(messages) = ran.messages
+            && let Some(entry) = entries.last_mut()
+        {
+            entry["messages"] = messages.into();
+        }
         for (var, value) in ran.scripts.updates() {
             scope.set(RUNTIME_LAYER, &var, value);
         }
@@ -554,6 +641,34 @@ pub(crate) async fn run_one(
     no_cookies: bool,
 ) -> Ran {
     match req {
+        Request::Sse(s) => {
+            let mut s = s.clone();
+            if no_cookies {
+                s.options.cookies = Some(false);
+            }
+            run_sse(
+                ctx,
+                &s,
+                scope.clone(),
+                scope_errors.to_vec(),
+                false,
+                false,
+                &mut std::io::sink(),
+            )
+            .await
+        }
+        Request::Mqtt(m) => {
+            run_mqtt(
+                ctx,
+                m,
+                scope.clone(),
+                scope_errors.to_vec(),
+                false,
+                false,
+                &mut std::io::sink(),
+            )
+            .await
+        }
         Request::Http(h) => {
             let mut h = h.clone();
             if no_cookies {
@@ -563,11 +678,15 @@ pub(crate) async fn run_one(
             let failed_asserts = o.scripts.failed_asserts();
             match &o.response {
                 Ok(r) => Ran {
+                    events: None,
+                    messages: None,
                     outcome: if failed_asserts > 0 { "fail" } else { "pass" },
                     label: format!("{} {}", r.status, r.reason),
                     scripts: o.scripts,
                 },
                 Err(e) => Ran {
+                    events: None,
+                    messages: None,
                     outcome: "error",
                     label: e.clone(),
                     scripts: o.scripts,
@@ -613,6 +732,8 @@ pub(crate) async fn run_one(
             tokio::join!(run, collect);
             if code != 0 {
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: "error",
                     label,
                     scripts,
@@ -620,6 +741,8 @@ pub(crate) async fn run_one(
             } else {
                 let fails = scripts.failed_asserts();
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: if fails > 0 { "fail" } else { "pass" },
                     label,
                     scripts,
@@ -666,12 +789,16 @@ pub(crate) async fn run_one(
             tokio::join!(run, collect);
             if let Some(e) = error {
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: "error",
                     label: e,
                     scripts,
                 }
             } else if code != 1000 {
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: "error",
                     label,
                     scripts,
@@ -679,6 +806,8 @@ pub(crate) async fn run_one(
             } else {
                 let failed_asserts = scripts.failed_asserts();
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: if failed_asserts > 0 { "fail" } else { "pass" },
                     label,
                     scripts,
@@ -716,6 +845,8 @@ pub(crate) async fn run_one(
             tokio::join!(run, collect);
             if code == 2 {
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: "error",
                     label,
                     scripts,
@@ -723,6 +854,8 @@ pub(crate) async fn run_one(
             } else {
                 let fails = scripts.failed_asserts();
                 Ran {
+                    events: None,
+                    messages: None,
                     outcome: if code == 1 || fails > 0 {
                         "fail"
                     } else {

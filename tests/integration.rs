@@ -52,7 +52,6 @@ fn postman_import_has_no_unexplained_losses() {
         ("Users / Admin / Ban user", "JavaScript scripts"),
         ("Orders / Cancel order", "description"),
         ("Auth / OAuth token", "\"oauth2\" auth is not supported"),
-        ("GraphQL query", "GraphQL body became a JSON body"),
         ("Random name", "$randomFirstName"),
         ("Dynamic id", "{{$guid}} became {{$uuid}}"),
         ("(collection)", "{{token}} is used by"),
@@ -75,7 +74,21 @@ fn postman_import_has_no_unexplained_losses() {
             "missing explanation for {item} ({needle}) in:\n{report}"
         );
     }
-    assert_eq!(r.skipped.len(), 20, "unexpected report entries:\n{report}");
+    assert_eq!(r.skipped.len(), 19, "unexpected report entries:\n{report}");
+    // A GraphQL body keeps its query and variables apart.
+    let gql = r
+        .root
+        .requests
+        .iter()
+        .find(|(n, _)| n == "GraphQL query")
+        .map(|(_, req)| req.clone());
+    assert!(matches!(
+        gql,
+        Some(Request::Http(sendito_core::HttpRequest {
+            body: sendito_core::Body::GraphQL { query, variables, .. },
+            ..
+        })) if query == "{ me { id name } }" && variables == "{\"limit\": 5}"
+    ));
     // Saved responses are imported as examples.
     let receipt = r
         .root
@@ -244,6 +257,7 @@ fn curl_round_trip() {
             headers.sort();
             let body = match res.body {
                 sendito_core::resolve::ResolvedBody::Multipart(parts) => format!("{parts:?}"),
+                sendito_core::resolve::ResolvedBody::Invalid(e) => format!("invalid: {e}"),
                 b => format!("{b:?}"),
             };
             (
@@ -441,6 +455,8 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -500,6 +516,8 @@ fn cookie_jar_fails_closed_for_insecure_file() {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -562,6 +580,8 @@ fn cookie_jar_stores_and_replays() {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -1011,6 +1031,8 @@ fn http_oauth_login_refresh_and_send() {
             schemas: Default::default(),
             grpc_deadline_ms: 0,
             ws_timeout_ms: 0,
+            sse_timeout_ms: 30_000,
+            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
             cookie_jar: false,
             oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
@@ -1102,6 +1124,8 @@ fn http_oauth_client_credentials_needs_no_login() {
             schemas: Default::default(),
             grpc_deadline_ms: 0,
             ws_timeout_ms: 0,
+            sse_timeout_ms: 30_000,
+            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
             cookie_jar: false,
             oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
@@ -1161,6 +1185,8 @@ fn ws_session_replays_the_cookie_jar() {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,

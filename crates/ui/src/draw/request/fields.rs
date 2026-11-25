@@ -5,6 +5,7 @@ use super::*;
 pub(in crate::draw) fn short_label(f: Field) -> &'static str {
     match f {
         Field::BodyKind => "Body type",
+        Field::GraphqlSection => "Section",
         Field::RawContentType | Field::FileContentType => "Content-Type",
         Field::FilePath => "File",
         Field::AuthKind => "Auth type",
@@ -24,6 +25,7 @@ pub(in crate::draw) fn short_label(f: Field) -> &'static str {
         Field::ImportPaths => "Import paths",
         Field::Tls => "Use TLS",
         Field::Deadline => "Deadline ms",
+        Field::MaxEvents => "Max events",
         Field::ScriptSection => "Section",
         Field::McpServer => "Server",
         Field::McpTool => "Tool",
@@ -460,7 +462,7 @@ pub(in crate::draw) fn draw_fields(
                     .collect(),
             ));
         }
-        if tab.ed.kind == Kind::Http {
+        if matches!(tab.ed.kind, Kind::Http | Kind::Sse) {
             let auto = tab.ed.auto_headers();
             if !auto.is_empty() {
                 sections.push((

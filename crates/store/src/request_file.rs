@@ -29,6 +29,7 @@ struct RawOptions {
     cookies: Option<bool>,
     tls: Option<bool>,
     deadline_ms: Option<u64>,
+    max_events: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +60,12 @@ struct RawBody {
     fields: Vec<RawKv>,
     #[serde(default)]
     parts: Vec<RawPart>,
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    variables: String,
+    #[serde(default)]
+    operation_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +159,124 @@ pub(crate) struct RawScripts {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RawSubscription {
+    topic: String,
+    #[serde(default)]
+    qos: u8,
+    #[serde(default = "yes")]
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMessage {
+    #[serde(default)]
+    topic: String,
+    payload: Option<String>,
+    payload_base64: Option<String>,
+    #[serde(default)]
+    qos: u8,
+    #[serde(default)]
+    retain: bool,
+}
+
+fn mqtt_message(m: RawMessage, what: &str) -> Result<MqttMessage, String> {
+    let payload = match (m.payload, m.payload_base64) {
+        (Some(_), Some(_)) => {
+            return Err(format!("{what}: set payload or payload_base64, not both"));
+        }
+        (Some(text), None) => MqttPayload::text(text),
+        (None, Some(text)) => MqttPayload { text, base64: true },
+        (None, None) => MqttPayload::default(),
+    };
+    if m.qos > 2 {
+        return Err(format!("{what}: qos must be 0, 1 or 2, not {}", m.qos));
+    }
+    Ok(MqttMessage {
+        topic: m.topic,
+        payload,
+        qos: m.qos,
+        retain: m.retain,
+    })
+}
+
+fn mqtt(r: RawRequest) -> Result<Request, String> {
+    if r.method.is_some() || r.body.is_some() || !r.headers.is_empty() || !r.params.is_empty() {
+        return Err("MQTT does not support method, body, headers or params fields".into());
+    }
+    // Auth kinds MQTT does not support are refused at send time, so a
+    // draft the editor saves can always be opened again.
+    let auth = auth(r.auth)?;
+    let protocol = match r.protocol.as_deref() {
+        None => MqttProtocol::default(),
+        Some(p) => MqttProtocol::parse(p)
+            .ok_or_else(|| format!("protocol must be \"3.1.1\" or \"5\", not {p:?}"))?,
+    };
+    let subscriptions = r
+        .subscriptions
+        .into_iter()
+        .map(|s| {
+            if s.qos > 2 {
+                return Err(format!(
+                    "subscription {:?}: qos must be 0, 1 or 2, not {}",
+                    s.topic, s.qos
+                ));
+            }
+            Ok(MqttSubscription {
+                topic: s.topic,
+                qos: s.qos,
+                enabled: s.enabled,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(Request::Mqtt(MqttRequest {
+        url: r.url.unwrap_or_default(),
+        client_id: r.client_id.unwrap_or_default(),
+        username: r.username.unwrap_or_default(),
+        password: r.password.unwrap_or_default(),
+        protocol,
+        clean_session: r.clean_session.unwrap_or(true),
+        keep_alive_s: r.keep_alive_s.unwrap_or(MQTT_KEEP_ALIVE_S),
+        options: MqttOptions {
+            timeout_ms: r.options.timeout_ms,
+            deadline_ms: r.options.deadline_ms,
+            verify_tls: r.options.verify_tls.unwrap_or(true),
+        },
+        subscriptions,
+        publish: r
+            .publish
+            .into_iter()
+            .map(|m| mqtt_message(m, "publish"))
+            .collect::<Result<_, String>>()?,
+        last_will: r
+            .last_will
+            .map(|m| mqtt_message(m, "last_will"))
+            .transpose()?,
+        auth,
+        scripts: scripts(r.scripts)?,
+    }))
+}
+
+fn write_mqtt_message(w: &mut Writer, m: &MqttMessage) {
+    w.str("topic", &m.topic);
+    w.str(
+        if m.payload.base64 {
+            "payload_base64"
+        } else {
+            "payload"
+        },
+        &m.payload.text,
+    );
+    if m.qos != 0 {
+        w.int("qos", u64::from(m.qos));
+    }
+    if m.retain {
+        w.bool("retain", true);
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawRequest {
     kind: String,
     method: Option<String>,
@@ -178,6 +303,17 @@ struct RawRequest {
     schema: Option<RawSchema>,
     #[serde(default)]
     scripts: RawScripts,
+    client_id: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    protocol: Option<String>,
+    clean_session: Option<bool>,
+    keep_alive_s: Option<u64>,
+    #[serde(default)]
+    subscriptions: Vec<RawSubscription>,
+    #[serde(default)]
+    publish: Vec<RawMessage>,
+    last_will: Option<RawMessage>,
 }
 
 pub(crate) fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
@@ -330,6 +466,13 @@ fn body(b: Option<RawBody>) -> Result<Body, String> {
                 })
                 .collect::<Result<_, String>>()?,
         },
+        // `variables` is JSON text kept as written (a half-typed object is a
+        // valid draft); the sender checks that it is an object.
+        "graphql" => Body::GraphQL {
+            query: b.query,
+            variables: b.variables,
+            operation_name: b.operation_name.unwrap_or_default(),
+        },
         o => return Err(format!("unknown body type {o:?}")),
     })
 }
@@ -352,6 +495,24 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 cookies: r.options.cookies,
             },
             scripts: scripts(r.scripts)?,
+        })),
+        "sse" if r.method.is_some() || r.body.is_some() => {
+            Err("SSE does not support method or body fields".into())
+        }
+        "sse" => Ok(Request::Sse(SseRequest {
+            url: r.url.unwrap_or_default(),
+            params: kvs(r.params),
+            headers: kvs(r.headers),
+            auth: auth(r.auth)?,
+            scripts: scripts(r.scripts)?,
+            options: SseOptions {
+                timeout_ms: r.options.timeout_ms,
+                deadline_ms: r.options.deadline_ms,
+                max_events: r.options.max_events,
+                follow_redirects: r.options.follow_redirects.unwrap_or(true),
+                verify_tls: r.options.verify_tls.unwrap_or(true),
+                cookies: r.options.cookies,
+            },
         })),
         "grpc" => Ok(Request::Grpc(GrpcRequest {
             target: r.target.unwrap_or_default(),
@@ -406,8 +567,9 @@ pub fn parse(text: &str) -> Result<Request, String> {
             },
             scripts: scripts(r.scripts)?,
         })),
+        "mqtt" => mqtt(r),
         o => Err(format!(
-            "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\" or \"mcp\")"
+            "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\", \"sse\", \"mqtt\" or \"mcp\")"
         )),
     }
 }
@@ -618,6 +780,21 @@ pub fn to_toml(req: &Request) -> String {
                         }
                     }
                 }
+                Body::GraphQL {
+                    query,
+                    variables,
+                    operation_name,
+                } => {
+                    w.table("body");
+                    w.str("type", "graphql");
+                    w.str("query", query);
+                    if !variables.is_empty() {
+                        w.str("variables", variables);
+                    }
+                    if !operation_name.is_empty() {
+                        w.str("operation_name", operation_name);
+                    }
+                }
             }
             write_scripts(&mut w, &h.scripts);
         }
@@ -664,6 +841,91 @@ pub fn to_toml(req: &Request) -> String {
                 w.table("options");
                 w.int("timeout_ms", t);
             }
+            write_scripts(&mut w, &m.scripts);
+        }
+        Request::Sse(s) => {
+            w.str("kind", "sse");
+            w.str("url", &s.url);
+            let o = &s.options;
+            if o != &SseOptions::default() {
+                w.table("options");
+                if let Some(v) = o.timeout_ms {
+                    w.int("timeout_ms", v);
+                }
+                if let Some(v) = o.deadline_ms {
+                    w.int("deadline_ms", v);
+                }
+                if let Some(v) = o.max_events {
+                    w.int("max_events", v);
+                }
+                if !o.follow_redirects {
+                    w.bool("follow_redirects", false);
+                }
+                if !o.verify_tls {
+                    w.bool("verify_tls", false);
+                }
+                if let Some(v) = o.cookies {
+                    w.bool("cookies", v);
+                }
+            }
+            write_kvs(&mut w, "params", &s.params);
+            write_kvs(&mut w, "headers", &s.headers);
+            write_auth(&mut w, &s.auth);
+            write_scripts(&mut w, &s.scripts);
+        }
+        Request::Mqtt(m) => {
+            w.str("kind", "mqtt");
+            w.str("url", &m.url);
+            for (key, value) in [
+                ("client_id", &m.client_id),
+                ("username", &m.username),
+                ("password", &m.password),
+            ] {
+                if !value.is_empty() {
+                    w.str(key, value);
+                }
+            }
+            if m.protocol != MqttProtocol::default() {
+                w.str("protocol", m.protocol.as_str());
+            }
+            if !m.clean_session {
+                w.bool("clean_session", false);
+            }
+            if m.keep_alive_s != MQTT_KEEP_ALIVE_S {
+                w.int("keep_alive_s", m.keep_alive_s);
+            }
+            let o = &m.options;
+            if o != &MqttOptions::default() {
+                w.table("options");
+                if let Some(v) = o.timeout_ms {
+                    w.int("timeout_ms", v);
+                }
+                if let Some(v) = o.deadline_ms {
+                    w.int("deadline_ms", v);
+                }
+                if !o.verify_tls {
+                    w.bool("verify_tls", false);
+                }
+            }
+            for sub in &m.subscriptions {
+                w.array_table("subscriptions");
+                w.str("topic", &sub.topic);
+                if sub.qos != 0 {
+                    w.int("qos", u64::from(sub.qos));
+                }
+                if !sub.enabled {
+                    w.bool("enabled", false);
+                }
+            }
+            for p in &m.publish {
+                w.array_table("publish");
+                write_mqtt_message(&mut w, p);
+            }
+            if let Some(will) = &m.last_will {
+                w.table("last_will");
+                write_mqtt_message(&mut w, will);
+            }
+            write_auth(&mut w, &m.auth);
             write_scripts(&mut w, &m.scripts);
         }
         Request::Ws(wq) => {
@@ -742,6 +1004,8 @@ pub fn sniff_badge(text: &str) -> Option<String> {
         ),
         Some("grpc") => Some("GRPC".into()),
         Some("websocket") => Some("WS".into()),
+        Some("sse") => Some("SSE".into()),
+        Some("mqtt") => Some("MQTT".into()),
         Some("mcp") => Some("MCP".into()),
         _ => None,
     }
@@ -850,6 +1114,22 @@ mod tests {
             Body::File {
                 path: "x.bin".into(),
                 content_type: String::new(),
+            },
+            Body::GraphQL {
+                query: "query {{user}} {\n  me { id }\n}\n".into(),
+                variables: "{\n  \"n\": {{count}}\n}\n".into(),
+                operation_name: "Me".into(),
+            },
+            Body::GraphQL {
+                query: "{ a }".into(),
+                variables: String::new(),
+                operation_name: String::new(),
+            },
+            // A half-typed variables document is kept as written.
+            Body::GraphQL {
+                query: "{ a }".into(),
+                variables: "{\"n\":".into(),
+                operation_name: String::new(),
             },
         ] {
             for auth in [
@@ -1025,6 +1305,26 @@ mod tests {
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }
+    }
+
+    #[test]
+    fn graphql_body_text() {
+        let r = Request::Http(HttpRequest {
+            method: "POST".into(),
+            url: "/graphql".into(),
+            body: Body::GraphQL {
+                query: "{ me { id } }".into(),
+                variables: "{\"x\":1}".into(),
+                operation_name: String::new(),
+            },
+            ..Default::default()
+        });
+        let t = to_toml(&r);
+        assert_eq!(
+            t,
+            "kind = \"http\"\nmethod = \"POST\"\nurl = \"/graphql\"\n\n[body]\ntype = \"graphql\"\nquery = \"{ me { id } }\"\nvariables = \"{\\\"x\\\":1}\"\n"
+        );
+        assert_eq!(parse(&t).ok(), Some(r));
     }
 
     #[test]

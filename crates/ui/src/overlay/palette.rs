@@ -51,6 +51,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":q!", "Quit without saving"),
     (":new", "New HTTP request (Ctrl+N)"),
     (":newgrpc", "New gRPC request (Ctrl+W g)"),
+    (":newsse", "New SSE request (Ctrl+W E)"),
+    (":newmqtt", "New MQTT request (Ctrl+W M)"),
     (":newws", "New WebSocket request (Ctrl+W y)"),
     (":newmcp", "New MCP request"),
     (":mcpservers", "Choose an MCP server"),
@@ -116,6 +118,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "Fill the gRPC message with a template from the schema",
     ),
     (":reload", "Reload the gRPC schema"),
+    (
+        ":graphqlschema",
+        "Reload the GraphQL schema for the HTTP request",
+    ),
     (":settings", "Open settings"),
     (
         ":oauth",

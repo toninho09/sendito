@@ -508,20 +508,12 @@ fn body(v: Option<&Value>, item: &str, ctx: &mut Ctx) -> Body {
         }
         "graphql" => {
             let g = b.get("graphql").cloned().unwrap_or(Value::Null);
-            let query = get_str(&g, "query");
-            let vars_text = get_str(&g, "variables");
-            let variables: Value = if vars_text.trim().is_empty() {
-                Value::Object(Default::default())
-            } else {
-                serde_json::from_str(&vars_text).unwrap_or(Value::String(vars_text))
-            };
-            let doc = serde_json::json!({ "query": query, "variables": variables });
-            ctx.skip(
-                item,
-                "the GraphQL body became a JSON body with \"query\" and \"variables\"",
-            );
-            Body::Json {
-                text: serde_json::to_string_pretty(&doc).unwrap_or_default(),
+            Body::GraphQL {
+                query: get_str(&g, "query"),
+                // Postman keeps the variables as JSON text; an unparsable text
+                // is kept as written and reported when the request is sent.
+                variables: get_str(&g, "variables"),
+                operation_name: String::new(),
             }
         }
         "" => Body::None,
@@ -884,7 +876,14 @@ mod tests {
         let Request::Http(gql) = &r.root.requests[3].1 else {
             panic!()
         };
-        assert!(matches!(&gql.body, Body::Json { text } if text.contains("\"x\": 1")));
+        assert_eq!(
+            gql.body,
+            Body::GraphQL {
+                query: "{ me { id } }".into(),
+                variables: "{\"x\":1}".into(),
+                operation_name: String::new(),
+            }
+        );
         let Request::Http(parts) = &r.root.requests[5].1 else {
             panic!()
         };
@@ -916,7 +915,6 @@ mod tests {
             "its JavaScript scripts",
             "oauth2",
             "description",
-            "GraphQL",
             "Weird",
             "no file selected",
         ] {

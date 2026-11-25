@@ -11,13 +11,19 @@ pub fn setting_note(id: SettingId) -> &'static str {
             "The :watch command re-sends the active request every this many seconds."
         }
         SettingId::StreamKept => {
-            "A gRPC or WebSocket stream keeps this many messages; the oldest go first."
+            "A gRPC, WebSocket or SSE stream keeps this many messages; the oldest go first."
         }
         SettingId::HttpTimeout => {
             "Milliseconds an HTTP request waits when it sets no timeout of its own."
         }
         SettingId::GrpcDeadline => {
             "Milliseconds a gRPC call may take when it sets no deadline of its own; 0 = no deadline."
+        }
+        SettingId::SseTimeout => {
+            "Milliseconds allowed for SSE opening; the event stream has no total timeout."
+        }
+        SettingId::MqttTimeout => {
+            "Milliseconds to wait for the broker's CONNACK when a request sets none; 0 = no limit."
         }
         SettingId::WsTimeout => {
             "Milliseconds a WebSocket handshake may take when the request sets none; 0 = no limit."
@@ -88,6 +94,8 @@ impl App {
             SettingId::HttpTimeout
             | SettingId::GrpcDeadline
             | SettingId::WsTimeout
+            | SettingId::SseTimeout
+            | SettingId::MqttTimeout
             | SettingId::McpTimeout => format!("{raw} ms"),
             SettingId::CollectionName if raw.is_empty() => {
                 format!("{} (folder name)", self.project.name)
@@ -118,6 +126,8 @@ impl App {
             SettingId::HttpTimeout => c.http.timeout_ms.to_string(),
             SettingId::GrpcDeadline => c.grpc.deadline_ms.to_string(),
             SettingId::WsTimeout => c.websocket.timeout_ms.to_string(),
+            SettingId::SseTimeout => c.sse.timeout_ms.to_string(),
+            SettingId::MqttTimeout => c.mqtt.timeout_ms.to_string(),
             SettingId::McpTimeout => c.mcp.timeout_ms.to_string(),
             SettingId::MaxBody => c.http.max_body_mb.to_string(),
             SettingId::Proxy => opt(&c.http.proxy),
@@ -253,6 +263,8 @@ impl App {
             SettingId::HttpTimeout => c.http.timeout_ms = num,
             SettingId::GrpcDeadline => c.grpc.deadline_ms = num,
             SettingId::WsTimeout => c.websocket.timeout_ms = num,
+            SettingId::SseTimeout => c.sse.timeout_ms = num,
+            SettingId::MqttTimeout => c.mqtt.timeout_ms = num,
             SettingId::McpTimeout => c.mcp.timeout_ms = num,
             SettingId::MaxBody => c.http.max_body_mb = num,
             SettingId::Proxy => c.http.proxy = s,

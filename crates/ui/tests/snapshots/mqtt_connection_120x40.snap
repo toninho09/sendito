@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   MQTT untitled ● ×    +                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ MQTT ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  mqtts://broker.example.test                                               ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Topics 1  Publish  Will  Auth  Scripts  Options ──────────────────────────────────────╮
+│  GET   health              ││     Topic filter                                                                QoS    │
+│                            ││ [✓] sensors/+/temperature                                                      │‹1› │× │
+│                            ││  +  add topic filter                                                           │       │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            │╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯
+│                            │╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│                            ││ Broker     mqtts://broker.example.test                                                 │
+│                            ││ Client ID  sendito-demo                                                                │
+│                            ││ Protocol   3.1.1                                                                       │
+│                            ││ User name  (none)                                                                      │
+│                            ││ Clean      true                                                                        │
+│                            ││ Keep alive 60 s                                                                        │
+│                            ││ CONNACK    accepted (session present: no)                                              │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰──────────────────────────────────────────────────────────────────────── Ln 1/8 · wrap ─╯
+ demo   ● 1 unsaved                                            Alt+1-4 tabs · y copy · / search · ^W menu · F1 all keys
