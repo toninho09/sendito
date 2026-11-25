@@ -69,6 +69,7 @@ here.
 | URL normalization (no scheme → `http://`), query append before fragment | `crates/core/src/resolve.rs::normalize_url`, `append_query` | |
 | Unresolved variables, masked copy of a request | `crates/core/src/resolve.rs::unresolved_vars`, `mask_request` | |
 | Declarative scripts: pre, extract, assert | `crates/core/src/script.rs` | No code execution |
+| Lua scripts: `[scripts.lua] pre` and `post`, sandbox and API | `crates/core/src/lua_script.rs` | Run by `crates/pipeline/src/runner/mod.rs::pre_phase` and `post_phase` in every runner |
 | Script sources (`jsonpath`, `header`, `status`, `time`, `size`, `hash`, `xpath`, `regex`, `cookie`) | `crates/core/src/script.rs::read`, `crates/core/src/xpath.rs` | Each runner fills `ResponseView`, with `timing` |
 | Folder inheritance (auth, headers, variables, scripts) | `crates/core/src/inherit.rs::apply` | `var_layers`; applied once per send by `crates/pipeline/src/runner/scope.rs::with_folders` |
 | Completion shape of a message or tool input | `crates/core/src/complete.rs` | Shared by gRPC and MCP editors |

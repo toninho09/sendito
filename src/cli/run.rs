@@ -870,6 +870,9 @@ pub(crate) async fn run_one(
 }
 
 pub(crate) fn print_scripts(s: &runner::ScriptResults) -> usize {
+    for l in &s.logs {
+        eprintln!("log: {l}");
+    }
     for e in &s.extracts {
         match &e.value {
             Ok(v) => eprintln!(
@@ -883,6 +886,16 @@ pub(crate) fn print_scripts(s: &runner::ScriptResults) -> usize {
             ),
             Err(err) => eprintln!("extract {}: {err}", e.var),
         }
+    }
+    for (var, v) in &s.post {
+        eprintln!(
+            "set {var} = {}",
+            if v.secret {
+                sendito_core::vars::MASK.to_string()
+            } else {
+                v.value.clone()
+            }
+        );
     }
     for a in &s.asserts {
         if a.pass {

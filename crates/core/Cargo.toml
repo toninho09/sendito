@@ -18,6 +18,7 @@ sha1.workspace = true
 sha2.workspace = true
 md-5.workspace = true
 xee-xpath.workspace = true
+mlua.workspace = true
 
 [lints]
 workspace = true

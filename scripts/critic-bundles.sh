@@ -109,6 +109,11 @@ masked). Case 53 is signed with AWS SigV4: X-Amz-Date and Authorization are adde
 (the date and signature change at each send and are masked); the signed headers are
 content-type, host and x-amz-date. Case 54 sends a HS256 JWT signed at send time
 from the claims in the file, as Authorization: Bearer.
+Case http/58 and case grpc/16 have a [scripts.lua] pre script. The script is part
+of the request file: the method, headers, query, body and gRPC metadata it sets
+(and the headers it removes) count as defined by the file. Case 58 changes GET to
+POST, adds X-Request-Id, X-Sum and the query q, removes X-Remove and adds "b" to
+the JSON body (compact, keys sorted); case 16 sets x-request-id and the message.
 Cases 55 and 56 send GraphQL bodies as compact JSON: query, optional variables,
 then optional operationName. Variables must be a JSON object; case 57 fails before
 sending anything. Content-Type is application/json unless explicitly overridden.

@@ -619,8 +619,9 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 
 ## Scripts
 
-The **Scripts** tab has three declarative sections — no JavaScript
-([FORMAT.md](../FORMAT.md#http-request), [DEBT.md](DEBT.md)).
+The **Scripts** tab has three declarative sections and two Lua scripts
+([FORMAT.md](../FORMAT.md#http-request)). The section choice at the top
+switches between them; an empty script shows "(empty)".
 
 * **Pre-request** (`[[scripts.pre]]`) — `var` / `value` pairs that set runtime
   variables before sending, in order, each seeing the previous.
@@ -639,8 +640,23 @@ The **Scripts** tab has three declarative sections — no JavaScript
   operators `eq`, `ne`, `contains`, `not_contains`, `exists`, `not_exists`,
   `lt`, `le`, `gt`, `ge`, `matches` (regular expression). Numeric comparison is
   numeric; otherwise string comparison.
-* Results appear in the **Results** tab (gRPC: **Log**) and decide the exit code
-  of `sendito run` (`1` when any assertion fails).
+* **Lua scripts** (`[scripts.lua]`, `pre` and `post`) — code in
+  [Lua 5.4](https://www.lua.org), for logic that the rows cannot express
+  ([FORMAT.md](../FORMAT.md#lua-scripts)). The pre script runs after the
+  pre-request rows: it sets variables (`vars.set`, `vars.set_secret`) and
+  changes the request (`request.url`, `request.method`, headers, query
+  parameters, the body text). The post script runs after the assertions: it
+  reads `response` (status, headers, body, `json()`, `time()`), sets
+  variables and records `test(name, pass)` results. `print` writes to the
+  script output. Helpers: `render`, `hash`, `base64_encode`, `base64_decode`,
+  `json_parse`, `json_stringify`. Folder scripts run first. The scripts cannot
+  reach files, the network or processes, and stop at fixed instruction and
+  memory limits. An error in a pre script stops the send; an error in a post
+  script is a failed test.
+* Results appear in the **Results** tab (gRPC: **Log**): assertions and tests,
+  the variables set, and the script output. They decide the exit code of
+  `sendito run` (`1` when an assertion or a test fails, `2` when a pre script
+  fails).
 
 ---
 
@@ -1059,7 +1075,8 @@ knowing up front:
 * HTTP library differences: `Accept: */*` is added when you define none, HTTP/1
   header names go out Title-Case, and header order between different names may
   differ.
-* No JavaScript scripts; no HTTP/3 or gRPC-Web.
+* Scripts are Lua, not JavaScript (Postman scripts are not converted); no
+  HTTP/3 or gRPC-Web.
 * WebSocket: HTTP(S) CONNECT proxies only (no SOCKS, no `proxy = "env"`), no
   `permessage-deflate`, and `curl ws://…` is refused rather than imported.
 * gRPC ignores `[http] proxy`.

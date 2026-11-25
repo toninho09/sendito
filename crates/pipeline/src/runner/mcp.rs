@@ -182,10 +182,12 @@ pub async fn exec_mcp(
     info: &McpRunInfo,
     updates: mpsc::UnboundedSender<McpUpdate>,
 ) {
-    let mut results = ScriptResults {
-        pre: script::run_pre(&req.scripts.pre, &mut scope),
-        ..Default::default()
-    };
+    let PrePhase {
+        req,
+        mut results,
+        error: pre_error,
+    } = pre_phase(req, &mut scope);
+    let req = &req;
     let resolved = resolve_mcp(req, &scope);
     let template = Request::Mcp(req.clone());
     let target = match mask_request(&template, &scope) {
@@ -215,6 +217,9 @@ pub async fn exec_mcp(
             needs_login,
         });
     };
+    if let Some(e) = pre_error {
+        return fail(e, results, false);
+    }
     if resolved.server.is_empty() || resolved.tool.is_empty() {
         return fail("choose a server and tool first".into(), results, false);
     }
@@ -251,6 +256,7 @@ pub async fn exec_mcp(
             };
             results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
             results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+            post_phase(&req.scripts, &view, &mut scope, &mut results);
             scrub_asserts(&mut results.asserts, &secrets);
             let size = body.len() as u64;
             let entry = history_entry(

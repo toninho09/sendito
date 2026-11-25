@@ -732,6 +732,31 @@ fn flow_send_get_and_post_json() {
     h.key("p");
 }
 
+/// The Scripts tab edits the Lua pre script; the send runs it and the
+/// Messages tab shows its output.
+#[test]
+fn flow_lua_pre_script() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    open(&mut h, "health");
+    // Scripts tab, the section choice, then section 4: the Lua pre script.
+    h.key("alt+5");
+    h.key("enter");
+    h.key("right right right");
+    assert!(h.screen().contains("Pre-request: Lua script (empty)"));
+    h.key("down");
+    h.type_text("request:set_header(\"X-Flow\", \"lua\") print(\"hi\")");
+    h.key("ctrl+enter");
+    h.wait_idle(10);
+    let caps = s.http.take();
+    let c = caps.last().must();
+    assert_eq!(c.header("x-flow").as_deref(), Some("lua"));
+    h.key("ctrl+w j alt+4");
+    let sc = h.screen();
+    assert!(sc.contains("Script output:"), "{sc}");
+    assert!(sc.contains("  hi"), "{sc}");
+}
+
 #[test]
 fn flow_response_jq_filter() {
     let s = servers();

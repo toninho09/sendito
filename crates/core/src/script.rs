@@ -138,17 +138,7 @@ fn read(
             };
             Ok(Some(n.to_string()))
         }
-        Source::Hash => Ok(Some(match expr {
-            "md5" => hex(&Md5::digest(resp.body)),
-            "sha1" => hex(&Sha1::digest(resp.body)),
-            "sha256" => hex(&Sha256::digest(resp.body)),
-            "sha512" => hex(&Sha512::digest(resp.body)),
-            other => {
-                return Err(format!(
-                    "unknown hash '{other}' (md5, sha1, sha256, sha512)"
-                ));
-            }
-        })),
+        Source::Hash => digest(expr, resp.body).map(Some),
         Source::XPath => {
             let items = parsed.xml.query(resp.body, expr)?;
             Ok(match items.len() {
@@ -183,6 +173,21 @@ fn read(
 fn millis(d: Duration) -> String {
     let s = format!("{:.3}", d.as_secs_f64() * 1000.0);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// The lowercase hex digest of `bytes` with the hash `algo`.
+pub(crate) fn digest(algo: &str, bytes: &[u8]) -> Result<String, String> {
+    Ok(match algo {
+        "md5" => hex(&Md5::digest(bytes)),
+        "sha1" => hex(&Sha1::digest(bytes)),
+        "sha256" => hex(&Sha256::digest(bytes)),
+        "sha512" => hex(&Sha512::digest(bytes)),
+        other => {
+            return Err(format!(
+                "unknown hash '{other}' (md5, sha1, sha256, sha512)"
+            ));
+        }
+    })
 }
 
 fn hex(bytes: &[u8]) -> String {

@@ -71,8 +71,9 @@ Sends a request without the UI, or runs every request in a folder.
 | `--fail-fast` | Stop at the first failed or errored request (folder runs only) |
 | `--report <text\|json>` | Folder report format; `text` (default) writes lines to stderr, `json` writes the summary to stdout |
 
-One request: the response body goes to **stdout**, and the status, timing and
-assertion results go to **stderr**. A failure is signalled by the exit code (see
+One request: the response body goes to **stdout**, and the status, timing,
+assertion and test results go to **stderr**, with the Lua script output as
+`log:` lines. A failure is signalled by the exit code (see
 below), so `sendito run x > body.txt` is safe: redirected output holds the body
 bytes unchanged (a line break is added only when stdout is a terminal). A body
 cut at `[http] max_body_mb` prints a warning on stderr. A variable whose secret
@@ -291,8 +292,8 @@ available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 | Code | Meaning |
 |---:|---|
 | `0` | Success: every assertion passed (and, for a folder run, every request succeeded) |
-| `1` | A failed assertion, or an MCP tool returned `isError: true` |
-| `2` | The request failed: network error, a gRPC status other than `OK`, a WebSocket close other than `1000`, an SSE transport/response validation error, or an MQTT session error (refused CONNACK, CONNACK timeout, transport error) |
+| `1` | A failed assertion or Lua `test`, an error in a Lua post script, or an MCP tool returned `isError: true` |
+| `2` | The request failed: an error in a Lua pre script (nothing is sent), network error, a gRPC status other than `OK`, a WebSocket close other than `1000`, an SSE transport/response validation error, or an MQTT session error (refused CONNACK, CONNACK timeout, transport error) |
 | `3` | Usage error, including unresolved variables |
 
 For a folder run the exit code is the worst of the four over all requests:

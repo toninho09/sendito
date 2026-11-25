@@ -84,6 +84,8 @@ pub enum Field {
     ScriptPre,
     ScriptExtract,
     ScriptAssert,
+    /// The Lua script of the selected section (pre or post).
+    ScriptCode,
     Timeout,
     FollowRedirects,
     VerifyTls,
@@ -193,6 +195,7 @@ impl Field {
             | Field::ScriptPre
             | Field::ScriptExtract
             | Field::ScriptAssert
+            | Field::ScriptCode
             | Field::Message
             | Field::Metadata
             | Field::WsMessages
@@ -330,6 +333,7 @@ impl Field {
             | Field::ScriptPre
             | Field::ScriptExtract
             | Field::ScriptAssert
+            | Field::ScriptCode
             | Field::Message
             | Field::Metadata
             | Field::WsMessages
@@ -384,6 +388,7 @@ impl Field {
         matches!(
             self,
             Field::BodyText
+                | Field::ScriptCode
                 | Field::Message
                 | Field::WsMessages
                 | Field::JwtClaims
@@ -396,6 +401,7 @@ impl Field {
         matches!(
             self,
             Field::BodyText
+                | Field::ScriptCode
                 | Field::RawContentType
                 | Field::FilePath
                 | Field::FileContentType

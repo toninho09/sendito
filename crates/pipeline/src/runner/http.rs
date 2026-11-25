@@ -189,11 +189,27 @@ pub(super) async fn exec_http_inner(
     scope_errors: Vec<String>,
     streaming: bool,
 ) -> HttpRun {
-    let mut results = ScriptResults {
-        pre: script::run_pre(&req.scripts.pre, &mut scope),
-        ..Default::default()
-    };
+    let PrePhase {
+        req,
+        mut results,
+        error: pre_error,
+    } = pre_phase(req, &mut scope);
+    let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
+    if let Some(message) = pre_error {
+        return HttpRun {
+            stream: None,
+            secrets: Vec::new(),
+            outcome: HttpOutcome {
+                resolved,
+                response: Err(message),
+                doc: Doc::default(),
+                body_size: 0,
+                scripts: results,
+                scope_errors,
+            },
+        };
+    }
     if let sendito_core::resolve::ResolvedBody::Invalid(message) = &resolved.body {
         let message = sendito_core::vars::scrub(message, &scope.secret_values());
         resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message.clone());
@@ -452,6 +468,7 @@ pub(super) async fn exec_http_inner(
                 }
             }
             results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+            post_phase(&req.scripts, &view, &mut scope, &mut results);
             let mut assert_secrets = http_secrets(req, &scope);
             assert_secrets.extend(cookie_secrets.iter().cloned());
             scrub_asserts(&mut results.asserts, &assert_secrets);

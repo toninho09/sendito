@@ -153,10 +153,12 @@ pub async fn exec_mqtt(
     mut control: mpsc::UnboundedReceiver<Control>,
 ) {
     let start = Instant::now();
-    let mut scripts = ScriptResults {
-        pre: script::run_pre(&req.scripts.pre, &mut scope),
-        ..Default::default()
-    };
+    let PrePhase {
+        req,
+        results: mut scripts,
+        error: pre_error,
+    } = pre_phase(req, &mut scope);
+    let req = &req;
     let resolved = resolve_mqtt(req, &scope);
     let secrets = scope.secret_values();
     let timeout = match resolved.timeout_ms.unwrap_or(ctx.mqtt_timeout_ms) {
@@ -169,7 +171,7 @@ pub async fn exec_mqtt(
     let mut connack: Option<bool> = None;
     let mut error: Option<String> = None;
     let reason: String;
-    let opened = match resolved.error.clone() {
+    let opened = match pre_error.or_else(|| resolved.error.clone()) {
         Some(e) => Err(e),
         None => match broker_options(ctx, &resolved) {
             Err(e) => Err(e),
@@ -302,6 +304,7 @@ pub async fn exec_mqtt(
             }
         }
         scripts.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+        post_phase(&req.scripts, &view, &mut scope, &mut scripts);
         scrub_asserts(&mut scripts.asserts, &secrets);
     }
     error = error.map(|e| scrub(&e, &secrets));

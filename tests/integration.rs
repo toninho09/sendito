@@ -961,6 +961,103 @@ fn cli_runs_a_folder_and_chains_variables() {
     });
 }
 
+/// Lua scripts in `sendito run`: the folder script runs first, a variable
+/// only a pre script sets is not unresolved, post-script variables chain into
+/// the next request, a failed `test` exits 1 and a pre-script error exits 2.
+#[test]
+fn cli_runs_lua_scripts() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join(".sendito/environments/local.toml"),
+            format!("[variables]\nbase_url = \"{}\"\n", echo.url()),
+        )
+        .unwrap();
+        write(
+            dir.path(),
+            "Api/folder.toml",
+            "[scripts.lua]\npre = '''\nrequest:set_header(\"X-Folder\", \"f\")\nvars.set(\"uid\", \"u-1\")\n'''\n",
+        );
+        write(
+            dir.path(),
+            "Api/1 create.toml",
+            r#"kind = "http"
+method = "POST"
+url = "{{base_url}}/users/{{uid}}"
+
+[scripts.lua]
+pre = '''
+request:set_header("X-Uid", "{{uid}}" .. "-" .. vars.get("uid"))
+print("sending " .. vars.get("uid"))
+'''
+post = '''
+test("ok", response.status == 200)
+vars.set("seen", response:json().target)
+'''
+"#,
+        );
+        write(
+            dir.path(),
+            "Api/2 next.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/next?t={{seen}}\"\n",
+        );
+        let run = |args: &[&str]| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .output()
+                .unwrap()
+        };
+
+        let out = run(&["run", "Api", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("2 passed, 0 failed, 0 error(s)"), "{stderr}");
+        let sent = echo.take();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].target(), "/users/u-1");
+        assert_eq!(sent[0].header("x-folder").as_deref(), Some("f"));
+        assert_eq!(sent[0].header("x-uid").as_deref(), Some("u-1-u-1"));
+        assert_eq!(sent[1].target(), "/next?t=/users/u-1");
+
+        // One request: the log and the test results go to stderr.
+        let out = run(&["run", "Api/1 create.toml", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("log: sending u-1"), "{stderr}");
+        assert!(stderr.contains("✓ test: ok"), "{stderr}");
+        echo.take();
+
+        // A failed test exits 1.
+        write(
+            dir.path(),
+            "fail.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/x\"\n\n[scripts.lua]\npost = 'test(\"never\", false)'\n",
+        );
+        let out = run(&["run", "fail.toml", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains("✗ test: never"), "{stderr}");
+        echo.take();
+
+        // A pre-script error stops the send and exits 2.
+        write(
+            dir.path(),
+            "stop.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/x\"\n\n[scripts.lua]\npre = 'error(\"no token\")'\n",
+        );
+        let out = run(&["run", "stop.toml", "--env", "local", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("request script:1: no token"), "{stderr}");
+        assert!(echo.take().is_empty(), "the request must not be sent");
+    });
+}
+
 /// Folder runs also drive gRPC and MCP calls. The update channel is only fed
 /// while the call future is polled, so awaiting the updates first hangs the
 /// whole run.

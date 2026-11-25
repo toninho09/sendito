@@ -69,8 +69,13 @@ allows `accept` as a transport header.
 
 ## 3. Product limits worth knowing
 
-* No JavaScript scripting: scripts are declarative (set, extract, assert). Postman
-  scripts are reported as not imported.
+* No JavaScript scripting: scripts are declarative rows (set, extract, assert)
+  or Lua code (`[scripts.lua]`). Postman, Bruno and `.http` scripts are
+  JavaScript: they are reported as not imported, not converted. The request
+  editor does not run Lua scripts, so it highlights a variable that only a
+  script sets as undefined.
+* The Lua scripts use `mlua` with Lua 5.4 built from source (`vendored`): a
+  build needs a C compiler for the target.
 * Folder runs (`sendito run <folder>`) are sequential and share one variable
   scope in tree order; there is no parallelism, no per-request retry and no
   JUnit/TAP writer (the JSON report is the machine format). A request that

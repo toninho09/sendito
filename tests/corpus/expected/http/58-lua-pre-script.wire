@@ -1,0 +1,11 @@
+POST /echo?q=a%20b HTTP/1.1
+X-Keep: kept
+X-Request-Id: lua-ana
+X-Sum: 3
+Content-Type: application/json
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 21
+
+{"a":1,"b":"lua-ana"}
+### client saw: 200 OK

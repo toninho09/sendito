@@ -119,34 +119,40 @@ pub(super) fn draw_request(
     let (names_list, counts): (Vec<&str>, Vec<usize>) = {
         let e = &app.tabs[app.active].ed;
         let n = e.tab_names().to_vec();
+        // Script rows, plus one for each Lua script that has code.
+        let scripts = table_count(&e.pre)
+            + table_count(&e.extract)
+            + table_count(&e.asserts)
+            + usize::from(!e.lua_pre.trimmed_is(""))
+            + usize::from(!e.lua_post.trimmed_is(""));
         let mut c = match e.kind {
             Kind::Http => vec![
                 table_count(&e.params),
                 table_count(&e.headers),
                 usize::from(e.body_kind != sendito_core::BodyKind::None),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Grpc => vec![
                 0,
                 table_count(&e.metadata),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Sse => vec![
                 table_count(&e.params),
                 table_count(&e.headers),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Ws => vec![
                 table_count(&e.headers),
                 usize::from(!e.message.trimmed_is("[]") && !e.message.trimmed_is("")),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Mqtt => vec![
@@ -154,20 +160,20 @@ pub(super) fn draw_request(
                 table_count(&e.mqtt_publish),
                 usize::from(!e.will_topic.text().is_empty()),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Mcp => vec![
                 0,
                 usize::from(!e.message.trimmed_is("{}") && !e.message.trimmed_is("")),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
                 0,
             ],
             Kind::Folder => vec![
                 table_count(&e.headers),
                 usize::from(e.auth_kind != sendito_core::AuthKind::Inherit),
                 table_count(&e.vars),
-                table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
+                scripts,
             ],
         };
         // Docs, the last tab of every kind.

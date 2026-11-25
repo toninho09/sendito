@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// The sections of the Scripts tab (see `Editors::script_section`).
+const SCRIPT_SECTIONS: usize = 5;
+
+/// ` (empty)` for a blank script, for the section list.
+fn empty_note(e: &TextEditor) -> &'static str {
+    if e.text().trim().is_empty() {
+        " (empty)"
+    } else {
+        ""
+    }
+}
+
 /// Editor widgets for every field of a request.
 #[derive(Debug, Clone)]
 pub struct Editors {
@@ -63,8 +75,11 @@ pub struct Editors {
     pub jwt_key: TextEditor,
     pub jwt_claims: TextEditor,
     pub jwt_expires: TextEditor,
-    /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions.
+    /// Scripts tab section: 0 pre-request, 1 extract, 2 assertions, 3 Lua
+    /// pre script, 4 Lua post script.
     pub script_section: usize,
+    pub lua_pre: TextEditor,
+    pub lua_post: TextEditor,
     /// MQTT subscriptions: topic filter and QoS.
     pub mqtt_subs: Table,
     /// MQTT publishes: topic, payload, QoS, retain and base64.
@@ -420,6 +435,11 @@ impl Editors {
             jwt_claims: TextEditor::multi("{}").with_highlight(Highlight::Json),
             jwt_expires: TextEditor::single("").with_placeholder("none"),
             script_section: 0,
+            lua_pre: TextEditor::multi("").with_placeholder(
+                "vars.set(\"ts\", render(\"{{$timestamp}}\"))  request:set_header(\"X-Id\", \"1\")",
+            ),
+            lua_post: TextEditor::multi("")
+                .with_placeholder("test(\"status is 200\", response.status == 200)"),
             mqtt_subs: mqtt_subs_table(),
             mqtt_publish: mqtt_publish_table(),
             will_topic: TextEditor::single("").with_placeholder("none"),
@@ -462,12 +482,19 @@ impl Editors {
                 vec![Cell::Choice(src), t(&a.expr), Cell::Choice(op), t(&a.value)],
             );
         }
+        let code = |v: &[LuaScript]| v.first().map(|r| r.code.clone()).unwrap_or_default();
+        e.lua_pre.set_text(&code(&scripts.lua_pre));
+        e.lua_post.set_text(&code(&scripts.lua_post));
         e.script_section = if !scripts.pre.is_empty() {
             0
         } else if !scripts.extract.is_empty() {
             1
         } else if !scripts.asserts.is_empty() {
             2
+        } else if !scripts.lua_pre.is_empty() {
+            3
+        } else if !scripts.lua_post.is_empty() {
+            4
         } else {
             0
         };
@@ -760,6 +787,8 @@ impl Editors {
                     value: r.cells[3].text(),
                 })
                 .collect(),
+            lua_pre: LuaScript::own(self.lua_pre.text()).into_iter().collect(),
+            lua_post: LuaScript::own(self.lua_post.text()).into_iter().collect(),
         }
     }
 
@@ -1117,6 +1146,7 @@ impl Editors {
         match self.script_section {
             1 => Field::ScriptExtract,
             2 => Field::ScriptAssert,
+            3 | 4 => Field::ScriptCode,
             _ => Field::ScriptPre,
         }
     }
@@ -1129,6 +1159,8 @@ impl Editors {
                 "After response: assertions ({})",
                 self.asserts.values().len()
             ),
+            format!("Pre-request: Lua script{}", empty_note(&self.lua_pre)),
+            format!("After response: Lua script{}", empty_note(&self.lua_post)),
         ]
     }
 
@@ -1152,6 +1184,8 @@ impl Editors {
                 _ => &mut self.body_text,
             },
             Field::BodyText => &mut self.body_text,
+            Field::ScriptCode if self.script_section == 4 => &mut self.lua_post,
+            Field::ScriptCode => &mut self.lua_pre,
             Field::RawContentType => &mut self.raw_ct,
             Field::FilePath => &mut self.file_path,
             Field::FileContentType => &mut self.file_ct,
@@ -1314,7 +1348,9 @@ impl Editors {
             }
             Field::SchemaSource => self.schema_files = !self.schema_files,
             Field::GraphqlSection => self.graphql_section = step(self.graphql_section, 3),
-            Field::ScriptSection => self.script_section = step(self.script_section, 3),
+            Field::ScriptSection => {
+                self.script_section = step(self.script_section, SCRIPT_SECTIONS)
+            }
             Field::FollowRedirects => self.follow = !self.follow,
             Field::VerifyTls => self.verify = !self.verify,
             Field::Cookies => {
@@ -1375,7 +1411,7 @@ impl Editors {
             }
             Field::SchemaSource => self.schema_files = index == 1,
             Field::GraphqlSection => self.graphql_section = index.min(2),
-            Field::ScriptSection => self.script_section = index.min(2),
+            Field::ScriptSection => self.script_section = index.min(SCRIPT_SECTIONS - 1),
             Field::DocsView => self.docs_preview = index == 1,
             Field::Cookies => {
                 self.cookies = match index {

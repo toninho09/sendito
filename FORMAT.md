@@ -71,7 +71,8 @@ Lookup order, last wins:
 2. the active environment (`.sendito/environments/<name>.toml`)
 3. the variables of the request's folders (`folder.toml`), the collection root
    first and the request's own folder last
-4. runtime variables set by scripts (pre-request `set`, post-response `extract`)
+4. runtime variables set by scripts (pre-request `set`, post-response `extract`,
+   and `vars.set` in Lua scripts)
 
 A variable's value may itself contain `{{other}}` placeholders (resolved up to
 8 levels; cycles stay unresolved). Built-in dynamic variables, generated once per
@@ -153,6 +154,14 @@ secret = true                   # mask the value in the UI and history
 from = "status"                 # a source of "Script sources" below
 op = "eq"                       # eq ne contains not_contains exists not_exists lt le gt ge matches
 value = "200"                   # omitted for exists / not_exists; may use {{variables}}
+
+[scripts.lua]                   # Lua code; see "Lua scripts" below
+pre = '''
+request:set_header("X-Trace", vars.get("trace"))
+'''
+post = '''
+test("status is 200", response.status == 200)
+'''
 ```
 
 ### Script sources
@@ -181,9 +190,73 @@ body the request kind gives to scripts (the last message for gRPC, the last
 text frame for WebSocket, the last event data for SSE, the last payload for
 MQTT, the result object for MCP) and the headers it gives to `header`.
 
+### Lua scripts
+
+`[scripts.lua]` holds code in [Lua 5.4](https://www.lua.org/manual/5.4/):
+`pre` and `post`, both optional. A blank script is not written. The order of
+one send is:
+
+1. the `[[scripts.pre]]` rows (folders first, then the request);
+2. the `pre` scripts (folders first, then the request);
+3. resolution and the send;
+4. `[[scripts.extract]]`, then `[[scripts.assert]]`;
+5. the `post` scripts (folders first, then the request).
+
+The scripts of one phase share one Lua state: a global that one script sets
+is visible to the next. The Sendito variables are shared by both phases.
+
+| Name | In | What it does |
+|---|---|---|
+| `vars.get(name)` | pre, post | the resolved value as a string, or `nil` when the variable is not defined |
+| `vars.has(name)` | pre, post | `true` when the variable is defined |
+| `vars.set(name, value)` | pre, post | sets a runtime variable; a number is written as Lua writes it, a table as JSON; `nil` is an error |
+| `vars.set_secret(name, value)` | pre, post | the same, as a secret |
+| `render(text)` | pre, post | `text` with its `{{variables}}` resolved, dynamic ones included |
+| `hash(algo, text)` | pre, post | the lowercase hex digest: `md5`, `sha1`, `sha256`, `sha512` |
+| `base64_encode(text)`, `base64_decode(text)` | pre, post | standard base64 |
+| `json_parse(text)`, `json_stringify(value)` | pre, post | JSON text to a Lua value and back; `null` is `nil`, object keys are sorted |
+| `print(...)` | pre, post | a line of script output (the values joined with a tab), secrets masked |
+| `request.url` | pre | the URL (gRPC: the target); read and write |
+| `request.method` | pre | HTTP only; read and write (written in upper case) |
+| `request:header(n)`, `request:set_header(n, v)`, `request:remove_header(n)` | pre | headers (gRPC: metadata); names in any case |
+| `request:param(n)`, `request:set_param(n, v)`, `request:remove_param(n)` | pre | query parameters (HTTP and SSE) |
+| `request.body` | pre | the body text: HTTP JSON and raw text, the GraphQL query, the gRPC message, the WebSocket messages, the MCP arguments |
+| `response.status`, `response.body` | post | the status the kind gives to scripts (see "Script sources") and the body bytes |
+| `response:header(n)`, `response.headers` | post | one header, or a list of `{name = ..., value = ...}` |
+| `response:json()` | post | the body parsed as JSON |
+| `response:time(phase)` | post | a phase of the `time` source in milliseconds, or `nil` when it was not measured |
+| `test(name, pass)` | post | a result next to the assertions, labelled `test: name` |
+
+A member that the request kind does not have is an error, for example
+`request:set_header` on MQTT or `request.body` on a form body. The values a
+pre script writes are templates: `{{variables}}` in them are resolved at the
+send. `set_header` replaces the first row with that name, enables it and
+removes the other rows with that name; with no such row it adds one.
+
+A value a script sets is a secret when `set_secret` sets it or when it holds
+the value of a secret variable. An error in a `pre` script stops the send
+with the message, the script (`request` or `folder <path>`) and the line, for
+example `request script:3: no token`; the request is not sent. An error in a
+`post` script is a failed test named after the script, and the next scripts
+still run.
+
+The Lua state loads the `string`, `table`, `math` and `utf8` libraries only:
+there is no `io`, `os`, `package`, `debug` or `coroutine`, and `dofile`,
+`loadfile`, `load`, `collectgarbage` and `string.dump` are removed. The
+scripts cannot read files, open connections or start processes. One script
+runs at most 10 000 000 Lua instructions, and the state holds at most 64 MiB.
+
+The check for unresolved variables before a send runs the `pre` phase on a
+copy first, so a variable that only a `pre` script sets is not reported. The
+editor highlights it as undefined, because the editor does not run scripts.
+The exports (`sendito curl`, `sendito http`, `:curl`, `:httpfile`) do not run
+scripts either.
+
 ### What goes on the wire
 
-Sendito sends exactly what the request defines, plus what HTTP framing requires:
+Sendito sends exactly what the request defines, plus what HTTP framing requires.
+The `pre` Lua scripts are part of the request: what they set or remove counts
+as defined by the file. In detail:
 
 * **Method and URL**: the method is upper-cased. The URL is used as written
   (characters that are not allowed in a URL, such as spaces or non-ASCII, are
@@ -699,8 +772,8 @@ How a request inherits:
   not get headers.
 * **Variables**: one layer per folder, above the environment and below the
   runtime variables.
-* **Scripts**: the folders' pre-request, extract and assert rows run before the
-  request's own, the collection root first.
+* **Scripts**: the folders' pre-request, extract and assert rows and their
+  Lua scripts run before the request's own, the collection root first.
 
 An unsaved request inherits from the collection root only. A `folder.toml`
 that cannot be read stops the send of every request below it, with the file

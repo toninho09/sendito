@@ -101,7 +101,25 @@ pub fn unresolved(req: &Request, names: &Scope) -> Vec<String> {
 /// (see [`build_scope_checked`]) counts as unresolved even when a lower layer
 /// defines it.
 pub fn unresolved_loaded(req: &Request, scope: &Scope, failed: &[String]) -> Vec<String> {
-    unresolved(req, &without(scope, failed))
+    let mut scope = without(scope, failed);
+    let req = dry_pre(req, &mut scope);
+    unresolved(&req, &scope)
+}
+
+/// The request after a dry run of the pre phase on `scope`, so the variables
+/// the Lua pre scripts set and the request fields they change count. The
+/// scripts reach nothing outside the run, so running them twice is safe. A
+/// script error leaves the request as it is: the send reports the error.
+fn dry_pre(req: &Request, scope: &mut Scope) -> Request {
+    if req.scripts().lua_pre.is_empty() {
+        return req.clone();
+    }
+    script::run_pre(&req.scripts().pre, scope);
+    let mut out = req.clone();
+    match lua_script::run_lua_pre(&req.scripts().lua_pre, &mut out, scope) {
+        Ok(_) => out,
+        Err(_) => req.clone(),
+    }
 }
 
 /// The check before a send with the loaded scope: [`unresolved_loaded`], plus

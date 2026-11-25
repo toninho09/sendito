@@ -1,5 +1,6 @@
 //! The send pipeline shared by the TUI and `sendito run`:
-//! scope → pre-request script → resolve → send → extract/assert → history.
+//! scope → pre-request scripts → resolve → send → extract/assert → post
+//! scripts → history.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use sendito_core::inherit::{self, ChainItem};
+use sendito_core::lua_script;
 use sendito_core::model::*;
 use sendito_core::resolve::{
     ResolvedGrpc, ResolvedHttp, SignedAuth, mask_request, resolve_grpc, resolve_http, resolve_mcp,
@@ -25,9 +27,15 @@ use crate::doc::Doc;
 
 #[derive(Debug, Clone, Default)]
 pub struct ScriptResults {
+    /// Variables the `pre` rows and the Lua pre scripts set, in order.
     pub pre: Vec<(String, VarValue)>,
     pub extracts: Vec<ExtractResult>,
+    /// The assertions, then the `test(...)` results of the Lua post scripts.
     pub asserts: Vec<AssertResult>,
+    /// Variables the Lua post scripts set, in order.
+    pub post: Vec<(String, VarValue)>,
+    /// `print` lines of the Lua scripts, secrets masked.
+    pub logs: Vec<String>,
 }
 
 impl ScriptResults {
@@ -35,7 +43,8 @@ impl ScriptResults {
         self.asserts.iter().filter(|a| !a.pass).count()
     }
 
-    /// Runtime variable updates (pre-request sets and successful extractions).
+    /// Runtime variable updates in the order they were made: pre-request
+    /// sets, successful extractions, then post-script sets.
     pub fn updates(&self) -> Vec<(String, VarValue)> {
         let mut v = self.pre.clone();
         for e in &self.extracts {
@@ -43,8 +52,82 @@ impl ScriptResults {
                 v.push((e.var.clone(), val.clone()));
             }
         }
+        v.extend(self.post.iter().cloned());
         v
     }
+}
+
+/// A request kind the pre phase can wrap in a `Request` and take back.
+pub(crate) trait Kind: Clone {
+    fn wrap(self) -> Request;
+    fn take(r: Request) -> Option<Self>;
+}
+
+macro_rules! kind {
+    ($($t:ty => $v:ident),*) => {$(
+        impl Kind for $t {
+            fn wrap(self) -> Request {
+                Request::$v(self)
+            }
+            fn take(r: Request) -> Option<Self> {
+                match r {
+                    Request::$v(x) => Some(x),
+                    _ => None,
+                }
+            }
+        }
+    )*};
+}
+
+kind!(HttpRequest => Http, GrpcRequest => Grpc, WebSocketRequest => Ws,
+      SseRequest => Sse, MqttRequest => Mqtt, McpRequest => Mcp);
+
+/// The result of the pre-request phase.
+pub(crate) struct PrePhase<T> {
+    /// The request to send: the one given, as the Lua pre scripts changed it.
+    pub req: T,
+    pub results: ScriptResults,
+    /// A Lua pre script failed: the send must stop with this message.
+    pub error: Option<String>,
+}
+
+/// The pre-request phase of a send: the `pre` rows, then the Lua pre
+/// scripts. Both set variables in `scope`; the scripts can also change the
+/// request. On a script error the request is the one given.
+pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
+    let mut wrapped = req.clone().wrap();
+    let mut results = ScriptResults {
+        pre: script::run_pre(&wrapped.scripts().pre, scope),
+        ..Default::default()
+    };
+    let scripts = wrapped.scripts().lua_pre.clone();
+    let error = match lua_script::run_lua_pre(&scripts, &mut wrapped, scope) {
+        Ok(out) => {
+            results.pre.extend(out.sets);
+            results.logs = out.logs;
+            None
+        }
+        Err(e) => Some(e),
+    };
+    PrePhase {
+        req: T::take(wrapped).unwrap_or_else(|| req.clone()),
+        results,
+        error,
+    }
+}
+
+/// The Lua post scripts of a send, after the assertions: their tests join
+/// the assertions, their variables and logs join `results`.
+pub(crate) fn post_phase(
+    scripts: &Scripts,
+    view: &ResponseView<'_>,
+    scope: &mut Scope,
+    results: &mut ScriptResults,
+) {
+    let out = lua_script::run_lua_post(&scripts.lua_post, view, scope);
+    results.asserts.extend(out.tests);
+    results.post.extend(out.sets);
+    results.logs.extend(out.logs);
 }
 
 #[derive(Clone)]
@@ -200,8 +283,11 @@ mod tests {
                 pass: false,
                 actual: "y".into(),
             }],
+            post: vec![("d".into(), VarValue::plain("4"))],
+            logs: vec![],
         };
-        assert_eq!(r.updates().len(), 2);
+        let order: Vec<_> = r.updates().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(order, ["a", "b", "d"]);
         assert_eq!(r.failed_asserts(), 1);
         assert_eq!(schema_key("u", &SchemaSource::Reflection), "reflect:u");
         let mut summary = GrpcSummary::new();

@@ -89,6 +89,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
                 actual: "2".into(),
             },
         ],
+        ..Default::default()
     };
     let outcome = HttpOutcome {
         resolved,

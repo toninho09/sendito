@@ -119,10 +119,12 @@ pub async fn exec_ws(
     updates: mpsc::UnboundedSender<WsUpdate>,
     mut control: mpsc::UnboundedReceiver<Control>,
 ) {
-    let mut results = ScriptResults {
-        pre: script::run_pre(&req.scripts.pre, &mut scope),
-        ..Default::default()
-    };
+    let PrePhase {
+        req,
+        mut results,
+        error: pre_error,
+    } = pre_phase(req, &mut scope);
+    let req = &req;
     let mut resolved = sendito_core::resolve::resolve_ws(req, &scope);
     // `timeout_ms` unset falls back to `[websocket] timeout_ms`; 0 means no
     // limit in either place.
@@ -157,6 +159,9 @@ pub async fn exec_ws(
             scope_errors: scope_errors.clone(),
         });
     };
+    if let Some(e) = pre_error {
+        return fail(e, results);
+    }
     if req.auth.kind().http_only() {
         return fail(
             format!(
@@ -326,6 +331,7 @@ pub async fn exec_ws(
     };
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+    post_phase(&req.scripts, &view, &mut scope, &mut results);
     scrub_asserts(
         &mut results.asserts,
         &[&secrets[..], &cookie_secrets[..]].concat(),

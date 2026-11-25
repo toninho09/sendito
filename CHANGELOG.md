@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Lua scripts
+
+* Requests and `folder.toml` take Lua 5.4 code in `[scripts.lua]`: `pre` runs
+  after the pre-request rows and `post` after the assertions, folder scripts
+  first. Every request kind runs them.
+* A pre script sets variables and changes the request: `request.url`,
+  `request.method`, `request:set_header`/`remove_header` (gRPC metadata),
+  `request:set_param`/`remove_param` and `request.body`. What it sets is sent
+  as if the file defined it.
+* A post script reads `response` (status, headers, body, `json()`,
+  `time(phase)`), sets variables and records `test(name, pass)` results next to
+  the assertions.
+* Helpers: `vars.get`, `vars.has`, `vars.set`, `vars.set_secret`, `render`,
+  `hash`, `base64_encode`, `base64_decode`, `json_parse`, `json_stringify`.
+  `print` lines appear in the Results tab and as `log:` lines of
+  `sendito run`.
+* The scripts cannot reach files, the network or processes (no `io`, `os`,
+  `package`, `debug`, `load` or `dofile`) and stop at fixed instruction and
+  memory limits.
+* An error in a pre script stops the send (`sendito run` exits 2); a failed
+  test or an error in a post script exits 1.
+* The Scripts tab has two new sections, "Pre-request: Lua script" and "After
+  response: Lua script", each with a multi-line editor.
+* The check for unresolved variables runs the pre phase on a copy, so a
+  variable that only a pre script sets is not reported.
+
 ### MCP servers in the interface
 
 * The MCP servers editor (`Ctrl+W S`, `:mcpservers edit`) and `:mcpadd` write

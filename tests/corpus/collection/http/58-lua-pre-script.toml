@@ -1,0 +1,33 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo"
+
+[[headers]]
+name = "X-Remove"
+value = "gone"
+
+[[headers]]
+name = "X-Keep"
+value = "kept"
+
+[body]
+type = "json"
+text = "{\"a\": 1}"
+
+[[scripts.pre]]
+var = "prefix"
+value = "lua"
+
+[scripts.lua]
+pre = '''
+local id = vars.get("prefix") .. "-" .. vars.get("user")
+vars.set("req_id", id)
+request.method = "post"
+request:set_header("X-Request-Id", "{{req_id}}")
+request:set_header("X-Sum", 1 + 2)
+request:remove_header("X-Remove")
+request:set_param("q", "a b")
+local body = json_parse(request.body)
+body.b = id
+request.body = json_stringify(body)
+'''

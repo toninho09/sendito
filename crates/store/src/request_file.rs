@@ -155,6 +155,18 @@ pub(crate) struct RawScripts {
     extract: Vec<RawExtract>,
     #[serde(default, rename = "assert")]
     asserts: Vec<RawAssert>,
+    lua: Option<RawLua>,
+}
+
+/// `[scripts.lua]`: the Lua code that runs before the send and after the
+/// response.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLua {
+    #[serde(default)]
+    pre: String,
+    #[serde(default)]
+    post: String,
 }
 
 #[derive(Deserialize)]
@@ -387,7 +399,10 @@ pub(crate) fn scripts(s: RawScripts) -> Result<Scripts, String> {
             format!("unknown script source {s:?} ({})", names.join(", "))
         })
     };
+    let lua = s.lua.unwrap_or_default();
     Ok(Scripts {
+        lua_pre: LuaScript::own(lua.pre).into_iter().collect(),
+        lua_post: LuaScript::own(lua.post).into_iter().collect(),
         pre: s
             .pre
             .into_iter()
@@ -712,6 +727,18 @@ pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
         w.str("op", a.op.as_str());
         if a.op.takes_value() {
             w.str("value", &a.value);
+        }
+    }
+    // A file holds the request's (or folder's) own script only.
+    let code = |v: &[LuaScript]| v.first().map(|r| r.code.clone()).unwrap_or_default();
+    let (pre, post) = (code(&s.lua_pre), code(&s.lua_post));
+    if !pre.trim().is_empty() || !post.trim().is_empty() {
+        w.table("scripts.lua");
+        if !pre.trim().is_empty() {
+            w.str("pre", &pre);
+        }
+        if !post.trim().is_empty() {
+            w.str("post", &post);
         }
     }
 }
@@ -1132,6 +1159,7 @@ mod tests {
                         value: String::new(),
                     },
                 ],
+                ..Scripts::default()
             },
         })
     }
@@ -1344,6 +1372,41 @@ mod tests {
         let bad = "kind = \"mcp\"\n[[scripts.assert]]\nfrom = \"nope\"\nop = \"exists\"\n";
         let err = parse(bad).unwrap_err();
         assert!(err.contains("xpath, regex, cookie"), "{err}");
+    }
+
+    #[test]
+    fn roundtrip_lua_scripts() {
+        let pre = "vars.set(\"a\", 1)\nrequest:set_header(\"X\", '''q''')\n";
+        let h = Request::Http(HttpRequest {
+            url: "https://x".into(),
+            scripts: Scripts {
+                pre: vec![SetVar {
+                    var: "v".into(),
+                    value: "1".into(),
+                }],
+                lua_pre: LuaScript::own(pre).into_iter().collect(),
+                lua_post: LuaScript::own("test(\"ok\", response.status == 200);")
+                    .into_iter()
+                    .collect(),
+                ..Scripts::default()
+            },
+            ..HttpRequest::default()
+        });
+        let t = to_toml(&h);
+        assert_eq!(parse(&t).ok(), Some(h.clone()));
+        assert_eq!(to_toml(&parse(&t).unwrap()), t);
+        assert!(t.contains("[[scripts.pre]]"), "{t}");
+        assert!(t.contains("\n[scripts.lua]\npre = "), "{t}");
+        // A blank script is not written; a post script alone is.
+        let mut only_post = h.clone();
+        only_post.scripts_mut().lua_pre = Vec::new();
+        let t = to_toml(&only_post);
+        assert!(!t.contains("pre = "), "{t}");
+        assert_eq!(parse(&t).ok(), Some(only_post));
+        let blank = "kind = \"mcp\"\n[scripts.lua]\npre = \"  \"\n";
+        assert!(parse(blank).unwrap().scripts().is_empty());
+        let bad = "kind = \"mcp\"\n[scripts.lua]\nbefore = \"x\"\n";
+        assert!(parse(bad).is_err());
     }
 
     #[test]

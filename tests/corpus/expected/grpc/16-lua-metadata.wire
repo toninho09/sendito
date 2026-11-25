@@ -1,0 +1,10 @@
+method: /sendito.test.v1.Echo/Unary
+metadata received:
+  x-request-id: ana-lua
+  te: trailers
+  content-type: application/grpc
+  user-agent: sendito/0.2.0 tonic/0.14.9
+messages received: 1
+  json: {"text":"from ana"}
+  protobuf (base64): Cghmcm9tIGFuYQ==
+client: 1 response message(s), status OK (0)

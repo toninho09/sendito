@@ -127,6 +127,7 @@ mod tests {
                     value: String::new(),
                 },
             ],
+            ..Scripts::default()
         };
         let ctx = context(root.path());
         let updates = run(&ctx, &req, secret_scope(), |_, _| {}).await;

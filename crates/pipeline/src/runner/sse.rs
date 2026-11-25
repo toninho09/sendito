@@ -52,37 +52,46 @@ pub async fn exec_sse(
     mut control: mpsc::UnboundedReceiver<Control>,
 ) {
     let start = Instant::now();
-    let request = req.http_request();
+    // The pre phase runs here, on the SSE request, so the scripts see and
+    // change its fields; the opening request does not run it again.
+    let PrePhase {
+        req,
+        results: mut scripts,
+        error: pre_error,
+    } = pre_phase(req, &mut scope);
+    let req = &req;
+    let mut request = req.http_request();
+    request.scripts.pre.clear();
+    request.scripts.lua_pre.clear();
     let mut opening_ctx = ctx.clone();
     opening_ctx.history = None;
     opening_ctx.send.default_timeout = Duration::from_millis(ctx.sse_timeout_ms);
-    let opening = http::exec_http_inner(
-        &opening_ctx,
-        &request,
-        scope.clone(),
-        scope_errors.clone(),
-        true,
-    );
-    tokio::pin!(opening);
-    let run = tokio::select! {
-        run = &mut opening => Some(run),
-        _ = control.recv() => None,
+    let run = if pre_error.is_some() {
+        None
+    } else {
+        let opening = http::exec_http_inner(
+            &opening_ctx,
+            &request,
+            scope.clone(),
+            scope_errors.clone(),
+            true,
+        );
+        tokio::pin!(opening);
+        tokio::select! {
+            run = &mut opening => Some(run),
+            _ = control.recv() => None,
+        }
     };
     let mut events = 0;
     let mut size = 0;
     let mut last = Vec::new();
     let mut headers = Vec::new();
     let mut status = 0;
-    let mut scripts = ScriptResults::default();
     let mut secrets = scope.secret_values();
     let mut error = None;
     let reason;
     if let Some(mut run) = run {
         secrets.extend(run.secrets);
-        scripts = run.outcome.scripts;
-        for (name, value) in &scripts.pre {
-            scope.set(RUNTIME_LAYER, name, value.clone());
-        }
         match run.outcome.response {
             Err(e) => {
                 error = Some(e);
@@ -172,6 +181,9 @@ pub async fn exec_sse(
                 }
             }
         }
+    } else if let Some(e) = pre_error {
+        error = Some(e);
+        reason = "error";
     } else {
         reason = "cancelled";
     }
@@ -194,6 +206,7 @@ pub async fn exec_sse(
             }
         }
         scripts.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
+        post_phase(&req.scripts, &view, &mut scope, &mut scripts);
         scrub_asserts(&mut scripts.asserts, &secrets);
     }
     error = error.map(|e| sendito_core::vars::scrub(&e, &secrets));

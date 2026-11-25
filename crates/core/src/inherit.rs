@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::model::{Auth, FolderSettings, KeyValue, Request, Scripts};
+use crate::model::{Auth, FolderSettings, KeyValue, LuaScript, Request, Scripts};
 use crate::vars::{Layer, VarValue};
 
 /// One folder of the chain: its relative path (`""` for the root) and its settings.
@@ -156,10 +156,25 @@ fn names(rows: &[KeyValue]) -> HashSet<String> {
 
 fn merge_scripts(chain: &[ChainItem], own: &Scripts) -> Scripts {
     let mut out = Scripts::default();
-    for s in chain.iter().map(|(_, f)| &f.scripts).chain([own]) {
+    let levels = chain
+        .iter()
+        .map(|(rel, f)| (Some(rel.as_str()), &f.scripts))
+        .chain([(None, own)]);
+    for (rel, s) in levels {
         out.pre.extend(s.pre.iter().cloned());
         out.extract.extend(s.extract.iter().cloned());
         out.asserts.extend(s.asserts.iter().cloned());
+        // A folder's script is named after the folder in error messages.
+        let named = |r: &LuaScript| LuaScript {
+            origin: match rel {
+                Some("") => "folder /".to_string(),
+                Some(rel) => format!("folder {rel}"),
+                None => r.origin.clone(),
+            },
+            code: r.code.clone(),
+        };
+        out.lua_pre.extend(s.lua_pre.iter().map(named));
+        out.lua_post.extend(s.lua_post.iter().map(named));
     }
     out
 }
@@ -288,14 +303,34 @@ mod tests {
         };
         let mut root = FolderSettings::default();
         root.scripts.pre.push(set("root"));
+        let lua = |code: &str| LuaScript::own(code).into_iter().collect::<Vec<_>>();
+        root.scripts.lua_post = lua("root()");
         let mut a = FolderSettings::default();
         a.scripts.pre.push(set("a"));
+        a.scripts.lua_pre = lua("a()");
         let chain = vec![(String::new(), root), ("A".into(), a)];
         let mut mcp = McpRequest::default();
         mcp.scripts.pre.push(set("own"));
+        mcp.scripts.lua_pre = lua("own()");
+        mcp.scripts.lua_post = lua("own()");
         let out = apply(&Request::Mcp(mcp), &chain);
         let order: Vec<&str> = out.scripts().pre.iter().map(|s| s.var.as_str()).collect();
         assert_eq!(order, ["root", "a", "own"]);
+        // Folder Lua scripts run first and are named after their folder.
+        let named = |v: &[LuaScript]| {
+            v.iter()
+                .map(|r| (r.origin.clone(), r.code.clone()))
+                .collect::<Vec<_>>()
+        };
+        let pair = |o: &str, c: &str| (o.to_string(), c.to_string());
+        assert_eq!(
+            named(&out.scripts().lua_pre),
+            [pair("folder A", "a()"), pair("", "own()")]
+        );
+        assert_eq!(
+            named(&out.scripts().lua_post),
+            [pair("folder /", "root()"), pair("", "own()")]
+        );
     }
 
     #[test]

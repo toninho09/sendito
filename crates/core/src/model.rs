@@ -716,11 +716,41 @@ pub struct Scripts {
     pub pre: Vec<SetVar>,
     pub extract: Vec<Extract>,
     pub asserts: Vec<Assertion>,
+    /// Lua scripts that run after the `pre` rows (`[scripts.lua] pre`). A
+    /// file holds at most one; a request with its folders applied holds one
+    /// per level, the collection root first.
+    pub lua_pre: Vec<LuaScript>,
+    /// Lua scripts that run after the assertions (`[scripts.lua] post`).
+    pub lua_post: Vec<LuaScript>,
 }
 
 impl Scripts {
     pub fn is_empty(&self) -> bool {
-        self.pre.is_empty() && self.extract.is_empty() && self.asserts.is_empty()
+        self.pre.is_empty()
+            && self.extract.is_empty()
+            && self.asserts.is_empty()
+            && self.lua_pre.is_empty()
+            && self.lua_post.is_empty()
+    }
+}
+
+/// The code of one Lua script and where it comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LuaScript {
+    /// Empty for the request's own script; `folder <path>` for a folder's
+    /// script after `inherit::apply`. Error messages name it.
+    pub origin: String,
+    pub code: String,
+}
+
+impl LuaScript {
+    /// The request's own script; `None` when `code` is blank.
+    pub fn own(code: impl Into<String>) -> Option<Self> {
+        let code = code.into();
+        (!code.trim().is_empty()).then(|| Self {
+            origin: String::new(),
+            code,
+        })
     }
 }
 

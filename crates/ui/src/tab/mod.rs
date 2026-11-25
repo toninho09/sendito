@@ -432,6 +432,12 @@ mod tests {
                     op: AssertOp::Lt,
                     value: "300".into(),
                 }],
+                lua_pre: LuaScript::own("request:set_header(\"X\", \"1\")\nprint(1)")
+                    .into_iter()
+                    .collect(),
+                lua_post: LuaScript::own("test(\"ok\", response.status < 300);")
+                    .into_iter()
+                    .collect(),
             },
             description: "# Create\n\nMakes an *x*.".into(),
         })

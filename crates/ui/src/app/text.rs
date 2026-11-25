@@ -295,6 +295,27 @@ pub(super) fn messages_text(
         }
         s.push('\n');
     }
+    if !sc.post.is_empty() {
+        s.push_str("Post-response variables:\n");
+        for (k, v) in &sc.post {
+            s.push_str(&format!(
+                "  {k} = {}\n",
+                if v.secret {
+                    crate::MASK.to_string()
+                } else {
+                    v.value.clone()
+                }
+            ));
+        }
+        s.push('\n');
+    }
+    if !sc.logs.is_empty() {
+        s.push_str("Script output:\n");
+        for l in &sc.logs {
+            s.push_str(&format!("  {l}\n"));
+        }
+        s.push('\n');
+    }
     if !sc.extracts.is_empty() {
         s.push_str("Extracted variables:\n");
         for e in &sc.extracts {

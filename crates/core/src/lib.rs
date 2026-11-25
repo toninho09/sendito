@@ -7,6 +7,7 @@ pub mod complete;
 pub mod graphql;
 pub mod inherit;
 pub mod json_schema;
+pub mod lua_script;
 pub mod model;
 pub mod resolve;
 pub mod script;

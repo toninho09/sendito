@@ -53,8 +53,9 @@ plain TOML files you can version in git.
   An opt-in cookie jar keeps cookies per environment; `:cookies` manages them.
   Each redirect hop gets the jar's cookies for its own URL.
   → [Variables and secrets](docs/FEATURES.md#variables-and-secrets)
-* **Scripts without code**: set variables before sending, extract values (JSONPath,
-  header, status) after, and assert on them.
+* **Scripts**: set variables before sending, extract values (JSONPath,
+  header, status) after, and assert on them; or write the logic in
+  [Lua](https://www.lua.org) when rows are not enough.
   → [Scripts](docs/FEATURES.md#scripts)
 * **Folder settings** (`folder.toml`): headers, auth, variables and scripts that
   every request below a folder inherits. `s` on a tree folder opens them.
@@ -78,7 +79,7 @@ plain TOML files you can version in git.
 - [WebSocket](#websocket)
 - [MCP tools](#mcp-tools)
 - [Environments and secrets](#environments-and-secrets)
-- [Scripts (no code)](#scripts-no-code)
+- [Scripts](#scripts)
 - [Watch, proxy and TLS](#watch-proxy-and-tls)
 - [Cookie jar](#cookie-jar)
 - [Import and export](#import-and-export)
@@ -416,9 +417,9 @@ body to stdout unchanged.
 
 More: [variables and secrets](docs/FEATURES.md#variables-and-secrets).
 
-## Scripts (no code)
+## Scripts
 
-The **Scripts** tab has three sections:
+The **Scripts** tab has five sections:
 
 * **Pre-request**: set variables, e.g. `request_id = req-{{$uuid}}`.
 * **Extract**: after the response, store a JSONPath result, a header or the status
@@ -427,6 +428,12 @@ The **Scripts** tab has three sections:
   `== != contains !contains exists !exists < <= > >= matches`. Results appear in
   the **Results** tab (**Log** for gRPC) and decide the exit code of
   `sendito run`.
+* **Lua pre script**: code that runs before the send. It sets variables and
+  changes the URL, method, headers, query and body, e.g.
+  `request:set_header("X-Sig", hash("sha256", vars.get("payload")))`.
+* **Lua post script**: code that runs after the assertions. It reads the
+  response and records tests, e.g.
+  `test("has items", #response:json().items > 0)`.
 
 More: [scripts](docs/FEATURES.md#scripts).
 
