@@ -197,6 +197,15 @@
   the picker of the active request. `:rescan` reads the collection from disk
   again. `:newenv` creates an environment.
 
+### Pretty XML, HTML, YAML and CSV
+
+* The pretty body view formats XML and HTML (one tag per line, a fold per
+  element), YAML (as received, a fold per indented block) and CSV/TSV
+  (aligned columns, bold header), with colors for each format.
+* The Content-Type chooses the format; without one, `<?xml` and
+  `<!doctype html` / `<html` bodies are recognized. A body that does not
+  parse in its format shows raw. The jq path and filter stay JSON only.
+
 ### Streams and large responses
 
 * **`[ui] stream_messages_kept`** (default 10000, also in Settings): a gRPC or

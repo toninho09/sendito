@@ -142,10 +142,27 @@ The wire rules are exact and spelled out in
   still shows the size on the wire. Any other coding (`zstd`, stacked) or a
   truncated stream is shown as received. Sendito never sends `Accept-Encoding`,
   so it only decodes what the server chose to send.
-* **Body views**: pretty JSON with folding, raw text and hex, each with line
-  numbers, search and a scrollbar. In the pretty view the bottom border shows
-  the jq path of the line at the cursor (`.items[0].email`): `f` filters the
-  body to that value and `Y` copies the path.
+* **Body views**: pretty, raw text and hex, each with line numbers, search
+  and a scrollbar. In the pretty view the bottom border shows the jq path of
+  the line at the cursor (`.items[0].email`): `f` filters the body to that
+  value and `Y` copies the path (JSON only).
+* **Pretty formats**: the Content-Type chooses the format; with none that
+  names one, a body that starts with `{` or `[` is JSON, `<?xml` is XML and
+  `<!doctype html` or `<html` is HTML. YAML and CSV need their Content-Type.
+  A body that does not parse in its format shows raw.
+  * **JSON**: re-indented, highlighted, a fold per object and array.
+  * **XML** (`xml`, `+xml`): one tag per line, two spaces per level, a fold
+    per element. Text, comments and CDATA keep their bytes. Closing tags that
+    do not match show the body raw.
+  * **HTML** (`text/html`, `xhtml`): the same layout. `br`, `img` and the
+    other void elements open no level; the content of `pre`, `script`,
+    `style` and `textarea` shows as received; an element left open (`<p>`,
+    `<li>`) ends before the closing tag of its parent.
+  * **YAML** (`yaml`, `yml`): the text as received (comments, anchors, key
+    order), highlighted, a fold per indented block.
+  * **CSV and TSV** (`text/csv`, `text/tab-separated-values`): aligned
+    columns with a bold header row; a line break in a cell shows as `⏎`.
+    Bodies larger than 10 MB, or with rows of different lengths, show raw.
 * **Query bar**: `/` (search) and `j` (vim `J`, jq filter) open a bar on the
   first row of the response view; there is no dialog. The view follows the
   text as you type. On the right the bar shows `2 results`, `match 3/12`,

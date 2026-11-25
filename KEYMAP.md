@@ -117,7 +117,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `bottom` | `End`, `Ctrl+End` | `G`, `End` | Go to the last line |
 | `scroll_left` | `Left` | `h`, `Left` | Scroll left |
 | `scroll_right` | `Right` | `l`, `Right` | Scroll right |
-| `view_pretty` | `p` | `p` | Body view: pretty (JSON formatted and highlighted) |
+| `view_pretty` | `p` | `p` | Body view: pretty (formatted and highlighted) |
 | `view_raw` | `r` | `r` | Body view: raw text |
 | `view_hex` | `x` | `x` | Body view: hex dump |
 | `search` | `/`, `Ctrl+F` | `/`, `Ctrl+F` | Search in the response |
@@ -128,9 +128,9 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `next_message` | `]` | `]` | Show the next message of a stream (the last one follows new ones) |
 | `search_next` | `n`, `F3` | `n`, `F3` | Next search match |
 | `search_prev` | `N`, `Shift+F3` | `N`, `Shift+F3` | Previous search match |
-| `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the JSON block at the cursor |
-| `fold_all` | `-` | `z M`, `-` | Fold all JSON blocks |
-| `unfold_all` | `+`, `=` | `z R`, `+`, `=` | Unfold all JSON blocks |
+| `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the block at the cursor |
+| `fold_all` | `-` | `z M`, `-` | Fold all blocks |
+| `unfold_all` | `+`, `=` | `z R`, `+`, `=` | Unfold all blocks |
 | `toggle_wrap` | `w` | `w` | Wrap long lines on/off |
 | `copy_body` | `y`, `Ctrl+C` | `y y`, `Ctrl+C` | Copy the response body to the clipboard |
 | `save_body` | `s` | `s` | Save the response body to a file |

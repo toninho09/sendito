@@ -1,5 +1,6 @@
 //! Read-only document viewer for response bodies and message logs: pretty
-//! JSON with folding and highlighting, raw text, hex, wrapping and search.
+//! JSON, XML, HTML, YAML and CSV with folding and highlighting, raw text, hex,
+//! wrapping and search.
 //! Documents index lines by offset so 10 MB bodies stay cheap to render.
 
 use std::collections::BTreeSet;
@@ -471,7 +472,8 @@ impl Viewer {
         self.cursor = self.cursor.min(total.saturating_sub(1));
         self.scroll = crate::list::keep_visible(self.cursor, self.scroll, h);
         let base = theme.base();
-        let pretty_json = self.mode == ViewMode::Pretty && self.doc.pretty.is_some();
+        let pretty =
+            (self.mode == ViewMode::Pretty && self.doc.pretty.is_some()).then_some(self.doc.format);
         let mut line_cache: Option<LineCache> = None;
         for i in 0..h {
             let v = self.scroll + i;
@@ -529,12 +531,10 @@ impl Viewer {
             }
             // The rows of one wrapped line share its spans, matches and indent.
             if line_cache.as_ref().is_none_or(|c| c.0 != line_no) {
-                let spans = if pretty_json {
-                    json_line_spans(&line, theme)
-                } else if self.mode != ViewMode::Hex {
-                    syntax_spans(self.syntax, &line, theme)
-                } else {
-                    Vec::new()
+                let spans = match pretty {
+                    Some(format) => pretty_spans(format, &line, line_no, theme),
+                    None if self.mode != ViewMode::Hex => syntax_spans(self.syntax, &line, theme),
+                    None => Vec::new(),
                 };
                 let matches: Vec<(u32, u32)> = self
                     .search
@@ -649,6 +649,195 @@ impl Viewer {
             }
         }
     }
+}
+
+/// Character spans for line `line_no` of a pretty body: sorted and not
+/// overlapping.
+pub fn pretty_spans(
+    format: BodyFormat,
+    line: &str,
+    line_no: usize,
+    theme: &Theme,
+) -> Vec<(usize, usize, Style)> {
+    match format {
+        BodyFormat::Json => json_line_spans(line, theme),
+        BodyFormat::Xml | BodyFormat::Html => markup_line_spans(line, theme),
+        BodyFormat::Yaml => yaml_line_spans(line, theme),
+        BodyFormat::Csv(_) => table_line_spans(line, line_no == 0, theme),
+        BodyFormat::Text => Vec::new(),
+    }
+}
+
+/// Tags: `<`, `/` and `>` dim, the name in the key color, attribute names in
+/// the number color and quoted values in the string color. A comment,
+/// doctype, CDATA or processing instruction line is all dim.
+fn markup_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut out = Vec::new();
+    let t = line.trim_start();
+    if t.starts_with("<!") || t.starts_with("<?") {
+        out.push((
+            n - t.chars().count(),
+            n,
+            theme.dim().add_modifier(Modifier::ITALIC),
+        ));
+        return out;
+    }
+    let mut push = |s: usize, e: usize, st: Style| {
+        if e > s {
+            out.push((s, e, st));
+        }
+    };
+    let mut i = 0;
+    while i < n {
+        if chars[i] != '<'
+            || !chars
+                .get(i + 1)
+                .is_some_and(|c| c.is_alphabetic() || *c == '/')
+        {
+            i += 1;
+            continue;
+        }
+        let s = i;
+        i += if chars[i + 1] == '/' { 2 } else { 1 };
+        push(s, i, theme.dim());
+        let s = i;
+        while i < n && !chars[i].is_whitespace() && !matches!(chars[i], '>' | '/') {
+            i += 1;
+        }
+        push(s, i, theme.fg(theme.json_key));
+        while i < n && chars[i] != '>' {
+            let s = i;
+            match chars[i] {
+                q @ ('"' | '\'') => {
+                    i += 1;
+                    while i < n && chars[i] != q {
+                        i += 1;
+                    }
+                    i = (i + 1).min(n);
+                    push(s, i, theme.fg(theme.json_str));
+                }
+                '/' => {
+                    i += 1;
+                    push(s, i, theme.dim());
+                }
+                c if c.is_whitespace() || c == '=' => i += 1,
+                _ => {
+                    while i < n && !chars[i].is_whitespace() && !matches!(chars[i], '=' | '>' | '/')
+                    {
+                        i += 1;
+                    }
+                    push(s, i, theme.fg(theme.json_num));
+                }
+            }
+        }
+        if i < n {
+            push(i, i + 1, theme.dim());
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Keys in the key color; quoted and plain values in the string color,
+/// numbers and `true`/`false`/`null`/`~` in the number and literal colors;
+/// comments, `- `, `---` and block indicators dim.
+fn yaml_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut out = Vec::new();
+    let mut i = chars.iter().take_while(|c| **c == ' ').count();
+    let rest: String = chars[i..].iter().collect();
+    if rest.starts_with('#') || matches!(rest.trim_end(), "---" | "...") {
+        out.push((i, n, theme.dim()));
+        return out;
+    }
+    if chars.get(i) == Some(&'-') && chars.get(i + 1).is_none_or(|c| *c == ' ') {
+        out.push((i, i + 1, theme.dim()));
+        i += 1;
+        while i < n && chars[i] == ' ' {
+            i += 1;
+        }
+    }
+    // A comment starts at a `#` after a space, outside quotes.
+    let mut end = n;
+    let mut quote = None;
+    for j in i..n {
+        match (quote, chars[j]) {
+            (None, q @ ('"' | '\'')) => quote = Some(q),
+            (Some(q), c) if c == q => quote = None,
+            (None, '#') if j == i || chars[j - 1] == ' ' => {
+                end = j;
+                break;
+            }
+            _ => {}
+        }
+    }
+    // The key ends at the first `: ` (or a final `:`) outside quotes.
+    let mut quote = None;
+    let colon = (i..end).find(|&j| match (quote, chars[j]) {
+        (None, q @ ('"' | '\'')) if j == i => {
+            quote = Some(q);
+            false
+        }
+        (Some(q), c) if c == q => {
+            quote = None;
+            false
+        }
+        (None, ':') => j + 1 == end || chars[j + 1] == ' ',
+        _ => false,
+    });
+    if let Some(c) = colon {
+        out.push((i, c, theme.fg(theme.json_key)));
+        i = c + 1;
+        while i < end && chars[i] == ' ' {
+            i += 1;
+        }
+    }
+    let value: String = chars[i..end].iter().collect();
+    let v = value.trim_end();
+    let v_end = i + v.chars().count();
+    let style = if v.is_empty() {
+        None
+    } else if v.starts_with(['|', '>']) && v.len() <= 3 {
+        Some(theme.dim())
+    } else if matches!(v, "true" | "false" | "null" | "~") {
+        Some(theme.fg(theme.json_lit))
+    } else if v.parse::<f64>().is_ok() {
+        Some(theme.fg(theme.json_num))
+    } else {
+        Some(theme.fg(theme.json_str))
+    };
+    if let Some(st) = style {
+        out.push((i, v_end, st));
+    }
+    if end < n {
+        out.push((end, n, theme.dim()));
+    }
+    out
+}
+
+/// The column separators dim; the first row (the header) bold in the key
+/// color.
+fn table_line_spans(line: &str, header: bool, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let sep = sendito_pipeline::pretty::COLUMN_SEPARATOR;
+    let sep_len = sep.chars().count();
+    let bold = theme.fg(theme.json_key).add_modifier(Modifier::BOLD);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (k, cell) in line.split(sep).enumerate() {
+        if k > 0 {
+            out.push((start, start + sep_len, theme.dim()));
+            start += sep_len;
+        }
+        let len = cell.chars().count();
+        if header && len > 0 {
+            out.push((start, start + len, bold));
+        }
+        start += len;
+    }
+    out
 }
 
 /// Character spans for one line of a [`Syntax`] document: sorted and not
@@ -839,6 +1028,82 @@ fn fold(c: char) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The text and style of each span.
+    fn parts(line: &str, spans: &[(usize, usize, Style)]) -> Vec<(String, Style)> {
+        let chars: Vec<char> = line.chars().collect();
+        for w in spans.windows(2) {
+            assert!(w[0].1 <= w[1].0, "{spans:?}");
+        }
+        spans
+            .iter()
+            .map(|(s, e, st)| (chars[*s..*e].iter().collect(), *st))
+            .collect()
+    }
+
+    #[test]
+    fn markup_colors() {
+        let t = Theme::dusk();
+        let line = "  <user id=\"1\" ok/>x < y</user>";
+        let p = parts(line, &pretty_spans(BodyFormat::Xml, line, 3, &t));
+        let texts: Vec<&str> = p.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "<", "user", "id", "\"1\"", "ok", "/", ">", "</", "user", ">"
+            ]
+        );
+        assert_eq!(p[1].1, t.fg(t.json_key));
+        assert_eq!(p[2].1, t.fg(t.json_num));
+        assert_eq!(p[3].1, t.fg(t.json_str));
+        let c = pretty_spans(BodyFormat::Html, "  <!-- note -->", 0, &t);
+        assert_eq!((c[0].0, c[0].1), (2, 15));
+    }
+
+    #[test]
+    fn yaml_colors() {
+        let t = Theme::dusk();
+        let line = "  - name: \"a # b\" # c";
+        let p = parts(line, &pretty_spans(BodyFormat::Yaml, line, 0, &t));
+        assert_eq!(
+            p,
+            [
+                ("-".into(), t.dim()),
+                ("name".into(), t.fg(t.json_key)),
+                ("\"a # b\"".into(), t.fg(t.json_str)),
+                ("# c".into(), t.dim()),
+            ]
+        );
+        let p = parts(
+            "port: 443",
+            &pretty_spans(BodyFormat::Yaml, "port: 443", 0, &t),
+        );
+        assert_eq!(p[1], ("443".into(), t.fg(t.json_num)));
+        let p = parts(
+            "on: true",
+            &pretty_spans(BodyFormat::Yaml, "on: true", 0, &t),
+        );
+        assert_eq!(p[1], ("true".into(), t.fg(t.json_lit)));
+        assert_eq!(pretty_spans(BodyFormat::Yaml, "# x", 0, &t)[0].2, t.dim());
+    }
+
+    #[test]
+    fn table_colors() {
+        let t = Theme::dusk();
+        let line = "name │ São";
+        let head = parts(line, &pretty_spans(BodyFormat::Csv(b','), line, 0, &t));
+        let bold = t.fg(t.json_key).add_modifier(Modifier::BOLD);
+        assert_eq!(
+            head,
+            [
+                ("name".into(), bold),
+                (" │ ".into(), t.dim()),
+                ("São".into(), bold)
+            ]
+        );
+        let body = parts(line, &pretty_spans(BodyFormat::Csv(b','), line, 1, &t));
+        assert_eq!(body, [(" │ ".into(), t.dim())]);
+    }
 
     #[test]
     fn syntax_colors() {

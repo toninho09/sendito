@@ -3,6 +3,7 @@
 //! document model it produces.
 
 pub mod doc;
+pub mod pretty;
 pub mod runner;
 
 /// The protocol types that callers of the pipeline (the TUI) read.

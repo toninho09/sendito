@@ -45,7 +45,7 @@ expression: screen
 │   │   Ctrl+W V                     Edit environments and their variables                         │   End, Ctrl+End                Go to the last line                                            │   │
 │   │   Ctrl+W S                     Edit the MCP servers in the project config                    │   Left                         Scroll left                                                    │   │
 │   │   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   Right                        Scroll right                                                   │   │
-│   │   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   p                            Body view: pretty (JSON formatted and highlighted)             │   │
+│   │   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   p                            Body view: pretty (formatted and highlighted)                  │   │
 │   │   Ctrl+W i                     Import a collection or a curl command                         │   r                            Body view: raw text                                            │   │
 │   │   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   x                            Body view: hex dump                                            │   │
 │   │   Ctrl+W f                     Pretty-print the JSON body / message                          │   /, Ctrl+F                    Search in the response                                         │   │
@@ -57,8 +57,8 @@ expression: screen
 │   │   Ctrl+Space                   Show completion suggestions at the cursor                     │                                ones)                                                          │   │
 │   │                                                                                              │   n, F3                        Next search match                                              │   │
 │   │ ── Sidebar tree ──                                                                           │   N, Shift+F3                  Previous search match                                          │   │
-│   │   Enter                        Open the selected request / toggle the folder                 │   Enter, Space                 Fold or unfold the JSON block at the cursor                    │   │
-│   │   Right                        Expand folder                                                 │   -                            Fold all JSON blocks                                           │   │
+│   │   Enter                        Open the selected request / toggle the folder                 │   Enter, Space                 Fold or unfold the block at the cursor                         │   │
+│   │   Right                        Expand folder                                                 │   -                            Fold all blocks                                                │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 ╰───                                                                                                                                                                                                 ──╯
  demo                                                                                                                                                     type search · ↑↓ PgUp PgDn scroll · Esc close

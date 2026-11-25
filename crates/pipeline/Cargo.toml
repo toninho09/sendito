@@ -21,6 +21,7 @@ base64.workspace = true
 time.workspace = true
 url.workspace = true
 unicode-width.workspace = true
+csv.workspace = true
 
 [lints]
 workspace = true

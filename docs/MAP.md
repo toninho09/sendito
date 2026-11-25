@@ -94,6 +94,7 @@ here.
 | jq response filter (display only) | `crates/ui/src/filter.rs::apply` | `crates/ui/src/tab/response.rs::apply_jq`; jaq with `halt`/`stderr` removed |
 | Response query bar (jq and search) | `crates/ui/src/tab/response.rs::QueryBar` | `crates/ui/src/app/query.rs::query_key`, `crates/ui/src/draw/response.rs::draw_query_bar`; key completion `crates/ui/src/complete.rs::jq_keys` |
 | Stream message list (gRPC, WebSocket) | `crates/ui/src/tab/response.rs::stream_messages` | `crates/ui/src/tab/response.rs::set_message`, `crates/ui/src/draw/response.rs::draw_stream_split`; `[` / `]` in `crates/ui/src/app/import_export.rs::step_message` |
+| Body format detection and pretty forms (XML, HTML, YAML, CSV/TSV) | `crates/pipeline/src/pretty/mod.rs::detect` | `crates/pipeline/src/pretty/markup.rs::pretty_markup`, `crates/pipeline/src/pretty/yaml.rs::yaml_folds`, `crates/pipeline/src/pretty/table.rs::pretty_table`; chosen in `crates/pipeline/src/doc.rs::from_bytes` |
 | JSON path at the cursor | `crates/pipeline/src/doc.rs::json_path` | `crates/ui/src/viewer.rs::json_path`; `f` / `Y` in `crates/ui/src/app/import_export.rs::filter_here` |
 | Watch (repeat the active request) | `crates/ui/src/app/mod.rs::toggle_watch` | `send_opts(…, from_watch)`, sparkline via `watch_text` |
 
@@ -256,7 +257,7 @@ the module for the surface you are changing.
 | Open tab: editors per field, model ↔ widgets, response state, gRPC/MCP/WS session state | `crates/ui/src/tab/` (`fields.rs` field list, `editors.rs` model ↔ widgets, `response.rs` response state) |
 | Text editor: multi-line, selection, undo, clipboard, `{{var}}` and JSON highlighting, vim subset | `crates/widgets/src/editor/` (`conventional.rs`, `vim.rs`, `render.rs`) |
 | Editable tables (params, headers, form, multipart, scripts, metadata) | `crates/widgets/src/form.rs` |
-| Response viewer: pretty JSON with folding, raw, hex, search, wrapping | `crates/ui/src/viewer.rs` (widget), `crates/pipeline/src/doc.rs` (document model) |
+| Response viewer: pretty JSON, XML, HTML, YAML and CSV with folding, raw, hex, search, wrapping | `crates/ui/src/viewer.rs` (widget, colors per format in `pretty_spans`), `crates/pipeline/src/doc.rs` (document model) |
 | Completion popup logic (schema keys, methods, servers, tools) | `crates/ui/src/complete.rs` |
 | Actions, bindings, contexts; the single source for help and KEYMAP.md | `crates/ui/src/keymap.rs` |
 | Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs` |

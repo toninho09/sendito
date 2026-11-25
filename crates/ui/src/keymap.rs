@@ -112,7 +112,7 @@ actions! {
     PageDown => "page_down", "Page down";
     Top => "top", "Go to the first line";
     Bottom => "bottom", "Go to the last line";
-    ViewPretty => "view_pretty", "Body view: pretty (JSON formatted and highlighted)";
+    ViewPretty => "view_pretty", "Body view: pretty (formatted and highlighted)";
     ViewRaw => "view_raw", "Body view: raw text";
     ViewHex => "view_hex", "Body view: hex dump";
     Search => "search", "Search in the response";
@@ -123,9 +123,9 @@ actions! {
     NextMessage => "next_message", "Show the next message of a stream (the last one follows new ones)";
     SearchNext => "search_next", "Next search match";
     SearchPrev => "search_prev", "Previous search match";
-    FoldToggle => "fold_toggle", "Fold or unfold the JSON block at the cursor";
-    FoldAll => "fold_all", "Fold all JSON blocks";
-    UnfoldAll => "unfold_all", "Unfold all JSON blocks";
+    FoldToggle => "fold_toggle", "Fold or unfold the block at the cursor";
+    FoldAll => "fold_all", "Fold all blocks";
+    UnfoldAll => "unfold_all", "Unfold all blocks";
     ToggleWrap => "toggle_wrap", "Wrap long lines on/off";
     CopyBody => "copy_body", "Copy the response body to the clipboard";
     SaveBody => "save_body", "Save the response body to a file";
