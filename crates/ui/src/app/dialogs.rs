@@ -5,11 +5,11 @@ use super::*;
 impl App {
     pub(super) fn confirm(&mut self, action: ConfirmAction, sel: usize) {
         match action {
-            ConfirmAction::SendAnyway => {
-                if sel == 0 {
-                    self.send(true);
-                }
-            }
+            ConfirmAction::SendAnyway { missing } => match sel {
+                0 => self.send(true),
+                1 if !missing.is_empty() => self.define_variables(&missing),
+                _ => {}
+            },
             ConfirmAction::SendMissingSecrets => {
                 if sel == 0 {
                     self.secrets_ok = true;
@@ -111,21 +111,8 @@ impl App {
                     _ => self.overlay = Some(Overlay::Env(ed)),
                 }
             }
-            ConfirmAction::CfgClose => self.cfg_close(sel),
-            ConfirmAction::McpClose => {
-                let Some(mut ed) = self.parked_mcp.take() else {
-                    return;
-                };
-                match sel {
-                    0 => {
-                        if !self.save_mcp_editor(&mut ed) {
-                            self.overlay = Some(Overlay::Mcp(ed));
-                        }
-                    }
-                    1 => {}
-                    _ => self.overlay = Some(Overlay::Mcp(ed)),
-                }
-            }
+            ConfirmAction::KeymapClose => self.keymap_close(sel),
+            ConfirmAction::RecordsClose => self.records_close(sel),
             ConfirmAction::DialogClose => {
                 let Some(dialog) = self.parked_dialog.take() else {
                     return;
@@ -282,12 +269,83 @@ impl App {
                 self.http_oauth_command(&format!("{verb} {item}"));
             }
             PickAction::Example => self.show_example(item),
-            PickAction::McpServerDetails => {
-                if let Err(e) = self.open_mcp_server_editor(item) {
-                    self.set_status(e, StatusKind::Error);
+            PickAction::EnvFile { dir, dotenv } => self.pick_env_file(&dir, dotenv, item),
+            PickAction::OAuthIdentity => {
+                if index >= self.project.config.oauth.len() {
+                    self.open_oauth_editor();
+                    if let Some(Overlay::Records(e)) = &mut self.overlay {
+                        e.add();
+                    }
+                    return;
                 }
+                if let Some(t) = self.tab_mut() {
+                    t.ed.auth_oauth_name.set_text(item);
+                }
+                self.changed();
             }
         }
+    }
+
+    /// What a name prompt will create, checked as it is typed: the path
+    /// (`false`) or why the name cannot be used (`true`).
+    pub(crate) fn prompt_preview(&self, p: &Prompt) -> Option<(String, bool)> {
+        use sendito_store::collection::{
+            EXT, join_rel, validate_folder_name, validate_request_name,
+        };
+        let name = p.input.text();
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let folder = || {
+            p.choices
+                .iter()
+                .find(|(l, _, _)| l == "In folder")
+                .and_then(|(_, _, i)| self.tree.all_folders().get(*i).cloned())
+        };
+        let (check, parent) = match &p.action {
+            PromptAction::NewRequest { folder: f } => {
+                (validate_request_name(name), folder().unwrap_or(f.clone()))
+            }
+            PromptAction::SaveAs { .. } | PromptAction::SaveHistory(_) => {
+                (validate_request_name(name), folder().unwrap_or_default())
+            }
+            PromptAction::NewFolder { folder } => (validate_folder_name(name), folder.clone()),
+            PromptAction::Rename(rel) => {
+                let parent = rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+                let check = if rel.ends_with(&format!(".{EXT}")) {
+                    validate_request_name(name)
+                } else {
+                    validate_folder_name(name)
+                };
+                (check, parent.to_string())
+            }
+            _ => return None,
+        };
+        if let Err(e) = check {
+            return Some((e.to_string(), true));
+        }
+        let file = match &p.action {
+            PromptAction::NewFolder { .. } => name.to_string(),
+            PromptAction::Rename(rel) if !rel.ends_with(&format!(".{EXT}")) => name.to_string(),
+            _ => format!("{name}.{EXT}"),
+        };
+        let rel = join_rel(&parent, &file);
+        if matches!(&p.action, PromptAction::Rename(old) if *old == rel) {
+            return None;
+        }
+        if self.project.coll.abs(&rel).exists() {
+            let place = if parent.is_empty() {
+                "the collection root".to_string()
+            } else {
+                format!("/{parent}")
+            };
+            return Some((
+                format!("\"{name}\" already exists in {place}: choose another name"),
+                true,
+            ));
+        }
+        Some((format!("→ {rel}"), false))
     }
 
     pub(super) fn prompt_ok(&mut self, p: &mut Prompt) -> Result<(), String> {
@@ -414,13 +472,7 @@ impl App {
                 let mut envs = vec![COLLECTION_ENV.to_string()];
                 envs.extend(self.env_list.iter().cloned());
                 let current = envs.iter().position(|e| *e == name).unwrap_or(0);
-                let mut ed = self.parked_env.take().unwrap_or(EnvEditor {
-                    envs: vec![],
-                    current: 0,
-                    table: EnvEditor::table(),
-                    dirty: false,
-                    error: None,
-                });
+                let mut ed = self.parked_env.take().unwrap_or_default();
                 ed.envs = envs;
                 ed.current = current;
                 self.load_env_into(&mut ed);
@@ -443,9 +495,9 @@ impl App {
             PromptAction::McpServer { name } => {
                 self.add_mcp_server(&name, choice, &value)?;
             }
-            PromptAction::Setting(id) => {
-                self.set_typed_setting(id, &value)?;
-                self.open_settings(id);
+            PromptAction::MoveToSecret(field) => {
+                let m = self.move_to_secret(field, value.trim())?;
+                self.set_status(m, StatusKind::Ok);
             }
         }
         Ok(())

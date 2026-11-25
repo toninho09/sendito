@@ -53,12 +53,14 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
-| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the project config |
+| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the config file chosen in Settings |
 | `history` | `F7`, `Ctrl+W r` | `F7`, `Ctrl+W r` | Show request history in the sidebar (toggle) |
 | `toggle_sidebar` | `Ctrl+B`, `Ctrl+W b` | `Ctrl+B`, `Ctrl+W b` | Show or hide the sidebar |
 | `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
+| `move_to_secret` | `Ctrl+W K` | `Ctrl+W K` | Move the plain value of the focused credential field into an environment secret |
+| `reveal_secrets` | `Ctrl+W *` | `Ctrl+W *` | Show or hide credentials typed as plain text (with Hide plain secrets on) |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
 | `grow_sidebar` | `Ctrl+W >` | `Ctrl+W >` | Widen the sidebar |
 | `shrink_sidebar` | `Ctrl+W <` | `Ctrl+W <` | Narrow the sidebar |
@@ -229,9 +231,9 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:newws` | New WebSocket request (Ctrl+W y) |
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
-| `:mcpservers edit` | Edit the MCP servers in the project config (Ctrl+W S) |
-| `:mcpadd <name>` | Add an MCP server to the project config (asks for the URL or command) |
-| `:mcpedit [name]` | Edit the details of an MCP server: env, headers, TLS, OAuth (lists them without a name) |
+| `:mcpservers edit` | Edit the MCP servers in the config file chosen in Settings (Ctrl+W S) |
+| `:mcpadd <name>` | Add an MCP server to the config file chosen in Settings (asks for the URL or command) |
+| `:mcpedit [name]` | Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name) |
 | `:mcptools` | Discover and choose an MCP tool |
 | `:method` | Choose the HTTP method |
 | `:bodytype` | Choose the body type of the HTTP request |

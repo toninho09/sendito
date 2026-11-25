@@ -119,11 +119,13 @@ pub fn request_folder(req: &Request) -> FolderSettings {
 /// The views of the Docs tab, in `docs_preview` order.
 const DOCS_VIEWS: [&str; 2] = ["Edit", "Preview"];
 
-pub(super) fn ms_text(v: Option<u64>) -> String {
+/// A count or a number of seconds as the text of a field (durations in
+/// milliseconds use `crate::units`).
+pub(super) fn num_text(v: Option<u64>) -> String {
     v.map(|v| v.to_string()).unwrap_or_default()
 }
 
-pub(super) fn parse_ms(s: &str) -> Option<u64> {
+pub(super) fn parse_num(s: &str) -> Option<u64> {
     s.trim().parse().ok()
 }
 
@@ -317,7 +319,7 @@ impl Editors {
             auth_user: TextEditor::single(""),
             auth_pass: TextEditor::single(""),
             auth_token: TextEditor::single("").with_placeholder("{{token}}"),
-            auth_oauth_name: TextEditor::single("").with_placeholder("name from [oauth]"),
+            auth_oauth_name: TextEditor::single("").with_placeholder("F2 lists the identities"),
             auth_key: TextEditor::single("X-API-Key"),
             auth_value: TextEditor::single(""),
             auth_in: ApiKeyLocation::Header,
@@ -522,7 +524,8 @@ impl Editors {
                         e.file_ct.set_text(content_type);
                     }
                 }
-                e.timeout.set_text(&ms_text(h.options.timeout_ms));
+                e.timeout
+                    .set_text(&crate::units::ms_text(h.options.timeout_ms));
                 e.follow = h.options.follow_redirects;
                 e.verify = h.options.verify_tls;
                 e.cookies = h.options.cookies;
@@ -536,7 +539,7 @@ impl Editors {
                 e.metadata = kv_table("Key", "Value", &g.metadata);
                 e.tls = g.tls;
                 e.grpc_verify = g.verify_tls;
-                e.deadline.set_text(&ms_text(g.deadline_ms));
+                e.deadline.set_text(&crate::units::ms_text(g.deadline_ms));
                 if let SchemaSource::Files {
                     files,
                     import_paths,
@@ -550,8 +553,9 @@ impl Editors {
             Request::Sse(s) => {
                 e = Self::from_request(&Request::Http(s.http_request()));
                 e.kind = Kind::Sse;
-                e.deadline.set_text(&ms_text(s.options.deadline_ms));
-                e.max_events.set_text(&ms_text(s.options.max_events));
+                e.deadline
+                    .set_text(&crate::units::ms_text(s.options.deadline_ms));
+                e.max_events.set_text(&num_text(s.options.max_events));
             }
             Request::Ws(w) => {
                 e.kind = Kind::Ws;
@@ -560,8 +564,10 @@ impl Editors {
                 e.headers = kv_table("Header", "Value", &w.headers);
                 e.ws_subprotocols.set_text(&list_text(&w.subprotocols));
                 e.message.set_text(&w.messages);
-                e.timeout.set_text(&ms_text(w.options.timeout_ms));
-                e.deadline.set_text(&ms_text(w.options.deadline_ms));
+                e.timeout
+                    .set_text(&crate::units::ms_text(w.options.timeout_ms));
+                e.deadline
+                    .set_text(&crate::units::ms_text(w.options.deadline_ms));
                 e.tls = w.options.tls;
                 e.grpc_verify = w.options.verify_tls;
                 e.cookies = w.options.cookies;
@@ -601,8 +607,10 @@ impl Editors {
                 e.mqtt_protocol = m.protocol;
                 e.clean_session = m.clean_session;
                 e.keep_alive.set_text(&m.keep_alive_s.to_string());
-                e.timeout.set_text(&ms_text(m.options.timeout_ms));
-                e.deadline.set_text(&ms_text(m.options.deadline_ms));
+                e.timeout
+                    .set_text(&crate::units::ms_text(m.options.timeout_ms));
+                e.deadline
+                    .set_text(&crate::units::ms_text(m.options.deadline_ms));
                 e.verify = m.options.verify_tls;
             }
             Request::Mcp(m) => {
@@ -610,7 +618,7 @@ impl Editors {
                 e.mcp_server.set_text(&m.server);
                 e.mcp_tool.set_text(&m.tool);
                 e.message.set_text(&m.arguments);
-                e.timeout.set_text(&ms_text(m.timeout_ms));
+                e.timeout.set_text(&crate::units::ms_text(m.timeout_ms));
             }
         }
         e.description.set_text(req.description());
@@ -674,7 +682,7 @@ impl Editors {
                 self.jwt_secret.set_text(secret);
                 self.jwt_key.set_text(private_key);
                 self.jwt_claims.set_text(claims);
-                self.jwt_expires.set_text(&ms_text(*expires_in_s));
+                self.jwt_expires.set_text(&num_text(*expires_in_s));
             }
         }
     }
@@ -714,7 +722,7 @@ impl Editors {
                 secret: self.jwt_secret.text(),
                 private_key: self.jwt_key.text(),
                 claims: self.jwt_claims.text(),
-                expires_in_s: parse_ms(&self.jwt_expires.text()),
+                expires_in_s: parse_num(&self.jwt_expires.text()),
             },
         }
     }
@@ -828,7 +836,7 @@ impl Editors {
                     body,
                     auth: self.auth(),
                     options: HttpOptions {
-                        timeout_ms: parse_ms(&self.timeout.text()),
+                        timeout_ms: crate::units::parse_ms(&self.timeout.text()),
                         follow_redirects: self.follow,
                         verify_tls: self.verify,
                         cookies: self.cookies,
@@ -845,9 +853,9 @@ impl Editors {
                 scripts: self.scripts(),
                 description: self.description.text(),
                 options: SseOptions {
-                    timeout_ms: parse_ms(&self.timeout.text()),
-                    deadline_ms: parse_ms(&self.deadline.text()),
-                    max_events: parse_ms(&self.max_events.text()),
+                    timeout_ms: crate::units::parse_ms(&self.timeout.text()),
+                    deadline_ms: crate::units::parse_ms(&self.deadline.text()),
+                    max_events: parse_num(&self.max_events.text()),
                     follow_redirects: self.follow,
                     verify_tls: self.verify,
                     cookies: self.cookies,
@@ -862,7 +870,7 @@ impl Editors {
                 auth: self.auth(),
                 tls: self.tls,
                 verify_tls: self.grpc_verify,
-                deadline_ms: parse_ms(&self.deadline.text()),
+                deadline_ms: crate::units::parse_ms(&self.deadline.text()),
                 schema: if self.schema_files {
                     SchemaSource::Files {
                         files: parse_list(&self.proto_files.text()),
@@ -881,8 +889,8 @@ impl Editors {
                 messages: self.message.text(),
                 auth: self.auth(),
                 options: WsOptions {
-                    timeout_ms: parse_ms(&self.timeout.text()),
-                    deadline_ms: parse_ms(&self.deadline.text()),
+                    timeout_ms: crate::units::parse_ms(&self.timeout.text()),
+                    deadline_ms: crate::units::parse_ms(&self.deadline.text()),
                     verify_tls: self.grpc_verify,
                     tls: self.tls,
                     cookies: self.cookies,
@@ -900,10 +908,10 @@ impl Editors {
                     password: self.mqtt_pass.text(),
                     protocol: self.mqtt_protocol,
                     clean_session: self.clean_session,
-                    keep_alive_s: parse_ms(&self.keep_alive.text()).unwrap_or(MQTT_KEEP_ALIVE_S),
+                    keep_alive_s: parse_num(&self.keep_alive.text()).unwrap_or(MQTT_KEEP_ALIVE_S),
                     options: MqttOptions {
-                        timeout_ms: parse_ms(&self.timeout.text()),
-                        deadline_ms: parse_ms(&self.deadline.text()),
+                        timeout_ms: crate::units::parse_ms(&self.timeout.text()),
+                        deadline_ms: crate::units::parse_ms(&self.deadline.text()),
                         verify_tls: self.verify,
                     },
                     subscriptions: self
@@ -942,7 +950,7 @@ impl Editors {
                 server: self.mcp_server.text(),
                 tool: self.mcp_tool.text(),
                 arguments: self.message.text(),
-                timeout_ms: parse_ms(&self.timeout.text()),
+                timeout_ms: crate::units::parse_ms(&self.timeout.text()),
                 scripts: self.scripts(),
                 description: self.description.text(),
             }),

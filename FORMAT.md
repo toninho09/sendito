@@ -766,7 +766,8 @@ Each variable has exactly one source; sources can be mixed in one environment.
 | `dotenv` | the environment's `.env` file, key = `key` or the variable name | read only: Sendito never writes the file |
 
 The top-level `dotenv` key sets the path of the `.env` file for the `dotenv`
-variables of that file. Without it, the path is `.env` at the collection root.
+variables of that file (the ".env file" line of the environment editor).
+Without it, the path is `.env` at the collection root.
 A relative path starts at the collection root, and `~/` is expanded.
 `collection.toml` takes the same key for the collection variables. The file
 uses the usual `.env` syntax: `KEY=value` lines, `#` comments, an optional
@@ -828,6 +829,8 @@ confirm_quit = true
 watch_interval_s = 5     # :watch re-sends the active request this often
 stream_messages_kept = 10000  # messages a gRPC/WebSocket stream keeps; oldest go first
 hints = "short"          # footer key hints: full | short | off
+hide_plain_secrets = false  # show •••••• for a credential typed as plain text
+                         # in a request field (Ctrl+W * shows it)
 
 [http]
 timeout_ms = 30000
@@ -964,8 +967,10 @@ can hold a token typed into it.
 * `session.toml` — open tabs (path, or the unsaved request as a draft in request
   format; `pinned = true` for a pinned tab), active tab, layout, expanded
   folders, favorite requests (`favorites`, relative paths in the order they
-  were added), active environment and non-secret runtime variables. Restored
-  on start. Favorites belong to one user: the file is gitignored.
+  were added), active environment, non-secret runtime variables and the
+  config scope of the settings (`config_scope`: `global`, the default, or
+  `project`). Restored on start. Favorites and the scope belong to one user:
+  the file is gitignored.
 * `history.jsonl` — one JSON object per sent request:
 
   ```json

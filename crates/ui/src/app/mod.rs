@@ -191,27 +191,31 @@ pub enum OverlayHit {
         col: usize,
     },
     EnvDelete(usize),
-    /// A cell of the MCP servers editor.
-    McpCell {
+    /// The `.env` file line of the environment editor.
+    EnvDotenv,
+    /// An entry of a record editor's list; the last is the "new" row.
+    RecList(usize),
+    /// A form field of a record editor, by its index in `visible()`.
+    RecField(usize),
+    /// A table cell of a record editor's form field.
+    RecCell {
+        field: usize,
         row: usize,
         col: usize,
     },
-    /// The ✕ of an MCP servers row.
-    McpDelete(usize),
-    /// A button of the MCP servers editor (0 = save, 1 = add, 2 = details,
-    /// 3 = close).
-    McpButton(usize),
-    /// A tab of a config editor (MCP server details, OAuth, keymap).
-    CfgTab(usize),
-    /// A cell of a config editor.
-    CfgCell {
+    /// The ✕ of a table row of a record editor's form field.
+    RecDelete {
+        field: usize,
         row: usize,
-        col: usize,
     },
-    /// The ✕ of a config editor row.
-    CfgDelete(usize),
-    /// A button of a config editor (0 = save, 1 = add, 2 = close).
-    CfgButton(usize),
+    /// A button of a record editor (see `records::buttons`).
+    RecButton(usize),
+    /// A tab of the keymap editor.
+    KeyTab(usize),
+    /// An action of the keymap editor, by its position among the actions.
+    KeyRow(usize),
+    /// A button of the keymap editor (see `keymap_editor::BUTTONS`).
+    KeyButton(usize),
     /// Dead space inside a dialog frame; clicking it does nothing.
     Dialog,
     Outside,
@@ -270,6 +274,12 @@ pub enum AppMsg {
     Cookies {
         job: u64,
         result: Result<CookiesOutcome, String>,
+    },
+    /// The result of the record editor's connection test: the number of
+    /// tools, or why the listing failed.
+    McpTest {
+        server: String,
+        result: Result<usize, String>,
     },
     McpTools {
         job: u64,
@@ -458,10 +468,14 @@ pub struct App {
     /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
     /// send only.
     secrets_ok: bool,
-    /// The MCP servers editor parked behind its save/discard confirmation.
-    pub parked_mcp: Option<McpEditor>,
-    /// A config editor kept behind its "unsaved changes" dialog.
-    pub parked_cfg: Option<crate::config_editor::CfgEditor>,
+    /// Credentials typed as plain text show as typed although Hide plain
+    /// secrets is on (`Ctrl+W *`).
+    pub reveal_secrets: bool,
+    /// A record editor (MCP servers, OAuth) parked behind its save/discard
+    /// confirmation.
+    pub parked_records: Option<crate::records::RecordEditor>,
+    /// The keymap editor kept behind its "unsaved changes" dialog.
+    pub parked_keymap: Option<crate::keymap_editor::KeymapEditor>,
     /// The config file settings are saved to (the settings dialog chooses).
     pub config_scope: ConfigScope,
     /// The prompt or import dialog parked behind its discard confirmation.
@@ -591,9 +605,10 @@ impl App {
             size: (80, 24),
             parked_env: None,
             secrets_ok: false,
-            parked_mcp: None,
-            parked_cfg: None,
-            config_scope: ConfigScope::default(),
+            reveal_secrets: false,
+            parked_records: None,
+            parked_keymap: None,
+            config_scope: session.config_scope,
             parked_dialog: None,
             last_report: None,
             cursor: None,
@@ -725,6 +740,7 @@ impl App {
                 .filter(|(_, v)| !v.secret)
                 .map(|(k, v)| (k.clone(), v.value.clone()))
                 .collect(),
+            config_scope: self.config_scope,
         }
     }
 
@@ -760,6 +776,10 @@ impl App {
             {
                 w.next = now + w.interval;
             }
+        }
+        // The keymap editor ends a recording after a pause.
+        if let Some(Overlay::Keymap(e)) = &mut self.overlay {
+            return e.capture_due();
         }
         if self.overlay.is_some() {
             return false;

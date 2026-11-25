@@ -7,14 +7,14 @@ expression: screen
 │▸ Orders/                   ││  https://example.test/events                                                                                                                               ▶ Send  ^⏎  │
 │▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 │  GRPC  echo unary          │╭─ Params  Headers 1  Auth  Scripts  Options  Docs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  GET   health              ││ Timeout ms    ▍  default                                                                                                                                               │
-│                            ││ Deadline ms    5000                                                                                                                                                    │
+│  GET   health              ││ Timeout       ▍  default · 30 s (Settings)                                                                                                                             │
+│                            ││ Deadline       5000                                                                                                                                                    │
 │                            ││ Max events     3                                                                                                                                                       │
 │                            ││ Redirects      [✓] On  follow 3xx responses (up to 10)                                                                                                                 │
 │                            ││ Verify TLS     [✓] On  turn off for self-signed certificates                                                                                                           │
 │                            ││ Cookie jar     Config default ▾                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
+│                            ││ The longest wait for the stream to open: 30 s, 500 ms (a bare number is ms).                                                                                           │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

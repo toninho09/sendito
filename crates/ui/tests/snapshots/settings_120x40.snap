@@ -3,42 +3,42 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
  sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────╭─ Settings ─────────────────────────────────────────────────────────╮────────────────────────╮
-│▸ Orders/               │                                                                    │                        │
-│▸ Users/                │  Saving                                                            │                        │
-│  GRPC  echo unary      │    Save changes to                                    ‹ global ›   │                        │
-│  GET   health          │  Appearance                                                        │                        │
-│                        │    Theme                              ███████  ‹ auto › (1 of 7)   │                        │
-│                        │    Icons                                             ‹ unicode ›   │                        │
-│                        │    Key hints                                           ‹ short ›   │                        │
-│                        │  Editing                                                           │                        │
-│                        │    Vim mode                                              ‹ Off ›   │                        │
-│                        │    Key bindings                                    ‹ 0 changes ›   │                        │
-│                        │  Layout                                                            │                        │
-│                        │    Sidebar position                                     ‹ left ›   │                        │
-│                        │    Pin folders while scrolling                            ‹ On ›   │                        │
-│                        │  Behavior                                                          │                        │
-│                        │    Mouse support                                          ‹ On ›   │                        │
-│                        │    Confirm quit with unsaved changes                      ‹ On ›   │                        │
-│                        │    Record history                                         ‹ On ›   │                        │
-│                        │    History entries kept                                ‹ 10000 ›   │ ds)                    │
-│                        │    Watch interval                                        ‹ 5 s ›   │ nd                     │
-│                        │    Stream messages kept                                ‹ 10000 ›   │                        │
-│                        │  Timeouts                                                          │ the mouse)             │
-│                        │    HTTP request timeout                             ‹ 30000 ms ›   │ ide                    │
-│                        │    gRPC deadline                                        ‹ none ›   │                        │
-│                        │    WebSocket handshake timeout                          ‹ none ›   │                        │
-│                        │    SSE opening timeout                              ‹ 30000 ms ›   │                        │
-│                        │    MQTT timeout                                     ‹ 30000 ms ›   │                        │
-│                        │    MCP call timeout                                 ‹ 30000 ms ›   │                        │
-│                        │  HTTP                                                              │                        │
-│                        │    Largest response body                              ‹ 100 MB ›   │                        │
-│                        │ ────────────────────────────────────────────────────────────────── │                        │
-│                        │  Colors: auto follows the terminal; ansi uses your terminal        │                        │
-│                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │
-│                        │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                        │
-│                        │  Changes apply at once and are saved to                            │                        │
-│                        │  ~/.config/sendito/config.toml                                     │                        │
-│                        ╰────────────────────────────────────────────────────────────────────╯                        │
-╰─── 6 requests · 2 folder                                                                      ───────────────────────╯
- demo                                                                             ↑↓ move · ←→ Space change · Esc close
+╭ Requests  History ───╭─ Settings ─────────────────────────────────────────────────────────────╮──────────────────────╮
+│▸ Orders/             │  Save to  Global  Project                                              │                      │
+│▸ Users/              │  ▍  type to filter settings                                            │                      │
+│  GRPC  echo unary    │                                                                        │                      │
+│  GET   health        │  Appearance                                                            │                      │
+│                      │    Theme                                  ███████  ‹ auto › (1 of 7)   │                      │
+│                      │    Icons                                                 ‹ unicode ›   │                      │
+│                      │    Key hints                                               ‹ short ›   │                      │
+│                      │    Hide plain secrets                                        ‹ Off ›   │                      │
+│                      │  Editing                                                               │                      │
+│                      │    Vim mode                                                  ‹ Off ›   │                      │
+│                      │    Key bindings                                        ‹ 0 changes ›   │                      │
+│                      │  Layout                                                                │                      │
+│                      │    Sidebar position                                         ‹ left ›   │                      │
+│                      │    Pin folders while scrolling                                ‹ On ›   │                      │
+│                      │  Behavior                                                              │                      │
+│                      │    Mouse support                                              ‹ On ›   │                      │
+│                      │    Confirm quit with unsaved changes                          ‹ On ›   │                      │
+│                      │    Record history                                             ‹ On ›   │ )                    │
+│                      │    History entries kept                                    ‹ 10000 ›   │                      │
+│                      │    Watch interval                                            ‹ 5 s ›   │                      │
+│                      │    Stream messages kept                                    ‹ 10000 ›   │ e mouse)             │
+│                      │  Timeouts                                                              │ e                    │
+│                      │    HTTP request timeout                                     ‹ 30 s ›   │                      │
+│                      │    gRPC deadline                                            ‹ none ›   │                      │
+│                      │    WebSocket handshake timeout                              ‹ none ›   │                      │
+│                      │    SSE opening timeout                                      ‹ 30 s ›   │                      │
+│                      │    MQTT timeout                                             ‹ 30 s ›   │                      │
+│                      │    MCP call timeout                                         ‹ 30 s ›   │                      │
+│                      │  MCP                                                                   │                      │
+│                      │ ────────────────────────────────────────────────────────────────────── │                      │
+│                      │  Colors: auto follows the terminal; ansi uses your terminal palette;   │                      │
+│                      │  contrast is high-contrast. Add your own in themes/ (sendito theme     │                      │
+│                      │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi  (←…  │                      │
+│                      │  Changes apply at once and are saved to                                │                      │
+│                      │  ~/.config/sendito/config.toml                                         │                      │
+│                      ╰────────────────────────────────────────────────────────────────────────╯                      │
+╰─── 6 requests · 2 fold                                                                          ─────────────────────╯
+ demo                                        ↑↓ move · ←→ Space change · type filter · Tab global / project · Esc close

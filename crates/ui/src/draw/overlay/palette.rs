@@ -4,6 +4,32 @@ use super::*;
 
 /// Character positions of `q` in `label` (case-insensitive): a substring
 /// when there is one, else the letters of a fuzzy match.
+/// Marks the letters of `query` in `text`, drawn at (`x`, `y`): accent,
+/// bold and underlined.
+pub(super) fn mark_matches(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    text: &str,
+    query: &str,
+    selected: bool,
+    theme: &Theme,
+) {
+    for ci in match_positions(text, query) {
+        let cx = x + text.chars().take(ci).collect::<String>().width() as u16;
+        if let Some(c) = buf.cell_mut((cx, y)) {
+            let fg = if selected {
+                theme.on_selection(theme.accent)
+            } else {
+                theme.accent
+            };
+            c.set_fg(fg)
+                .modifier
+                .insert(Modifier::BOLD | Modifier::UNDERLINED);
+        }
+    }
+}
+
 pub(super) fn match_positions(label: &str, q: &str) -> Vec<usize> {
     let q: Vec<char> = q
         .to_lowercase()
@@ -133,19 +159,7 @@ pub(super) fn draw_palette(
             );
         }
         // The typed letters, marked in the label.
-        for ci in match_positions(&shown, query) {
-            let cx = lx + shown.chars().take(ci).collect::<String>().width() as u16;
-            if let Some(c) = buf.cell_mut((cx, y)) {
-                let fg = if sel {
-                    frame.theme.on_selection(frame.theme.accent)
-                } else {
-                    frame.theme.accent
-                };
-                c.set_fg(fg)
-                    .modifier
-                    .insert(Modifier::BOLD | Modifier::UNDERLINED);
-            }
-        }
+        mark_matches(buf, lx, y, &shown, query, sel, frame.theme);
         let _ = x;
         let dx = (inner.x + inner.width).saturating_sub(dw + 1);
         if dx > lx + shown.width() as u16 {

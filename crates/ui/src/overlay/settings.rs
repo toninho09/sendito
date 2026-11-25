@@ -2,15 +2,8 @@
 
 /// The config file the settings dialog and the OAuth and keymap editors
 /// write to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ConfigScope {
-    /// `~/.config/sendito/config.toml`: every collection.
-    #[default]
-    Global,
-    /// `<collection>/.sendito/config.toml`: this collection; it wins over
-    /// the global file.
-    Project,
-}
+/// The config file the settings write to; kept in `session.toml`.
+pub use sendito_store::session::ConfigScope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingId {
@@ -27,12 +20,14 @@ pub enum SettingId {
     WatchInterval,
     StreamKept,
     Hints,
+    HidePlainSecrets,
     HttpTimeout,
     GrpcDeadline,
     WsTimeout,
     SseTimeout,
     MqttTimeout,
     McpTimeout,
+    McpServers,
     MaxBody,
     CookieJar,
     Proxy,
@@ -51,7 +46,7 @@ impl SettingId {
     pub fn key(self) -> Option<(&'static str, &'static str)> {
         use SettingId::*;
         Some(match self {
-            Scope | OAuthIds | KeyBindings => return None,
+            Scope | OAuthIds | KeyBindings | McpServers => return None,
             Vim => ("ui", "vim_mode"),
             Theme => ("ui", "theme"),
             Icons => ("ui", "icons"),
@@ -64,6 +59,7 @@ impl SettingId {
             WatchInterval => ("ui", "watch_interval_s"),
             StreamKept => ("ui", "stream_messages_kept"),
             Hints => ("ui", "hints"),
+            HidePlainSecrets => ("ui", "hide_plain_secrets"),
             HttpTimeout => ("http", "timeout_ms"),
             GrpcDeadline => ("grpc", "deadline_ms"),
             WsTimeout => ("websocket", "timeout_ms"),
@@ -108,7 +104,19 @@ impl SettingId {
 
     /// Enter opens an editor of its own (the value is a table).
     pub fn opens(self) -> bool {
-        matches!(self, SettingId::OAuthIds | SettingId::KeyBindings)
+        matches!(
+            self,
+            SettingId::OAuthIds | SettingId::KeyBindings | SettingId::McpServers
+        )
+    }
+
+    /// The value is a duration in milliseconds, shown and typed as "30 s".
+    pub fn duration(self) -> bool {
+        use SettingId::*;
+        matches!(
+            self,
+            HttpTimeout | GrpcDeadline | WsTimeout | SseTimeout | MqttTimeout | McpTimeout
+        )
     }
 
     /// The smallest number a numeric setting takes, `None` for text.
@@ -126,7 +134,6 @@ impl SettingId {
     pub fn heading(self) -> Option<&'static str> {
         use SettingId::*;
         match self {
-            Scope => Some("Saving"),
             Theme => Some("Appearance"),
             Vim => Some("Editing"),
             Sidebar => Some("Layout"),
@@ -134,17 +141,86 @@ impl SettingId {
             HttpTimeout => Some("Timeouts"),
             MaxBody => Some("HTTP"),
             TlsCa => Some("TLS"),
+            McpServers => Some("MCP"),
             CollectionName => Some("Collection"),
             _ => None,
         }
     }
 }
 
+/// The settings dialog: the selected row, the filter, the value being
+/// typed (number, path and text settings are edited in place) and why it
+/// was refused.
+pub struct SettingsView {
+    /// The selected setting, as an index into `SETTINGS`.
+    pub sel: usize,
+    pub filter: crate::editor::TextEditor,
+    pub edit: Option<crate::editor::TextEditor>,
+    pub error: Option<String>,
+}
+
+impl SettingsView {
+    pub fn new(sel: usize) -> Self {
+        Self {
+            sel,
+            filter: crate::editor::TextEditor::single("")
+                .with_placeholder("type to filter settings"),
+            edit: None,
+            error: None,
+        }
+    }
+
+    /// The settings that match the filter (label or config key), as
+    /// indices into `SETTINGS`.
+    pub fn visible(&self) -> Vec<usize> {
+        let f = self.filter.text().to_lowercase();
+        SETTINGS
+            .iter()
+            .enumerate()
+            .filter(|(_, (id, label))| {
+                f.is_empty()
+                    || label.to_lowercase().contains(&f)
+                    || id
+                        .key()
+                        .is_some_and(|(s, k)| format!("{s}.{k}").contains(&f))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Moves the selection by `d` among the visible settings.
+    pub fn step(&mut self, d: isize) {
+        let vis = self.visible();
+        let at = vis.iter().position(|i| *i == self.sel).unwrap_or(0);
+        if let Some(i) = vis.get(crate::list::step(at, d, vis.len())) {
+            self.sel = *i;
+        }
+    }
+
+    /// Starts typing the selected setting's value, `raw` selected.
+    pub fn start_edit(&mut self, raw: String) {
+        let mut ed = crate::editor::TextEditor::single(&raw);
+        ed.select_all();
+        self.edit = Some(ed);
+        self.error = None;
+    }
+
+    /// Keeps the selection on a visible setting after the filter changed.
+    pub fn clamp(&mut self) {
+        let vis = self.visible();
+        if !vis.contains(&self.sel)
+            && let Some(i) = vis.first()
+        {
+            self.sel = *i;
+        }
+    }
+}
+
 pub const SETTINGS: &[(SettingId, &str)] = &[
-    (SettingId::Scope, "Save changes to"),
     (SettingId::Theme, "Theme"),
     (SettingId::Icons, "Icons"),
     (SettingId::Hints, "Key hints"),
+    (SettingId::HidePlainSecrets, "Hide plain secrets"),
     (SettingId::Vim, "Vim mode"),
     (SettingId::KeyBindings, "Key bindings"),
     (SettingId::Sidebar, "Sidebar position"),
@@ -161,6 +237,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::SseTimeout, "SSE opening timeout"),
     (SettingId::MqttTimeout, "MQTT timeout"),
     (SettingId::McpTimeout, "MCP call timeout"),
+    (SettingId::McpServers, "MCP servers"),
     (SettingId::MaxBody, "Largest response body"),
     (SettingId::CookieJar, "Cookie jar"),
     (SettingId::Proxy, "Proxy"),

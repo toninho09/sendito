@@ -247,6 +247,25 @@ impl App {
                     }
                 }
             }
+            AppMsg::McpTest { server, result } => {
+                if let Some(Overlay::Records(e)) = &mut self.overlay
+                    && e.kind == crate::records::RecordKind::Mcp
+                {
+                    match result {
+                        Ok(n) => {
+                            e.error = None;
+                            e.note = Some(format!(
+                                "✓ {server} answered: {n} tool{}",
+                                if n == 1 { "" } else { "s" }
+                            ));
+                        }
+                        Err(err) => {
+                            e.note = None;
+                            e.error = Some(format!("{server}: {err}"));
+                        }
+                    }
+                }
+            }
             AppMsg::McpTools {
                 job,
                 tab,

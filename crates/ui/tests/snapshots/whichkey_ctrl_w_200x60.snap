@@ -46,19 +46,19 @@ expression: screen
 │                            ││ 10         ],                                                                                                                                                          │
 │                            ││ 11         "active": true                                                                                                                                              │
 │                            ││ 12       },                                                                                                                                                            │
-│                            ││ 13 ▾     {                                                                                                                                                             │
-│                            ││ 14         "id": 2,                                                                                                                                                    │
-│                            ││ 15         "name": "Bia",                                 ╭─ ^W ──────────────────────────────────────────────────────────────────────────────────────────────────────╮│
-│                            ││ 16         "email": "bia@example.com",                    │                                                                                                           │
-│                            ││ 17         "roles": [],                                   │  Request           Tabs                   Focus & layout              Open                   App          │
-│                            ││ 18         "active": false,                               │  e  send           t  new HTTP            h j k l  focus              v  environment         q  quit      │
-│                            ││ 19         "manager": null                                │  x  cancel         g  new gRPC            w W  next / previous pane   V  edit environments   ?  all keys  │
-│                            ││ 20       }                                                │  d  end stream     y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
-│                            ││ 21     ],                                                 │  m  watch          E  new SSE             b  sidebar                  r  history                          │
-│                            ││ 22     "count": 2,                                        │  s  save           M  new MQTT            z  zoom                     i  import                           │
-│                            ││ 23     "next": "/users?page=2"                            │  F  favorite       c  close               > <  sidebar width                                              │
-│                            ││ 24   }                                                    │  u  copy as curl   n p  next / previous   + -  split height                                               │
-│                            ││                                                           │  f  format body    P  pin                                                                                 │
-│                            ││                                                           │                                                                                                           │
-╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ────────────────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────── Esc cancel ─╯
+│                            ││ 13 ▾     {                                              ╭─ ^W ────────────────────────────────────────────────────────────────────────────────────────────────────────╮│
+│                            ││ 14         "id": 2,                                     │                                                                                                             │
+│                            ││ 15         "name": "Bia",                               │  Request             Tabs                   Focus & layout              Open                   App          │
+│                            ││ 16         "email": "bia@example.com",                  │  e  send             t  new HTTP            h j k l  focus              v  environment         q  quit      │
+│                            ││ 17         "roles": [],                                 │  x  cancel           g  new gRPC            w W  next / previous pane   V  edit environments   ?  all keys  │
+│                            ││ 18         "active": false,                             │  d  end stream       y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
+│                            ││ 19         "manager": null                              │  m  watch            E  new SSE             b  sidebar                  r  history                          │
+│                            ││ 20       }                                              │  s  save             M  new MQTT            z  zoom                     i  import                           │
+│                            ││ 21     ],                                               │  F  favorite         c  close               > <  sidebar width                                              │
+│                            ││ 22     "count": 2,                                      │  u  copy as curl     n p  next / previous   + -  split height                                               │
+│                            ││ 23     "next": "/users?page=2"                          │  f  format body      P  pin                                                                                 │
+│                            ││ 24   }                                                  │  K  move to secret                                                                                          │
+│                            ││                                                         │  *  show secrets                                                                                            │
+│                            ││                                                         │                                                                                                             │
+╰─── 6 requests · 2 folders ─╯╰─ Pretty  Raw  Hex ──────────────────────────────────────╰──────────────────────────────────────────────────────────────────────────────────────────────── Esc cancel ─╯
  demo                                                                                                                                                                                     ^W … next key

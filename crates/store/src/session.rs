@@ -1,5 +1,6 @@
-//! Session state restored on restart: open tabs, unsaved drafts, layout and the
-//! active environment. Stored in the gitignored `.sendito/session.toml`.
+//! Session state restored on restart: open tabs, unsaved drafts, layout, the
+//! active environment and the config scope of the settings. Stored in the
+//! gitignored `.sendito/session.toml`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,6 +25,20 @@ pub struct Session {
     pub favorites: Vec<String>,
     /// Non-secret runtime variables set by scripts.
     pub runtime_vars: BTreeMap<String, String>,
+    /// Where the settings and the config editors write to.
+    pub config_scope: ConfigScope,
+}
+
+/// The config file the settings and the config editors write to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigScope {
+    /// `~/.config/sendito/config.toml`: every collection.
+    #[default]
+    Global,
+    /// `<collection>/.sendito/config.toml`: this collection; it wins over
+    /// the global file.
+    Project,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -131,6 +146,7 @@ mod tests {
         };
         s.runtime_vars.insert("k".into(), "v".into());
         s.layout.sidebar_width = 40;
+        s.config_scope = ConfigScope::Project;
         save(&p, &s).unwrap();
         save(&p, &s).unwrap();
         assert_eq!(load(&p).0, s);
@@ -143,5 +159,27 @@ mod tests {
             "garbage ["
         );
         assert!(!p.exists());
+    }
+
+    /// The scope is written and read as its name; a file without it starts
+    /// global.
+    #[test]
+    fn config_scope_from_name() {
+        let d = tempfile::tempdir().unwrap();
+        let p = session_path(d.path());
+        assert_eq!(load(&p).0.config_scope, ConfigScope::Global);
+        let s = Session {
+            config_scope: ConfigScope::Project,
+            ..Default::default()
+        };
+        save(&p, &s).unwrap();
+        assert!(
+            fs::read_to_string(&p)
+                .unwrap()
+                .contains("config_scope = \"project\"")
+        );
+        let (s, warning) = load(&p);
+        assert!(warning.is_none());
+        assert_eq!(s.config_scope, ConfigScope::Project);
     }
 }

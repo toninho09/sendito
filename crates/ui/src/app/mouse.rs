@@ -95,16 +95,10 @@ impl App {
                         let n = p.visible().len();
                         p.sel = crate::list::step(p.sel, d.signum(), n);
                     }
-                    Overlay::Settings { sel } => {
-                        *sel = crate::list::step(*sel, d.signum(), SETTINGS.len());
-                    }
+                    Overlay::Settings(v) => v.step(d.signum()),
                     Overlay::Env(e) => e.table.move_selection(d.signum()),
-                    Overlay::Mcp(m) => m.table.move_selection(d.signum()),
-                    Overlay::Cfg(e) => {
-                        if let Some(t) = e.table() {
-                            t.move_selection(d.signum());
-                        }
-                    }
+                    Overlay::Records(e) => e.wheel(d.signum()),
+                    Overlay::Keymap(e) => e.wheel(d.signum()),
                     Overlay::Prompt(p) => {
                         if let Some(hl) = p.open {
                             let n = p
@@ -532,7 +526,14 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
-            (Overlay::Mcp(_) | Overlay::Cfg(_), OverlayHit::Outside) => {
+            (Overlay::Picker(p), OverlayHit::Outside)
+                if matches!(p.action, PickAction::EnvFile { .. }) =>
+            {
+                self.overlay = Some(ov);
+                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                return;
+            }
+            (Overlay::Records(_) | Overlay::Keymap(_), OverlayHit::Outside) => {
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
@@ -605,15 +606,27 @@ impl App {
             }
             // A click selects a setting; the value chip (or a double click)
             // changes it, matching the keyboard's ←/→.
-            (Overlay::Settings { sel }, OverlayHit::Item(i)) => {
-                *sel = i;
+            (Overlay::Settings(v), OverlayHit::Item(i)) => {
+                v.sel = i;
+                v.edit = None;
                 if double {
-                    self.change_setting(SETTINGS[i].0, 1);
+                    self.click_setting(v, i);
                 }
             }
-            (Overlay::Settings { sel }, OverlayHit::Value(i)) => {
-                *sel = i;
-                self.change_setting(SETTINGS[i].0, 1);
+            (Overlay::Settings(v), OverlayHit::Value(i)) => {
+                v.sel = i;
+                self.click_setting(v, i);
+            }
+            // The Global / Project tabs choose the file.
+            (Overlay::Settings(_), OverlayHit::Choice(i)) => {
+                let want = if i == 0 {
+                    ConfigScope::Global
+                } else {
+                    ConfigScope::Project
+                };
+                if self.config_scope != want {
+                    self.change_setting(SettingId::Scope, 1);
+                }
             }
             (Overlay::Prompt(p), OverlayHit::Choice(k)) => {
                 p.focus = k + 1;
@@ -662,21 +675,17 @@ impl App {
                     e.error = Some("save (Ctrl+S) or discard changes before switching".into());
                 } else {
                     e.current = i;
-                    let mut ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
+                    let mut ed = std::mem::take(e);
                     self.load_env_into(&mut ed);
                     *e = ed;
                 }
             }
+            (Overlay::Env(e), OverlayHit::EnvDotenv) => {
+                e.on_dotenv = true;
+                e.dotenv.click(x.saturating_sub(rect.x), 0, false);
+            }
             (Overlay::Env(e), OverlayHit::EnvCell { row, col }) => {
+                e.on_dotenv = false;
                 e.table.select(row, col);
                 if e.table.editing_text() {
                     e.table.ensure_row();
@@ -685,6 +694,7 @@ impl App {
                     }
                 } else if e.table.activate(1) {
                     e.dirty = true;
+                    self.refresh_env_rows(e);
                 }
             }
             (Overlay::Env(_), OverlayHit::Button(0)) => {
@@ -702,60 +712,45 @@ impl App {
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 return;
             }
-            (Overlay::Mcp(m), OverlayHit::McpDelete(row)) => {
-                m.table.sel_row = row.min(m.table.rows.len());
-                if m.table.delete_row() {
-                    m.dirty = true;
-                }
-            }
-            (Overlay::Mcp(m), OverlayHit::McpCell { row, col }) => {
-                m.table.select(row, col);
-                if m.table.editing_text() {
-                    m.table.ensure_row();
-                    if let Some(ed) = m.table.editor_mut() {
-                        ed.click(x.saturating_sub(rect.x), 0, false);
+            (Overlay::Records(e), OverlayHit::RecButton(i)) => {
+                let key = match (i, e.kind) {
+                    (0, _) => KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                    (1, _) => KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+                    (2, crate::records::RecordKind::Mcp) => {
+                        KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
                     }
-                } else if m.table.activate(1) {
-                    m.dirty = true;
-                }
-            }
-            (Overlay::Mcp(_), OverlayHit::McpButton(0)) => {
-                self.overlay = Some(ov);
-                self.overlay_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-                return;
-            }
-            (Overlay::Mcp(_), OverlayHit::McpButton(1)) => {
-                self.overlay = Some(ov);
-                self.overlay_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
-                return;
-            }
-            (Overlay::Mcp(_), OverlayHit::McpButton(2)) => {
-                self.overlay = Some(ov);
-                self.overlay_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
-                return;
-            }
-            (Overlay::Cfg(e), OverlayHit::CfgTab(i)) => {
-                e.current = i.min(e.tables.len().saturating_sub(1));
-            }
-            (Overlay::Cfg(e), OverlayHit::CfgCell { row, col }) => {
-                crate::config_editor::cfg_click(e, row, col, x.saturating_sub(rect.x));
-            }
-            (Overlay::Cfg(e), OverlayHit::CfgDelete(row)) => {
-                crate::config_editor::cfg_delete(e, row);
-            }
-            (Overlay::Cfg(_), OverlayHit::CfgButton(i)) => {
-                let key = match i {
-                    0 => KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
-                    1 => KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
-                    _ => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                    (2, _) => KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+                    _ => {
+                        // Close: Esc from the list closes (it asks first
+                        // when there are changes).
+                        e.pane = crate::records::Pane::List;
+                        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+                    }
                 };
                 self.overlay = Some(ov);
                 self.overlay_key(key);
                 return;
             }
-            (Overlay::Mcp(_), OverlayHit::McpButton(_)) => {
+            (
+                Overlay::Records(e),
+                hit @ (OverlayHit::RecList(_)
+                | OverlayHit::RecField(_)
+                | OverlayHit::RecCell { .. }
+                | OverlayHit::RecDelete { .. }),
+            ) => e.click(hit, x.saturating_sub(rect.x)),
+            (Overlay::Keymap(e), OverlayHit::KeyTab(i)) => {
+                e.mode = i.min(crate::keymap_editor::KEYMAP_MODES.len() - 1);
+            }
+            (Overlay::Keymap(e), OverlayHit::KeyRow(i)) => e.sel = i,
+            (Overlay::Keymap(_), OverlayHit::KeyButton(i)) => {
+                let key = match i {
+                    0 => KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                    1 => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    2 => KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+                    _ => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                };
                 self.overlay = Some(ov);
-                self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                self.overlay_key(key);
                 return;
             }
             (Overlay::Report(r), OverlayHit::Button(0)) => {

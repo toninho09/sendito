@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   +                                                                                   ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││                                                                                        │
+│▸ Users/                    ││                                                                                        │
+│  GRPC  echo unary          ││                                                                                        │
+│  GET   health              ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
+│ ╭─ MCP servers · project config ───────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Ctrl+S saves to ~/.sendito/config.toml                                                                           │ │
+│ │                                                                                                                  │ │
+│ │ ▌ echo            http │ Name           ▍echo                                                                    │ │
+│ │   files          stdio │ Kind            http   stdio                                                            │ │
+│ │   + New (Ctrl+N)       │ URL             http://127.0.0.1:9/mcp                                                  │ │
+│ │                        │ Auth            none   bearer   oauth                                                   │ │
+│ │                        │ Verify TLS      [✓] On                                                                  │ │
+│ │                        │ ── Headers ──────────────────────────────────────────────────────────────────────────── │ │
+│ │                        │ Header                   Value                                                          │ │
+│ │                        │ add header              │                                                               │ │
+│ │                        │                                                                                         │ │
+│ │                        │                                                                                         │ │
+│ │                        │                                                                                         │ │
+│ │                        │                                                                                         │ │
+│ │                                                                                                                  │ │
+│ │ The [mcp.servers.<name>] key a request names in its Server field; no spaces.                                     │ │
+│ │                                                                                                                  │ │
+│ │  Save (Ctrl+S)    New (Ctrl+N)    Test (Ctrl+T)    Close (Esc)                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                                      │
+│                            ││         F7  all history                                                                │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
+ demo                                                                      ^S save · Tab ↑↓ fields · ^T test · Esc list

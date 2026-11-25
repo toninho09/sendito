@@ -17,7 +17,7 @@ pub(super) fn draw_import(
         buf,
         inner.x + 2,
         inner.y + 1,
-        "Paste curl, or a Postman, Insomnia, OpenAPI/Swagger or .http file, or a Bruno directory.",
+        "Paste curl or a collection, or type a path: Postman, Insomnia, OpenAPI, .http or Bruno.",
         tw,
         note,
     );
@@ -25,18 +25,31 @@ pub(super) fn draw_import(
         buf,
         inner.x + 2,
         inner.y + 2,
-        "Relative paths: the folder where you started Sendito, then the collection.",
+        "Paths start where you started Sendito, then the collection. Tab completes; F5 imports.",
         tw,
         note,
     );
-    put(
-        buf,
-        inner.x + 2,
-        inner.y + 3,
-        "Enter = new line; F5 / Ctrl+S imports.",
-        tw,
-        note,
-    );
+    // What the text would import, checked when it changes.
+    let text = i.input.text();
+    if text != i.previewed {
+        i.preview = app.import_preview(&text);
+        i.previewed = text;
+    }
+    if let Some((line, bad)) = &i.preview {
+        let st = frame.theme.on_overlay(if *bad {
+            frame.theme.err
+        } else {
+            frame.theme.ok
+        });
+        put(
+            buf,
+            inner.x + 2,
+            inner.y + 3,
+            &truncate(line, tw as usize),
+            tw,
+            st,
+        );
+    }
     let er = Rect::new(inner.x + 2, inner.y + 5, tw, inner.height.saturating_sub(8));
     let tr = input_box(buf, er, true, frame.theme);
     *cursor = i.input.render(tr, buf, frame.theme, true, is_def);

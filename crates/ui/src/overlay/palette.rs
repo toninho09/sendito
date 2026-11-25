@@ -58,15 +58,15 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":mcpservers", "Choose an MCP server"),
     (
         ":mcpservers edit",
-        "Edit the MCP servers in the project config (Ctrl+W S)",
+        "Edit the MCP servers in the config file chosen in Settings (Ctrl+W S)",
     ),
     (
         ":mcpadd <name>",
-        "Add an MCP server to the project config (asks for the URL or command)",
+        "Add an MCP server to the config file chosen in Settings (asks for the URL or command)",
     ),
     (
         ":mcpedit [name]",
-        "Edit the details of an MCP server: env, headers, TLS, OAuth (lists them without a name)",
+        "Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name)",
     ),
     (":mcptools", "Discover and choose an MCP tool"),
     (":method", "Choose the HTTP method"),

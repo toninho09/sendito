@@ -183,8 +183,8 @@ Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 | Streamable HTTP transport (JSON and SSE bodies) | `crates/mcp/src/http.rs` | Session-id and protocol-version headers |
 | JSON-RPC messages, protocol constants | `crates/mcp/src/protocol.rs` | `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS` |
 | Tool discovery and argument template | `crates/mcp/src/lib.rs::Tool` | `:mcptools`, F2 in the UI |
-| Server table editor (`Ctrl+W S`) | `crates/ui/src/app/mcp.rs::open_mcp_editor` | `crates/ui/src/overlay/mcp_editor.rs::McpEditor`, save via `save_mcp_editor` |
-| Server details (`Ctrl+O` in the server table: env, headers, `verify_tls`, OAuth fields) | `crates/ui/src/config_editor.rs::open_mcp_server_editor` | `crates/ui/src/config_editor.rs::CfgEditor`, save via `save_cfg_editor` |
+| Servers editor (`Ctrl+W S`, `:mcpedit`): list and form | `crates/ui/src/records.rs::RecordEditor` (`open_mcp_editor`, `open_mcp_server_editor`, `save_records`) | Fields per kind in `crates/ui/src/records.rs::Record`; drawing in `crates/ui/src/draw/overlay/records.rs` |
+| Connection test (`Ctrl+T` in the servers editor) | `crates/ui/src/app/mcp.rs::start_mcp_test` | Answer in `AppMsg::McpTest` (`crates/ui/src/app/ingest.rs`) |
 
 Tests: `crates/mcp/tests/client.rs`, `tests/mcp_cli.rs`, corpus cases under
 `tests/corpus/collection/mcp/`.
@@ -249,7 +249,9 @@ the module for the surface you are changing.
 | Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
 | Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
 | Import, export, body actions | `crates/ui/src/app/import_export.rs` |
-| Settings and themes | `crates/ui/src/app/settings.rs` |
+| Settings and themes | `crates/ui/src/app/settings.rs`; the dialog's state (filter, in-place edit) in `crates/ui/src/overlay/settings.rs::SettingsView` |
+| Name prompt preview (the file a name creates, a name taken) | `crates/ui/src/app/dialogs.rs::prompt_preview` |
+| Import dialog preview and path completion | `crates/ui/src/app/import_export.rs` (`import_preview`, `complete_import_path`) |
 | Hint row | `crates/ui/src/app/hints.rs` |
 | Report, timing, header and help text | `crates/ui/src/app/text.rs` |
 | Overlay keys, dialog accept actions | `crates/ui/src/app/overlay_keys.rs`, `crates/ui/src/app/dialogs.rs` |
@@ -266,8 +268,11 @@ the module for the surface you are changing.
 | Theme registry: user theme files, `extends`, notes | `crates/ui/src/theme.rs::Registry` |
 | Icon sets (`unicode`, `nerd`) | `crates/widgets/src/icons.rs` |
 | Sidebar tree state: flatten, expand, filter, select | `crates/ui/src/tree.rs` |
-| Overlays: palette, help, settings, confirm, prompt, picker, env editor, MCP editor, import, report | `crates/ui/src/overlay/` (`palette.rs`, `settings.rs`, `env_editor.rs`, `mcp_editor.rs`) |
-| Config editors: MCP server details, OAuth identities (`:oauth`), key bindings (`:keymap`) | `crates/ui/src/config_editor.rs` |
+| Durations as the interface shows and reads them (`30 s`, `500 ms`) | `crates/ui/src/units.rs` |
+| Field labels, help lines, credential fields | `crates/ui/src/tab/fields.rs` (`Field::label`, `Field::help`, `Field::is_secret`) |
+| Overlays: palette, help, settings, confirm, prompt, picker, env editor, import, report | `crates/ui/src/overlay/` (`palette.rs`, `settings.rs`, `env_editor.rs`; `mcp_editor.rs` holds the MCP kinds and the stdio command-line parsing) |
+| Record editors (list and form): MCP servers (`Ctrl+W S`), OAuth identities (`:oauth`) | `crates/ui/src/records.rs` |
+| Key bindings editor (`:keymap`): grouped actions, key recording, clash warnings | `crates/ui/src/keymap_editor.rs` (drawing in `crates/ui/src/draw/overlay/keymap.rs`) |
 | List arithmetic: scroll clamping, steps, page steps, wrap-around | `crates/widgets/src/list.rs` |
 
 ### Drawing
@@ -286,7 +291,7 @@ Every clickable region is registered in `app.hits` while drawing.
 | Request pane: URL strip, sub-tabs, fields, tables | `crates/ui/src/draw/request/` (`url.rs`, `fields.rs`) |
 | Response pane: tabs, borders, scrollbar | `crates/ui/src/draw/response.rs` |
 | Sidebar: request tree and history | `crates/ui/src/draw/sidebar.rs` |
-| Overlays and dialogs | `crates/ui/src/draw/overlay/` (`palette.rs`, `settings.rs`, `dialogs.rs`, `editors.rs`, `report.rs`) |
+| Overlays and dialogs | `crates/ui/src/draw/overlay/` (`palette.rs`, `settings.rs`, `dialogs.rs`, `editors.rs`, `keymap.rs`, `records.rs`, `report.rs`) |
 | Completion popup | `crates/ui/src/draw/complete.rs` |
 | Start screen and pixel wordmark | `crates/ui/src/draw/welcome.rs` |
 
@@ -296,7 +301,7 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
 | A new `:command` | `crates/ui/src/overlay/palette.rs::COMMANDS` → dispatch in `crates/ui/src/app/commands.rs::run_command` → `KEYMAP.md` via `make keymap` |
-| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay/settings.rs::SettingId` (`key`, `typed`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
+| A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay/settings.rs::SettingId` (`key`, `typed`, `opens`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
 | A new dialog | `crates/ui/src/overlay/mod.rs::Overlay` → `crates/ui/src/draw/overlay/` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app/mouse.rs` → snapshots |
 
 ## Headless CLI

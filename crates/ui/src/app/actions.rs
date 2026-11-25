@@ -73,6 +73,8 @@ impl App {
             Action::Import => self.open_import(""),
             Action::ExportCurl => self.export_curl(false),
             Action::FormatBody => self.format_body(),
+            Action::MoveToSecret => self.prompt_move_to_secret(),
+            Action::RevealSecrets => self.reveal_secrets = !self.reveal_secrets,
             Action::Zoom => self.zoom = !self.zoom,
             Action::GrowSidebar => self.resize_sidebar(4),
             Action::ShrinkSidebar => self.resize_sidebar(-4),

@@ -90,66 +90,113 @@ impl App {
                     ]);
                 }
                 // Save, New env and Close are on the dialog's buttons.
-                Overlay::Env(e) => v.extend([
-                    ("Ctrl+S".into(), "save".into()),
-                    ("Ctrl+D".into(), "delete row".into()),
-                    ("Space".into(), "source".into()),
-                    ("Ctrl+PgUp/Dn".into(), "env".into()),
-                    if e.table.sel_col == 3 {
-                        ("type".into(), "set secret".into())
+                Overlay::Env(e) => {
+                    use crate::overlay::env_editor as t;
+                    if e.on_dotenv {
+                        v.extend([
+                            ("F2".into(), "browse".into()),
+                            ("Tab".into(), "complete path".into()),
+                            ("↓".into(), "variables".into()),
+                        ]);
                     } else {
-                        ("Ctrl+N".into(), "new env".into())
-                    },
-                    (
-                        "Esc".into(),
-                        if e.dirty {
-                            "close (asks to save)"
-                        } else {
-                            "close"
+                        v.extend([
+                            ("Ctrl+D".into(), "delete row".into()),
+                            ("Space".into(), "type".into()),
+                        ]);
+                        match e.selected_type().filter(|_| e.table.sel_col == 2) {
+                            Some(t::FILE) => v.push(("F2".into(), "browse".into())),
+                            Some(s) if t::holds_secret(s) => {
+                                v.push(("type".into(), "set secret".into()))
+                            }
+                            _ => {}
                         }
-                        .into(),
-                    ),
-                ]),
-                Overlay::Cfg(e) => {
+                    }
+                    v.extend([
+                        ("Ctrl+S".into(), "save".into()),
+                        ("Ctrl+PgUp/Dn".into(), "env".into()),
+                        (
+                            "Esc".into(),
+                            if e.dirty {
+                                "close (asks to save)"
+                            } else {
+                                "close"
+                            }
+                            .into(),
+                        ),
+                    ]);
+                }
+                Overlay::Keymap(e) => {
+                    if e.capture.is_some() {
+                        v.extend([
+                            ("keys".into(), "record".into()),
+                            ("pause 1 s".into(), "keep".into()),
+                            ("Esc".into(), "cancel".into()),
+                        ]);
+                    } else {
+                        v.extend([
+                            ("Enter".into(), "change".into()),
+                            ("^A".into(), "add a key".into()),
+                            ("Del".into(), "default".into()),
+                            ("^D".into(), "no key".into()),
+                            ("Tab".into(), "mode".into()),
+                            ("^S".into(), "save".into()),
+                            (
+                                "Esc".into(),
+                                if e.dirty {
+                                    "close (asks to save)"
+                                } else {
+                                    "close"
+                                }
+                                .into(),
+                            ),
+                        ]);
+                    }
+                }
+                Overlay::Records(e) => {
+                    use crate::records::{Input, Pane, RecordKind};
                     v.push(("Ctrl+S".into(), "save".into()));
-                    v.push(("Ctrl+N".into(), "add row".into()));
-                    v.push(("Ctrl+D".into(), "delete row".into()));
-                    if e.tabs.len() > 1 {
-                        v.push(("Ctrl+PgUp/PgDn".into(), "tab".into()));
+                    if e.pane == Pane::List {
+                        v.extend([
+                            ("↑↓".into(), "choose".into()),
+                            ("Enter".into(), "edit".into()),
+                            ("Ctrl+N".into(), "new".into()),
+                            ("Ctrl+D".into(), "delete".into()),
+                        ]);
+                    } else {
+                        let input = e.focused_field().map(|f| match &f.input {
+                            Input::Choice { .. } => 1,
+                            Input::Toggle(_) => 2,
+                            Input::Table(_) => 3,
+                            _ => 0,
+                        });
+                        match input {
+                            Some(1) => v.push(("←→".into(), "change".into())),
+                            Some(2) => v.push(("Space".into(), "toggle".into())),
+                            Some(3) => v.extend([
+                                ("Enter".into(), "next cell".into()),
+                                ("Ctrl+D".into(), "delete row".into()),
+                            ]),
+                            _ => {}
+                        }
+                        v.push(("Tab ↑↓".into(), "fields".into()));
+                    }
+                    match e.kind {
+                        RecordKind::Mcp => v.push(("Ctrl+T".into(), "test".into())),
+                        RecordKind::OAuth => v.push(("Ctrl+L".into(), "sign in".into())),
                     }
                     v.push((
                         "Esc".into(),
-                        if e.dirty {
-                            "close (asks to save)"
-                        } else {
-                            "close"
+                        match (e.pane, e.dirty) {
+                            (Pane::Form, _) => "list",
+                            (_, true) => "close (asks to save)",
+                            _ => "close",
                         }
                         .into(),
                     ));
                 }
-                Overlay::Mcp(m) => v.extend([
-                    ("Ctrl+S".into(), "save".into()),
-                    ("Ctrl+O".into(), "details".into()),
-                    ("Ctrl+N".into(), "add row".into()),
-                    ("Ctrl+D".into(), "delete row".into()),
-                    ("Space".into(), "kind".into()),
-                    if m.table.sel_row >= m.table.rows.len() {
-                        ("type".into(), "add server".into())
-                    } else {
-                        ("Enter".into(), "next cell".into())
-                    },
-                    (
-                        "Esc".into(),
-                        if m.dirty {
-                            "close (asks to save)"
-                        } else {
-                            "close"
-                        }
-                        .into(),
-                    ),
-                ]),
                 Overlay::Import(_) => v.extend([
                     ("F5 / Ctrl+S".into(), "import".into()),
+                    ("Tab".into(), "complete path".into()),
                     ("Esc".into(), "cancel".into()),
                 ]),
                 Overlay::Report(r) => v.extend([
@@ -166,15 +213,21 @@ impl App {
                     ("↑↓ PgUp PgDn".into(), "scroll".into()),
                     ("Esc".into(), "close".into()),
                 ]),
-                Overlay::Settings { sel } => v.extend([
+                Overlay::Settings(s) if s.edit.is_some() => v.extend([
+                    ("Enter".into(), "save".into()),
+                    ("Esc".into(), "cancel".into()),
+                ]),
+                Overlay::Settings(s) => v.extend([
                     ("↑↓".into(), "move".into()),
-                    if SETTINGS.get(*sel).is_some_and(|(id, _)| id.typed()) {
-                        ("Enter".into(), "type a value".into())
-                    } else if SETTINGS.get(*sel).is_some_and(|(id, _)| id.opens()) {
+                    if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.typed()) {
+                        ("Enter".into(), "edit".into())
+                    } else if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.opens()) {
                         ("Enter".into(), "open the editor".into())
                     } else {
                         ("←→ Space".into(), "change".into())
                     },
+                    ("type".into(), "filter".into()),
+                    ("Tab".into(), "global / project".into()),
                     ("Esc".into(), "close".into()),
                 ]),
             }
@@ -290,6 +343,9 @@ impl App {
                     (Focus::ReqBody, Some(Field::McpTool)) => {
                         v.push(("F2".into(), "choose tool".into()))
                     }
+                    (Focus::ReqBody, Some(Field::AuthOAuthName)) => {
+                        v.push(("F2".into(), "choose identity".into()))
+                    }
                     (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
                         v.push(("F2".into(), "choose server".into()))
                     }
@@ -322,6 +378,15 @@ impl App {
                         ("↑↓ PgUp/PgDn".into(), "scroll".into()),
                         ("Enter".into(), "edit".into()),
                     ]),
+                    (Focus::ReqBody, Some(f))
+                        if f.is_secret()
+                            && self
+                                .tab_mut()
+                                .and_then(|t| t.ed.text_mut(f))
+                                .is_some_and(|e| crate::tab::plain_secret(&e.text())) =>
+                    {
+                        v.push((k(self, Action::MoveToSecret), "move to secret".into()))
+                    }
                     (Focus::ReqBody, Some(f)) if f.is_choice() => {
                         v.push(("Enter/Space".into(), "choose".into()))
                     }

@@ -326,6 +326,11 @@ fn mqtt_session() {
         snap("mqtt_timing", h);
         h.key("alt+4");
         snap("mqtt_log", h);
+        // The one-line fields of the Will and Options tabs have labels.
+        h.app.tab_mut().must().req_tab = 2;
+        snap("mqtt_will", h);
+        h.app.tab_mut().must().req_tab = 5;
+        snap("mqtt_options", h);
     });
 }
 
@@ -470,8 +475,41 @@ fn overlays() {
             &servers,
         )
         .unwrap();
+        // The editor shows the Settings scope's file; the servers are in the
+        // project one.
+        h.app.config_scope = sendito_ui::overlay::ConfigScope::Project;
         h.key("esc ctrl+w S");
         snap("mcp_servers", h);
+        // The form of the selected server.
+        h.key("enter");
+        snap("mcp_server_form", h);
+        // An OAuth identity of the password grant.
+        let ids = std::collections::BTreeMap::from([(
+            "billing".to_string(),
+            sendito_store::config::OAuthIdentity {
+                grant: sendito_store::config::OAuthGrant::Password,
+                token_url: "https://auth.example.test/token".into(),
+                client_id: "sendito".into(),
+                client_secret: Some("{{billing_secret}}".into()),
+                username: Some("{{api_user}}".into()),
+                password: Some("hunter2".into()),
+                scopes: vec!["invoices:read".into()],
+                ..Default::default()
+            },
+        )]);
+        sendito_store::config::set_table(
+            &sendito_store::config::project_path(h.dir.path()),
+            &["oauth"],
+            &ids,
+        )
+        .unwrap();
+        h.key("esc esc");
+        h.app.run_command("oauth");
+        h.key("enter");
+        snap("oauth_form", h);
+        h.key("esc esc");
+        h.app.run_command("keymap");
+        snap("keymap_editor", h);
         h.key("esc ctrl+w i");
         snap("import", h);
         h.key("esc");

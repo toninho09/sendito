@@ -397,24 +397,30 @@ from the request.
   servers; F2 on the tool field lists the tools and, when the arguments editor is
   empty or `{}`, fills an argument template from the tool's input schema.
   `:mcpservers` and `:mcptools` run the same pickers from the palette.
-* **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) opens the
-  servers as a table — name, kind (`http`/`stdio`), the URL or command line,
-  and for HTTP servers the auth (`none`/`bearer`/`oauth`) and the bearer token —
-  and `Ctrl+S` writes `[mcp.servers]` to the project config
-  (`.sendito/config.toml`), keeping the rest of the file. It shows and writes
-  only the project file's servers: servers from the global config are used but
-  never copied into the project file. While the project config has an error,
-  the editor and `:mcpadd` show it and write nothing. Rows whose name and
-  URL/command line did not change keep their `args`, `env` and `headers`. A
-  server set to `oauth` keeps its OAuth fields. `Ctrl+O` (or the Details
-  button) opens the selected saved server: the `env` table of a stdio server,
-  or for an HTTP server an Options tab (`verify_tls` and the OAuth overrides
-  `client_id`, `client_secret`, `authorize_url`, `token_url`,
-  `registration_url`, `scopes`, which need the auth set to `oauth`) and a
-  Headers tab. A plain `client_secret`, or a plain value in a header whose name
-  says it holds a credential (`authorization`, `*key*`, `*token*`, `*secret*`),
-  gets a warning on save. `:mcpadd <name>` asks for the URL or command and adds
-  one server at once.
+* **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) lists
+  the servers on the left (name and kind) and shows the form of the selected
+  one on the right. The form shows only what applies: an `http` server has a
+  URL, the auth (`none`/`bearer`/`oauth`), the token (bearer only), Verify TLS,
+  a Headers table and the OAuth overrides (`oauth` only: client ID, client
+  secret, authorize, token and register URLs, scopes; empty lets discovery
+  find them); a `stdio` server has a command, an Arguments table (one argument
+  per row, as typed: spaces and quotes stay part of it) and an Environment
+  table. A whole command line typed in Command, with no rows in Arguments,
+  splits on spaces. The line under the form explains the focused field.
+  Enter (or a click) opens the form, Esc returns to the list, Tab and ↑↓ move
+  between fields, ← → change a choice, `Ctrl+N` adds a server and `Ctrl+D`
+  deletes the selected one. `Ctrl+S` writes `[mcp.servers]` to the config
+  file chosen in Settings (global or project; the title says which), keeping
+  the rest of the file. It shows and writes only that file's servers: a
+  server from the other file is used, never copied. While that config has an
+  error, the editor and `:mcpadd` show it and write nothing. `Ctrl+T` tests
+  the selected saved server: it lists its tools and shows "✓ N tools" or the
+  error. A plain token or client secret, or a plain value in a header whose
+  name says it holds a credential (`authorization`, `*key*`, `*token*`,
+  `*secret*`), shows "⚠ plain text" and gets a warning on save.
+  `:mcpedit <name>` opens the editor of the file that holds that server with
+  its form open; `:mcpedit` alone opens the list. `:mcpadd <name>` asks for
+  the URL or command and adds one server at once to the chosen file.
 * **Auth**:
   * static **bearer** (`{{variables}}` allowed);
   * **OAuth 2.1** — metadata discovery (RFC 9728 / RFC 8414), PKCE, dynamic
@@ -562,8 +568,42 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   server echoes is masked as it was sent and when it comes back JSON-escaped or
   percent-encoded (form or query); other encodings, such as base64, are not
   recognised, and secrets shorter than 3 characters are not masked in echoes.
-* The **environment editor** (`Ctrl+W V`) edits variables in a table, writes
-  secret values to their source, and shows whether each one is set.
+* The **environment editor** (`Ctrl+W V`) edits variables in a table:
+  Variable, Type (Space changes it) and Value. Value takes what the type
+  needs:
+
+  | Type | Value | In the file |
+  |---|---|---|
+  | `text` | the value | `name = "value"` |
+  | `secret` | the secret, masked; `Ctrl+S` writes it to `secrets.toml` | `source = "local"` |
+  | `secret key` | the name of an entry in `secrets.toml` | `source = "local", key = "…"` |
+  | `keychain` | the secret, masked; `Ctrl+S` writes it to the OS keychain | `source = "keychain"` |
+  | `keychain key` | the name of an account in the keychain | `source = "keychain", key = "…"` |
+  | `file` | the path (F2 browses; a pasted path works) | `source = "file", path = "…"` |
+  | `.env` | the key in the `.env` file (empty = the variable name) | `source = "dotenv"` |
+
+  Changing between a secret type and another clears the Value, so a secret
+  never shows as text. An empty Value says whether a secret is set or the
+  `.env` file has the key.
+* **F2** on the Value of a `file` row, or on the `.env` file line, opens a
+  file picker: `../` and the folders open, the filter narrows the list, and
+  a file fills in its path (relative to the collection, else with `~`). Esc
+  goes back to the editor with its edits.
+* The **.env file** line above the table sets the file that the `.env`
+  variables read (the `dotenv` key; empty = `.env` at the collection root).
+  It says "✓ found · N keys", "✗ not found" or the parse error while you
+  type, and the `.env` rows update. Up on the first row goes to the line;
+  Tab completes the path, and Tab, Down or Enter go back to the table.
+  Sendito only reads the file.
+* **Plain credentials in a request**: a password, token, API key value, AWS
+  secret key or session token, JWT secret or MQTT password typed without
+  `{{variable}}` shows "⚠ plain text" and a help line. `Ctrl+W K` moves the
+  value into a secret: it asks a name, writes the value to
+  `.sendito/secrets.toml` for the active environment (or the collection
+  variables when none is active), adds the `local` variable to that
+  environment and writes `{{name}}` in the field. A name the environment
+  already has is refused. With **Hide plain secrets** on, such a value shows
+  as `••••••`; `Ctrl+W *` shows it.
 * Environment names cannot start with `_`, and `runtime` is reserved.
   `_collection` holds the collection-level variables' secrets.
 * The editor never loses edits: switching (`Ctrl+PageUp`/`Ctrl+PageDown`) and
@@ -614,8 +654,8 @@ The **Scripts** tab has three declarative sections — no JavaScript
 * **Discovery**: the root is the nearest `.sendito/`; hidden entries and
   `[collection] ignore` directories are skipped; natural sort, folders first.
 * **Session restore** (`.sendito/session.toml`, gitignored): open tabs, drafts,
-  active tab and environment, layout, expanded folders and non-secret runtime
-  variables.
+  active tab and environment, layout, expanded folders, non-secret runtime
+  variables and the config scope of the settings.
 * **History** (`.sendito/history.jsonl`, gitignored): one JSON object per sent
   request, the request as written with `{{variables}}` (no bodies), trimmed at
   `[history] max_entries` (default 10 000) plus 10 % slack.
@@ -784,7 +824,21 @@ Import gaps are listed in [DEBT.md](DEBT.md).
 * **Overlays** over a dimmed backdrop: command palette, help (searchable, two
   columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
-  folder, theme, OAuth sign-in, cookie jar), the environment editor, the import dialog and the report dialog.
+  folder, theme, OAuth sign-in, OAuth identity, cookie jar), the environment
+  editor, the MCP servers, OAuth and keymap editors, the import dialog and the
+  report dialog. With a filter typed, a picker's title says how many items
+  match ("2 of 8") and the matched letters are marked; the environment picker
+  shows how many variables each environment has.
+* **Name prompts** (new request, new folder, save, rename) show the file the
+  name creates (`→ Orders/get order.toml`) and say at once when the name is
+  not valid or already taken. A choice row whose options fit shows them all
+  (the request type: HTTP, gRPC, WebSocket, MCP, SSE, MQTT).
+* **Import dialog**: the line under the instructions says what the text
+  would import ("✓ curl · POST https://…", "✓ Postman "shop" · 24 requests")
+  or why it cannot ("✗ no file or directory at …"); Tab completes a path.
+* **Undefined variables**: the question before a send offers **Define**,
+  which opens the environment editor of the active environment (or the
+  collection variables) with a row for each missing variable.
   Clicks inside a dialog act inside it; only the controls do something. A
   settings row is selected by a click and changed by its value chip (or a
   double click), like ←/→ on the keyboard.
@@ -810,8 +864,8 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:w`, `:saveas <name>`, `:wq`, `:q`, `:q!` | Save / save as / save and quit / quit / quit without saving |
 | `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request |
 | `:mcpservers`, `:mcptools` | Choose an MCP server / discover and choose a tool |
-| `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the project config / add one |
-| `:mcpedit [name]` | Edit the details of an MCP server (a picker without a name) |
+| `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the config file chosen in Settings / add one |
+| `:mcpedit [name]` | Edit an MCP server (the servers list without a name) |
 | `:method`, `:bodytype`, `:authtype`, `:grpcmethod` | Open the method, body type, auth type or gRPC method picker of the active request |
 | `:rescan` | Read the collection from disk again |
 | `:import [path]` | Import a collection or paste curl |
@@ -831,7 +885,8 @@ onto a folder to move it; drag pane borders to resize; the wheel scrolls the
 pane under the pointer. Inside a dialog, clicks act inside it: fields take the
 caret, list rows and buttons act, and its own frame is inert; the wheel acts
 only while the pointer is over the dialog. A click truly outside closes it,
-except confirmations and the environment/MCP editors, which ask to save first,
+except confirmations and the environment, MCP, OAuth and keymap editors,
+which ask to save first,
 and a prompt or import dialog with typed text, which asks before discarding it.
 
 **Vim mode** (`[ui] vim_mode` or Settings): modal editors (normal / insert /
@@ -856,23 +911,30 @@ in-app help, and can be remapped in `[keymap.all]`, `[keymap.conventional]` or
 
 ## Settings
 
-`Ctrl+W ,` or `:settings`. Changes take effect at once. **Save changes to**
-chooses the file: `global` (`~/.config/sendito/config.toml`, every
-collection, the default) or `project` (`.sendito/config.toml`, this collection,
-shared through git). The project file wins over the global one: when a change
-goes to the global file and the project file sets the same key, the status
-says so. The choice lasts for the session.
+`Ctrl+W ,` or `:settings`. Changes take effect at once. The **Save to** tabs
+on top (Tab switches, or a click) choose the file: **Global**
+(`~/.config/sendito/config.toml`, every collection, the default) or
+**Project** (`.sendito/config.toml`, this collection, shared through git). A
+`•` before a setting marks a value the chosen file sets. The project file wins
+over the global one: on the Global tab, a value the project file also sets
+shows "project wins", and a change to it says so in the status. The choice is
+kept in `session.toml`, per user and collection; it starts at Global.
 
-On/off and choice rows change with ← → or Space. Number, path and text rows
-open a dialog on Enter: the value is checked before it is saved, and an empty
-path or text removes the key. Two rows open editors of their own.
+Typing filters the settings by name or config key (Esc clears the filter);
+↑↓ move. On/off and choice rows change with ← → or Space. Number, path and
+text rows are edited in place: Enter starts with the value selected, Enter
+saves it after a check (a refused value stays, with the reason under the
+list) and Esc gives it up; an empty path or text removes the key. Timeouts
+show and take a time with its unit (`30 s`, `500 ms`, `2 min`; a bare number
+is milliseconds); the file keeps milliseconds. Three rows open editors of
+their own.
 
 | Setting | Config key | Effect |
 |---|---|---|
-| Save changes to | — | The file settings, `:oauth` and `:keymap` write |
 | Theme | `ui.theme` | Colors; `auto` follows the terminal background |
 | Icons | `ui.icons` | `unicode` (any font) or `nerd` (needs a Nerd Font) |
 | Key hints | `ui.hints` | Footer hints: `full`, `short` (default) or `off` |
+| Hide plain secrets | `ui.hide_plain_secrets` | Show `••••••` for a password, token or key typed as plain text in a request (`Ctrl+W *` shows it); default off |
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
 | Key bindings | `keymap.*` | Opens the keymap editor (`:keymap`) |
 | Sidebar position | `ui.sidebar` | `left` or `right` |
@@ -887,6 +949,7 @@ path or text removes the key. Two rows open editors of their own.
 | gRPC deadline | `grpc.deadline_ms` | When a request sets none; 0 = none |
 | WebSocket handshake timeout | `websocket.timeout_ms` | When a request sets none; 0 = none |
 | MCP call timeout | `mcp.timeout_ms` | When a request sets none (1 or more) |
+| MCP servers | `mcp.servers.*` | Opens the servers editor (`Ctrl+W S`); the value counts the servers of the chosen file |
 | Largest response body | `http.max_body_mb` | Larger bodies are cut (1 or more) |
 | Cookie jar | `http.cookie_jar` | When a request's `[options] cookies` says nothing |
 | Proxy | `http.proxy` | `env` or a proxy URL, checked before it is saved |
@@ -897,19 +960,30 @@ path or text removes the key. Two rows open editors of their own.
 | Collection name | `collection.name` | Always saved to the project file. Keychain secrets are stored under it: after a change, set them again (the dialog and the status say so) |
 | Skipped directories | `collection.ignore` | Comma-separated; empty = the defaults |
 
-**OAuth editor** (`:oauth`): one row per `[oauth.<name>]` identity — name,
-grant, authorize or device URL, token URL, client ID, client secret, username,
-password and scopes (separated by spaces). The name, the token URL and the
-client ID are required; the authorize URL for `authorization_code`, the device
-URL for `device_code` and the username for `password`. A client
-secret without `{{variable}}` is saved with a warning: keep it in an
-environment secret and write `{{name}}`.
+**OAuth editor** (`:oauth`): the identities on the left, the form of the
+selected one on the right — name, grant (Authorization code, Client
+credentials, Password, Device code), then only the fields of that grant:
+authorize URL (authorization code) or device URL (device code), token URL,
+client ID, client secret, username and password (password grant) and scopes
+(separated by spaces). The name, the token URL and the client ID are
+required, and so are the URL or username the grant needs; a missing one
+selects the identity and says what to set. A client secret or password
+without `{{variable}}` shows "⚠ plain text" and is saved with a warning.
+`Ctrl+L` signs in with the selected saved identity (the grants that need a
+sign-in). In a request, F2 on the OAuth identity field lists the identities;
+"New identity…" opens this editor on a new one.
 
-**Keymap editor** (`:keymap`): tabs `all`, `conventional` and `vim`, one row per
-action with its keys (comma-separated, e.g. `ctrl+g, f9`; empty keys unbind
-the action). The line under the table describes the action or lists the
-actions that start with what was typed. An unknown action or key is refused;
-saved keys apply at once.
+**Keymap editor** (`:keymap`): every action, grouped as in the help, with
+its keys in the selected mode tab (`all` for both editing modes,
+`conventional` or `vim` for one; Tab switches). Typing filters the actions by
+description, id or key. Enter records new keys for the selected action:
+press them (a sequence such as `Ctrl+W x` too) and a pause of one second
+keeps them; Esc cancels. `Ctrl+A` records a key added to the current ones,
+Del restores the default keys and `Ctrl+D` leaves the action without a key.
+Changed keys show "(changed)". A key that another action of the same place
+also uses, or that starts a longer key, gets a warning line. `Ctrl+S` writes
+`[keymap.<mode>]` and the keys apply at once; entries of the file the editor
+does not know are kept. Esc cannot be recorded.
 
 Both editors read and write only the chosen file, and refuse to write while
 that file has an error.

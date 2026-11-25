@@ -149,16 +149,28 @@ impl App {
                 if empty {
                     message.push_str("The request contains {{}} with no variable name. ");
                 }
-                message.push_str(
-                    "Send anyway sends them as typed, braces included. To define them, cancel and \
-                     open the environment (Ctrl+W V).",
-                );
+                message.push_str("Send anyway sends them as typed, braces included.");
+                let mut buttons = vec!["Send anyway".to_string()];
+                if !un.is_empty() {
+                    let target = if self.active_env.is_some() {
+                        format!("\"{env}\"")
+                    } else {
+                        "the collection variables".into()
+                    };
+                    message.push_str(&format!(
+                        " Define opens the environment editor with them added to {target}."
+                    ));
+                    buttons.push("Define".into());
+                }
+                buttons.push("Cancel".into());
                 self.overlay = Some(Overlay::Confirm(Confirm {
                     title: "Undefined variables".into(),
                     message,
-                    buttons: vec!["Send anyway".into(), "Cancel".into()],
-                    sel: 1,
-                    action: ConfirmAction::SendAnyway,
+                    sel: buttons.len() - 1,
+                    buttons,
+                    action: ConfirmAction::SendAnyway {
+                        missing: un.into_iter().collect(),
+                    },
                 }));
                 return;
             }

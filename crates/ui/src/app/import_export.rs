@@ -63,6 +63,78 @@ impl App {
         }
     }
 
+    /// A typed import path: the working directory first, then the
+    /// collection folder.
+    fn import_path(&self, t: &str) -> std::path::PathBuf {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let p = sendito_store::env::expand(&cwd, t);
+        if p.exists() {
+            return p;
+        }
+        let in_root = sendito_store::env::expand(&self.project.root, t);
+        if in_root.exists() { in_root } else { p }
+    }
+
+    /// What the import dialog's text would import, for the line under its
+    /// instructions: `(text, is a problem)`.
+    pub(crate) fn import_preview(&self, text: &str) -> Option<(String, bool)> {
+        let t = text.trim();
+        if t.is_empty() {
+            return None;
+        }
+        let summary = |r: Result<
+            (sendito_import::ImportFormat, sendito_import::ImportResult),
+            String,
+        >| match r {
+            Ok((format, result)) => {
+                let n = result.root.count_requests();
+                (
+                    format!(
+                        "✓ {} \"{}\" · {n} request{}",
+                        format.label(),
+                        result.root.name,
+                        if n == 1 { "" } else { "s" }
+                    ),
+                    false,
+                )
+            }
+            Err(e) => (format!("✗ {e}"), true),
+        };
+        if t.starts_with("curl ") || t == "curl" {
+            return Some(match sendito_import::curl::import(t) {
+                Ok(c) => (
+                    format!("✓ curl · {} {}", c.request.method, c.request.url),
+                    false,
+                ),
+                Err(e) => (format!("✗ curl: {e}"), true),
+            });
+        }
+        if t.starts_with('{') {
+            return Some(summary(sendito_import::import_json(t)));
+        }
+        if t.contains('\n') {
+            return None;
+        }
+        let p = self.import_path(t);
+        if !p.exists() {
+            return Some((
+                format!("✗ no file or directory at {} (Tab completes)", p.display()),
+                true,
+            ));
+        }
+        Some(summary(sendito_import::import_path(&p)))
+    }
+
+    /// Tab in the import dialog: completes the path typed so far (see
+    /// [`complete_path`]).
+    pub(crate) fn complete_import_path(&self, text: &str) -> Option<String> {
+        let t = text.trim();
+        if t.starts_with("curl") || t.starts_with('{') {
+            return None;
+        }
+        complete_path(t, |p| self.import_path(p))
+    }
+
     pub(super) fn do_import(&mut self, text: &str) -> Result<(), String> {
         let t = text.trim();
         if t.is_empty() {
@@ -78,17 +150,7 @@ impl App {
         let (format, result) = if t.starts_with('{') {
             sendito_import::import_json(t)?
         } else {
-            // A relative path is looked up in the working directory, then in
-            // the collection folder.
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let mut p = sendito_store::env::expand(&cwd, t);
-            if !p.exists() {
-                let in_root = sendito_store::env::expand(&self.project.root, t);
-                if in_root.exists() {
-                    p = in_root;
-                }
-            }
-            sendito_import::import_path(&p)?
+            sendito_import::import_path(&self.import_path(t))?
         };
         let rep = sendito_import::write(&result, &self.project.coll, Some(&self.project.envs), "")
             .map_err(|e| e.to_string())?;
@@ -516,5 +578,50 @@ impl App {
             human_size(bytes.len() as u64),
             p.display()
         ))
+    }
+}
+
+/// Completes the path typed so far; `resolve` turns a typed folder into the
+/// folder to read. Returns the completed text, or `None` when nothing (or
+/// more than one name without a longer common start) matches. A hidden name
+/// matches only a prefix that starts with `.`.
+pub(crate) fn complete_path(
+    text: &str,
+    resolve: impl Fn(&str) -> std::path::PathBuf,
+) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() || t.contains('\n') {
+        return None;
+    }
+    let (dir, prefix) = match t.rsplit_once('/') {
+        Some((d, p)) => (format!("{d}/"), p),
+        None => (String::new(), t),
+    };
+    let base = resolve(if dir.is_empty() { "." } else { &dir });
+    let names: Vec<(String, bool)> = std::fs::read_dir(&base)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            (name.starts_with(prefix) && (prefix.starts_with('.') || !name.starts_with('.')))
+                .then(|| (name, e.path().is_dir()))
+        })
+        .collect();
+    match names.as_slice() {
+        [] => None,
+        [(name, is_dir)] => Some(format!("{dir}{name}{}", if *is_dir { "/" } else { "" })),
+        _ => {
+            let first = &names[0].0;
+            let common = names.iter().fold(first.len(), |n, (s, _)| {
+                first
+                    .chars()
+                    .zip(s.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count()
+                    .min(n)
+            });
+            let longer: String = first.chars().take(common).collect();
+            (longer.len() > prefix.len()).then(|| format!("{dir}{longer}"))
+        }
     }
 }

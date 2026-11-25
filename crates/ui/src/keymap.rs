@@ -85,12 +85,14 @@ actions! {
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
-    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the project config";
+    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the config file chosen in Settings";
     History => "history", "Show request history in the sidebar (toggle)";
     ToggleSidebar => "toggle_sidebar", "Show or hide the sidebar";
     Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
+    MoveToSecret => "move_to_secret", "Move the plain value of the focused credential field into an environment secret";
+    RevealSecrets => "reveal_secrets", "Show or hide credentials typed as plain text (with Hide plain secrets on)";
     Zoom => "zoom", "Maximize or restore the focused pane";
     GrowSidebar => "grow_sidebar", "Widen the sidebar";
     ShrinkSidebar => "shrink_sidebar", "Narrow the sidebar";
@@ -365,6 +367,8 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Import, Global, Both, &["ctrl+w i"]),
         (ExportCurl, Global, Both, &["ctrl+w u"]),
         (FormatBody, Global, Both, &["ctrl+w f"]),
+        (MoveToSecret, Global, Both, &["ctrl+w K"]),
+        (RevealSecrets, Global, Both, &["ctrl+w *"]),
         (Zoom, Global, Both, &["ctrl+w z"]),
         (GrowSidebar, Global, Both, &["ctrl+w >"]),
         (ShrinkSidebar, Global, Both, &["ctrl+w <"]),
@@ -687,6 +691,8 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         WatchToggle => (G::Request, "watch"),
         Save => (G::Request, "save"),
         FormatBody => (G::Request, "format body"),
+        MoveToSecret => (G::Request, "move to secret"),
+        RevealSecrets => (G::Request, "show secrets"),
         ExportCurl => (G::Request, "copy as curl"),
         NewRequest => (G::Tabs, "new HTTP"),
         NewGrpcRequest => (G::Tabs, "new gRPC"),

@@ -2,16 +2,18 @@
 
 pub mod app;
 pub mod complete;
-pub mod config_editor;
 pub mod draw;
 pub use sendito_widgets::{editor, form, icons, list};
 pub mod filter;
 pub mod keymap;
+pub mod keymap_editor;
 pub mod overlay;
+pub mod records;
 pub use sendito_pipeline::runner;
 pub mod tab;
 pub mod theme;
 pub mod tree;
+pub mod units;
 pub mod viewer;
 
 use std::io::{self, Write};

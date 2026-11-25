@@ -1,15 +1,15 @@
 //! Modal overlays: palette, help, settings, confirm, prompt, picker, env
-//! editor, import, report.
+//! editor, record editors, import, report.
 
 use crate::editor::TextEditor;
 use crate::form::{Cell, ColKind, Column, Table};
 use crate::viewer::Viewer;
 
-mod env_editor;
+pub mod env_editor;
 mod mcp_editor;
 mod palette;
 mod settings;
-pub use env_editor::*;
+pub use env_editor::EnvEditor;
 pub use mcp_editor::*;
 pub use palette::*;
 pub use settings::*;
@@ -17,7 +17,11 @@ pub use settings::*;
 /// What to do when a confirm dialog's first button is chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
-    SendAnyway,
+    /// Undefined variables: 0 = send anyway; with `missing` names, 1 = add
+    /// them to the environment editor.
+    SendAnyway {
+        missing: Vec<String>,
+    },
     /// Send although a secret did not load (its `{{name}}` goes out as typed).
     SendMissingSecrets,
     Delete(String),
@@ -28,11 +32,11 @@ pub enum ConfirmAction {
     CloseTabRunning(u64),
     /// Env editor closing with changes: 0 = save, 1 = discard.
     EnvClose,
-    /// MCP servers editor closing with changes: 0 = save, 1 = discard.
-    McpClose,
-    /// A config editor (MCP server details, OAuth, keymap) closing with
+    /// A record editor (MCP servers, OAuth identities) closing with
     /// changes: 0 = save, 1 = discard.
-    CfgClose,
+    RecordsClose,
+    /// The keymap editor closing with changes: 0 = save, 1 = discard.
+    KeymapClose,
     /// Prompt or import dialog closing with typed text: 0 = discard,
     /// 1 = keep editing.
     DialogClose,
@@ -77,8 +81,9 @@ pub enum PromptAction {
     McpServer {
         name: String,
     },
-    /// A typed setting of the settings dialog (number, path or text).
-    Setting(SettingId),
+    /// The name of the secret that takes the plain value of this field of
+    /// the active tab.
+    MoveToSecret(crate::tab::Field),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,10 +103,18 @@ pub enum PickAction {
     Auth {
         login: bool,
     },
-    /// Open the details editor of an MCP server.
-    McpServerDetails,
     /// Show a saved example of the active request.
     Example,
+    /// The OAuth identity of the request's auth; the last item opens the
+    /// OAuth editor with a new identity.
+    OAuthIdentity,
+    /// A file for the environment editor parked behind the picker: the
+    /// `.env` file line when `dotenv`, else the Value of the selected row.
+    /// A folder item (`name/`, `../`) opens that folder.
+    EnvFile {
+        dir: std::path::PathBuf,
+        dotenv: bool,
+    },
 }
 
 pub struct Prompt {
@@ -240,6 +253,10 @@ pub struct Import {
     /// The field's text when the dialog opened: a different text is pending.
     pub initial: String,
     pub error: Option<String>,
+    /// What the text would import (`false`) or why it cannot (`true`).
+    pub preview: Option<(String, bool)>,
+    /// The text `preview` describes.
+    pub previewed: String,
 }
 
 impl Import {
@@ -250,6 +267,8 @@ impl Import {
             input,
             initial,
             error: None,
+            preview: None,
+            previewed: String::new(),
         }
     }
 
@@ -262,13 +281,13 @@ impl Import {
 pub enum Overlay {
     Palette(Palette),
     Help { viewer: Viewer, filter: TextEditor },
-    Settings { sel: usize },
+    Settings(SettingsView),
     Confirm(Confirm),
     Prompt(Prompt),
     Picker(Picker),
     Env(EnvEditor),
-    Mcp(McpEditor),
-    Cfg(crate::config_editor::CfgEditor),
+    Records(crate::records::RecordEditor),
+    Keymap(crate::keymap_editor::KeymapEditor),
     Import(Import),
     Report(Report),
 }
@@ -326,20 +345,25 @@ mod tests {
             name: "g".into(),
             source: VarSource::Dotenv { key: None },
         });
-        let mut ed = EnvEditor {
-            envs: vec![],
-            current: 0,
-            table: EnvEditor::table(),
-            dirty: false,
-            error: None,
-        };
+        let mut ed = EnvEditor::default();
         ed.load(&env, |_| None);
-        if let Cell::Text(e) = &mut ed.table.rows[1].cells[3] {
+        // A secret value is typed in the Value column, masked.
+        if let Cell::Text(e) = &mut ed.table.rows[1].cells[2] {
+            assert!(e.mask);
             e.set_text("s3cret");
         }
+        // A keychain key is the Value of the "keychain key" type.
+        assert_eq!(ed.table.rows[2].cells[1].choice(), env_editor::KEYCHAIN_KEY);
+        assert_eq!(ed.table.rows[2].cells[2].text(), "k");
         let (back, secrets) = ed.to_env("dev");
         assert_eq!(back, env);
         assert_eq!(secrets, vec![("b".to_string(), "s3cret".to_string())]);
+        // A secret typed under one type is cleared when it becomes text.
+        if let Cell::Choice(c) = &mut ed.table.rows[1].cells[1] {
+            *c = env_editor::TEXT;
+        }
+        ed.refresh(|_| None);
+        assert_eq!(ed.table.rows[1].cells[2].text(), "");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! MCP sign-in, tool discovery and the server editor.
+//! MCP sign-in, tool discovery, the connection test and `:mcpadd`.
 
 use super::*;
 
@@ -32,24 +32,6 @@ fn mcp_server_entry(
             verify_tls: true,
             auth: None,
         }),
-    }
-}
-
-/// The auth of an HTTP server from the editor's Auth and Token cells
-/// (`MCP_AUTHS`). An OAuth server keeps its fields from the file.
-fn mcp_server_auth(
-    choice: usize,
-    token: &str,
-    old: Option<sendito_store::config::McpServerAuth>,
-) -> Option<sendito_store::config::McpServerAuth> {
-    use sendito_store::config::McpServerAuth;
-    match (choice, old) {
-        (0, _) => None,
-        (1, _) => Some(McpServerAuth::Bearer {
-            token: token.to_string(),
-        }),
-        (_, Some(old @ McpServerAuth::Oauth { .. })) => Some(old),
-        _ => Some(McpServerAuth::oauth()),
     }
 }
 
@@ -155,14 +137,8 @@ impl App {
     /// had no auth, then run the request that asked for the sign-in.
     pub(super) fn after_mcp_login(&mut self, then: McpLoginThen) {
         if then.write_auth {
-            let path = match self.project_mcp_servers() {
-                Ok(own) if own.contains_key(&then.server) => Some(self.project_config_path()),
-                Ok(_) => self.project.global_config.clone(),
-                Err(e) => {
-                    self.set_status(format!("signed in, but {e}"), StatusKind::Warn);
-                    return;
-                }
-            };
+            // The file that holds the server: the project file first.
+            let path = self.mcp_server_file(&then.server).map(|(p, _)| p);
             let auth = sendito_store::config::McpServerAuth::oauth();
             let written = path
                 .ok_or_else(|| "no config file holds this server".to_string())
@@ -242,12 +218,7 @@ impl App {
             );
             return;
         }
-        let info = runner::McpRunInfo::of(&self.project);
-        let envs = self.project.envs.clone();
-        let env = self.active_env.clone();
-        let runtime = self.runtime.clone();
-        let tx = self.tx.clone();
-        let server2 = server.clone();
+        let list = self.tool_list(server.clone());
         if let Some((_, task)) = self.mcp_discovery.take() {
             task.abort();
         }
@@ -256,36 +227,9 @@ impl App {
         if open_picker || self.complete.is_none() {
             self.set_status("loading MCP tools… (Ctrl+W x cancels)", StatusKind::Info);
         }
+        let tx = self.tx.clone();
         let task = self.rt.spawn(async move {
-            // The error carries whether the server needs a sign-in.
-            let result = async {
-                let (scope, errors) = tokio::task::spawn_blocking(move || {
-                    runner::build_scope(&envs, env.as_deref(), &runtime)
-                })
-                .await
-                .map_err(|e| (e.to_string(), false))?;
-                if !errors.is_empty() {
-                    return Err((errors.join("; "), false));
-                }
-                let name = scope.render(&server2).text;
-                let transport =
-                    runner::mcp_transport(&info, &name, &scope).map_err(|e| (e, false))?;
-                let opts = sendito_pipeline::mcp::Options {
-                    timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
-                };
-                let (events, _rx) = mpsc::unbounded_channel();
-                sendito_pipeline::mcp::list_tools(&transport, &opts, events)
-                    .await
-                    .map_err(|e| {
-                        let needs_login =
-                            matches!(e, sendito_pipeline::mcp::McpError::NeedsLogin(_));
-                        (
-                            sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()),
-                            needs_login,
-                        )
-                    })
-            }
-            .await;
+            let result = list.await;
             let needs_login = matches!(result, Err((_, true)));
             let _ = tx.send(AppMsg::McpTools {
                 job,
@@ -299,30 +243,117 @@ impl App {
         self.mcp_discovery = Some((job, task));
     }
 
+    /// Lists the tools of `server` (a `[mcp.servers]` name or a URL, with
+    /// `{{variables}}`) in the active scope. The error says whether the
+    /// server needs a sign-in.
+    fn tool_list(
+        &self,
+        server: String,
+    ) -> impl std::future::Future<Output = Result<Vec<sendito_pipeline::mcp::Tool>, (String, bool)>>
+    + Send
+    + 'static {
+        let info = runner::McpRunInfo::of(&self.project);
+        let envs = self.project.envs.clone();
+        let env = self.active_env.clone();
+        let runtime = self.runtime.clone();
+        async move {
+            let (scope, errors) = tokio::task::spawn_blocking(move || {
+                runner::build_scope(&envs, env.as_deref(), &runtime)
+            })
+            .await
+            .map_err(|e| (e.to_string(), false))?;
+            if !errors.is_empty() {
+                return Err((errors.join("; "), false));
+            }
+            let name = scope.render(&server).text;
+            let transport = runner::mcp_transport(&info, &name, &scope).map_err(|e| (e, false))?;
+            let opts = sendito_pipeline::mcp::Options {
+                timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
+            };
+            let (events, _rx) = mpsc::unbounded_channel();
+            sendito_pipeline::mcp::list_tools(&transport, &opts, events)
+                .await
+                .map_err(|e| {
+                    let needs_login = matches!(e, sendito_pipeline::mcp::McpError::NeedsLogin(_));
+                    (
+                        sendito_core::vars::scrub(&e.to_string(), &scope.secret_values()),
+                        needs_login,
+                    )
+                })
+        }
+    }
+
+    /// The record editor's connection test: lists the tools of the saved
+    /// server `name`; the answer comes back as `AppMsg::McpTest`.
+    pub(crate) fn start_mcp_test(&mut self, name: &str) {
+        let list = self.tool_list(name.to_string());
+        let tx = self.tx.clone();
+        let server = name.to_string();
+        self.rt.spawn(async move {
+            let result = match list.await {
+                Ok(tools) => Ok(tools.len()),
+                Err((e, true)) => Err(format!("{e} (sign in: :mcp login {server})")),
+                Err((e, false)) => Err(e),
+            };
+            let _ = tx.send(AppMsg::McpTest { server, result });
+        });
+    }
+
     // ----- MCP servers --------------------------------------------------
 
-    /// The project config file (`<root>/.sendito/config.toml`), where servers
-    /// added from the interface are written.
+    /// The project config file (`<root>/.sendito/config.toml`).
     pub(crate) fn project_config_path(&self) -> std::path::PathBuf {
         sendito_store::config::project_path(&self.project.root)
     }
 
-    /// The project file's own `[mcp.servers]`. The editors work on these
-    /// only: the merged config also holds the global file's servers, whose
-    /// literal values (tokens) must never be copied into the project file,
-    /// which is versioned.
+    /// The config file the MCP editors write: the settings scope, as for the
+    /// OAuth and keymap editors.
+    pub(crate) fn mcp_config_path(&self) -> Result<std::path::PathBuf, String> {
+        self.scope_path(self.config_scope).ok_or_else(|| {
+            "there is no global config file: choose Project (Tab) in Settings".to_string()
+        })
+    }
+
+    /// The `[mcp.servers]` of one config file, as that file holds it (not
+    /// merged). The editors work on one file's own servers: a write replaces
+    /// the table, and one file's literal values (tokens) must never be copied
+    /// into the other file, which may be versioned.
     ///
-    /// A project file that does not load cleanly is an error: its servers
-    /// would read as none, and a write would delete them.
-    pub(crate) fn project_mcp_servers(
-        &self,
+    /// A file that does not load cleanly is an error: its servers would read
+    /// as none, and a write would delete them.
+    pub(crate) fn mcp_servers_in(
+        path: &std::path::Path,
     ) -> Result<std::collections::BTreeMap<String, sendito_store::config::McpServer>, String> {
-        let (cfg, warnings) = sendito_store::config::load(None, Some(&self.project_config_path()));
+        let (cfg, warnings) = sendito_store::config::load(None, Some(path));
         if warnings.is_empty() {
             Ok(cfg.mcp.servers)
         } else {
             Err(format!("fix the config first: {}", warnings.join("; ")))
         }
+    }
+
+    /// The `[mcp.servers]` of the settings scope's file.
+    pub(crate) fn scope_mcp_servers(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, sendito_store::config::McpServer>, String> {
+        Self::mcp_servers_in(&self.mcp_config_path()?)
+    }
+
+    /// The file that holds the MCP server `name`, and the server as that file
+    /// holds it: the project file first (it wins over the global file), then
+    /// the global file. `None` when no file that loads holds it.
+    pub(crate) fn mcp_server_file(
+        &self,
+        name: &str,
+    ) -> Option<(std::path::PathBuf, sendito_store::config::McpServer)> {
+        let global = self.project.global_config.clone();
+        [Some(self.project_config_path()), global]
+            .into_iter()
+            .flatten()
+            .find_map(|path| {
+                let servers = Self::mcp_servers_in(&path).ok()?;
+                servers.get(name).map(|s| (path, s.clone()))
+            })
     }
 
     /// Reloads the merged servers (global and project) after a write.
@@ -335,22 +366,9 @@ impl App {
                 .servers;
     }
 
-    pub fn open_mcp_editor(&mut self) {
-        self.clear_transient_status();
-        let mut ed = McpEditor {
-            table: McpEditor::table(),
-            dirty: false,
-            error: None,
-        };
-        match self.project_mcp_servers() {
-            Ok(servers) => ed.load(&servers),
-            Err(e) => ed.error = Some(e),
-        }
-        self.overlay = Some(Overlay::Mcp(ed));
-    }
-
-    /// `:mcpadd <name>`: asks for the URL or command and writes it at once (the
-    /// editor is for reviewing and fixing what is already there).
+    /// `:mcpadd <name>`: asks for the URL or command and writes it at once to
+    /// the settings scope's config file (the editor is for reviewing and
+    /// fixing what is already there).
     pub(super) fn prompt_mcp_add(&mut self, name: &str) {
         self.clear_transient_status();
         if name.trim().is_empty() {
@@ -375,86 +393,7 @@ impl App {
         self.overlay = Some(Overlay::Prompt(prompt));
     }
 
-    /// Replaces `[mcp.servers]` in the project config with the editor's rows,
-    /// keeping what the table does not show (env, headers, OAuth fields) for a row
-    /// whose name and command/URL did not change.
-    pub(super) fn save_mcp_editor(&mut self, ed: &mut McpEditor) -> bool {
-        // `rows` keeps the first of two rows with one name: say so instead of
-        // dropping the other one on save.
-        let mut seen = std::collections::HashSet::new();
-        for r in ed.table.values() {
-            let name = r.cells[0].text().trim().to_string();
-            if !name.is_empty() && !seen.insert(name.clone()) {
-                ed.error = Some(format!("{name}: two servers have this name"));
-                return false;
-            }
-        }
-        let own = match self.project_mcp_servers() {
-            Ok(own) => own,
-            Err(e) => {
-                ed.error = Some(e);
-                return false;
-            }
-        };
-        let mut servers = std::collections::BTreeMap::new();
-        let mut plain_tokens = Vec::new();
-        for row in ed.rows() {
-            let name = row.name;
-            if row.value.is_empty() {
-                ed.error = Some(format!("{name}: set a URL or a command"));
-                return false;
-            }
-            if row.kind == 1 && row.auth != 0 {
-                ed.error = Some(format!(
-                    "{name}: a stdio server has no auth; set it to none"
-                ));
-                return false;
-            }
-            if row.auth == 1 && row.token.is_empty() {
-                ed.error = Some(format!("{name}: set a token, or set the auth to none"));
-                return false;
-            }
-            if row.auth == 1 && !row.token.contains("{{") {
-                plain_tokens.push(name.clone());
-            }
-            let old = own.get(&name).cloned();
-            let old_auth = match &old {
-                Some(sendito_store::config::McpServer::Http(h)) => h.auth.clone(),
-                _ => None,
-            };
-            let mut entry = mcp_server_entry(row.kind, &row.value, old);
-            if let sendito_store::config::McpServer::Http(h) = &mut entry {
-                h.auth = mcp_server_auth(row.auth, &row.token, old_auth);
-            }
-            servers.insert(name, entry);
-        }
-        let path = self.project_config_path();
-        if let Err(e) = sendito_store::config::set_mcp_servers(&path, &servers) {
-            ed.error = Some(e.to_string());
-            return false;
-        }
-        let n = servers.len();
-        self.reload_mcp_servers();
-        ed.load(&servers);
-        if plain_tokens.is_empty() {
-            self.set_status(
-                format!("saved {n} MCP server(s) to {}", path.display()),
-                StatusKind::Ok,
-            );
-        } else {
-            self.set_status(
-                format!(
-                    "saved {n} MCP server(s); the token of {} is plain text in a versioned file: \
-                     put it in an environment secret and write {{{{name}}}}",
-                    plain_tokens.join(", ")
-                ),
-                StatusKind::Warn,
-            );
-        }
-        true
-    }
-
-    /// `:mcpadd` confirm: one server added to the project config.
+    /// `:mcpadd` confirm: one server added to the settings scope's config file.
     pub(super) fn add_mcp_server(
         &mut self,
         name: &str,
@@ -476,10 +415,10 @@ impl App {
                 "an http server needs a URL".into()
             });
         }
-        let mut servers = self.project_mcp_servers()?;
+        let path = self.mcp_config_path()?;
+        let mut servers = Self::mcp_servers_in(&path)?;
         let old = servers.get(name).cloned();
         servers.insert(name.to_string(), mcp_server_entry(kind, value, old));
-        let path = self.project_config_path();
         sendito_store::config::set_mcp_servers(&path, &servers).map_err(|e| e.to_string())?;
         self.reload_mcp_servers();
         self.set_status(

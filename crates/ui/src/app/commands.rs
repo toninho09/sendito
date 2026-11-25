@@ -19,6 +19,31 @@ impl App {
         self.overlay = Some(Overlay::Picker(p));
     }
 
+    /// F2 on the OAuth identity field: the identities of the config, then
+    /// "New identity…".
+    pub(super) fn open_oauth_identity_picker(&mut self) {
+        let Some(t) = self.tab() else { return };
+        let current = t.ed.auth_oauth_name.text();
+        let mut items: Vec<String> = self.project.config.oauth.keys().cloned().collect();
+        let details: Vec<String> = self
+            .project
+            .config
+            .oauth
+            .values()
+            .map(|i| i.grant.as_str().replace('_', " "))
+            .chain(std::iter::once("opens the OAuth editor".to_string()))
+            .collect();
+        let cur = items.iter().position(|n| *n == current);
+        items.push("New identity…".into());
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "OAuth identity",
+            items,
+            details,
+            PickAction::OAuthIdentity,
+            cur,
+        )));
+    }
+
     pub(super) fn open_choice_picker(&mut self, f: Field) {
         let Some(t) = self.tab() else { return };
         let items = t.ed.choice_options(f);
@@ -378,22 +403,6 @@ impl App {
         )));
     }
 
-    /// Lists the MCP servers; choosing one opens its details editor.
-    pub(super) fn open_mcp_details_picker(&mut self) {
-        let items: Vec<String> = self.project.config.mcp.servers.keys().cloned().collect();
-        if items.is_empty() {
-            self.set_status("no servers configured in [mcp.servers]", StatusKind::Warn);
-            return;
-        }
-        self.overlay = Some(Overlay::Picker(Picker::new(
-            "Edit an MCP server",
-            items,
-            vec![],
-            PickAction::McpServerDetails,
-            None,
-        )));
-    }
-
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
         let (word, arg) = cmd
@@ -469,7 +478,7 @@ impl App {
             "mcpservers" => self.open_mcp_server_picker(),
             "mcpadd" => self.prompt_mcp_add(arg),
             "mcptools" => self.load_mcp_tools(true),
-            "mcpedit" if arg.is_empty() => self.open_mcp_details_picker(),
+            "mcpedit" if arg.is_empty() => self.open_mcp_editor(),
             "mcpedit" => {
                 if let Err(e) = self.open_mcp_server_editor(arg) {
                     self.set_status(e, StatusKind::Error);

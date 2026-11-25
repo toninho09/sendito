@@ -20,11 +20,11 @@ expression: screen
 │                           │                                                              │                           │
 │                           │  {{order_id}} not defined in the collection variables or     │                           │
 │                           │  "local". Send anyway sends them as typed, braces            │                           │
-│                           │  included. To define them, cancel and open the               │                           │
-│                           │  environment (Ctrl+W V).                                     │                           │
+│                           │  included. Define opens the environment editor with them     │                           │
+│                           │  added to "local".                                           │                           │
 │                           │                                                              │ ──────────────────────────╯
 │                           │                                                              │ ──────────────────────────╮
-│                           │   Send anyway (y)    Cancel (Esc)                            │                           │
+│                           │   Send anyway (s)    Define (d)    Cancel (Esc)              │                           │
 │                           ╰──────────────────────────────────────────────────────────────╯                           │
 │                                                                                                                      │
 │                            ││                                                                                        │
@@ -41,4 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo   {{order_id}} undefined                                        y send anyway · ⏎ cancel · ←→ choose · Esc cancel
+ demo   {{order_id}} undefined                             s send anyway · d define · ⏎ cancel · ←→ choose · Esc cancel

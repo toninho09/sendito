@@ -1,0 +1,44 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+ sendito   MQTT untitled ● ×    +                                                              ● local ▾   F1  all keys
+╭ Requests  History ─────────╮╭ MQTT ● ────────────────────────────────────────────────────────────────────────────────╮
+│▸ Orders/                   ││  mqtts://broker.example.test                                               ▶ Send  ^⏎  │
+│▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
+│  GRPC  echo unary          │╭─ Topics 1  Publish  Will  Auth  Scripts  Options  Docs ────────────────────────────────╮
+│  GET   health              ││ Will topic     none                                                                    │
+│                            ││ Will QoS       0 ▾  delivery guarantee of the Last Will message                        │
+│                            ││ Will retain    [ ] Off  the broker keeps the Last Will for new subscribers             │
+│                            ││ Base64         [ ] Off  the payload below is base64; the broker gets the bytes         │
+│                            ││   1                                                                                    │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            │╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯
+│                            │╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│                            ││ connecting to mqtts://broker.example.test                                              │
+│                            ││ +0.012s connected (session present: no)                                                │
+│                            ││ +0.015s subscribed sensors/+/temperature (QoS 1)                                       │
+│                            ││ +0.100s message sensors/kitchen/temperature qos=1 retain (31 bytes)                    │
+│                            ││ +0.200s message sensors/office/temperature qos=1 (30 bytes)                            │
+│                            ││ +0.300s message sensors/garage/temperature qos=1 (30 bytes)                            │
+│                            ││ deadline                                                                               │
+│                            ││                                                                                        │
+│                            ││ No scripts or assertions for this request. Add them in the Scripts tab.                │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+│                            ││                                                                                        │
+╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────── Ln 10/10 · wrap ─╯
+ demo   ● 1 unsaved                                            Alt+1-4 tabs · y copy · / search · ^W menu · F1 all keys

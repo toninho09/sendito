@@ -30,9 +30,9 @@ expression: screen
 │                            ││                                    │                                                                │                                                                  │
 │                            ││                                    │  Name      ▍                                                   │                                                                  │
 │                            ││                                    │                                                                │                                                                  │
-│                            ││                                    │  Type       ‹ HTTP ›  ← → change · Space list                  │                                                                  │
+│                            ││                                    │  Type       HTTP   gRPC   WebSocket   MCP   SSE   MQTT         │                                                                  │
 │                            ││                                    │                                                                │                                                                  │
-│                            │╰─ Orders › get order ───────────────│  In folder  ‹ /Orders ›  ← → change · Space list               │ ─────────────────────────────────────────────────────────────────╯
+│                            │╰─ Orders › get order ───────────────│  In folder  / (collection root)   /Orders   /Users             │ ─────────────────────────────────────────────────────────────────╯
 │                            │╭─ Body  Headers  Timing  Results ───│                                                                │ ─────────────────────────────────────────────────────────────────╮
 │                            ││                                    │                                                                │                                                                  │
 │                            ││                                    │   Create (Enter)    Cancel (Esc)                               │                                                                  │

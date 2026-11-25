@@ -361,8 +361,9 @@ configured servers or discover tools. Tool selection fills initial arguments whe
 the unchanged editor is empty or contains `{}`. Set the arguments and press F5 to call.
 
 Servers can also be added from the interface: `Ctrl+W S` (or `:mcpservers edit`)
-lists them as a table and saves `[mcp.servers]` to the project config, and
-`:mcpadd <name>` asks for the URL or command and adds one at once. The server field
+lists them as a table and saves `[mcp.servers]` to the config file chosen in
+Settings (global or project), and `:mcpadd <name>` asks for the URL or command and
+adds one at once. The server field
 takes a configured name or a direct `http(s)://` URL.
 
 For OAuth, you do not need to edit the file: call a tool or list the tools, and
@@ -541,11 +542,12 @@ The Settings dialog (`Ctrl+W ,`) changes, at once:
 | Watch interval | default seconds between watch re-sends (`ui.watch_interval_s`) |
 
 It also holds the timeouts, the largest response body, the cookie jar, the
-proxy, the TLS files and the collection name and skipped directories. Number,
-path and text values are typed in a dialog that checks them. **Save changes to**
-chooses the global file or the project file. `:oauth` edits the HTTP OAuth
-identities and `:keymap` your key bindings; `Ctrl+O` in the MCP servers editor
-edits a server's env, headers and OAuth fields. See
+proxy, the TLS files and the collection name and skipped directories. Typing
+filters the settings; number, path and text values are edited in place and
+checked. The **Save to** tabs (Tab) choose the global file or the project file. **MCP servers** opens the servers
+editor (`Ctrl+W S`): a list of servers and a form for the selected one (URL
+or command, auth, headers, arguments, env, OAuth fields). `:oauth` edits the
+HTTP OAuth identities the same way and `:keymap` your key bindings. See
 [Settings](docs/FEATURES.md#settings).
 
 ## The screen

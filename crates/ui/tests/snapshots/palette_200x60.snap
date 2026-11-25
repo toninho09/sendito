@@ -9,7 +9,7 @@ expression: screen
 │  GRPC  echo unary          ││                                                                                                                                                                        │
 │  GET   health              ││                                                                                                                                                                        │
 │                            ││                   ╭─ Command palette ────────────────────────────────────────────────────────────────────────────────╮                                                 │
-│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/168   ┃                                                 │
+│                            ││                   │ ▍  type to search actions, settings, commands and requests                               1/171   ┃                                                 │
 │                            ││                   │                                                                                                  ┃                                                 │
 │                            ││                   │▌ Show all keys and actions                                                        F1 / Ctrl+W ?  ┃                                                 │
 │                            ││                   │  Send the request (or start the gRPC call)                                      Ctrl+Enter / F5  ┃                                                 │
@@ -43,11 +43,11 @@ expression: screen
 │                            ││                   │  Open settings                                                                         Ctrl+W ,  │                                                 │
 │                            ││                   │  Choose the active environment                                                    F4 / Ctrl+W v  │                                                 │
 │                            ││                   │  Edit environments and their variables                                                 Ctrl+W V  │                                                 │
-│                            ││                   │  Edit the MCP servers in the project config                                            Ctrl+W S  │                                                 │
+│                            ││                   │  Edit the MCP servers in the config file chosen in Settings                            Ctrl+W S  │                                                 │
 │                            ││                   │  Show request history in the sidebar (toggle)                                     F7 / Ctrl+W r  │                                                 │
 │                            ││                   │  Show or hide the sidebar                                                     Ctrl+B / Ctrl+W b  │                                                 │
 │                            ││                   │  Import a collection or a curl command                                                 Ctrl+W i  │                                                 │
-│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 132 more ─╯                                                 │
+│                            ││                   ╰───────────────────────────────────────────────────────────────────────────────────── ↓ 135 more ─╯                                                 │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │

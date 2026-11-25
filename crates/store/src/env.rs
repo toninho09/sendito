@@ -431,6 +431,12 @@ impl Envs {
         Ok(out)
     }
 
+    /// How many keys the `.env` file of `env` holds. An error names the file
+    /// and the line, never the line's text.
+    pub fn dotenv_keys(&self, env: &EnvFile) -> std::result::Result<usize, String> {
+        self.load_dotenv(env).map(|m| m.len())
+    }
+
     /// Whether a secret has a value, when that can be known without blocking:
     /// `Some` for `local` (secrets.toml), `file` (the file exists) and
     /// `dotenv` (the `.env` file has the key), `None` for plain values and

@@ -7,7 +7,7 @@ expression: screen
 │▸ Orders/                   ││  GET    ▾   {{base_url}}/users  → http://127.0.0.1:9/users                                                                                                 ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 │├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options  Docs ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│├ DEL   delete user         ││ Timeout ms     default                                                                                                                                                 │
+│├ DEL   delete user         ││ Timeout        default · 30 s (Settings)                                                                                                                               │
 │└ GET   list users          ││ Redirects      [✓] On  follow 3xx responses (up to 10)                                                                                                                 │
 │  GRPC  echo unary          ││ Verify TLS     [✓] On  turn off for self-signed certificates                                                                                                           │
 │  GET   health              ││ Cookie jar     Config default ▾                                                                                                                                        │

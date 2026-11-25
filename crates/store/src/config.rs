@@ -73,6 +73,9 @@ pub struct UiConfig {
     /// Messages a gRPC or WebSocket stream keeps in the response; the oldest
     /// go first. The counts and sizes still cover every message.
     pub stream_messages_kept: usize,
+    /// Show `••••••` in place of a credential typed as plain text in a
+    /// request field (a `{{name}}` reference stays visible).
+    pub hide_plain_secrets: bool,
 }
 
 impl Default for UiConfig {
@@ -88,6 +91,7 @@ impl Default for UiConfig {
             watch_interval_s: 5,
             hints: "short".into(),
             stream_messages_kept: 10_000,
+            hide_plain_secrets: false,
         }
     }
 }

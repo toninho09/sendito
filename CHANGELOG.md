@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+### MCP servers in the interface
+
+* The MCP servers editor (`Ctrl+W S`, `:mcpservers edit`) and `:mcpadd` write
+  to the config file chosen in Settings (global or project), as the OAuth and
+  keymap editors do; the title says which file. A server defined in the global
+  file is now edited from the interface: switch "Save changes to" to global,
+  or open its details with `:mcpedit <name>`, which edits the file that holds
+  the server. Nothing is copied from one file to the other.
+* Settings has an "MCP servers" row that counts the configured servers; Enter
+  opens the editor.
+* The details of a stdio server have an Arguments tab, one argument per row:
+  an argument keeps its spaces and quotes, which the command line of the
+  servers table cannot hold.
+* "Save changes to" in Settings is kept in `session.toml` (per user and
+  collection), so the editors open on the same file after a start; it starts
+  at `global`.
+
+### Forms and dialogs
+
+* The Will, Auth and Options tabs of an MQTT request label every field (Will
+  topic, Will QoS, Will retain, Base64, User name, Password, Client ID,
+  Protocol, Clean session, Keep alive); the choices and toggles say what they
+  do.
+* The environment editor explains the `dotenv` source; the OAuth identities
+  editor lists the four grants.
+* A help line under the request fields explains the focused field (what it
+  does, what an empty value means, the units it takes).
+* An empty timeout or gRPC deadline shows the value that applies, e.g.
+  "default · 30 s (Settings)".
+* Timeouts and deadlines show and take a time with its unit: `30 s`,
+  `500 ms`, `2 min`; a bare number is still milliseconds and the files still
+  keep milliseconds. This covers the request Options tabs and the timeout
+  rows of Settings.
+* A password, token, key or secret typed as plain text in a request shows
+  "⚠ plain text". `Ctrl+W K` moves it into a secret of the active
+  environment (`.sendito/secrets.toml`) and writes `{{name}}` in the field.
+* New setting **Hide plain secrets** (`[ui] hide_plain_secrets`, default off):
+  such values show as `••••••`; `Ctrl+W *` shows them.
+* The MCP servers editor (`Ctrl+W S`) is a list of servers with a form for
+  the selected one. The form shows only the fields of the server's kind and
+  auth, with labels and a help line: no more `verify_tls` / `client_id` typed
+  as field names, and no separate details editor (`Ctrl+O` is gone; `:mcpedit
+  <name>` opens the form). Verify TLS is a toggle; the arguments and the
+  environment of a stdio server are tables. `Ctrl+T` tests the selected server
+  and shows how many tools it has.
+* The OAuth identities editor (`:oauth`) uses the same list and form. The
+  grant is a choice, and only its fields show (the device URL for device
+  code, the username and password for the password grant). `Ctrl+L` signs in.
+* F2 on a request's OAuth identity field lists the identities; "New
+  identity…" opens the OAuth editor.
+* The environment editor has the columns Variable, Type and Value: one field
+  per row. The types are `text`, `secret`, `secret key`, `keychain`,
+  `keychain key`, `file` and `.env`. A secret or keychain value is typed in
+  Value (masked, stored outside the file); a "key" type takes the name of an
+  existing entry instead, and `file` and `.env` take the path and the key.
+  Changing between a secret type and another clears the Value, so a secret
+  never shows as text. An empty Value says whether a secret is set or `.env`
+  has the key.
+* F2 on the Value of a `file` row, or on the `.env` file line, browses for
+  the file: folders open, a file fills in its path (relative to the
+  collection, or with `~`). A typed or pasted path still works.
+* The environment editor edits the `.env` file of the environment (the
+  `dotenv` key) on a line above the table. The line says whether the file
+  exists and how many keys it holds; Tab completes the path, and an empty
+  line means `.env` at the collection root.
+* Settings: **Save to** tabs (Global / Project, Tab switches) replace the
+  "Save changes to" row; typing filters the settings; numbers, paths and text
+  are edited in place instead of in a separate dialog; `•` marks a value the
+  chosen file sets, and "project wins" a global value the project file
+  overrides.
+* Name prompts show the file the name creates and say at once when the name
+  is not valid or taken; the request type shows all six kinds.
+* The import dialog says what the text would import (or why it cannot) as
+  you type, and Tab completes a path.
+* The undefined-variables question has a **Define** button: the environment
+  editor opens with a row for each missing variable.
+* Pickers say how many items match the filter and mark the matched letters;
+  the environment picker shows how many variables each environment has.
+* The key bindings editor (`:keymap`) lists every action with its keys,
+  grouped as in the help, with a filter. Enter records the new keys (a pause
+  of one second keeps them), `Ctrl+A` adds a key, Del restores the default,
+  `Ctrl+D` removes the keys. A key that clashes with another action gets a
+  warning. Action ids and key names are no longer typed by hand.
+
 ### Script sources
 
 * Add six sources for `[[scripts.assert]]` and `[[scripts.extract]]`:

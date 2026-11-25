@@ -7,7 +7,6 @@ use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
-use crate::config_editor::CfgEditor;
 use crate::editor::TextEditor;
 use crate::overlay::*;
 use crate::theme::Theme;
@@ -15,17 +14,21 @@ use crate::viewer::{ViewMode, Viewer};
 
 use super::dialog;
 use super::dialog::{buttons, inset, popup, shell, shell_at};
-use super::editor::{self, EditorDialog, EditorHits};
+use super::editor::{self, EditorDialog, EditorHits, Head};
 use super::kit::*;
 
 mod dialogs;
 mod editors;
+mod keymap;
 mod palette;
+mod records;
 mod report;
 mod settings;
 use dialogs::*;
 use editors::*;
+use keymap::*;
 use palette::*;
+use records::*;
 use report::*;
 use settings::*;
 
@@ -71,13 +74,13 @@ pub(super) fn draw_overlay(
         Overlay::Help { viewer, filter } => {
             draw_help(app, buf, frame, &is_def, viewer, filter, &mut cursor)
         }
-        Overlay::Settings { sel } => draw_settings(app, buf, frame, sel),
+        Overlay::Settings(v) => draw_settings(app, buf, frame, v, &mut cursor),
         Overlay::Confirm(c) => draw_confirm(app, buf, frame, c),
         Overlay::Prompt(p) => draw_prompt(app, buf, frame, &is_def, p, &mut cursor),
         Overlay::Picker(p) => draw_picker(app, buf, frame, &is_def, p, &mut cursor),
         Overlay::Env(e) => draw_env(app, buf, frame, &is_def, e, &mut cursor),
-        Overlay::Mcp(m) => draw_mcp(app, buf, frame, &is_def, m, &mut cursor),
-        Overlay::Cfg(e) => draw_cfg(app, buf, frame, &is_def, e, &mut cursor),
+        Overlay::Records(e) => draw_records(app, buf, frame, &is_def, e, &mut cursor),
+        Overlay::Keymap(e) => draw_keymap(app, buf, frame, &is_def, e, &mut cursor),
         Overlay::Import(i) => draw_import(app, buf, frame, &is_def, i, &mut cursor),
         Overlay::Report(rep) => draw_report(app, buf, frame, rep),
     }

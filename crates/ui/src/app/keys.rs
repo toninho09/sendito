@@ -16,6 +16,17 @@ impl App {
     }
 
     pub fn on_paste(&mut self, s: &str) {
+        // A path pasted in the `.env` file line: one line, then the status.
+        if matches!(&self.overlay, Some(Overlay::Env(e)) if e.on_dotenv)
+            && let Some(Overlay::Env(mut e)) = self.overlay.take()
+        {
+            e.dotenv
+                .insert_str(s.lines().next().unwrap_or_default().trim());
+            e.dirty = true;
+            self.refresh_env_rows(&mut e);
+            self.overlay = Some(Overlay::Env(e));
+            return;
+        }
         if let Some(ov) = &mut self.overlay {
             match ov {
                 Overlay::Import(i) => i.input.insert_str(s),
@@ -31,16 +42,8 @@ impl App {
                     e.table.paste(s);
                     e.dirty = true;
                 }
-                Overlay::Mcp(m) => {
-                    m.table.paste(s);
-                    m.dirty = true;
-                }
-                Overlay::Cfg(e) => {
-                    if let Some(t) = e.table() {
-                        t.paste(s);
-                        e.dirty = true;
-                    }
-                }
+                Overlay::Records(e) => e.paste(s),
+                Overlay::Keymap(e) => e.filter.insert_str(s),
                 _ => {}
             }
             return;
@@ -400,6 +403,10 @@ impl App {
                 }
                 Field::McpTool => {
                     self.load_mcp_tools(true);
+                    return;
+                }
+                Field::AuthOAuthName => {
+                    self.open_oauth_identity_picker();
                     return;
                 }
                 _ => {}

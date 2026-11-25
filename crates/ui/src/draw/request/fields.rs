@@ -2,52 +2,6 @@
 
 use super::*;
 
-pub(in crate::draw) fn short_label(f: Field) -> &'static str {
-    match f {
-        Field::BodyKind => "Body type",
-        Field::GraphqlSection => "Section",
-        Field::RawContentType | Field::FileContentType => "Content-Type",
-        Field::FilePath => "File",
-        Field::AuthKind => "Auth type",
-        Field::AuthUser => "Username",
-        Field::AuthPass => "Password",
-        Field::AuthToken => "Token",
-        Field::AuthOAuthName => "OAuth identity",
-        Field::Cookies => "Cookie jar",
-        Field::AuthKey => "Key name",
-        Field::AuthValue => "Key value",
-        Field::AuthIn => "Send in",
-        Field::Timeout => "Timeout ms",
-        Field::FollowRedirects => "Redirects",
-        Field::VerifyTls | Field::GrpcVerify => "Verify TLS",
-        Field::SchemaSource => "Schema",
-        Field::ProtoFiles => "Proto files",
-        Field::ImportPaths => "Import paths",
-        Field::Tls => "Use TLS",
-        Field::Deadline => "Deadline ms",
-        Field::MaxEvents => "Max events",
-        Field::ScriptSection => "Section",
-        Field::McpServer => "Server",
-        Field::McpTool => "Tool",
-        Field::WsSubprotocols => "Subprotocols",
-        Field::WsMessages => "Messages sent after connecting",
-        Field::Vars => "Variables",
-        Field::AwsAccessKey => "Access key",
-        Field::AwsSecretKey => "Secret key",
-        Field::AwsSessionToken => "Session token",
-        Field::AwsRegion => "Region",
-        Field::AwsService => "Service",
-        Field::JwtAlgorithm => "Algorithm",
-        Field::JwtSecret => "Secret",
-        Field::JwtPrivateKey => "Private key",
-        Field::JwtClaims => "Claims (JSON)",
-        Field::JwtExpires => "Expires in s",
-        Field::DocsView => "View",
-        Field::ScriptPre | Field::ScriptExtract | Field::ScriptAssert => "",
-        _ => "",
-    }
-}
-
 /// The size of the file at `path`, `None` when it is not a file. A result is
 /// kept for two seconds: the note is drawn on every frame, and a file on a
 /// slow mount must not hold up each one.
@@ -220,12 +174,47 @@ pub(in crate::draw) fn draw_fields(
             (t.ed.auth_kind == sendito_core::AuthKind::Inherit).then(|| app.inherited_auth_note(t));
         (note, app.inherited_rows(t))
     };
+    let hide_secrets = app.project.config.ui.hide_plain_secrets && !app.reveal_secrets;
+    let move_key = app.keymap.hint(Action::MoveToSecret, app.vim);
+    let defaults = OptionDefaults::of(&app.project.config, app.tabs[app.active].ed.kind);
     let tab = &mut app.tabs[app.active];
     let fields = tab.fields();
     app.areas.field_rects.clear();
     if fields.is_empty() || area.height == 0 {
         return None;
     }
+    // The help line of the focused one-line field: under the fields when
+    // they leave room, else on the last row (taken from the last table or
+    // editor).
+    let help = fields
+        .get(tab.field)
+        .copied()
+        .filter(|f| focus_body && !f.is_flex())
+        .and_then(|f| {
+            let plain = f.is_secret()
+                && tab
+                    .ed
+                    .text_mut(f)
+                    .is_some_and(|e| crate::tab::plain_secret(&e.text()));
+            if plain {
+                Some((
+                    format!(
+                        "Plain text: the request file keeps it as typed. {move_key} moves it into an environment secret."
+                    ),
+                    true,
+                ))
+            } else {
+                let h = f.help(tab.ed.kind);
+                (!h.is_empty()).then(|| (h.to_string(), false))
+            }
+        });
+    let has_flex = fields.iter().any(|f| f.is_flex());
+    let reserved = help.is_some() && has_flex && area.height >= 3;
+    let area = if reserved {
+        Rect::new(area.x, area.y, area.width, area.height - 1)
+    } else {
+        area
+    };
     // Fixed one-row fields; tables and multi-line editors share the rest.
     let flex: Vec<usize> = fields
         .iter()
@@ -294,7 +283,7 @@ pub(in crate::draw) fn draw_fields(
             _ => rect,
         };
         if f.is_table() {
-            let label = short_label(*f);
+            let label = f.label();
             let tbl = tab.ed.table_mut(*f);
             if let Some(tbl) = tbl {
                 let field = i;
@@ -342,7 +331,7 @@ pub(in crate::draw) fn draw_fields(
                 buf,
                 rect.x,
                 y,
-                &truncate(short_label(*f), label_w as usize - 1),
+                &truncate(f.label(), label_w as usize - 1),
                 label_w,
                 lst,
             );
@@ -438,7 +427,28 @@ pub(in crate::draw) fn draw_fields(
                 );
                 app.hits.push((rect, Hit::ReqField(i)));
             } else if let Some(ed) = tab.ed.text_mut(*f) {
-                let tr = input_box(buf, vr, is_sel, theme);
+                let mut tr = input_box(buf, vr, is_sel, theme);
+                if let Some(p) = defaults.placeholder(*f) {
+                    ed.placeholder = p;
+                }
+                if f.is_secret() {
+                    let plain = crate::tab::plain_secret(&ed.text());
+                    ed.mask = plain && hide_secrets;
+                    // A tag at the right end says the value is not a secret.
+                    let tag = " ⚠ plain text ";
+                    let tw = tag.width() as u16;
+                    if plain && tr.width > tw + 12 {
+                        tr.width -= tw;
+                        put(
+                            buf,
+                            tr.x + tr.width,
+                            y,
+                            tag,
+                            tw,
+                            theme.field().patch(theme.fg(theme.warn)),
+                        );
+                    }
+                }
                 if let Some(c) = ed.render(tr, buf, theme, is_sel, is_def) {
                     app.areas.caret = Some(c);
                     cursor = Some(c);
@@ -482,8 +492,75 @@ pub(in crate::draw) fn draw_fields(
             .unwrap_or(0);
         draw_sections(buf, r, rows + 2, &sections, theme);
     }
+    if let Some((text, warn)) = help {
+        let bottom = area.y + area.height;
+        // With a table or an editor the line takes the row kept under them;
+        // with one-line fields only it goes one blank row under the last one.
+        let hy = if reserved {
+            Some(bottom)
+        } else {
+            (!has_flex).then_some(y + 1)
+        };
+        if let Some(hy) = hy.filter(|hy| *hy < bottom + u16::from(reserved))
+            && area.width > 2
+        {
+            let st = if warn {
+                theme.fg(theme.warn)
+            } else {
+                theme.dim()
+            };
+            put(
+                buf,
+                area.x,
+                hy,
+                &truncate(&text, area.width as usize),
+                area.width,
+                st,
+            );
+        }
+    }
     app.areas.field_rects = rects;
     cursor
+}
+
+/// What an empty timeout or deadline field falls back to, from the config.
+struct OptionDefaults {
+    timeout_ms: Option<u64>,
+    grpc_deadline_ms: Option<u64>,
+}
+
+impl OptionDefaults {
+    fn of(c: &sendito_store::config::Config, kind: Kind) -> Self {
+        let timeout_ms = match kind {
+            Kind::Http => Some(c.http.timeout_ms),
+            Kind::Sse => Some(c.sse.timeout_ms),
+            Kind::Ws => Some(c.websocket.timeout_ms),
+            Kind::Mqtt => Some(c.mqtt.timeout_ms),
+            Kind::Mcp => Some(c.mcp.timeout_ms),
+            Kind::Grpc | Kind::Folder => None,
+        };
+        let grpc_deadline_ms = (kind == Kind::Grpc).then_some(c.grpc.deadline_ms);
+        Self {
+            timeout_ms,
+            grpc_deadline_ms,
+        }
+    }
+
+    /// The placeholder of an empty field: the value that applies and where
+    /// it is set. `None` keeps the field's own placeholder.
+    fn placeholder(&self, f: Field) -> Option<String> {
+        let ms = match f {
+            Field::Timeout => self.timeout_ms?,
+            Field::Deadline => self.grpc_deadline_ms?,
+            _ => return None,
+        };
+        let value = if ms == 0 {
+            "no limit".to_string()
+        } else {
+            crate::units::format_ms(ms)
+        };
+        Some(format!("default · {value} (Settings)"))
+    }
 }
 
 /// Read-only sections at the bottom of `r` (a title rule and up to three
@@ -597,6 +674,8 @@ pub(in crate::draw) fn choice_hint(f: Field) -> &'static str {
         Field::ScriptSection => "Enter to switch",
         Field::DocsView => "Markdown text or the rendered page",
         Field::JwtAlgorithm => "HS* sign with a secret; RS256 and ES256 with a PEM key",
+        Field::MqttWillQos => "delivery guarantee of the Last Will message",
+        Field::MqttProtocol => "MQTT version the broker speaks",
         _ => "",
     }
 }
@@ -606,6 +685,9 @@ pub(in crate::draw) fn toggle_hint(f: Field) -> &'static str {
         Field::FollowRedirects => "follow 3xx responses (up to 10)",
         Field::VerifyTls | Field::GrpcVerify => "turn off for self-signed certificates",
         Field::Tls => "or prefix the target with https://",
+        Field::MqttWillRetain => "the broker keeps the Last Will for new subscribers",
+        Field::MqttWillBase64 => "the payload below is base64; the broker gets the bytes",
+        Field::MqttCleanSession => "start without the session the broker kept",
         _ => "",
     }
 }

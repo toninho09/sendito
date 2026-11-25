@@ -10,7 +10,7 @@ expression: screen
 │  GET   health              ││ Schema         Server reflection ▾  reflection asks the server; proto files are compi… │
 │                            ││ Use TLS        [ ] Off  or prefix the target with https://                             │
 │                            ││ Verify TLS     [✓] On  turn off for self-signed certificates                           │
-│                            ││ Deadline ms    none                                                                    │
+│                            ││ Deadline       default · no limit (Settings)                                           │
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 │                            ││                                                                                        │

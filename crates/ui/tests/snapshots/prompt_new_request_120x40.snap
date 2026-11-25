@@ -20,9 +20,9 @@ expression: screen
 │                          │                                                                │                          │
 │                          │  Name      ▍                                                   │                          │
 │                          │                                                                │                          │
-│                          │  Type       ‹ HTTP ›  ← → change · Space list                  │                          │
+│                          │  Type       HTTP   gRPC   WebSocket   MCP   SSE   MQTT         │                          │
 │                          │                                                                │                          │
-│                          │  In folder  ‹ /Orders ›  ← → change · Space list               │ ─────────────────────────╯
+│                          │  In folder  / (collection root)   /Orders   /Users             │ ─────────────────────────╯
 │                          │                                                                │ ─────────────────────────╮
 │                          │                                                                │                          │
 │                          │   Create (Enter)    Cancel (Esc)                               │                          │

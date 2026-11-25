@@ -1,6 +1,7 @@
 //! Settings: values, parsing, saving and themes.
 
 use super::*;
+use crate::units::format_ms;
 
 /// What a typed setting does and what it takes: the settings dialog shows it
 /// for the selected row, and the dialog that types the value shows it too.
@@ -14,22 +15,25 @@ pub fn setting_note(id: SettingId) -> &'static str {
             "A gRPC, WebSocket or SSE stream keeps this many messages; the oldest go first."
         }
         SettingId::HttpTimeout => {
-            "Milliseconds an HTTP request waits when it sets no timeout of its own."
+            "How long an HTTP request may take when it sets no timeout of its own, e.g. 30 s or 500 ms."
         }
         SettingId::GrpcDeadline => {
-            "Milliseconds a gRPC call may take when it sets no deadline of its own; 0 = no deadline."
+            "How long a gRPC call may take when it sets no deadline of its own, e.g. 10 s; 0 = no deadline."
         }
         SettingId::SseTimeout => {
-            "Milliseconds allowed for SSE opening; the event stream has no total timeout."
+            "How long an SSE stream may take to open, e.g. 30 s; the events have no total timeout."
         }
         SettingId::MqttTimeout => {
-            "Milliseconds to wait for the broker's CONNACK when a request sets none; 0 = no limit."
+            "How long to wait for the broker's CONNACK when a request sets none, e.g. 30 s; 0 = no limit."
         }
         SettingId::WsTimeout => {
-            "Milliseconds a WebSocket handshake may take when the request sets none; 0 = no limit."
+            "How long a WebSocket handshake may take when the request sets none, e.g. 10 s; 0 = no limit."
         }
         SettingId::McpTimeout => {
-            "Milliseconds an MCP call (handshake included) may take when the request sets none."
+            "How long an MCP call (handshake included) may take when the request sets none, e.g. 30 s."
+        }
+        SettingId::McpServers => {
+            "The servers of [mcp.servers] in the file chosen above, as Ctrl+W S shows them."
         }
         SettingId::MaxBody => "Response bodies larger than this many MB are cut (a note says so).",
         SettingId::Proxy => {
@@ -48,7 +52,7 @@ pub fn setting_note(id: SettingId) -> &'static str {
             "Saved to the project config. Keychain secrets are stored under this name: after a change, set them again. Empty = the folder name."
         }
         SettingId::OAuthIds => {
-            "Named OAuth identities (authorization code + PKCE) that HTTP requests sign in with. Enter opens the editor."
+            "Named OAuth identities that HTTP requests get a token with (authorization code, client credentials, password or device code). Enter opens the editor."
         }
         SettingId::KeyBindings => {
             "Your own keys for actions, replacing the default ones. Enter opens the editor."
@@ -66,7 +70,7 @@ impl App {
     /// Opens the settings dialog with `id` selected.
     pub fn open_settings(&mut self, id: SettingId) {
         let sel = SETTINGS.iter().position(|(s, _)| *s == id).unwrap_or(0);
-        self.overlay = Some(Overlay::Settings { sel });
+        self.overlay = Some(Overlay::Settings(SettingsView::new(sel)));
     }
 
     pub fn setting_value(&self, id: SettingId) -> String {
@@ -90,13 +94,12 @@ impl App {
             SettingId::Hints => c.ui.hints.clone(),
             SettingId::WatchInterval => format!("{raw} s"),
             SettingId::MaxBody => format!("{raw} MB"),
-            SettingId::GrpcDeadline | SettingId::WsTimeout if raw == "0" => "none".into(),
-            SettingId::HttpTimeout
-            | SettingId::GrpcDeadline
-            | SettingId::WsTimeout
-            | SettingId::SseTimeout
-            | SettingId::MqttTimeout
-            | SettingId::McpTimeout => format!("{raw} ms"),
+            SettingId::GrpcDeadline | SettingId::WsTimeout | SettingId::MqttTimeout
+                if raw == "0 ms" =>
+            {
+                "none".into()
+            }
+            SettingId::HidePlainSecrets => on(c.ui.hide_plain_secrets),
             SettingId::CollectionName if raw.is_empty() => {
                 format!("{} (folder name)", self.project.name)
             }
@@ -104,6 +107,14 @@ impl App {
             SettingId::OAuthIds => match c.oauth.len() {
                 1 => "1 identity".into(),
                 n => format!("{n} identities"),
+            },
+            // What Enter opens: the scope's file, not the merged servers.
+            SettingId::McpServers => match self.scope_mcp_servers() {
+                Ok(s) => match s.len() {
+                    1 => "1 server".into(),
+                    n => format!("{n} servers"),
+                },
+                Err(_) => "not readable".into(),
             },
             SettingId::KeyBindings => match c.keymap.values().map(BTreeMap::len).sum::<usize>() {
                 1 => "1 change".into(),
@@ -123,12 +134,12 @@ impl App {
             SettingId::HistoryMax => c.history.max_entries.to_string(),
             SettingId::WatchInterval => c.ui.watch_interval_s.to_string(),
             SettingId::StreamKept => c.ui.stream_messages_kept.to_string(),
-            SettingId::HttpTimeout => c.http.timeout_ms.to_string(),
-            SettingId::GrpcDeadline => c.grpc.deadline_ms.to_string(),
-            SettingId::WsTimeout => c.websocket.timeout_ms.to_string(),
-            SettingId::SseTimeout => c.sse.timeout_ms.to_string(),
-            SettingId::MqttTimeout => c.mqtt.timeout_ms.to_string(),
-            SettingId::McpTimeout => c.mcp.timeout_ms.to_string(),
+            SettingId::HttpTimeout => format_ms(c.http.timeout_ms),
+            SettingId::GrpcDeadline => format_ms(c.grpc.deadline_ms),
+            SettingId::WsTimeout => format_ms(c.websocket.timeout_ms),
+            SettingId::SseTimeout => format_ms(c.sse.timeout_ms),
+            SettingId::MqttTimeout => format_ms(c.mqtt.timeout_ms),
+            SettingId::McpTimeout => format_ms(c.mcp.timeout_ms),
             SettingId::MaxBody => c.http.max_body_mb.to_string(),
             SettingId::Proxy => opt(&c.http.proxy),
             SettingId::TlsCa => opt(&c.http.tls.ca),
@@ -183,24 +194,6 @@ impl App {
         true
     }
 
-    /// Opens the dialog that types a value for a number, path or text setting.
-    pub(super) fn prompt_setting(&mut self, id: SettingId) {
-        let label = SETTINGS
-            .iter()
-            .find(|(s, _)| *s == id)
-            .map(|(_, l)| *l)
-            .unwrap_or("");
-        let mut prompt = Prompt::new(
-            label,
-            "Value",
-            TextEditor::single(&self.setting_raw(id)),
-            Vec::new(),
-            PromptAction::Setting(id),
-        );
-        prompt.note = Some(setting_note(id).into());
-        self.overlay = Some(Overlay::Prompt(prompt));
-    }
-
     /// Reads a typed setting: the value to save (`None` removes the key) or
     /// why the text is not valid.
     pub(super) fn parse_setting(
@@ -209,6 +202,16 @@ impl App {
         text: &str,
     ) -> Result<Option<toml::Value>, String> {
         let text = text.trim();
+        if id.duration() {
+            let min = id.min().unwrap_or(0);
+            return match crate::units::parse_ms(text) {
+                Some(n) if n >= min => i64::try_from(n)
+                    .map(|n| Some(toml::Value::Integer(n)))
+                    .map_err(|_| "the time is too long".to_string()),
+                _ if min == 0 => Err("type a time such as 30 s, 500 ms or 2 min (0 = none)".into()),
+                _ => Err("type a time such as 30 s, 500 ms or 2 min".into()),
+            };
+        }
         if let Some(min) = id.min() {
             return match text.parse::<u64>() {
                 Ok(n) if n >= min => i64::try_from(n)
@@ -245,7 +248,7 @@ impl App {
     }
 
     /// Saves a typed setting and applies it at once.
-    pub(super) fn set_typed_setting(&mut self, id: SettingId, text: &str) -> Result<(), String> {
+    pub(crate) fn set_typed_setting(&mut self, id: SettingId, text: &str) -> Result<(), String> {
         let value = self.parse_setting(id, text)?;
         let num = value
             .as_ref()
@@ -369,14 +372,25 @@ impl App {
         }
     }
 
+    /// A click on a setting's value: types a number, path or text in
+    /// place, changes the others.
+    pub(super) fn click_setting(&mut self, v: &mut SettingsView, i: usize) {
+        let id = SETTINGS[i].0;
+        if id.typed() {
+            v.start_edit(self.setting_raw(id));
+        } else {
+            self.change_setting(id, 1);
+        }
+    }
+
     pub fn change_setting(&mut self, id: SettingId, dir: isize) {
         if id.typed() {
-            self.prompt_setting(id);
             return;
         }
         match id {
             SettingId::OAuthIds => return self.open_oauth_editor(),
             SettingId::KeyBindings => return self.open_keymap_editor(),
+            SettingId::McpServers => return self.open_mcp_editor(),
             _ => {}
         }
         let c = &mut self.project.config;
@@ -386,6 +400,8 @@ impl App {
                     ConfigScope::Global => ConfigScope::Project,
                     ConfigScope::Project => ConfigScope::Global,
                 };
+                // Kept in session.toml: the next start restores it.
+                self.session_dirty = true;
                 return;
             }
             SettingId::Vim => {
@@ -430,6 +446,10 @@ impl App {
             SettingId::StickyFolders => {
                 c.ui.sticky_folders = !c.ui.sticky_folders;
                 toml::Value::Boolean(c.ui.sticky_folders)
+            }
+            SettingId::HidePlainSecrets => {
+                c.ui.hide_plain_secrets = !c.ui.hide_plain_secrets;
+                toml::Value::Boolean(c.ui.hide_plain_secrets)
             }
             SettingId::History => {
                 c.history.enabled = !c.history.enabled;

@@ -608,15 +608,13 @@ mod tests {
         assert!(e.text_mut(Field::BodyText).is_some());
         assert!(e.table_mut(Field::Params).is_some());
         assert!(e.text_mut(Field::Params).is_none());
-        for f in [
-            Field::Params,
-            Field::BodyText,
-            Field::BodyKind,
-            Field::Tls,
-            Field::Cookies,
-        ] {
+        for f in [Field::Timeout, Field::BodyKind, Field::Tls, Field::Cookies] {
             assert!(!f.label().is_empty());
+            assert!(!f.help(Kind::Http).is_empty());
         }
+        // Tables and editors fill their area: no label, no help line.
+        assert!(Field::Params.label().is_empty());
+        assert!(Field::BodyText.help(Kind::Http).is_empty());
         // The cookie jar option cycles: default → on → off → default.
         assert_eq!(e.choice_label(Field::Cookies), "Config default");
         assert!(e.cycle(Field::Cookies, 1));

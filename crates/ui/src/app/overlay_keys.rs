@@ -21,15 +21,15 @@ impl App {
         match ov {
             Overlay::Report(r) => self.report_key(r, key),
             Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
-            Overlay::Settings { sel } => self.settings_key(sel, key),
+            Overlay::Settings(v) => self.settings_key(v, key),
             Overlay::Confirm(c) => self.confirm_key(c, key),
             Overlay::Picker(p) => self.picker_key(p, key),
             Overlay::Palette(p) => self.palette_key(p, key),
             Overlay::Prompt(p) => self.prompt_key(p, key, ctrl),
             Overlay::Import(i) => self.import_key(i, key, ctrl),
             Overlay::Env(e) => self.env_key(e, key, ctrl),
-            Overlay::Mcp(m) => self.mcp_key(m, key, ctrl),
-            Overlay::Cfg(e) => self.cfg_key(e, key),
+            Overlay::Records(e) => self.records_key(e, key),
+            Overlay::Keymap(e) => self.keymap_key(e, key),
         }
     }
 
@@ -106,26 +106,76 @@ impl App {
         }
     }
 
-    pub(super) fn settings_key(&mut self, sel: &mut usize, key: KeyEvent) -> bool {
+    pub(super) fn settings_key(&mut self, v: &mut SettingsView, key: KeyEvent) -> bool {
+        let id = SETTINGS[v.sel].0;
+        // A value being typed in place: Enter saves it, Esc gives it up.
+        if let Some(ed) = &mut v.edit {
+            match key.code {
+                KeyCode::Esc => {
+                    v.edit = None;
+                    v.error = None;
+                }
+                KeyCode::Enter => match self.set_typed_setting(id, &ed.text()) {
+                    Ok(()) => {
+                        v.edit = None;
+                        v.error = None;
+                    }
+                    Err(e) => v.error = Some(e),
+                },
+                _ => {
+                    ed.handle_key(&key, false, &mut self.clipboard);
+                    v.error = None;
+                }
+            }
+            return true;
+        }
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                *sel = crate::list::step(*sel, -1, SETTINGS.len());
+            KeyCode::Esc if !v.filter.text().is_empty() => {
+                v.filter.set_text("");
                 true
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                *sel = crate::list::step(*sel, 1, SETTINGS.len());
+            KeyCode::Esc => false,
+            KeyCode::Up => {
+                v.step(-1);
                 true
             }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.change_setting(SETTINGS[*sel].0, -1);
+            KeyCode::Down => {
+                v.step(1);
                 true
             }
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-                self.change_setting(SETTINGS[*sel].0, 1);
+            KeyCode::PageUp => {
+                v.step(-8);
                 true
             }
-            _ => true,
+            KeyCode::PageDown => {
+                v.step(8);
+                true
+            }
+            // Tab switches the file the changes go to.
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.change_setting(SettingId::Scope, 1);
+                true
+            }
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Left if id.typed() => {
+                v.start_edit(self.setting_raw(id));
+                true
+            }
+            KeyCode::Left => {
+                self.change_setting(id, -1);
+                true
+            }
+            KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                self.change_setting(id, 1);
+                true
+            }
+            _ => {
+                if v.filter.handle_key(&key, false, &mut self.clipboard)
+                    == crate::editor::Outcome::Changed
+                {
+                    v.clamp();
+                }
+                true
+            }
         }
     }
 
@@ -181,7 +231,15 @@ impl App {
         {
             let vis = p.visible();
             match key.code {
-                KeyCode::Esc => false,
+                // The env editor waits behind its file picker.
+                KeyCode::Esc => {
+                    if matches!(p.action, PickAction::EnvFile { .. })
+                        && let Some(ed) = self.parked_env.take()
+                    {
+                        self.overlay = Some(Overlay::Env(ed));
+                    }
+                    false
+                }
                 KeyCode::Up => {
                     p.sel = crate::list::step(p.sel, -1, vis.len());
                     true
@@ -363,9 +421,6 @@ impl App {
                     {
                         self.overlay = Some(Overlay::Env(ed));
                     }
-                    if let PromptAction::Setting(id) = p.action {
-                        self.open_settings(id);
-                    }
                     false
                 }
                 // Space opens a choice row's list; Enter always confirms.
@@ -424,6 +479,13 @@ impl App {
                     }
                 };
             }
+            if key.code == KeyCode::Tab && key.modifiers.is_empty() {
+                if let Some(done) = self.complete_import_path(&i.input.text()) {
+                    i.input.set_text(&done);
+                    i.input.move_to_end();
+                }
+                return true;
+            }
             i.input.handle_key(&key, false, &mut self.clipboard);
             i.error = None;
             true
@@ -435,16 +497,7 @@ impl App {
             if key.code == KeyCode::Esc {
                 if e.dirty {
                     // Keep the editor open behind the confirm dialog.
-                    let ed = std::mem::replace(
-                        e,
-                        EnvEditor {
-                            envs: vec![],
-                            current: 0,
-                            table: EnvEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
+                    let ed = std::mem::take(e);
                     self.parked_env = Some(ed);
                     self.overlay = Some(Overlay::Confirm(Confirm {
                         title: "Unsaved environment changes".into(),
@@ -458,16 +511,7 @@ impl App {
                 return false;
             }
             if ctrl && key.code == KeyCode::Char('s') {
-                let mut ed = std::mem::replace(
-                    e,
-                    EnvEditor {
-                        envs: vec![],
-                        current: 0,
-                        table: EnvEditor::table(),
-                        dirty: false,
-                        error: None,
-                    },
-                );
+                let mut ed = std::mem::take(e);
                 self.save_env_editor(&mut ed);
                 *e = ed;
                 return true;
@@ -479,16 +523,7 @@ impl App {
                     e.error = Some("save (Ctrl+S) or discard changes before creating one".into());
                     return true;
                 }
-                let ed = std::mem::replace(
-                    e,
-                    EnvEditor {
-                        envs: vec![],
-                        current: 0,
-                        table: EnvEditor::table(),
-                        dirty: false,
-                        error: None,
-                    },
-                );
+                let ed = std::mem::take(e);
                 self.parked_env = Some(ed);
                 self.prompt_new_env();
                 return false;
@@ -500,18 +535,20 @@ impl App {
                 }
                 let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
                 e.current = crate::list::cycle(e.current, d, e.envs.len());
-                let mut ed = std::mem::replace(
-                    e,
-                    EnvEditor {
-                        envs: vec![],
-                        current: 0,
-                        table: EnvEditor::table(),
-                        dirty: false,
-                        error: None,
-                    },
-                );
+                let mut ed = std::mem::take(e);
                 self.load_env_into(&mut ed);
                 *e = ed;
+                return true;
+            }
+            let on_file =
+                e.table.sel_col == 2 && e.selected_type() == Some(crate::overlay::env_editor::FILE);
+            if key.code == KeyCode::F(2) && (e.on_dotenv || on_file) {
+                let ed = std::mem::take(e);
+                self.open_env_file_picker(ed);
+                return false;
+            }
+            if e.on_dotenv {
+                self.env_dotenv_key(e, key);
                 return true;
             }
             if ctrl && key.code == KeyCode::Char('d') {
@@ -525,7 +562,18 @@ impl App {
                 return true;
             }
             match e.table.handle_key(&key, false, &mut self.clipboard) {
-                TableOutcome::Changed => e.dirty = true,
+                // Up on the first row goes to the `.env` file line.
+                TableOutcome::ExitUp => {
+                    e.on_dotenv = true;
+                    e.dotenv.move_to_end();
+                }
+                TableOutcome::Changed => {
+                    e.dirty = true;
+                    // A new type changes what the row's cells mean.
+                    if e.table.sel_col == 1 {
+                        self.refresh_env_rows(e);
+                    }
+                }
                 TableOutcome::Leave => return false,
                 _ => {}
             }
@@ -533,90 +581,32 @@ impl App {
         }
     }
 
-    pub(super) fn mcp_key(&mut self, m: &mut McpEditor, key: KeyEvent, ctrl: bool) -> bool {
-        {
-            if key.code == KeyCode::Esc {
-                if m.dirty {
-                    // Keep the editor open behind the confirm dialog.
-                    let ed = std::mem::replace(
-                        m,
-                        McpEditor {
-                            table: McpEditor::table(),
-                            dirty: false,
-                            error: None,
-                        },
-                    );
-                    self.parked_mcp = Some(ed);
-                    self.overlay = Some(Overlay::Confirm(Confirm {
-                        title: "Unsaved MCP server changes".into(),
-                        message: "Save the changes to the project config?".into(),
-                        buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
-                        sel: 0,
-                        action: ConfirmAction::McpClose,
-                    }));
-                    return false;
-                }
-                return false;
+    /// A key on the `.env` file line of the environment editor. Tab
+    /// completes the path; when there is nothing to complete, Tab, Down and
+    /// Enter go to the table.
+    fn env_dotenv_key(&mut self, e: &mut EnvEditor, key: KeyEvent) {
+        let text = e.dotenv.text();
+        let done = match key.code {
+            KeyCode::Tab if key.modifiers.is_empty() => {
+                super::import_export::complete_path(&text, |t| {
+                    sendito_store::env::expand(&self.project.root, t)
+                })
+                .filter(|d| *d != text)
             }
-            if ctrl && key.code == KeyCode::Char('s') {
-                let mut ed = std::mem::replace(
-                    m,
-                    McpEditor {
-                        table: McpEditor::table(),
-                        dirty: false,
-                        error: None,
-                    },
-                );
-                self.save_mcp_editor(&mut ed);
-                *m = ed;
-                return true;
-            }
-            if ctrl && key.code == KeyCode::Char('d') {
-                if m.table.delete_row() {
-                    m.dirty = true;
-                }
-                return true;
-            }
-            if ctrl && key.code == KeyCode::Char('o') {
-                if m.dirty {
-                    m.error = Some("save (Ctrl+S) before you edit the details of a server".into());
-                    return true;
-                }
-                let name = m
-                    .table
-                    .rows
-                    .get(m.table.sel_row)
-                    .map(|r| r.cells[0].text().trim().to_string())
-                    .unwrap_or_default();
-                if name.is_empty() {
-                    m.error = Some("select a server first".into());
-                    return true;
-                }
-                return match self.open_mcp_server_editor(&name) {
-                    Ok(()) => false,
-                    Err(e) => {
-                        m.error = Some(e);
-                        true
-                    }
-                };
-            }
-            if ctrl && key.code == KeyCode::Char('n') {
-                // The trailing row is the one typed into to add a server.
-                m.table.sel_row = m.table.rows.len();
-                m.table.sel_col = 0;
-                m.table.ensure_row();
-                return true;
-            }
-            if key.code == KeyCode::Enter || key.code == KeyCode::Tab {
-                m.table.next_cell();
-                return true;
-            }
-            match m.table.handle_key(&key, false, &mut self.clipboard) {
-                TableOutcome::Changed => m.dirty = true,
-                TableOutcome::Leave => return false,
-                _ => {}
-            }
-            true
+            _ => None,
+        };
+        if let Some(done) = done {
+            e.dotenv.set_text(&done);
+            e.dotenv.move_to_end();
+        } else if matches!(key.code, KeyCode::Tab | KeyCode::Down | KeyCode::Enter) {
+            e.on_dotenv = false;
+            return;
+        } else {
+            e.dotenv.handle_key(&key, false, &mut self.clipboard);
+        }
+        if e.dotenv.text() != text {
+            e.dirty = true;
+            self.refresh_env_rows(e);
         }
     }
 }

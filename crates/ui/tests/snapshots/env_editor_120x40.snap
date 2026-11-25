@@ -6,18 +6,16 @@ expression: screen
 ╭ Re╭─ Environments ───────────────────────────────────────────────────────────────────────────────────────────────╮───╮
 │▸ O│  Collection variables  local (active)  staging                                                               │   │
 │▸ U│                                                                                                              │   │
-│  G│ Source says where a value lives (Space changes it). For secrets and keychain, select Secret value and type   │   │
-│  G│ the value. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.               │   │
+│  G│ .env file    .env (default)                                                                          no file │   │
+│  G│                                                                                                              │   │
+│   │ Type says where a value lives (Space changes it). A secret or keychain value is typed here but stored        │   │
+│   │ outside this file. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.       │   │
 │   │                                                                                                              │   │
-│   │ Variable                   Source      Value, key or path                      Secret value                  │   │
-│   │ base_url                  │‹plain›    │http://127.0.0.1:9                     │                           │× │   │
-│   │ grpc                      │‹plain›    │127.0.0.1:9                            │                           │× │   │
-│   │ token                     │‹secrets›  │                                       │set                        │× │   │
-│   │ add variable              │           │                                       │                              │   │
-│   │                                                                                                              │   │
-│   │                                                                                                              │   │
-│   │                                                                                                              │   │
-│   │                                                                                                              │   │
+│   │ Variable                  Type            Value                                                              │   │
+│   │ base_url                 │‹text›         │http://127.0.0.1:9                                              │× │   │
+│   │ grpc                     │‹text›         │127.0.0.1:9                                                     │× │   │
+│   │ token                    │‹secret›       │set · type to replace it                                        │× │   │
+│   │ add variable             │               │                                                                   │   │
 │   │                                                                                                              │   │
 │   │                                                                                                              │   │
 │   │                                                                                                              │   │
@@ -35,10 +33,12 @@ expression: screen
 │   │                                                                                                              │   │
 │   │                                                                                                              │   │
 │   │                                                                                                              │   │
-│   │ plain: written in this file, shared through git.                                                             │   │
+│   │                                                                                                              │   │
+│   │                                                                                                              │   │
+│   │ text: the value is written in this file and shared through git.                                              │   │
 │   │                                                                                                              │   │
 │   │  Save (Ctrl+S)    New env (Ctrl+N)    Close (Esc)                                                            │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                                      │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                    ^S save · ^D delete row · Space source · ^PgUp/Dn env · ^N new env · Esc close
+ demo                                                   ^D delete row · Space type · ^S save · ^PgUp/Dn env · Esc close

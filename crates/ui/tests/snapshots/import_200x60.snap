@@ -25,9 +25,9 @@ expression: screen
 │                            ││                                                                    ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                                                                    │
 │                            ││                   ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮                                                 │
 │                            ││                   │                                                                                                  │                                                 │
-│                            ││                   │  Paste curl, or a Postman, Insomnia, OpenAPI/Swagger or .http file, or a Bruno directory.        │                                                 │
-│                            ││                   │  Relative paths: the folder where you started Sendito, then the collection.                      │                                                 │
-│                            ││                   │  Enter = new line; F5 / Ctrl+S imports.                                                          │                                                 │
+│                            ││                   │  Paste curl or a collection, or type a path: Postman, Insomnia, OpenAPI, .http or Bruno.         │                                                 │
+│                            ││                   │  Paths start where you started Sendito, then the collection. Tab completes; F5 imports.          │                                                 │
+│                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │                                                                                                  │                                                 │
 │                            ││                   │  ▍  curl https://…   or   a collection, OpenAPI, .http file or Bruno directory                   │                                                 │
 │                            ││                   │                                                                                                  │ pear here.                                      │
@@ -61,4 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                                                                                                                       F5 / ^S import · Esc cancel
+ demo                                                                                                                                                   F5 / ^S import · Tab complete path · Esc cancel

@@ -60,7 +60,9 @@ pub(super) fn draw_prompt(
     p: &mut Prompt,
     cursor: &mut Option<(u16, u16)>,
 ) {
-    let has_msg = p.error.is_some() || p.note.is_some();
+    // The path the name gives, or why it cannot be used, checked as typed.
+    let preview = app.prompt_preview(p);
+    let has_msg = p.error.is_some() || p.note.is_some() || preview.is_some();
     let h = 7 + 2 * p.choices.len() as u16 + if has_msg { 2 } else { 0 };
     let (_, inner) = shell(app, buf, frame.body, 66, h, &p.title, frame.theme);
     let lw = 10;
@@ -106,38 +108,57 @@ pub(super) fn draw_prompt(
             break;
         }
         put(buf, inner.x + 2, y, label, lw, frame.theme.dialog_dim());
-        let v = format!(" ‹ {} › ", opts.get(*i).cloned().unwrap_or_default());
-        put(
-            buf,
-            inner.x + 2 + lw,
-            y,
-            &v,
-            inner.width.saturating_sub(lw + 4),
-            if p.focus == k + 1 {
+        let focused = p.focus == k + 1;
+        let room = inner.width.saturating_sub(lw + 4);
+        let chips: u16 = opts.iter().map(|o| o.width() as u16 + 3).sum();
+        let vx = inner.x + 2 + lw;
+        let end = if chips <= room {
+            // Every option as a chip: the chosen one stands out.
+            let mut x = vx;
+            for (n, o) in opts.iter().enumerate() {
+                let label = format!(" {o} ");
+                let st = match (n == *i, focused) {
+                    (true, true) => frame.theme.bold(frame.theme.chip(frame.theme.accent)),
+                    (true, false) => frame.theme.bold(frame.theme.bar()),
+                    _ => frame.theme.dialog_dim(),
+                };
+                x = put(buf, x, y, &label, label.width() as u16, st) + 1;
+            }
+            x
+        } else {
+            let v = format!(" ‹ {} › ", opts.get(*i).cloned().unwrap_or_default());
+            let st = if focused {
                 frame.theme.chip(frame.theme.accent)
             } else {
                 frame.theme.bar()
-            },
-        );
+            };
+            put(buf, vx, y, &v, room, st);
+            let hx = vx + v.width() as u16 + 1;
+            put(
+                buf,
+                hx,
+                y,
+                "← → change · Space list",
+                (inner.x + inner.width).saturating_sub(hx),
+                frame.theme.dialog_dim(),
+            );
+            hx
+        };
         app.hits.push((
-            Rect::new(inner.x + 2 + lw, y, v.width() as u16, 1),
+            Rect::new(vx, y, end.saturating_sub(vx), 1),
             Hit::Overlay(OverlayHit::Choice(k)),
         ));
-        let hx = inner.x + 2 + lw + v.width() as u16 + 1;
-        put(
-            buf,
-            hx,
-            y,
-            "← → change · Space list",
-            (inner.x + inner.width).saturating_sub(hx),
-            frame.theme.dialog_dim(),
-        );
         choices_end = y;
     }
     let msg = p
         .error
         .as_ref()
         .map(|e| (e, frame.theme.fg(frame.theme.err)))
+        .or_else(|| match &preview {
+            Some((m, true)) => Some((m, frame.theme.fg(frame.theme.err))),
+            Some((m, false)) if p.note.is_none() => Some((m, frame.theme.dim())),
+            _ => None,
+        })
         .or_else(|| {
             p.note
                 .as_ref()
@@ -219,8 +240,8 @@ pub(super) fn draw_picker(
     cursor: &mut Option<(u16, u16)>,
 ) {
     let vis = p.visible();
-    let has_details =
-        p.details.iter().any(|d| !d.is_empty()) && !matches!(p.action, PickAction::MoveTo(_));
+    let has_details = p.details.iter().any(|d| !d.is_empty())
+        && !matches!(p.action, PickAction::MoveTo(_) | PickAction::Env);
     let h = (vis.len() as u16 + 6 + u16::from(has_details))
         .min(frame.area.height.saturating_sub(4))
         .max(4);
@@ -232,7 +253,14 @@ pub(super) fn draw_picker(
         .max()
         .unwrap_or(30)
         .clamp(38, 130) as u16;
-    let (r, inner) = shell(app, buf, frame.body, w, h, &p.title, frame.theme);
+    // With a filter typed, the title says how many items match.
+    let query = p.filter.text();
+    let title = if query.trim().is_empty() {
+        p.title.clone()
+    } else {
+        format!("{} · {} of {}", p.title, vis.len(), p.items.len())
+    };
+    let (r, inner) = shell(app, buf, frame.body, w, h, &title, frame.theme);
     let (_tr, c) = dialog::input(app, buf, inner, &mut p.filter, is_def, frame.theme);
     *cursor = c;
     p.sel = p.sel.min(vis.len().saturating_sub(1));
@@ -307,6 +335,7 @@ pub(super) fn draw_picker(
                 ),
             );
         }
+        let ix = x;
         x = put(
             buf,
             x,
@@ -315,6 +344,7 @@ pub(super) fn draw_picker(
             (inner.x + inner.width).saturating_sub(x + 1),
             item_st,
         );
+        mark_matches(buf, ix, y, item, query.trim(), s, frame.theme);
         if let Some(d) = p.details.get(*idx)
             && !matches!(p.action, PickAction::MoveTo(_))
         {
