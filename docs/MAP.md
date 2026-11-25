@@ -366,6 +366,35 @@ type:
 | A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → [reports/ux-critic.md](reports/ux-critic.md) decisions |
 | A key, command or setting | see [Adding a key, command or setting](#adding-a-key-command-or-setting) |
 
+## Documentation coverage
+
+Where each part of the surface is written down, so a gap is visible in one
+place. `—` means only FEATURES.md describes it.
+
+| Surface | TUI | CLI | Format | Keys |
+|---|---|---|---|---|
+| HTTP request fields | [HTTP](FEATURES.md#http) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
+| HTTP wire rules | [HTTP](FEATURES.md#http) | — | [FORMAT §wire](../FORMAT.md#what-goes-on-the-wire) | — |
+| Proxy | [HTTP](FEATURES.md#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
+| TLS / mTLS | [HTTP](FEATURES.md#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
+| Cookie jar | [HTTP](FEATURES.md#http) | [`--no-cookies`](CLI.md#sendito-run-request) | [FORMAT §jar](../FORMAT.md#cookie-jar) | `:cookies` |
+| Watch | [HTTP](FEATURES.md#http) | — | `ui.watch_interval_s` | `Ctrl+W m`, `:watch` |
+| gRPC | [gRPC](FEATURES.md#grpc) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §gRPC](../FORMAT.md#grpc-request) | `Ctrl+W d` |
+| WebSocket | [WebSocket](FEATURES.md#websocket) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §WS](../FORMAT.md#websocket-request) | `Ctrl+W y`, `Ctrl+W d` |
+| MCP | [MCP](FEATURES.md#mcp) | [CLI mcp](CLI.md#sendito-mcp-login-server--logout) | [FORMAT §MCP](../FORMAT.md#mcp-request) | F2, `:mcptools` |
+| MCP / HTTP OAuth | [MCP](FEATURES.md#mcp) | [CLI auth](CLI.md#sendito-auth-login-identity--logout) | [FORMAT §config](../FORMAT.md#project-and-global-config) | `:auth login` |
+| Variables and secrets | [Variables](FEATURES.md#variables-and-secrets) | [`--env`](CLI.md#sendito-run-request) | [FORMAT §vars](../FORMAT.md#variables) | `F4`, `Ctrl+W V` |
+| Scripts | [Scripts](FEATURES.md#scripts) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
+| Import | [Import](FEATURES.md#import-and-export) | [CLI import](CLI.md#sendito-import-file-or-directory) | — | `Ctrl+W i` |
+| Export | [Import](FEATURES.md#import-and-export) | [CLI curl/http](CLI.md#sendito-curl-request) | — | `Ctrl+W u`, `:httpfile` |
+| History / session | [Storage](FEATURES.md#storage) | [`--no-history`](CLI.md#sendito-run-request) | [FORMAT §state](../FORMAT.md#local-state-files) | `F7` |
+| Theme / icons | [Themes](FEATURES.md#themes-and-icons) | [CLI theme](CLI.md#sendito-theme-list--print) | [THEMES](THEMES.md) | `:theme` |
+| Settings | [Settings](FEATURES.md#settings) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | `Ctrl+W ,` |
+| Folder runs | [Headless](FEATURES.md#headless-and-ci) | [CLI run](CLI.md#sendito-run-request) | — | — |
+| Mouse / vim | [TUI](FEATURES.md#tui) | — | — | [KEYMAP](../KEYMAP.md) |
+| Exit codes | — | [CLI codes](CLI.md#exit-codes) | — | — |
+| Hidden flags | — | [Internal flags](ARCHITECTURE.md#internal-flags) | — | — |
+
 ## Keeping this map current
 
 This file is hand-maintained. It goes stale in one predictable way: a file is

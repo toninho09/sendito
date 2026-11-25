@@ -103,6 +103,20 @@ the workspace tests on Ubuntu and macOS, the OS-keychain tests and the coverage
 gate. Run one heavy job at a time locally: workspace tests, media,
 benchmarks and coverage must not overlap.
 
+## Internal flags
+
+These are hidden from `--help` and used by the benchmarks, the key-map
+generation and the tests. They are not a stable interface.
+
+| Flag | Use |
+|---|---|
+| `--exit-after-first-frame` | Quit after drawing the first frame (cold-start benchmark) |
+| `--frame-log <file>` | Write per-frame render times (µs) to a file |
+| `--script <file>` | Replay scripted input from a file |
+| `--print-keymap` | Print [KEYMAP.md](../KEYMAP.md) to stdout (`make keymap`) |
+
+The TUI path is used by `make bench`, `make keymap` and the UI test harness.
+
 ## Changing behaviour
 
 The repo encodes a change in several places on purpose. For a wire change or a

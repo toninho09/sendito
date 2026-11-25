@@ -126,7 +126,8 @@ and narrows `check`, `lint` and `test` to it. `F` is a test-name filter; `make
 test` fails when no test matches it. Others, when a task calls for them:
 `make run ARGS="req.http"`, `make servers` (the echo servers), `make cov` (line
 coverage, 80 % gate), `make bench`, `make bundles` (the reviewer bundles of
-`docs/PLAN.md`).
+`docs/PLAN.md`), `make site` (the documentation site in `book/`, published to
+GitHub Pages by `.github/workflows/pages.yml`).
 
 Run one heavy job at a time: the workspace tests, media generation, benchmarks
 and coverage must not run together.

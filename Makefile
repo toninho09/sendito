@@ -12,7 +12,7 @@ F :=
 OUT ?= target/critic-bundles  # destination of make bundles
 
 .DEFAULT_GOAL := help
-.PHONY: help build check run servers fmt fmt-check lint deny ci test docs corpus corpus-update keymap snap media render bundles cov bench
+.PHONY: help build check run servers fmt fmt-check lint deny ci test docs site site-serve corpus corpus-update keymap snap media render bundles cov bench
 
 help: ## List the available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -54,6 +54,13 @@ test: ## Full suite, one summary line (P=<package> for one crate, F=<name> filte
 
 docs: ## Check that the paths, symbols and make targets the documentation cites exist
 	@bash scripts/quiet.sh docs cargo test -j $(J) -q --test docs
+
+site: ## Build the documentation site into book/book (needs mdbook)
+	@scripts/build-site.sh
+
+site-serve: ## Build the documentation site and serve it on localhost
+	@scripts/build-site.sh
+	@mdbook serve book --open
 
 # --- goldens and generated files ---
 

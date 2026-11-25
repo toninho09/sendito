@@ -14,16 +14,10 @@ plain TOML files you can version in git.
 
 ![Sendito: a POST request with a JSON body and the response](docs/media/hero.png)
 
-* **Correct on the wire.** Sendito sends what the request says: no hidden
-  `User-Agent` or `Referer` headers, explicit rules for query and form encoding
-  ([FORMAT.md](FORMAT.md)), and the headers you define in your order. Two small
-  differences come from the HTTP library and are listed in
-  [docs/DEBT.md](docs/DEBT.md): HTTP/1 header names are sent in Title-Case, and
-  `Accept: */*` is added when you define no `Accept`.
-  The headers added are framing (`Host`, `Content-Length`), auth, and a
-  `Content-Type` from the body type when you define none (JSON → `application/json`,
-  form → `application/x-www-form-urlencoded`, file → its content type or
-  `application/octet-stream`; multipart file parts → guessed from the extension).
+* **Correct on the wire.** Sendito sends what the request file defines, with
+  your headers in your order and no hidden `User-Agent` or `Referer`.
+  [FORMAT.md](FORMAT.md#what-goes-on-the-wire) lists the few headers it adds,
+  and [docs/DEBT.md](docs/DEBT.md) the two that come from the HTTP library.
   A corpus of cases for every protocol is checked byte for byte in CI.
 * **HTTP**: every method, query params, headers, raw / JSON / form / multipart
   (with files) / file bodies, Basic / Bearer / API-key / OAuth 2 / Digest /
@@ -43,6 +37,14 @@ plain TOML files you can version in git.
   Log tab, `wss://` with the same TLS material as HTTP, and the close code as the
   assertion status.
   → [WebSocket features](docs/FEATURES.md#websocket)
+* **SSE**: a live session per request — query parameters, headers, the HTTP
+  auth and cookies, events received live with a jq filter, and optional
+  `max_events` and `deadline_ms` limits.
+  → [SSE features](docs/FEATURES.md#sse)
+* **MQTT**: one session per send — connect, subscribe, publish and receive,
+  MQTT 3.1.1 or 5 over TCP or TLS, QoS 0 to 2, retained messages and a Last
+  Will.
+  → [MQTT features](docs/FEATURES.md#mqtt)
 * **MCP tools**: call tools on stdio or Streamable HTTP servers, discover tools
   and generate initial arguments from their input schema, with bearer or OAuth
   2.1 authentication for HTTP servers.
@@ -73,7 +75,6 @@ plain TOML files you can version in git.
 - [Install](#install)
 - [Quick start](#quick-start)
 - [See it in action](#see-it-in-action)
-- [Development](#development)
 - [Documentation](#documentation)
 - [License](#license)
 
@@ -89,13 +90,19 @@ binary on your `PATH`:
 ```sh
 tar xzf sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
 sha256sum -c sendito-v0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-sudo install sendito /usr/local/bin/
+sudo install sendito-v0.2.0-x86_64-unknown-linux-gnu/sendito /usr/local/bin/
 ```
 
-Or build from source (the repository pins Rust 1.100.0 in `rust-toolchain.toml`, which rustup installs on its own; the code needs 1.89 or newer — edition-2024 let chains need 1.88 and the jq filter library sets the floor at 1.89 — but nothing older than the pinned version is tested):
+On macOS, use `shasum -a 256 -c` instead of `sha256sum -c`.
+
+Or build from source. You need Rust 1.89 or newer and a C compiler (the Lua
+engine is compiled with Sendito). The repository pins Rust 1.100.0 in
+`rust-toolchain.toml`, and rustup installs it on its own:
 
 ```sh
-cargo install --path .
+git clone https://github.com/toninho09/sendito
+cd sendito
+cargo install --locked --path .
 ```
 
 ## Quick start
@@ -108,13 +115,16 @@ sendito                    # opens the collection
 
 In the app:
 
-1. Press `n` in the sidebar to create a request (choose HTTP, gRPC, WebSocket or MCP
-   and a folder):
+1. Press `n` in the sidebar to create a request (choose HTTP, gRPC, WebSocket,
+   SSE, MQTT or MCP and a folder):
    its file is created at once, empty. `Ctrl+N` instead opens a scratch tab that has
    no file until `Ctrl+S` asks for a name and folder.
 2. Type the URL, e.g. `{{base_url}}/users`, and press **Ctrl+Enter** or **F5**.
    Sending uses the request as shown, unsaved edits included.
 3. `Ctrl+S` saves; `F4` switches environment; `F1` lists every key.
+
+The [guides](docs/GUIDES.md) continue from here: environments and secrets, a
+login flow, CI, import from Postman and gRPC.
 
 Without the UI:
 
@@ -175,65 +185,23 @@ Short recordings of the main flows, rendered from the app's own frames
 | **An SSE session: receive events, end it** | ![An SSE session](docs/media/recordings/13-sse-session.gif) |
 | **An MQTT session: subscribe, publish live, disconnect** | ![An MQTT session](docs/media/recordings/14-mqtt-session.gif) |
 
-## Development
-
-```sh
-cargo test --workspace            # unit, integration, corpus, UI flows, snapshots
-cargo run -p sendito-testkit --bin echo-servers   # or make servers: HTTP :8787, gRPC :50051, WS :8788, MCP :8789
-cargo clippy --all-targets -- -D warnings && cargo fmt --check
-```
-
-The `Makefile` wraps the recurring commands with quiet, token-efficient output
-(`make help` lists them):
-
-| Target | Does |
-|---|---|
-| `make build` / `make check` | Build the workspace / type-check only (`P=` for one crate) |
-| `make servers` | Echo servers for manual tests (HTTP, gRPC, WS, MCP) |
-| `make test` | Full test suite (unit, integration, corpus, UI); `P=` and `F=` narrow it to one crate or test name |
-| `make lint` / `make fmt` / `make deny` | Clippy `-D warnings` (`P=` for one crate) / rustfmt / cargo-deny |
-| `make ci` | `fmt-check` + `lint` + `deny` + `test`, in order |
-| `make docs` | Check that the paths, symbols and `make` targets the documentation cites exist |
-| `make corpus` / `make corpus-update` | Run the wire corpus / rewrite its goldens |
-| `make keymap` | Regenerate `KEYMAP.md` |
-| `make snap` | Accept the insta UI snapshots |
-| `make media` / `make render` | Generate the frames / render screenshots and GIFs (before a release) |
-| `make bundles` | Build the reviewer bundles |
-| `make cov` / `make bench` | Line coverage of every crate but the UI, by the whole test suite / benchmarks |
-
-Crates: `sendito-core` (model, variables, resolution, scripts), `sendito-http`,
-`sendito-grpc`, `sendito-ws`, `sendito-mcp` (stdio and Streamable HTTP MCP client, OAuth),
-`sendito-store` (files, request format, environments, secrets, config, history,
-cookies, session, themes), `sendito-import` (Postman, Insomnia, Bruno, OpenAPI,
-`.http`, curl), `sendito-pipeline` (send pipeline and response document model),
-`sendito-ui` (terminal UI), `sendito-testkit`
-(test servers) and the `sendito` binary. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and the test
-layers, and [AGENTS.md](AGENTS.md) for the rules that keep them green.
-
-Dependencies are the official crates.io releases (no vendored or patched crates).
-Known limitations and trade-offs are listed in [docs/DEBT.md](docs/DEBT.md).
-
-The correctness corpus lives in `tests/corpus`: every request there is sent to the
-echo servers and the exact bytes received are compared with
-`tests/corpus/expected`. `UPDATE_CORPUS=1 cargo test --test corpus` rewrites them.
-
 ## Documentation
-
-Start at the [documentation index](docs/README.md).
 
 | Document | Contents |
 |---|---|
+| [docs/GUIDES.md](docs/GUIDES.md) | Step-by-step recipes for common tasks |
 | [docs/FEATURES.md](docs/FEATURES.md) | Every feature, grouped by area |
 | [docs/CLI.md](docs/CLI.md) | Every subcommand, flag, exit code, JSON report |
 | [FORMAT.md](FORMAT.md) | Request / environment / config schema and wire rules |
-| [KEYMAP.md](KEYMAP.md) | Generated key map |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crates, send pipeline, tests |
+| [KEYMAP.md](KEYMAP.md) | Every key and `:command` |
 | [docs/THEMES.md](docs/THEMES.md) | Theme format and color tokens |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common problems and their fixes |
 | [docs/DEBT.md](docs/DEBT.md) | Known limitations |
-| [docs/media/README.md](docs/media/README.md) | How the screenshots and GIFs are made |
-| [docs/reports/](docs/reports/) | Coverage, performance, UX and correctness reports |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+To work on Sendito, start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+(crates, data flow, tests) and [AGENTS.md](AGENTS.md) (rules and `make`
+targets). The [documentation index](docs/README.md) lists every document.
 
 ## License
 

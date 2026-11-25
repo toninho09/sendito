@@ -1,0 +1,10 @@
+[book]
+title = "Sendito"
+description = "Terminal API client for HTTP, gRPC, WebSocket, SSE, MQTT and MCP"
+authors = ["toninho09"]
+language = "en"
+
+[output.html]
+git-repository-url = "https://github.com/toninho09/sendito"
+edit-url-template = "https://github.com/toninho09/sendito/edit/main/{path}"
+site-url = "/sendito/"

@@ -9,9 +9,9 @@ sendito [PATH]                       # open the TUI
 sendito <command> [args]             # headless
 ```
 
-`args_conflicts_with_subcommands = true`: `sendito PATH` opens the TUI for
-`PATH`; the first word is only read as a subcommand when it is one
-(`init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme`, `import`).
+`sendito PATH` opens the TUI for `PATH`. The first word is a subcommand only
+when it is one of `init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme` and
+`import`.
 
 `PATH` defaults to the nearest directory above the current one that contains
 `.sendito/`, else the current directory.
@@ -154,7 +154,7 @@ With `--report json` the summary is printed to stdout:
   "duration_ms": 412,
   "requests": [
     {
-      "name": "Users/list users",
+      "path": "Users/list users.toml",
       "kind": "http",
       "outcome": "pass",
       "status": "200 OK",
@@ -169,8 +169,8 @@ With `--report json` the summary is printed to stdout:
 ```
 
 `passed + failed + errors == total`. A request skipped because of unresolved
-variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`
-or `mcp`. The exact per-request fields depend on the protocol; a request that
+variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`,
+`websocket`, `sse`, `mqtt` or `mcp`. The exact per-request fields depend on the protocol; a request that
 never ran has `status` and `duration_ms` set to `null` and an `error` message.
 
 ---
@@ -299,23 +299,6 @@ available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 For a folder run the exit code is the worst of the four over all requests:
 `3` if any request had unresolved variables or usage failed, else `2` if any
 request failed, else `1` if any assertion or tool failed, else `0`.
-
----
-
-## Internal flags (hidden)
-
-These are hidden from `--help` and used by the benchmarks, the key-map
-generation and the tests. They are documented for contributors; they are not a
-stable interface.
-
-| Flag | Use |
-|---|---|
-| `--exit-after-first-frame` | Quit after drawing the first frame (cold-start benchmark) |
-| `--frame-log <file>` | Write per-frame render times (µs) to a file |
-| `--script <file>` | Replay scripted input from a file |
-| `--print-keymap` | Print [KEYMAP.md](../KEYMAP.md) to stdout (`make keymap`) |
-
-The TUI path is used by `make bench`, `make keymap` and the UI test harness.
 
 ---
 

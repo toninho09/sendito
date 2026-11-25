@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Documentation site
+
+* The documentation is published to GitHub Pages as an mdBook site
+  (`.github/workflows/pages.yml`). `make site` builds it into `book/book` and
+  `make site-serve` serves it locally.
+* New pages: `docs/GUIDES.md` (first collection, login flow, CI with GitHub
+  Actions, import from Postman, Insomnia or Bruno, gRPC) and
+  `docs/TROUBLESHOOTING.md`.
+* README: SSE and MQTT in the overview, the install step uses the directory
+  inside the release archive, and a build from source starts with
+  `git clone`. The development notes moved to `docs/ARCHITECTURE.md` and
+  `AGENTS.md`.
+* `docs/CLI.md`: the JSON report shows `path` (the request file) and every
+  `kind` value.
+
 ### Lua scripts
 
 * Requests and `folder.toml` take Lua 5.4 code in `[scripts.lua]`: `pre` runs

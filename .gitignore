@@ -13,3 +13,6 @@
 /bench/results/*
 !/bench/results/REPORT.md
 .sendito
+/book/book/
+/book/src/*
+!/book/src/SUMMARY.md

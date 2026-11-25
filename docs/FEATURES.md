@@ -4,9 +4,8 @@ Everything Sendito does, grouped by area. Each section says where the feature
 lives (key, command, flag or config table) and links to the deeper document.
 Screenshots and recordings are in [media/](media/README.md).
 
-Sendito is a terminal API client for **HTTP**, **gRPC**, **WebSocket** and
-**MCP tools**. It
-runs locally, works with the mouse, conventional keys or vim keys, and keeps
+Sendito is a terminal API client for **HTTP**, **gRPC**, **WebSocket**,
+**SSE**, **MQTT** and **MCP tools**. It runs locally, works with the mouse, conventional keys or vim keys, and keeps
 requests as plain TOML files that you can version in git.
 
 ## At a glance
@@ -1090,51 +1089,3 @@ knowing up front:
 * MCP: tools only (no resources or prompts), a session per list/call, no legacy
   HTTP+SSE and no server GET stream.
 * Windows is not a target.
-
----
-
-## Coverage checklist
-
-Where each part of the surface is written down, so a gap is visible in one
-place. `—` means it is described only here.
-
-| Surface | TUI | CLI | Format | Keys |
-|---|---|---|---|---|
-| HTTP request fields | [HTTP](#http) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
-| HTTP wire rules | [HTTP](#http) | — | [FORMAT §wire](../FORMAT.md#what-goes-on-the-wire) | — |
-| Proxy | [HTTP](#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
-| TLS / mTLS | [HTTP](#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
-| Cookie jar | [HTTP](#http) | [`--no-cookies`](CLI.md#sendito-run-request) | [FORMAT §jar](../FORMAT.md#cookie-jar) | `:cookies` |
-| Watch | [HTTP](#http) | — | `ui.watch_interval_s` | `Ctrl+W m`, `:watch` |
-| gRPC | [gRPC](#grpc) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §gRPC](../FORMAT.md#grpc-request) | `Ctrl+W d` |
-| WebSocket | [WebSocket](#websocket) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §WS](../FORMAT.md#websocket-request) | `Ctrl+W y`, `Ctrl+W d` |
-| MCP | [MCP](#mcp) | [CLI mcp](CLI.md#sendito-mcp-login-server--logout) | [FORMAT §MCP](../FORMAT.md#mcp-request) | F2, `:mcptools` |
-| MCP / HTTP OAuth | [MCP](#mcp) | [CLI auth](CLI.md#sendito-auth-login-identity--logout) | [FORMAT §config](../FORMAT.md#project-and-global-config) | `:auth login` |
-| Variables and secrets | [Variables](#variables-and-secrets) | [`--env`](CLI.md#sendito-run-request) | [FORMAT §vars](../FORMAT.md#variables) | `F4`, `Ctrl+W V` |
-| Scripts | [Scripts](#scripts) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
-| Import | [Import](#import-and-export) | [CLI import](CLI.md#sendito-import-file-or-directory) | — | `Ctrl+W i` |
-| Export | [Import](#import-and-export) | [CLI curl/http](CLI.md#sendito-curl-request) | — | `Ctrl+W u`, `:httpfile` |
-| History / session | [Storage](#storage) | [`--no-history`](CLI.md#sendito-run-request) | [FORMAT §state](../FORMAT.md#local-state-files) | `F7` |
-| Theme / icons | [Themes](#themes-and-icons) | [CLI theme](CLI.md#sendito-theme-list--print) | [THEMES](THEMES.md) | `:theme` |
-| Settings | [Settings](#settings) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | `Ctrl+W ,` |
-| Folder runs | [Headless](#headless-and-ci) | [CLI run](CLI.md#sendito-run-request) | — | — |
-| Mouse / vim | [TUI](#tui) | — | — | [KEYMAP](../KEYMAP.md) |
-| Exit codes | — | [CLI codes](CLI.md#exit-codes) | — | — |
-| Hidden flags | — | [CLI internal](CLI.md#internal-flags-hidden) | — | — |
-
----
-
-## Documentation map
-
-| Document | Answers |
-|---|---|
-| [README](../README.md) | What it is, install, quick start, gallery |
-| [FORMAT.md](../FORMAT.md) | Request, environment and config files; exact wire rules |
-| [KEYMAP.md](../KEYMAP.md) | Every key, generated |
-| [CLI.md](CLI.md) | Every subcommand, flag, exit code |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Crates, data flow, tests, extending |
-| [MAP.md](MAP.md) | Which file and symbol implements each feature, and its tests |
-| [THEMES.md](THEMES.md) | Theme format and color tokens |
-| [DEBT.md](DEBT.md) | Known limitations |
-| [media/README.md](media/README.md) | Screenshots and GIFs |
-| [docs index](README.md) | Everything above, in one table |
