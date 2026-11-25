@@ -9,18 +9,33 @@ const MAX_DEPTH: usize = 8;
 /// A sample value for `schema`: its `example`, `default` or first `enum`
 /// value, else an empty value of its type (objects with every property,
 /// arrays empty). `resolve` turns a `$ref` into its schema (`None`: unknown).
+/// A `$ref` inside its own schema gives `null`, so a recursive schema does
+/// not grow the sample.
 pub fn sample(schema: &Value, resolve: &dyn Fn(&str) -> Option<Value>) -> Value {
-    sample_at(schema, resolve, 0)
+    sample_at(schema, resolve, 0, &mut Vec::new())
 }
 
-fn sample_at(schema: &Value, resolve: &dyn Fn(&str) -> Option<Value>, depth: usize) -> Value {
+/// `refs` holds the `$ref`s that lead to `schema`.
+fn sample_at(
+    schema: &Value,
+    resolve: &dyn Fn(&str) -> Option<Value>,
+    depth: usize,
+    refs: &mut Vec<String>,
+) -> Value {
     if depth >= MAX_DEPTH {
         return Value::Null;
     }
     if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
-        return resolve(r)
-            .map(|s| sample_at(&s, resolve, depth + 1))
-            .unwrap_or(Value::Null);
+        if refs.iter().any(|seen| seen == r) {
+            return Value::Null;
+        }
+        let Some(s) = resolve(r) else {
+            return Value::Null;
+        };
+        refs.push(r.to_string());
+        let v = sample_at(&s, resolve, depth + 1, refs);
+        refs.pop();
+        return v;
     }
     if let Some(value) = schema
         .get("example")
@@ -38,7 +53,7 @@ fn sample_at(schema: &Value, resolve: &dyn Fn(&str) -> Option<Value>, depth: usi
     if let Some(all) = schema.get("allOf").and_then(Value::as_array) {
         let mut out = Map::new();
         for part in all {
-            if let Value::Object(o) = sample_at(part, resolve, depth + 1) {
+            if let Value::Object(o) = sample_at(part, resolve, depth + 1, refs) {
                 out.extend(o);
             }
         }
@@ -50,7 +65,7 @@ fn sample_at(schema: &Value, resolve: &dyn Fn(&str) -> Option<Value>, depth: usi
             .and_then(Value::as_array)
             .and_then(|v| v.first())
     }) {
-        return sample_at(first, resolve, depth + 1);
+        return sample_at(first, resolve, depth + 1, refs);
     }
     let kind = match schema.get("type") {
         Some(Value::String(t)) => Some(t.as_str()),
@@ -67,7 +82,7 @@ fn sample_at(schema: &Value, resolve: &dyn Fn(&str) -> Option<Value>, depth: usi
             let mut out = Map::new();
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
                 for (name, value) in properties {
-                    out.insert(name.clone(), sample_at(value, resolve, depth + 1));
+                    out.insert(name.clone(), sample_at(value, resolve, depth + 1, refs));
                 }
             }
             Value::Object(out)
@@ -129,5 +144,15 @@ mod tests {
         let node = json!({"properties": {"next": {"$ref": "#/n"}}});
         let v = sample(&node, &|_| Some(node.clone()));
         assert!(v.to_string().len() < 200, "{v}");
+        // Many fields that refer to their own schema: the sample stays small.
+        let person = json!({"properties": {
+            "a": {"$ref": "#/p"}, "b": {"$ref": "#/p"}, "c": {"$ref": "#/p"},
+            "d": {"$ref": "#/p"}, "e": {"$ref": "#/p"}, "f": {"$ref": "#/p"}
+        }});
+        let v = sample(&json!({"$ref": "#/p"}), &|_| Some(person.clone()));
+        assert_eq!(
+            v,
+            json!({"a": null, "b": null, "c": null, "d": null, "e": null, "f": null})
+        );
     }
 }

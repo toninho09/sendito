@@ -649,8 +649,9 @@ switches between them; an empty script shows "(empty)".
   changes the request (`request.url`, `request.method`, headers, query
   parameters, the body text). The post script runs after the assertions: it
   reads `response` (status, headers, body, `json()`, `time()`), sets
-  variables and records `test(name, pass)` results. `print` writes to the
-  script output. Helpers: `render`, `hash`, `base64_encode`, `base64_decode`,
+  variables and records `test(name, pass)` results. A value that holds a
+  secret, a cookie value or the OAuth token of the send stays a secret.
+  `print` writes to the script output, secrets masked. Helpers: `render`, `hash`, `base64_encode`, `base64_decode`,
   `json_parse`, `json_stringify`. Folder scripts run first. The scripts cannot
   reach files, the network or processes, and stop at fixed instruction and
   memory limits. An error in a pre script stops the send; an error in a post

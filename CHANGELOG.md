@@ -27,6 +27,10 @@
   response: Lua script", each with a multi-line editor.
 * The check for unresolved variables runs the pre phase on a copy, so a
   variable that only a pre script sets is not reported.
+* A value a post script sets is a secret when it holds a cookie value or the
+  OAuth token of the send, as for an extract rule; `print` masks these values.
+* When a pre script fails, the Headers tab shows the request with its secrets
+  masked, as after a send.
 
 ### MCP servers in the interface
 
@@ -250,6 +254,8 @@
   their example or a sample of the schema, response examples as saved
   examples, and the security as auth (the document's in the root
   `folder.toml`). OAuth 2 security and external references are reported.
+* A schema that refers to itself gives `null` at the second visit, so a
+  recursive schema with many such fields does not make a huge sample body.
 * **`.http` / `.rest` files**: `###` blocks, `@variables`, `# @name`,
   `# @timeout`, `# @no-redirect`, headers, bodies and the auth forms both
   editors use, with the environments of `http-client.env.json`. A file

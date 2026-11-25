@@ -234,7 +234,9 @@ send. `set_header` replaces the first row with that name, enables it and
 removes the other rows with that name; with no such row it adds one.
 
 A value a script sets is a secret when `set_secret` sets it or when it holds
-the value of a secret variable. An error in a `pre` script stops the send
+the value of a secret variable. In a `post` script, a value that holds a
+cookie value or the OAuth access token of the send is a secret too, as for
+`[[scripts.extract]]`, and `print` masks these values. An error in a `pre` script stops the send
 with the message, the script (`request` or `folder <path>`) and the line, for
 example `request script:3: no token`; the request is not sent. An error in a
 `post` script is a failed test named after the script, and the next scripts

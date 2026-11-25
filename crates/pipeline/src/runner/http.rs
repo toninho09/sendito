@@ -197,6 +197,7 @@ pub(super) async fn exec_http_inner(
     let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
     if let Some(message) = pre_error {
+        mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
             stream: None,
             secrets: Vec::new(),
@@ -213,6 +214,7 @@ pub(super) async fn exec_http_inner(
     if let sendito_core::resolve::ResolvedBody::Invalid(message) = &resolved.body {
         let message = sendito_core::vars::scrub(message, &scope.secret_values());
         resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message.clone());
+        mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
             stream: None,
             secrets: Vec::new(),
@@ -519,14 +521,7 @@ pub(super) async fn exec_http_inner(
     };
     // `resolved` is only shown from here on (the Headers tab lists the
     // request as sent): a secret in the query or a header is masked.
-    let shown = http_secrets(req, &scope);
-    resolved.url = sendito_core::vars::scrub(&resolved.url, &shown);
-    for (_, v) in &mut resolved.headers {
-        *v = sendito_core::vars::scrub(v, &shown);
-    }
-    for n in &mut resolved.notes {
-        *n = sendito_core::vars::scrub(n, &shown);
-    }
+    mask_shown(&mut resolved, &http_secrets(req, &scope));
     HttpRun {
         stream: None,
         secrets: Vec::new(),
@@ -538,6 +533,18 @@ pub(super) async fn exec_http_inner(
             scripts: results,
             scope_errors,
         },
+    }
+}
+
+/// Masks the secret values in the parts of `resolved` that are shown (the
+/// Headers tab lists the request as sent): the URL, the headers and the notes.
+fn mask_shown(resolved: &mut ResolvedHttp, secrets: &[String]) {
+    resolved.url = sendito_core::vars::scrub(&resolved.url, secrets);
+    for (_, v) in &mut resolved.headers {
+        *v = sendito_core::vars::scrub(v, secrets);
+    }
+    for n in &mut resolved.notes {
+        *n = sendito_core::vars::scrub(n, secrets);
     }
 }
 

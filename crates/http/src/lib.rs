@@ -544,10 +544,12 @@ mod tests {
             let (mut s, _) = l.accept().await.unwrap();
             let mut buf = vec![0u8; 65536];
             let mut got = Vec::new();
+            // Read the whole request first: a reply sent while the client
+            // still writes the body breaks the client's pipe.
             loop {
                 let n = s.read(&mut buf).await.unwrap();
                 got.extend_from_slice(&buf[..n]);
-                if n == 0 || got.windows(4).any(|w| w == b"\r\n\r\n") {
+                if n == 0 || request_complete(&got) {
                     break;
                 }
             }
@@ -556,6 +558,24 @@ mod tests {
             got
         });
         (format!("http://localhost:{}", addr.port()), h)
+    }
+
+    /// True when `got` holds the head and the whole body of one request.
+    fn request_complete(got: &[u8]) -> bool {
+        let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") else {
+            return false;
+        };
+        let head = String::from_utf8_lossy(&got[..end]).to_ascii_lowercase();
+        let body = &got[end + 4..];
+        if head.contains("transfer-encoding: chunked") {
+            return body.ends_with(b"0\r\n\r\n");
+        }
+        let len = head
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:"))
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        body.len() >= len
     }
 
     fn req(url: String) -> ResolvedHttp {

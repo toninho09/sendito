@@ -129,22 +129,45 @@ pub(crate) fn response_phase(
 ) {
     results.extracts = script::run_extract(&scripts.extract, view, scope);
     // Cookie values and OAuth access tokens remain secret even if an
-    // extraction rule did not mark them; runtime variables may persist.
+    // extraction rule or a script did not mark them; runtime variables may
+    // persist.
     for extract in &mut results.extracts {
-        if let Ok(value) = &mut extract.value
-            && taint
-                .iter()
-                .any(|s| !s.is_empty() && value.value.contains(s))
-        {
-            value.secret = true;
-            scope.set(RUNTIME_LAYER, &extract.var, value.clone());
+        if let Ok(value) = &mut extract.value {
+            taint_set(scope, &extract.var, value, taint);
         }
     }
     results.asserts = script::run_asserts(&scripts.asserts, view, scope);
-    let out = lua_script::run_lua_post(&scripts.lua_post, view, scope);
+    let mut out = lua_script::run_lua_post(&scripts.lua_post, view, scope);
+    for (name, value) in &mut out.sets {
+        taint_set(scope, name, value, taint);
+    }
     results.asserts.extend(out.tests);
     results.post.extend(out.sets);
-    results.logs.extend(out.logs);
+    let taint: Vec<String> = taint.iter().filter(|s| !s.is_empty()).cloned().collect();
+    results.logs.extend(
+        out.logs
+            .iter()
+            .map(|l| sendito_core::vars::scrub(l, &taint)),
+    );
+}
+
+/// Marks `value` secret when it contains one of `taint`. The runtime layer
+/// gets the change while it still holds this value (a later set wins).
+fn taint_set(scope: &mut Scope, name: &str, value: &mut VarValue, taint: &[String]) {
+    if value.secret
+        || !taint
+            .iter()
+            .any(|s| !s.is_empty() && value.value.contains(s.as_str()))
+    {
+        return;
+    }
+    value.secret = true;
+    if scope
+        .raw(name)
+        .is_some_and(|(current, _)| current.value == value.value)
+    {
+        scope.set(RUNTIME_LAYER, name, value.clone());
+    }
 }
 
 #[derive(Clone)]
@@ -265,6 +288,93 @@ mod tests {
         assert_eq!(
             unresolved_send(&req, &scope, &["api_key".into()], &servers),
             vec!["api_key".to_string()]
+        );
+    }
+
+    fn secret_scope() -> Scope {
+        let mut env = BTreeMap::new();
+        env.insert("key".to_string(), VarValue::secret("s3cr3t-key"));
+        let mut s = Scope::new().with_layer("env", env);
+        s.push_layer(RUNTIME_LAYER, BTreeMap::new());
+        s
+    }
+
+    #[tokio::test]
+    async fn a_failed_pre_script_masks_the_request_shown() {
+        let req = HttpRequest {
+            url: "http://127.0.0.1:9/x?k={{key}}".into(),
+            headers: vec![KeyValue::new("X-Trace", "{{key}}")],
+            common: RequestCommon {
+                scripts: Scripts {
+                    lua_pre: LuaScript::own("error('stop')").into_iter().collect(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = RunCtx {
+            root: std::env::temp_dir(),
+            send: SendOptions::default(),
+            history: None,
+            name: String::new(),
+            path: None,
+            env: None,
+            schemas: SchemaCache::default(),
+            grpc_deadline_ms: 0,
+            ws_timeout_ms: 0,
+            sse_timeout_ms: 0,
+            mqtt_timeout_ms: 0,
+            mask_echoed_secrets: true,
+            cookie_jar: false,
+            oauth: None,
+        };
+        let o = exec_http(&ctx, &req, secret_scope(), vec![]).await;
+        assert!(o.response.is_err());
+        assert!(!o.resolved.url.contains("s3cr3t-key"), "{}", o.resolved.url);
+        assert!(
+            o.resolved
+                .headers
+                .iter()
+                .all(|(_, v)| !v.contains("s3cr3t-key")),
+            "{:?}",
+            o.resolved.headers
+        );
+    }
+
+    #[test]
+    fn a_post_script_set_of_a_cookie_value_stays_secret() {
+        let scripts = Scripts {
+            lua_post: LuaScript::own(
+                "vars.set('sid', response:header('x-sid'))\nprint('sid ' .. vars.get('sid'))",
+            )
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let headers = vec![("X-Sid".to_string(), "cookie-value-1".to_string())];
+        let view = ResponseView {
+            status: 200,
+            headers: &headers,
+            body: b"",
+            timing: &[],
+        };
+        let mut scope = secret_scope();
+        let mut results = ScriptResults::default();
+        response_phase(
+            &scripts,
+            &view,
+            &mut scope,
+            &mut results,
+            &["cookie-value-1".to_string()],
+        );
+        assert_eq!(results.post.len(), 1);
+        assert!(results.post[0].1.secret);
+        assert!(scope.raw("sid").is_some_and(|(v, _)| v.secret));
+        assert!(
+            !results.logs[0].contains("cookie-value-1"),
+            "{:?}",
+            results.logs
         );
     }
 
