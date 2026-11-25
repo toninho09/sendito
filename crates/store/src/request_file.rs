@@ -254,6 +254,7 @@ fn mqtt(r: RawRequest) -> Result<Request, String> {
             .transpose()?,
         auth,
         scripts: scripts(r.scripts)?,
+        description: r.description.unwrap_or_default(),
     }))
 }
 
@@ -279,6 +280,7 @@ fn write_mqtt_message(w: &mut Writer, m: &MqttMessage) {
 #[serde(deny_unknown_fields)]
 struct RawRequest {
     kind: String,
+    description: Option<String>,
     method: Option<String>,
     url: Option<String>,
     target: Option<String>,
@@ -495,6 +497,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 cookies: r.options.cookies,
             },
             scripts: scripts(r.scripts)?,
+            description: r.description.unwrap_or_default(),
         })),
         "sse" if r.method.is_some() || r.body.is_some() => {
             Err("SSE does not support method or body fields".into())
@@ -505,6 +508,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
             headers: kvs(r.headers),
             auth: auth(r.auth)?,
             scripts: scripts(r.scripts)?,
+            description: r.description.unwrap_or_default(),
             options: SseOptions {
                 timeout_ms: r.options.timeout_ms,
                 deadline_ms: r.options.deadline_ms,
@@ -536,6 +540,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 },
             },
             scripts: scripts(r.scripts)?,
+            description: r.description.unwrap_or_default(),
         })),
         "mcp" => {
             // `arguments` is JSON text. It is not validated here: a half-typed
@@ -548,6 +553,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 arguments,
                 timeout_ms: r.options.timeout_ms,
                 scripts: scripts(r.scripts)?,
+                description: r.description.unwrap_or_default(),
             }))
         }
         "websocket" => Ok(Request::Ws(WebSocketRequest {
@@ -566,6 +572,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 cookies: r.options.cookies,
             },
             scripts: scripts(r.scripts)?,
+            description: r.description.unwrap_or_default(),
         })),
         "mqtt" => mqtt(r),
         o => Err(format!(
@@ -711,6 +718,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("kind", "http");
             w.str("method", &h.method);
             w.str("url", &h.url);
+            write_description(&mut w, req.description());
             let o = &h.options;
             if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls || o.cookies.is_some()
             {
@@ -804,6 +812,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("service", &g.service);
             w.str("method", &g.method);
             w.str("message", &g.message);
+            write_description(&mut w, req.description());
             if g.tls || !g.verify_tls || g.deadline_ms.is_some() {
                 w.table("options");
                 if g.tls {
@@ -837,6 +846,7 @@ pub fn to_toml(req: &Request) -> String {
             if m.arguments != "{}" {
                 w.str("arguments", &m.arguments);
             }
+            write_description(&mut w, req.description());
             if let Some(t) = m.timeout_ms {
                 w.table("options");
                 w.int("timeout_ms", t);
@@ -846,6 +856,7 @@ pub fn to_toml(req: &Request) -> String {
         Request::Sse(s) => {
             w.str("kind", "sse");
             w.str("url", &s.url);
+            write_description(&mut w, req.description());
             let o = &s.options;
             if o != &SseOptions::default() {
                 w.table("options");
@@ -894,6 +905,7 @@ pub fn to_toml(req: &Request) -> String {
             if m.keep_alive_s != MQTT_KEEP_ALIVE_S {
                 w.int("keep_alive_s", m.keep_alive_s);
             }
+            write_description(&mut w, req.description());
             let o = &m.options;
             if o != &MqttOptions::default() {
                 w.table("options");
@@ -937,6 +949,7 @@ pub fn to_toml(req: &Request) -> String {
             if wq.messages != "[]" {
                 w.str("messages", &wq.messages);
             }
+            write_description(&mut w, req.description());
             let o = &wq.options;
             if o.timeout_ms.is_some()
                 || o.deadline_ms.is_some()
@@ -969,15 +982,38 @@ pub fn to_toml(req: &Request) -> String {
     w.finish()
 }
 
+/// `description` after the top-level keys and before the first table, so
+/// [`sniff_badge`] reads `kind` and `method` first.
+fn write_description(w: &mut Writer, text: &str) {
+    if !text.is_empty() {
+        w.str("description", text);
+    }
+}
+
 /// Cheap sniff of `kind`/`method` from the top of a request file (for tree badges
 /// without a full parse). Returns `None` when the file is not a request.
 pub fn sniff_badge(text: &str) -> Option<String> {
     let mut kind = None;
     let mut method = None;
+    // The closing quotes of the multi-line string the scan is in: its lines
+    // (a description, for example) are text, not keys.
+    let mut open: Option<&str> = None;
     for line in text.lines() {
+        if let Some(d) = open {
+            if line.contains(d) {
+                open = None;
+            }
+            continue;
+        }
         let l = line.trim();
         if l.starts_with('[') {
             break;
+        }
+        open = ["'''", "\"\"\""]
+            .into_iter()
+            .find(|d| l.matches(d).count() == 1);
+        if open.is_some() {
+            continue;
         }
         if !l.contains("kind") && !l.contains("method") {
             continue;
@@ -1056,6 +1092,7 @@ mod tests {
                 verify_tls: false,
                 cookies: None,
             },
+            description: String::new(),
             scripts: Scripts {
                 pre: vec![SetVar {
                     var: "ts".into(),
@@ -1225,6 +1262,8 @@ mod tests {
                 import_paths: vec!["protos".into()],
             },
             scripts: Scripts::default(),
+            // Lines that look like keys stay text for the badge sniff.
+            description: "# Echo\n\nkind = \"mcp\"\n[x](y) say \"hi\" '''\n".into(),
         });
         let t = to_toml(&g);
         assert_eq!(parse(&t).ok(), Some(g.clone()));
@@ -1241,6 +1280,7 @@ mod tests {
             arguments: "{\n  \"title\": \"{{version}}\"\n}".into(),
             timeout_ms: Some(150),
             scripts: Scripts::default(),
+            description: "Creates an *issue*.".into(),
         });
         let t = to_toml(&m);
         assert_eq!(parse(&t).ok(), Some(m.clone()));
@@ -1290,6 +1330,7 @@ mod tests {
                 cookies: Some(false),
             },
             scripts: Scripts::default(),
+            description: "- one\n- two\nmethod = 'post'\n".into(),
         });
         let t = to_toml(&w);
         assert_eq!(parse(&t).ok(), Some(w.clone()));
@@ -1421,6 +1462,12 @@ op = "exists"
         assert_eq!(sniff_badge("[package]\nname = \"x\""), None);
         assert_eq!(sniff_badge("kind = 'http'\n"), Some("GET".into()));
         assert_eq!(sniff_badge("x = 1"), None);
+        assert_eq!(
+            sniff_badge(
+                "kind = \"http\"\ndescription = '''\nmethod = \"PUT\"\n[a](b)\n'''\nmethod = \"post\"\n"
+            ),
+            Some("POST".into())
+        );
         assert_eq!(sniff_badge("kind = \"http\" # main\n"), Some("GET".into()));
         assert_eq!(
             sniff_badge("\"kind\" = \"http\"\nmethod = 'post' # create\n"),

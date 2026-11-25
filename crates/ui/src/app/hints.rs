@@ -317,6 +317,10 @@ impl App {
                         ("←→".into(), "change type".into()),
                         ("Enter".into(), "choose".into()),
                     ]),
+                    (Focus::ReqBody, Some(Field::DocsPreview)) => v.extend([
+                        ("↑↓ PgUp/PgDn".into(), "scroll".into()),
+                        ("Enter".into(), "edit".into()),
+                    ]),
                     (Focus::ReqBody, Some(f)) if f.is_choice() => {
                         v.push(("Enter/Space".into(), "choose".into()))
                     }
@@ -334,7 +338,9 @@ impl App {
                         if !self.vim {
                             v.push((k(self, Action::SelectAll), "select all".into()));
                         }
-                        v.push((k(self, Action::FormatBody), "format JSON".into()));
+                        if f != Field::Description {
+                            v.push((k(self, Action::FormatBody), "format JSON".into()));
+                        }
                     }
                     (Focus::Bar(0), _)
                         if self

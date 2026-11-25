@@ -52,6 +52,7 @@ fastrand = "2"
 serde_json_path = "0.7"
 jaq-all = { version = "0.4", default-features = false, features = ["std-all"] }
 regex = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "multipart", "stream", "json", "socks"] }
 rustls-pki-types = "1"

@@ -24,6 +24,7 @@ requests as plain TOML files that you can version in git.
 | Collections on disk | yes | all commands | [Storage](#storage) |
 | Folder settings (inherited headers, auth, variables, scripts) | yes | `run`, exports | [Folder settings](#folder-settings) |
 | Saved example responses | yes | — | [Saved examples](#saved-examples) |
+| Descriptions (Markdown, per request and folder) | yes | — | [Descriptions](#descriptions) |
 | Import (Postman / Insomnia / Bruno / OpenAPI / `.http` / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
 | Export (curl / `.http`) | yes | `sendito curl`, `sendito http` | [Import and export](#import-and-export) |
 | History | yes | `run` records it | [Storage](#storage) |
@@ -464,7 +465,7 @@ scripts apply to every request below it.
 * **Scripts**: the folder's rows run before the request's.
 * **Folder tab**: `s` on a tree folder (on a request: its folder) or
   `:folder` opens the settings in a tab with **Headers · Auth · Vars ·
-  Scripts**. The card names the folder and how many requests the settings
+  Scripts · Docs**. The card names the folder and how many requests the settings
   reach. `Ctrl+S` writes `folder.toml`; empty settings remove it. A folder tab
   is never sent.
 * **In a request tab**: the Auth tab offers **Inherit** and names the folder
@@ -475,6 +476,29 @@ scripts apply to every request below it.
   that cannot be read stops the send and names the file.
 * **Imports**: Postman and Insomnia folder auth and Bruno `folder.bru` /
   `collection.bru` become `folder.toml`.
+
+---
+
+## Descriptions
+
+Every request, every folder and the collection root can carry a Markdown
+description, like the documentation of a Postman request or folder
+([FORMAT.md](../FORMAT.md#description)).
+
+* **Docs tab**: the last tab of every request kind and of a folder tab. Its
+  **View** choice switches between **Edit** (a multi-line editor for the
+  Markdown) and **Preview** (the rendered text: headings, bold, italic,
+  inline code and code blocks, lists, task lists, quotes, links with their
+  URL, rules and tables). A request with a description opens on Preview.
+* **Preview keys**: `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` (vim: `j`/`k`,
+  `g`/`G`) scroll; Enter switches to Edit; `↑` on the first line goes back to
+  View. The tab label shows `Docs•` when there is a description.
+* **Files**: `description = '''…'''` in the request file or `folder.toml`;
+  the root `folder.toml` documents the collection. It is never sent and not
+  inherited.
+* **Imports**: the descriptions of Postman (collection, folders, requests),
+  Insomnia (workspace, folders, requests), Bruno (`docs` blocks) and OpenAPI
+  (`info.description`, tag descriptions, operation summary and description).
 
 ---
 
@@ -602,12 +626,14 @@ collection):
 * **Postman Collection v2.1** — folders, requests (method, URL, query, headers,
   every body mode, basic / bearer / API-key / Digest / AWS SigV4 / JWT auth;
   folder and collection auth go to `folder.toml`), collection
-  variables, dynamic-variable aliases, saved responses (as examples). Scripts,
-  OAuth 2, a JWT private key and descriptions are **reported**, not converted.
-* **Insomnia v4/v5** — folders, supported HTTP requests, selectable
-  environments, `{{ _.name }}` templates where expressible. Private
+  variables, dynamic-variable aliases, saved responses (as examples) and
+  descriptions. Scripts, OAuth 2 and a JWT private key are **reported**, not
+  converted.
+* **Insomnia v4/v5** — folders, supported HTTP requests, descriptions,
+  selectable environments, `{{ _.name }}` templates where expressible. Private
   environments are not imported.
-* **Bruno directory** — folders, supported HTTP requests, environments; secret
+* **Bruno directory** — folders, supported HTTP requests, `docs` blocks,
+  environments; secret
   variables are reported.
 * **OpenAPI 3.0 / 3.1 and Swagger 2.0** (JSON, or YAML with `.yaml`/`.yml`) —
   one request per operation, one folder per first tag, `{{baseUrl}}` from the
@@ -617,7 +643,8 @@ collection):
   example or a sample of its schema (JSON, form, multipart), the response
   examples as saved examples, and basic / bearer / Digest / API-key security
   (the document's security goes to the root `folder.toml`; an operation's own
-  security to the request). OAuth 2 and OpenID Connect security, cookie
+  security to the request), and the descriptions of the document, its tags and
+  its operations. OAuth 2 and OpenID Connect security, cookie
   parameters and external `$ref`s are reported.
 * **`.http` / `.rest` file** (JetBrains HTTP client, VS Code REST Client) —
   `###` blocks, `@name = value` variables, `# @name`, `# @timeout`,
@@ -681,9 +708,10 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   tree scrolls, the folders of the top row stay pinned above the list (at most
   half its height, the last one underlined); a click on a pinned folder
   selects it and scrolls the tree to it (`ui.sticky_folders`).
-* **Request tabs**: HTTP `Params · Headers · Body · Auth · Scripts · Options`;
-  gRPC `Message · Metadata · Auth · Scripts · Options`; MCP
-  `Tool · Args · Scripts · Options`, in the pane's top border. A tab shows its
+* **Request tabs**: HTTP
+  `Params · Headers · Body · Auth · Scripts · Options · Docs`; gRPC
+  `Message · Metadata · Auth · Scripts · Options · Docs`; MCP
+  `Tool · Args · Scripts · Options · Docs`, in the pane's top border. A tab shows its
   row count or `•` when set. The bottom border shows the request's folder path
   on the left and, for editors (with line numbers), `✓ JSON` /
   `✗ JSON: line, col` plus `Ln, Col` on the right. A click on the JSON error

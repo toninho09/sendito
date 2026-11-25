@@ -39,6 +39,15 @@ fn s(v: &Value) -> String {
     }
 }
 
+/// A Postman description: a string or `{ "content": "…", "type": "text/markdown" }`.
+fn description(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::Object(o)) => o.get("content").map(s).unwrap_or_default(),
+        Some(d) => s(d),
+        None => String::new(),
+    }
+}
+
 fn get_str(v: &Value, k: &str) -> String {
     v.get(k).map(s).unwrap_or_default()
 }
@@ -548,14 +557,7 @@ fn request(item: &Value, path: &str, ctx: &mut Ctx) -> Request {
     // No auth (or "inherit") inherits from the folder settings, as in Postman.
     let auth = auth(r.get("auth"), path, ctx).unwrap_or_default();
     let body = body(r.get("body"), path, ctx);
-    if r.get("description")
-        .is_some_and(|d| !d.is_null() && !s(d).is_empty())
-    {
-        ctx.skip(
-            path,
-            "its description was not imported (Sendito requests have no description)",
-        );
-    }
+    let description = description(r.get("description").or_else(|| item.get("description")));
     if item
         .get("event")
         .and_then(Value::as_array)
@@ -582,6 +584,7 @@ fn request(item: &Value, path: &str, ctx: &mut Ctx) -> Request {
         // Postman follows redirects and verifies TLS by default, like Sendito.
         options: HttpOptions::default(),
         scripts: Scripts::default(),
+        description,
     })
 }
 
@@ -614,10 +617,9 @@ fn folder(items: &[Value], name: &str, path: &str, auth_of: Auth, ctx: &mut Ctx)
             {
                 ctx.skip(&ipath, "the folder's JavaScript scripts were not imported (Sendito runs no JavaScript)");
             }
-            if it.get("description").is_some_and(|d| !s(d).is_empty()) {
-                ctx.skip(&ipath, "the folder's description was not imported");
-            }
-            f.folders.push(folder(children, &iname, &ipath, auth, ctx));
+            let mut sub = folder(children, &iname, &ipath, auth, ctx);
+            sub.settings.description = description(it.get("description"));
+            f.folders.push(sub);
         } else if it.get("request").is_some() {
             let req = request(it, &ipath, ctx);
             let examples = examples(it.get("response"));
@@ -667,7 +669,8 @@ pub fn import(json: &str) -> Result<ImportResult, PostmanError> {
             "the collection's JavaScript scripts were not imported (Sendito runs no JavaScript)",
         );
     }
-    let root = folder(items, &name, "", root_auth, &mut ctx);
+    let mut root = folder(items, &name, "", root_auth, &mut ctx);
+    root.settings.description = description(info.get("description"));
     let mut variables = Vec::new();
     for var in v
         .get("variable")
@@ -773,12 +776,12 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = r#"{
-      "info": {"name": "Demo", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+      "info": {"name": "Demo", "description": "Demo *API*", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
       "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]},
       "variable": [{"key": "base", "value": "https://api.example.com"}, {"key": "off", "value": "1", "disabled": true}],
       "event": [{"listen": "prerequest", "script": {"exec": ["console.log(1)"]}}],
       "item": [
-        {"name": "Users", "auth": {"type": "basic", "basic": [{"key": "username", "value": "u"}, {"key": "password", "value": "p"}]},
+        {"name": "Users", "description": {"content": "User *endpoints*", "type": "text/markdown"}, "auth": {"type": "basic", "basic": [{"key": "username", "value": "u"}, {"key": "password", "value": "p"}]},
          "item": [
           {"name": "List", "request": {"method": "get", "url": {"raw": "{{base}}/users?page=1", "query": [{"key": "page", "value": "1"}, {"key": "debug", "value": "1", "disabled": true}]}}},
           {"name": "Get/one", "request": {"method": "GET", "auth": {"type": "noauth"}, "url": {"raw": "{{base}}/users/:id", "variable": [{"key": "id", "value": "42"}]}}},
@@ -902,6 +905,13 @@ mod tests {
             panic!()
         };
         assert_eq!(plain.url, "https://example.com/plain");
+        // Descriptions of the collection, a folder and a request.
+        assert_eq!(r.root.settings.description, "Demo *API*");
+        assert_eq!(users.settings.description, "User *endpoints*");
+        let Request::Http(oauth) = &r.root.requests[4].1 else {
+            panic!()
+        };
+        assert_eq!(oauth.description, "docs");
         let reasons: Vec<String> = r
             .skipped
             .iter()
@@ -914,7 +924,6 @@ mod tests {
             ":id in the URL",
             "its JavaScript scripts",
             "oauth2",
-            "description",
             "Weird",
             "no file selected",
         ] {

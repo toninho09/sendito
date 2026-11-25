@@ -219,9 +219,9 @@ fn walk(
         match text(node, "_type") {
             "request_group" => {
                 let group_auth = auth(node.get("authentication"), &item, skipped);
-                folder
-                    .folders
-                    .push(walk(id, label, group_auth, children, seen, skipped));
+                let mut sub = walk(id, label, group_auth, children, seen, skipped);
+                sub.settings.description = text(node, "description").into();
+                folder.folders.push(sub);
             }
             "request" => {
                 let a = auth(node.get("authentication"), &item, skipped);
@@ -236,11 +236,9 @@ fn walk(
                     params: rows(node.get("parameters"), &item, skipped),
                     body: body(node.get("body"), &item, skipped),
                     auth: a,
+                    description: text(node, "description").into(),
                     ..Default::default()
                 };
-                if !text(node, "description").is_empty() {
-                    skip(skipped, &item, "description was not imported");
-                }
                 for key in [
                     "scripts",
                     "preRequestScript",
@@ -352,6 +350,7 @@ pub fn import(json: &str) -> Result<ImportResult, String> {
             &mut seen,
             &mut result.skipped,
         );
+        result.root.settings.description = text(ws, "description").into();
     } else {
         result.root.name = "Insomnia".into();
         for ws in &workspaces {
@@ -361,14 +360,16 @@ pub fn import(json: &str) -> Result<ImportResult, String> {
                 text(ws, "name")
             };
             let ws_auth = auth(ws.get("authentication"), name, &mut result.skipped);
-            result.root.folders.push(walk(
+            let mut sub = walk(
                 text(ws, "_id"),
                 name,
                 ws_auth,
                 &children,
                 &mut seen,
                 &mut result.skipped,
-            ));
+            );
+            sub.settings.description = text(ws, "description").into();
+            result.root.folders.push(sub);
         }
     }
     for node in resources {
@@ -427,12 +428,12 @@ mod tests {
     #[test]
     fn collection_and_environments() {
         let json = r#"{"__export_format":4,"resources":[
-          {"_type":"workspace","_id":"w","name":"API"},
+          {"_type":"workspace","_id":"w","name":"API","description":"API *docs*"},
           {"_type":"environment","_id":"base","parentId":"w","name":"Base","data":{"base":"http://example.test","nested":{"value":3}}},
           {"_type":"environment","_id":"dev","parentId":"base","name":"dev","data":{"base":"http://localhost"}},
           {"_type":"environment","_id":"private","parentId":"base","name":"private","isPrivate":true,"data":{"token":"do-not-import"}},
-          {"_type":"request_group","_id":"f","parentId":"w","name":"Users"},
-          {"_type":"request","_id":"r","parentId":"f","name":"Create","method":"POST","url":"{{ _.base }}/users","headers":[{"name":"x-on","value":"yes"},{"name":"x-off","value":"no","disabled":true}],"authentication":{"type":"bearer","token":"{{ _.token }}"},"body":{"mimeType":"application/json","text":"{}"}}
+          {"_type":"request_group","_id":"f","parentId":"w","name":"Users","description":"User calls"},
+          {"_type":"request","_id":"r","parentId":"f","name":"Create","description":"Creates a *user*.","method":"POST","url":"{{ _.base }}/users","headers":[{"name":"x-on","value":"yes"},{"name":"x-off","value":"no","disabled":true}],"authentication":{"type":"bearer","token":"{{ _.token }}"},"body":{"mimeType":"application/json","text":"{}"}}
         ]}"#;
         let result = import(json).unwrap();
         assert_eq!(result.root.count_requests(), 1);
@@ -446,6 +447,9 @@ mod tests {
             panic!("not http")
         };
         assert_eq!(req.url, "{{base}}/users");
+        assert_eq!(req.description, "Creates a *user*.");
+        assert_eq!(result.root.folders[0].settings.description, "User calls");
+        assert_eq!(result.root.settings.description, "API *docs*");
         assert!(!req.headers[1].enabled);
         assert_eq!(
             req.auth,

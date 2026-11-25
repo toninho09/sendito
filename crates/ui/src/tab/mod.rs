@@ -430,6 +430,7 @@ mod tests {
                     value: "300".into(),
                 }],
             },
+            description: "# Create\n\nMakes an *x*.".into(),
         })
     }
 
@@ -540,12 +541,20 @@ mod tests {
                 expires_in_s: None,
             },
             vars: vec![KeyValue::new("tenant", "acme").disabled()],
+            description: "Tenant calls".into(),
             ..Default::default()
         };
         let e = Editors::from_folder(&folder);
         assert_eq!(e.kind, Kind::Folder);
         assert_eq!(request_folder(&e.to_request()), folder);
         assert_eq!(e.fields(2), vec![Field::Vars]);
+        // Docs is the last tab; a written description opens rendered.
+        assert_eq!(e.fields(4), vec![Field::DocsView, Field::DocsPreview]);
+        let mut blank = Editors::from_request(&Request::new_mcp());
+        assert_eq!(blank.fields(4), vec![Field::DocsView, Field::Description]);
+        assert!(blank.cycle(Field::DocsView, 1));
+        assert_eq!(blank.fields(4), vec![Field::DocsView, Field::DocsPreview]);
+        assert_eq!(blank.fields(3), vec![Field::Timeout]);
         assert_eq!(
             e.fields(1),
             vec![

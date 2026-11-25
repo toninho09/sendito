@@ -119,7 +119,7 @@ pub(super) fn draw_request(
     let (names_list, counts): (Vec<&str>, Vec<usize>) = {
         let e = &app.tabs[app.active].ed;
         let n = e.tab_names().to_vec();
-        let c = match e.kind {
+        let mut c = match e.kind {
             Kind::Http => vec![
                 table_count(&e.params),
                 table_count(&e.headers),
@@ -170,17 +170,19 @@ pub(super) fn draw_request(
                 table_count(&e.pre) + table_count(&e.extract) + table_count(&e.asserts),
             ],
         };
+        // Docs, the last tab of every kind.
+        c.push(usize::from(!e.description.trimmed_is("")));
         (n, c)
     };
-    // Tables show their row count ("Headers 2"); Body and Auth show "•"
-    // when set. Narrow panes get shorter labels.
+    // Tables show their row count ("Headers 2"); Body, Auth and Docs show
+    // "•" when set. Narrow panes get shorter labels.
     let style_labels = |style: usize| -> Vec<String> {
         names_list
             .iter()
             .enumerate()
             .map(|(i, name)| {
                 let set = counts[i] > 0;
-                let counted = set && !matches!(*name, "Body" | "Auth" | "Will");
+                let counted = set && !matches!(*name, "Body" | "Auth" | "Will" | "Docs");
                 match style {
                     0 if counted => format!("{name} {}", counts[i]),
                     1 if counted => format!("{name}{}", counts[i]),

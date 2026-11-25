@@ -1062,6 +1062,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
                 auth: mask_auth(&h.auth, s),
                 options: h.options.clone(),
                 scripts: h.scripts.clone(),
+                description: h.description.clone(),
             })
         }
         Request::Grpc(g) => Request::Grpc(GrpcRequest {
@@ -1076,6 +1077,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             deadline_ms: g.deadline_ms,
             schema: g.schema.clone(),
             scripts: g.scripts.clone(),
+            description: g.description.clone(),
         }),
         Request::Sse(r) => Request::Sse(SseRequest {
             url: s.render_masked(&r.url),
@@ -1084,6 +1086,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             auth: mask_auth(&r.auth, s),
             options: r.options.clone(),
             scripts: r.scripts.clone(),
+            description: r.description.clone(),
         }),
         Request::Mqtt(m) => {
             let message = |msg: &MqttMessage| MqttMessage {
@@ -1121,6 +1124,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             auth: mask_auth(&w.auth, s),
             options: w.options.clone(),
             scripts: w.scripts.clone(),
+            description: w.description.clone(),
         }),
         Request::Mcp(m) => Request::Mcp(McpRequest {
             server: s.render_masked(&m.server),
@@ -1128,6 +1132,7 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             arguments: s.render_masked(&m.arguments),
             timeout_ms: m.timeout_ms,
             scripts: m.scripts.clone(),
+            description: m.description.clone(),
         }),
     }
 }

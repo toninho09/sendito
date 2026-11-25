@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  POST   ▾   {{base_url}}/users  → http://127.0.0.1:9/users                 ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────╮
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs ───────────────────────────────╮
 │├ DEL   delete user         ││ Section        After response: assertions (1) ▾  Enter to switch                       │
 │└ GET   list users          ││ From        JSONPath / header             Op           Expected                        │
 │  GRPC  echo unary          ││ ‹status›   │                             │‹==›        │200                          │× │

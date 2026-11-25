@@ -1,7 +1,8 @@
 # Sendito — recurring commands (`make help` lists the targets)
 # Lean output by default: targets that call cargo go through
 # scripts/quiet.sh, which keeps the full output in target/<target>.log and prints
-# a one-line summary on success (on failure, it dumps the log and exits with an error).
+# a one-line summary on success. On failure it prints the head and the tail of the
+# log (QUIET_FULL=1 prints all of it) and exits with an error.
 
 # cargo jobs and test threads (heavy suite; see AGENTS.md)
 J ?= 4

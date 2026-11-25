@@ -161,6 +161,25 @@ fn servers(doc: &Value, swagger: bool) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The trimmed string at a JSON pointer; empty when it is absent.
+fn str_at(v: &Value, pointer: &str) -> String {
+    v.pointer(pointer)
+        .and_then(Value::as_str)
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The description of a tag in the top-level `tags` list.
+fn tag_description(doc: &Value, tag: &str) -> String {
+    doc.get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|t| t.get("name").and_then(Value::as_str) == Some(tag))
+        .map(|t| str_at(t, "/description"))
+        .unwrap_or_default()
+}
+
 /// Parses an OpenAPI or Swagger document.
 pub fn import(doc: &Value) -> Result<ImportResult, String> {
     if !is_openapi(doc) {
@@ -197,6 +216,7 @@ pub fn import(doc: &Value) -> Result<ImportResult, String> {
         name: title.to_string(),
         ..Default::default()
     };
+    root.settings.description = str_at(doc, "/info/description");
     let global_security = doc.get("security").cloned();
     root.settings.auth =
         security_auth(&mut ctx, global_security.as_ref(), "(document)").unwrap_or_default();
@@ -226,7 +246,7 @@ pub fn import(doc: &Value) -> Result<ImportResult, String> {
                 Some(t) => format!("{t} / {name}"),
                 None => name.clone(),
             };
-            let (req, examples) = operation(
+            let (mut req, examples) = operation(
                 &mut ctx,
                 method,
                 path,
@@ -235,15 +255,31 @@ pub fn import(doc: &Value) -> Result<ImportResult, String> {
                 global_security.as_ref(),
                 &label,
             );
+            // The summary when the name does not already show it, then the description.
+            let summary = str_at(op, "/summary");
+            req.description = [
+                if summary == name {
+                    String::new()
+                } else {
+                    summary
+                },
+                str_at(op, "/description"),
+            ]
+            .into_iter()
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
             let folder = match tag {
                 Some(t) => {
                     let i = match root.folders.iter().position(|f| f.name == t) {
                         Some(i) => i,
                         None => {
-                            root.folders.push(ImportFolder {
+                            let mut f = ImportFolder {
                                 name: t,
                                 ..Default::default()
-                            });
+                            };
+                            f.settings.description = tag_description(doc, &f.name);
+                            root.folders.push(f);
                             root.folders.len() - 1
                         }
                     };
@@ -634,7 +670,8 @@ mod tests {
 
     const PETSTORE: &str = r##"
 openapi: 3.0.3
-info: {title: Petstore}
+info: {title: Petstore, description: "# Pets"}
+tags: [{name: pets, description: Pet calls}]
 servers:
   - url: https://{env}.example.com/v1
     description: production
@@ -645,6 +682,7 @@ paths:
   /pets:
     get:
       operationId: listPets
+      summary: List pets
       tags: [pets]
       parameters:
         - {name: limit, in: query, schema: {type: integer, default: 20}}
@@ -666,6 +704,7 @@ paths:
       - {name: petId, in: path, required: true, example: "7"}
     get:
       summary: Show a pet
+      description: Returns *one* pet.
       tags: [pets]
       security: []
       responses: {}
@@ -728,6 +767,11 @@ components:
             panic!()
         };
         assert_eq!(list.url, "{{baseUrl}}/pets");
+        assert_eq!(list.description, "List pets");
+        assert_eq!(pets.requests[1].1.description(), "");
+        assert_eq!(pets.requests[2].1.description(), "Returns *one* pet.");
+        assert_eq!(pets.settings.description, "Pet calls");
+        assert_eq!(r.root.settings.description, "# Pets");
         assert_eq!(list.params, vec![KeyValue::new("limit", "20").disabled()]);
         assert_eq!(list.headers, vec![KeyValue::new("X-Trace", "")]);
         assert_eq!(list.auth, Auth::Inherit);

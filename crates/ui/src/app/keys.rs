@@ -405,6 +405,10 @@ impl App {
                 _ => {}
             }
         }
+        if field == Field::DocsPreview {
+            self.docs_preview_key(key);
+            return;
+        }
         if field.is_table() {
             let Some(out) = self.with_table(|t, cb| t.handle_key(&key, vim, cb)) else {
                 return;
@@ -497,6 +501,39 @@ impl App {
             // A cursor move (Handled, not Changed) leaves the key position:
             // the popup's span would be stale.
             Outcome::Handled => self.complete = None,
+        }
+    }
+
+    /// The rendered description scrolls; Enter opens the text to edit.
+    fn docs_preview_key(&mut self, key: KeyEvent) {
+        let vim = self.vim;
+        let page = self
+            .tab()
+            .and_then(|t| self.areas.field_rects.get(t.field))
+            .map_or(10, |r| usize::from(r.height.max(2) - 1));
+        let Some(t) = self.tab_mut() else { return };
+        let top = t.ed.docs_scroll;
+        let scroll = &mut t.ed.docs_scroll;
+        match key.code {
+            KeyCode::Up if top == 0 => self.prev_field(),
+            KeyCode::Char('k') if vim && top == 0 => self.prev_field(),
+            KeyCode::Up => *scroll -= 1,
+            KeyCode::Char('k') if vim => *scroll -= 1,
+            // The draw clamps the scroll to the last page.
+            KeyCode::Down => *scroll += 1,
+            KeyCode::Char('j') if vim => *scroll += 1,
+            KeyCode::PageUp => *scroll = top.saturating_sub(page),
+            KeyCode::PageDown => *scroll = top.saturating_add(page),
+            KeyCode::Home => *scroll = 0,
+            KeyCode::Char('g') if vim => *scroll = 0,
+            KeyCode::End => *scroll = usize::MAX,
+            KeyCode::Char('G') if vim => *scroll = usize::MAX,
+            KeyCode::Enter => {
+                t.ed.docs_preview = false;
+                t.ed.docs_scroll = 0;
+            }
+            KeyCode::Esc => self.focus = Focus::ReqTabs,
+            _ => {}
         }
     }
 

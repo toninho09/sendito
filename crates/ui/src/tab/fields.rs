@@ -1,19 +1,23 @@
 //! The request fields a tab edits and the request kinds.
 
-pub const HTTP_TABS: &[&str] = &["Params", "Headers", "Body", "Auth", "Scripts", "Options"];
+pub const HTTP_TABS: &[&str] = &[
+    "Params", "Headers", "Body", "Auth", "Scripts", "Options", "Docs",
+];
 
-pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options"];
+pub const GRPC_TABS: &[&str] = &["Message", "Metadata", "Auth", "Scripts", "Options", "Docs"];
 
-pub const SSE_TABS: &[&str] = &["Params", "Headers", "Auth", "Scripts", "Options"];
+pub const SSE_TABS: &[&str] = &["Params", "Headers", "Auth", "Scripts", "Options", "Docs"];
 
-pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options"];
+pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options", "Docs"];
 
-pub const MQTT_TABS: &[&str] = &["Topics", "Publish", "Will", "Auth", "Scripts", "Options"];
+pub const MQTT_TABS: &[&str] = &[
+    "Topics", "Publish", "Will", "Auth", "Scripts", "Options", "Docs",
+];
 
-pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options"];
+pub const MCP_TABS: &[&str] = &["Tool", "Args", "Scripts", "Options", "Docs"];
 
 /// The tabs of a folder's settings (`folder.toml`).
-pub const FOLDER_TABS: &[&str] = &["Headers", "Auth", "Vars", "Scripts"];
+pub const FOLDER_TABS: &[&str] = &["Headers", "Auth", "Vars", "Scripts", "Docs"];
 
 pub const RESP_TABS: &[&str] = &["Body", "Headers", "Timing", "Results"];
 
@@ -119,6 +123,12 @@ pub enum Field {
     MqttProtocol,
     MqttCleanSession,
     MqttKeepAlive,
+    /// The Docs tab view: edit the Markdown or preview it.
+    DocsView,
+    /// The Markdown description, as text.
+    Description,
+    /// The Markdown description, rendered (read only).
+    DocsPreview,
 }
 
 impl Field {
@@ -193,6 +203,9 @@ impl Field {
             Field::MqttProtocol => "Protocol version",
             Field::MqttCleanSession => "Clean session",
             Field::MqttKeepAlive => "Keep alive (seconds)",
+            Field::DocsView => "View",
+            Field::Description => "Description (Markdown)",
+            Field::DocsPreview => "Description",
         }
     }
 
@@ -213,6 +226,11 @@ impl Field {
         )
     }
 
+    /// Tables, multi-line editors and the preview share the free height.
+    pub fn is_flex(self) -> bool {
+        self.is_table() || self.is_multiline() || self == Field::DocsPreview
+    }
+
     pub fn is_multiline(self) -> bool {
         matches!(
             self,
@@ -221,6 +239,7 @@ impl Field {
                 | Field::WsMessages
                 | Field::JwtClaims
                 | Field::MqttWillPayload
+                | Field::Description
         )
     }
 
@@ -262,6 +281,7 @@ impl Field {
                 | Field::MqttPass
                 | Field::MqttClientId
                 | Field::MqttKeepAlive
+                | Field::Description
         )
     }
 
@@ -279,6 +299,7 @@ impl Field {
                 | Field::JwtAlgorithm
                 | Field::MqttWillQos
                 | Field::MqttProtocol
+                | Field::DocsView
         )
     }
 

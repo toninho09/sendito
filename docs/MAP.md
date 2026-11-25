@@ -32,7 +32,7 @@ the file, so you can jump straight to it.
 | `sendito-import` | `crates/import/` | Postman, Insomnia, Bruno, curl, `.http` | `crates/import/src/lib.rs` |
 | `sendito-pipeline` | `crates/pipeline/` | The send pipeline the TUI and `sendito run` share (`runner/`: one module per protocol plus project, scope, OAuth and history), the response document model, and the protocol types the TUI reads (`http`, `grpc`, `ws`, `mcp` re-exports) | `crates/pipeline/src/runner/http.rs::exec_http` |
 | `sendito-ui` | `crates/ui/` | ratatui app, drawing, overlays, key map, theme registry. Depends on protocols only through `sendito-pipeline` | `crates/ui/src/lib.rs::run` |
-| `sendito-widgets` | `crates/widgets/` | Widgets with no app state: text editor, editable table, list movement, icons, color themes | `crates/widgets/src/lib.rs` |
+| `sendito-widgets` | `crates/widgets/` | Widgets with no app state: text editor, editable table, list movement, Markdown preview, icons, color themes | `crates/widgets/src/lib.rs` |
 | `sendito-testkit` | `crates/testkit/` | Echo servers, fake OAuth server, proxy, test PKI | `crates/testkit/src/lib.rs` |
 
 ## Request model and file format
@@ -261,6 +261,7 @@ the module for the surface you are changing.
 | Completion popup logic (schema keys, methods, servers, tools) | `crates/ui/src/complete.rs` |
 | Actions, bindings, contexts; the single source for help and KEYMAP.md | `crates/ui/src/keymap.rs` |
 | Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs` |
+| Markdown preview of a description (Docs tab) | `crates/widgets/src/markdown.rs` |
 | Theme registry: user theme files, `extends`, notes | `crates/ui/src/theme.rs::Registry` |
 | Icon sets (`unicode`, `nerd`) | `crates/widgets/src/icons.rs` |
 | Sidebar tree state: flatten, expand, filter, select | `crates/ui/src/tree.rs` |

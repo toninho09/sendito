@@ -41,6 +41,16 @@ my-api/
   `.examples`: such a directory holds the saved examples of the request with
   the same name (see [Saved examples](#saved-examples)); the tree does not show it.
 
+## Description
+
+Every request kind and every `folder.toml` can hold a `description`: Markdown
+text for people (CommonMark, with tables, task lists and strikethrough). The
+Docs tab edits it and shows it rendered; the root `folder.toml` holds the
+description of the collection. It is never sent on the wire, a request does
+not inherit the description of its folders, and the curl and `.http` exports
+leave it out. Sendito writes it after the request's top-level keys
+(`kind`, `method`, `url`, …) and before its first table.
+
 ## Canonical form
 
 Sendito writes files in one canonical layout: keys in the order shown below,
@@ -85,6 +95,9 @@ literally. `sendito run` refuses unless `--allow-unresolved` is given.
 kind = "http"
 method = "POST"                 # any token; default GET
 url = "{{base_url}}/users"      # no scheme → http://
+description = '''
+Creates a user. **Markdown**, shown in the Docs tab.
+'''                             # optional; never sent
 
 [options]                       # whole table optional
 timeout_ms = 5000               # default: [http] timeout_ms from config (30000)
@@ -624,6 +637,8 @@ variables and scripts apply to every request below that folder, in its
 subfolders too. The file is optional; the tree does not show it as a request.
 
 ```toml
+description = "Every call of the user API."   # optional; see Description
+
 [[headers]]                     # added to the requests below (gRPC: metadata)
 name = "X-Tenant"
 value = "{{tenant}}"

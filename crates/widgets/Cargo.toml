@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Sendito terminal widgets: text editor, table form, list movement, icons and color themes"
+description = "Sendito terminal widgets: text editor, table form, list movement, Markdown preview, icons and color themes"
 
 [dependencies]
 sendito-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 unicode-width.workspace = true
+pulldown-cmark.workspace = true
 
 [lints]
 workspace = true

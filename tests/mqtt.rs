@@ -71,6 +71,7 @@ mod tests {
                 password: "{{pass}}".into(),
             },
             scripts: Scripts::default(),
+            description: "Room sensors.\n\n- [x] temperature\n".into(),
         }
     }
 

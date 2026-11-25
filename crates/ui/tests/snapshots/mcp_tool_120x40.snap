@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ MCP ● ─────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││ ▍example                          http://127.0.0.1:9/mcp  search        ▾  ▶ Send  ^⏎  │
 │▸ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│  GRPC  echo unary          │╭─ Tool  Args 1  Scripts  Options ───────────────────────────────────────────────────────╮
+│  GRPC  echo unary          │╭─ Tool  Args 1  Scripts  Options  Docs ─────────────────────────────────────────────────╮
 │  GET   health              ││ Server         example                                                                 │
 │                            ││ Tool           search                                                                  │
 │                            ││                                                                                        │

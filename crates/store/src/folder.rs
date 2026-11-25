@@ -1,6 +1,7 @@
 //! Folder settings: `folder.toml` in a collection folder (or the root). The
 //! headers, auth, variables and scripts it holds apply to every request below
-//! it; `sendito_core::inherit` merges them. Schema in FORMAT.md.
+//! it; `sendito_core::inherit` merges them. Its description documents the
+//! folder only. Schema in FORMAT.md.
 
 use serde::Deserialize;
 
@@ -17,6 +18,7 @@ pub const FILE: &str = "folder.toml";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFolder {
+    description: Option<String>,
     #[serde(default)]
     headers: Vec<RawKv>,
     auth: Option<RawAuth>,
@@ -40,12 +42,16 @@ pub fn parse(text: &str) -> Result<FolderSettings, String> {
         auth: auth(r.auth)?,
         vars: kvs(r.vars),
         scripts: scripts(r.scripts)?,
+        description: r.description.unwrap_or_default(),
     })
 }
 
 /// Serializes folder settings in canonical form.
 pub fn to_toml(f: &FolderSettings) -> String {
     let mut w = Writer::new();
+    if !f.description.is_empty() {
+        w.str("description", &f.description);
+    }
     write_kvs(&mut w, "headers", &f.headers);
     write_auth(&mut w, &f.auth);
     write_kvs(&mut w, "vars", &f.vars);
@@ -69,6 +75,7 @@ mod tests {
                 token: "{{token}}".into(),
             },
             vars: vec![KeyValue::new("base", "https://api.example.com")],
+            description: "# Users\n\nAll *user* endpoints.\n".into(),
             ..Default::default()
         };
         f.scripts.pre.push(SetVar {

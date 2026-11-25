@@ -269,6 +269,7 @@ fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpReq
         "auth:basic",
         "auth:bearer",
         "auth:apikey",
+        "docs",
     ]
     .into_iter()
     .collect();
@@ -282,6 +283,7 @@ fn request(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> Option<HttpReq
         params,
         body,
         auth: auth(b, &field(details, "auth"), item, skipped),
+        description: b.get("docs").into(),
         ..Default::default()
     })
 }
@@ -296,12 +298,13 @@ fn read_blocks(path: &Path) -> Result<Blocks, String> {
 }
 
 /// The folder settings a `folder.bru` or `collection.bru` gives: its auth,
-/// its headers and its pre-request variables.
+/// its headers, its pre-request variables and its docs.
 fn settings(b: &Blocks, item: &str, skipped: &mut Vec<Skipped>) -> FolderSettings {
     FolderSettings {
         auth: auth(b, &field(b.get("auth"), "mode"), item, skipped),
         headers: rows(b.get("headers")),
         vars: rows(b.get("vars:pre-request")),
+        description: b.get("docs").into(),
         ..Default::default()
     }
 }
@@ -315,6 +318,7 @@ const SETTINGS_BLOCKS: &[&str] = &[
     "auth:apikey",
     "headers",
     "vars:pre-request",
+    "docs",
 ];
 
 fn directory(
@@ -619,21 +623,27 @@ body:graphql {
         std::fs::write(d.path().join("bruno.json"), "{\"name\":\"Example\"}").unwrap();
         std::fs::write(
             d.path().join("collection.bru"),
-            "auth {\n  mode: bearer\n}\nauth:bearer {\n  token: {{token}}\n}\nheaders {\n  X-App: demo\n}\n",
+            "auth {\n  mode: bearer\n}\nauth:bearer {\n  token: {{token}}\n}\nheaders {\n  X-App: demo\n}\ndocs {\n  # Example\n}\n",
         )
         .unwrap();
         std::fs::create_dir(d.path().join("Users")).unwrap();
         std::fs::write(
             d.path().join("Users/folder.bru"),
-            "auth {\n  mode: none\n}\nvars:pre-request {\n  page: 1\n}\n",
+            "auth {\n  mode: none\n}\nvars:pre-request {\n  page: 1\n}\ndocs {\n  User calls\n}\n",
         )
         .unwrap();
         std::fs::write(
             d.path().join("Users/get.bru"),
-            "meta {\n  name: list\n}\nget {\n  url: {{base}}/users\n}\n",
+            "meta {\n  name: list\n}\nget {\n  url: {{base}}/users\n}\ndocs {\n  Lists *users*.\n\n  - paged\n}\n",
         )
         .unwrap();
         let r = import(d.path()).unwrap();
+        assert_eq!(r.root.settings.description, "# Example");
+        assert_eq!(r.root.folders[0].settings.description, "User calls");
+        assert_eq!(
+            r.root.folders[0].requests[0].1.description(),
+            "Lists *users*.\n\n- paged"
+        );
         assert_eq!(
             r.root.settings.auth,
             Auth::Bearer {

@@ -51,6 +51,29 @@ lists everything a change type touches, and its "Test and tooling map" the tests
 `docs/PLAN.md` is history and `docs/reports/` is evidence: read them only when
 the task is about them.
 
+### Reading cost
+
+Every file read enters the context. Prefer a narrow read:
+
+* Prefer grep to find the heading, then read the range with `offset` and
+  `limit`. Read the section that answers the question, not the whole document.
+* Read only the matching part of the long documents: the section of
+  `docs/FEATURES.md`, `FORMAT.md` or `docs/MAP.md` for the change, the top
+  "next release" section of `CHANGELOG.md`, and the part of `README.md` you
+  edit.
+* Prefer `git diff --stat` and `git diff -U0` to reading the generated files in
+  `crates/ui/tests/snapshots/` and `tests/corpus/expected/`. Read one file only
+  when the diff does not explain the change.
+* Prefer the test name: grep it in `crates/ui/tests/flows.rs`,
+  `tests/integration.rs` and `tests/corpus.rs`, then read around the match.
+  These files are long.
+* Prefer the `make` targets: they keep the output in `target/<mode>.log`. On
+  failure, grep that log for the error and read around the match.
+* Avoid searching inside `target/`. The directory holds build artifacts.
+* Prefer the text sources, such as `docs/media/README.md` and
+  `docs/media/render.py`. Read a screenshot or a GIF only when the task is
+  about the image.
+
 ### Find code with CodeGraph
 
 Use CodeGraph whenever you can. It is a local index of every symbol, call
@@ -73,8 +96,9 @@ no index, skip CodeGraph: only the owner decides to create one.
 ## Commands
 
 `make help` lists every target. The cargo targets print one summary line and
-keep the full output in `target/<target>.log`; on failure they print the whole
-log. `J` and `TT` override the cargo jobs and the test threads.
+keep the full output in `target/<target>.log`. On failure they print the head
+and the tail of the log; `QUIET_FULL=1` prints all of it. `J` and `TT` override
+the cargo jobs and the test threads.
 
 ```sh
 make build                    # cargo build -j 4
@@ -120,8 +144,25 @@ Never edit these by hand; regenerate them and read the diff:
 |---|---|---|
 | `KEYMAP.md` | A key, a hint or a `:command` changed | `make keymap` (a unit test fails while it is stale) |
 | `tests/corpus/expected/` | Anything changed the bytes on the wire | `make corpus-update`; `make corpus` only runs the test |
-| `crates/ui/tests/snapshots/` | A UI change moved a snapshot (120×40 and 200×60) | `make snap`, then read what `git status` lists |
+| `crates/ui/tests/snapshots/` | A UI change moved a snapshot (120×40 and 200×60) | `make test P=sendito-ui` first, then `make snap` (see below) |
 | `docs/media/` | A visible UI change | `make media`, then `make render` |
+
+### Snapshots
+
+One file in `crates/ui/tests/snapshots/` holds one full screen. Compare the
+screens with commands, not by reading the files:
+
+1. Run `make test P=sendito-ui F=<test>` for the test of the screen. On a
+   mismatch, the test fails and prints only the lines that changed.
+2. Run `git status --short crates/ui/tests/snapshots` to list the changed files.
+3. Run `git diff --stat -- crates/ui/tests/snapshots` to see the size of each
+   change.
+4. Run `git diff -U0 -- crates/ui/tests/snapshots` to see only the changed lines.
+
+Read one whole file only when the diff does not explain a layout change, and only
+the file that changed. Do not read the directory with a glob. Do not edit the
+files by hand. `make snap` accepts the new screens; the owner reviews and commits
+them. Do not run `git add` on them.
 
 The wire corpus (`tests/corpus.rs`) sends every case in
 `tests/corpus/collection/` (HTTP, gRPC, WebSocket, SSE, MQTT, MCP) to the test servers and

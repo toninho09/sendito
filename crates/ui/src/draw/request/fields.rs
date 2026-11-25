@@ -42,6 +42,7 @@ pub(in crate::draw) fn short_label(f: Field) -> &'static str {
         Field::JwtPrivateKey => "Private key",
         Field::JwtClaims => "Claims (JSON)",
         Field::JwtExpires => "Expires in s",
+        Field::DocsView => "View",
         Field::ScriptPre | Field::ScriptExtract | Field::ScriptAssert => "",
         _ => "",
     }
@@ -229,7 +230,7 @@ pub(in crate::draw) fn draw_fields(
     let flex: Vec<usize> = fields
         .iter()
         .enumerate()
-        .filter(|(_, f)| f.is_table() || f.is_multiline())
+        .filter(|(_, f)| f.is_flex())
         .map(|(i, _)| i)
         .collect();
     let fixed = (fields.len() - flex.len()) as u16;
@@ -245,7 +246,7 @@ pub(in crate::draw) fn draw_fields(
     let selected = tab.field;
     let mut rects = Vec::new();
     for (i, f) in fields.iter().enumerate() {
-        let h = if f.is_table() || f.is_multiline() {
+        let h = if f.is_flex() {
             if i == *flex.last().unwrap_or(&0) {
                 (area.y + area.height).saturating_sub(y)
             } else {
@@ -318,6 +319,9 @@ pub(in crate::draw) fn draw_fields(
                     cursor = Some(c);
                 }
             }
+        } else if *f == Field::DocsPreview {
+            draw_docs_preview(buf, rect, theme, &mut tab.ed, is_sel);
+            app.hits.push((rect, Hit::ReqField(i)));
         } else if f.is_multiline() {
             let ed = tab.ed.text_mut(*f);
             if let Some(ed) = ed {
@@ -533,6 +537,57 @@ pub(super) fn body_content_type(tab: &Tab) -> Option<(String, &'static str)> {
     Some((auto.to_string(), "auto"))
 }
 
+/// The rendered description, from the line `docs_scroll` on, with a
+/// scrollbar on the right when it is longer than the area.
+fn draw_docs_preview(
+    buf: &mut Buffer,
+    rect: Rect,
+    theme: &Theme,
+    ed: &mut crate::tab::Editors,
+    focused: bool,
+) {
+    if rect.width < 2 || rect.height == 0 {
+        return;
+    }
+    let text = ed.description.text();
+    if text.trim().is_empty() {
+        put(
+            buf,
+            rect.x,
+            rect.y,
+            &truncate(
+                "No description. Set View to Edit to write one.",
+                rect.width as usize,
+            ),
+            rect.width,
+            theme.dim(),
+        );
+        return;
+    }
+    let lines = sendito_widgets::markdown::render(&text, rect.width - 1, theme);
+    let view = rect.height as usize;
+    ed.docs_scroll = ed.docs_scroll.min(lines.len().saturating_sub(view));
+    for (n, line) in lines.iter().skip(ed.docs_scroll).take(view).enumerate() {
+        buf.set_line(rect.x, rect.y + n as u16, line, rect.width - 1);
+    }
+    // The scrollbar helper draws inside the rows of a bordered area.
+    let outer = Rect::new(
+        rect.x,
+        rect.y.saturating_sub(1),
+        rect.width,
+        rect.height + 2,
+    );
+    scrollbar(
+        buf,
+        outer,
+        ed.docs_scroll,
+        lines.len(),
+        view,
+        focused,
+        theme,
+    );
+}
+
 pub(in crate::draw) fn choice_hint(f: Field) -> &'static str {
     match f {
         Field::BodyKind => "Enter or Space to change",
@@ -540,6 +595,7 @@ pub(in crate::draw) fn choice_hint(f: Field) -> &'static str {
         Field::AuthIn => "header or query parameter",
         Field::SchemaSource => "reflection asks the server; proto files are compiled locally",
         Field::ScriptSection => "Enter to switch",
+        Field::DocsView => "Markdown text or the rendered page",
         Field::JwtAlgorithm => "HS* sign with a secret; RS256 and ES256 with a PEM key",
         _ => "",
     }

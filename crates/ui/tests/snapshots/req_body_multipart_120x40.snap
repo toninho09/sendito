@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                          ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts  Options ───────────────────────────────────────╮
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts  Options  Docs ─────────────────────────────────╮
 │├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File   GraphQL                   │
 │└ GET   list users          ││     Name          Kind    Value / path  Filename             Content-Type              │
 │  GRPC  echo unary          ││ [✓] avatar       │‹file› │files/me.png │me.png (auto)       │image/png              │× │

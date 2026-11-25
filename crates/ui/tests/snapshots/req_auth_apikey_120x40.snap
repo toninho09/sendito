@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  DELETE ▾  ▍{{base_url}}/users/42                                          ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params  Headers  Body•  Auth•  Scripts  Options ──────────────────────────────────────╮
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth•  Scripts  Options  Docs ────────────────────────────────╮
 │├ DEL   delete user         ││ Auth type      API key ▾  Enter or Space to change · values may use {{variables}}      │
 │└ GET   list users          ││ Key name       X-API-Key                                                               │
 │  GRPC  echo unary          ││ Key value                                                                              │

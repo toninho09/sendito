@@ -80,17 +80,24 @@ pub struct Editors {
     pub mqtt_protocol: MqttProtocol,
     pub clean_session: bool,
     pub keep_alive: TextEditor,
+    /// The Markdown description (Docs tab).
+    pub description: TextEditor,
+    /// The Docs tab shows the rendered description, not the text.
+    pub docs_preview: bool,
+    /// The first line of the rendered description on screen.
+    pub docs_scroll: usize,
 }
 
 /// A folder tab keeps its settings in an HTTP request, so the tab's model,
 /// saved state and editors work as for a request: the headers, auth and
-/// scripts as they are, the variables in `params`.
+/// scripts and description as they are, the variables in `params`.
 pub fn folder_request(f: &FolderSettings) -> Request {
     Request::Http(HttpRequest {
         params: f.vars.clone(),
         headers: f.headers.clone(),
         auth: f.auth.clone(),
         scripts: f.scripts.clone(),
+        description: f.description.clone(),
         ..Default::default()
     })
 }
@@ -103,10 +110,14 @@ pub fn request_folder(req: &Request) -> FolderSettings {
             auth: h.auth.clone(),
             vars: h.params.clone(),
             scripts: h.scripts.clone(),
+            description: h.description.clone(),
         },
         _ => FolderSettings::default(),
     }
 }
+
+/// The views of the Docs tab, in `docs_preview` order.
+const DOCS_VIEWS: [&str; 2] = ["Edit", "Preview"];
 
 pub(super) fn ms_text(v: Option<u64>) -> String {
     v.map(|v| v.to_string()).unwrap_or_default()
@@ -420,6 +431,10 @@ impl Editors {
             mqtt_protocol: MqttProtocol::default(),
             clean_session: true,
             keep_alive: TextEditor::single(&MQTT_KEEP_ALIVE_S.to_string()),
+            description: TextEditor::multi("")
+                .with_placeholder("Markdown: # Title, **bold**, - list, `code`, [link](url)"),
+            docs_preview: false,
+            docs_scroll: 0,
         };
         let scripts = req.scripts();
         for s in &scripts.pre {
@@ -598,6 +613,9 @@ impl Editors {
                 e.timeout.set_text(&ms_text(m.timeout_ms));
             }
         }
+        e.description.set_text(req.description());
+        // A written description opens rendered, as a page to read.
+        e.docs_preview = !req.description().is_empty();
         e
     }
 
@@ -816,6 +834,7 @@ impl Editors {
                         cookies: self.cookies,
                     },
                     scripts: self.scripts(),
+                    description: self.description.text(),
                 })
             }
             Kind::Sse => Request::Sse(SseRequest {
@@ -824,6 +843,7 @@ impl Editors {
                 headers: kv_rows(&self.headers),
                 auth: self.auth(),
                 scripts: self.scripts(),
+                description: self.description.text(),
                 options: SseOptions {
                     timeout_ms: parse_ms(&self.timeout.text()),
                     deadline_ms: parse_ms(&self.deadline.text()),
@@ -852,6 +872,7 @@ impl Editors {
                     SchemaSource::Reflection
                 },
                 scripts: self.scripts(),
+                description: self.description.text(),
             }),
             Kind::Ws => Request::Ws(WebSocketRequest {
                 url: self.url.text(),
@@ -867,6 +888,7 @@ impl Editors {
                     cookies: self.cookies,
                 },
                 scripts: self.scripts(),
+                description: self.description.text(),
             }),
             Kind::Mqtt => {
                 let will_topic = self.will_topic.text();
@@ -913,6 +935,7 @@ impl Editors {
                     ),
                     auth: self.auth(),
                     scripts: self.scripts(),
+                    description: self.description.text(),
                 })
             }
             Kind::Mcp => Request::Mcp(McpRequest {
@@ -921,12 +944,14 @@ impl Editors {
                 arguments: self.message.text(),
                 timeout_ms: parse_ms(&self.timeout.text()),
                 scripts: self.scripts(),
+                description: self.description.text(),
             }),
             Kind::Folder => folder_request(&FolderSettings {
                 headers: kv_rows(&self.headers),
                 auth: self.auth(),
                 vars: kv_rows(&self.vars),
                 scripts: self.scripts(),
+                description: self.description.text(),
             }),
         }
     }
@@ -961,6 +986,17 @@ impl Editors {
                 }
             }
         };
+        // Docs is the last tab of every kind.
+        if tab + 1 == self.tab_names().len() {
+            return vec![
+                Field::DocsView,
+                if self.docs_preview {
+                    Field::DocsPreview
+                } else {
+                    Field::Description
+                },
+            ];
+        }
         let mut v = Vec::new();
         match self.kind {
             Kind::Http => match tab {
@@ -1142,6 +1178,7 @@ impl Editors {
             Field::MqttPass => &mut self.mqtt_pass,
             Field::MqttClientId => &mut self.mqtt_client_id,
             Field::MqttKeepAlive => &mut self.keep_alive,
+            Field::Description => &mut self.description,
             _ => return None,
         })
     }
@@ -1202,6 +1239,7 @@ impl Editors {
             Field::MqttWillRetain => onoff(self.will_retain),
             Field::MqttWillBase64 => onoff(self.will_base64),
             Field::MqttCleanSession => onoff(self.clean_session),
+            Field::DocsView => DOCS_VIEWS[usize::from(self.docs_preview)].into(),
             _ => String::new(),
         }
     }
@@ -1228,6 +1266,7 @@ impl Editors {
             Field::AuthIn => vec!["Header".into(), "Query parameter".into()],
             Field::SchemaSource => vec!["Server reflection".into(), "Proto files".into()],
             Field::ScriptSection => self.script_options(),
+            Field::DocsView => DOCS_VIEWS.iter().map(|v| v.to_string()).collect(),
             Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
             Field::MqttWillQos => QOS.iter().map(|q| q.to_string()).collect(),
             Field::MqttProtocol => MqttProtocol::ALL
@@ -1296,6 +1335,7 @@ impl Editors {
             Field::MqttWillRetain => self.will_retain = !self.will_retain,
             Field::MqttWillBase64 => self.will_base64 = !self.will_base64,
             Field::MqttCleanSession => self.clean_session = !self.clean_session,
+            Field::DocsView => self.docs_preview = !self.docs_preview,
             _ => return false,
         }
         true
@@ -1328,6 +1368,7 @@ impl Editors {
             Field::SchemaSource => self.schema_files = index == 1,
             Field::GraphqlSection => self.graphql_section = index.min(2),
             Field::ScriptSection => self.script_section = index.min(2),
+            Field::DocsView => self.docs_preview = index == 1,
             Field::Cookies => {
                 self.cookies = match index {
                     1 => Some(true),
@@ -1497,6 +1538,7 @@ impl Editors {
             &mut self.mqtt_pass,
             &mut self.mqtt_client_id,
             &mut self.keep_alive,
+            &mut self.description,
         ] {
             e.vim = mode;
         }

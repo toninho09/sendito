@@ -188,7 +188,8 @@ files are in [`docs/media/recordings/`](docs/media/recordings).
 ## HTTP
 
 A request is one TOML file. The request tabs are **Params · Headers · Body ·
-Auth · Scripts · Options**, and the wire rules are spelled out in
+Auth · Scripts · Options · Docs** (Docs holds a Markdown description with a
+rendered preview), and the wire rules are spelled out in
 [FORMAT.md](FORMAT.md#what-goes-on-the-wire).
 
 * **Bodies**: none, raw, JSON, form-urlencoded, multipart (text and file parts) or
@@ -562,9 +563,9 @@ edits a server's env, headers and OAuth fields. See
   **History** (grouped by day, status in color). Requests that are open in a tab
   are in the accent color. `/` filters and highlights the match; the bottom border
   counts requests and folders. The sidebar can be on the right and resized.
-* **Request**: the tabs **Params · Headers · Body · Auth · Scripts · Options**
-  (gRPC: **Message · Metadata · Auth · Scripts · Options**) sit in the pane's top
-  border (MCP: **Tool · Args · Scripts · Options**), with the folder path of the request (`Users › create user`) on the right.
+* **Request**: the tabs **Params · Headers · Body · Auth · Scripts · Options ·
+  Docs** (gRPC: **Message · Metadata · Auth · Scripts · Options · Docs**) sit in
+  the pane's top border (MCP: **Tool · Args · Scripts · Options · Docs**), with the folder path of the request (`Users › create user`) on the right.
   A tab label shows its number of rows, `Headers 2`, or `•` when Body or Auth is
   set. Editors have line numbers; a JSON body shows `✓ JSON` or
   `✗ JSON: line, col` and the cursor position (`Ln, Col`) in the bottom border.

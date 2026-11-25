@@ -514,6 +514,7 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
             auth,
             options,
             scripts: Scripts::default(),
+            description: String::new(),
         },
         notes,
     })

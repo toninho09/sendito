@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ HTTP ● ────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  POST   ▾   https://example.test/graphql                                   ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options ─────────────────────────────────────╮
+│├ POST  create user         │╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs ───────────────────────────────╮
 │├ DEL   delete user         ││ Body type      None   JSON   Raw   Form   Multipart   File   GraphQL            → json │
 │└ GET   list users          ││ Section        Query ▾                                                                 │
 │  GRPC  echo unary          ││   1 query Lookup {                                                                     │

@@ -51,6 +51,18 @@ impl Request {
         }
     }
 
+    /// The Markdown description of the request.
+    pub fn description(&self) -> &str {
+        match self {
+            Request::Http(h) => &h.description,
+            Request::Grpc(g) => &g.description,
+            Request::Ws(w) => &w.description,
+            Request::Sse(s) => &s.description,
+            Request::Mqtt(m) => &m.description,
+            Request::Mcp(m) => &m.description,
+        }
+    }
+
     pub fn auth(&self) -> &Auth {
         match self {
             Request::Http(h) => &h.auth,
@@ -145,6 +157,8 @@ pub struct HttpRequest {
     pub auth: Auth,
     pub options: HttpOptions,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl Default for HttpRequest {
@@ -158,6 +172,7 @@ impl Default for HttpRequest {
             auth: Auth::Inherit,
             options: HttpOptions::default(),
             scripts: Scripts::default(),
+            description: String::new(),
         }
     }
 }
@@ -673,7 +688,8 @@ impl Default for HttpOptions {
 }
 
 /// What a folder gives the requests below it (`folder.toml`): headers, auth,
-/// variables and scripts. Closer folders win; see `crate::inherit`.
+/// variables and scripts. Closer folders win; see `crate::inherit`. The
+/// description documents the folder only; requests do not inherit it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FolderSettings {
     pub headers: Vec<KeyValue>,
@@ -681,6 +697,8 @@ pub struct FolderSettings {
     /// Plain values; a value may reference other variables (`{{secret}}`).
     pub vars: Vec<KeyValue>,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl FolderSettings {
@@ -689,6 +707,7 @@ impl FolderSettings {
             && self.auth == Auth::Inherit
             && self.vars.is_empty()
             && self.scripts.is_empty()
+            && self.description.is_empty()
     }
 }
 
@@ -845,6 +864,8 @@ pub struct GrpcRequest {
     pub deadline_ms: Option<u64>,
     pub schema: SchemaSource,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl Default for GrpcRequest {
@@ -861,6 +882,7 @@ impl Default for GrpcRequest {
             deadline_ms: None,
             schema: SchemaSource::Reflection,
             scripts: Scripts::default(),
+            description: String::new(),
         }
     }
 }
@@ -883,6 +905,8 @@ pub struct WebSocketRequest {
     pub auth: Auth,
     pub options: WsOptions,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl Default for WebSocketRequest {
@@ -895,6 +919,7 @@ impl Default for WebSocketRequest {
             auth: Auth::Inherit,
             options: WsOptions::default(),
             scripts: Scripts::default(),
+            description: String::new(),
         }
     }
 }
@@ -934,6 +959,8 @@ pub struct SseRequest {
     pub auth: Auth,
     pub options: SseOptions,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -981,6 +1008,7 @@ impl SseRequest {
                 cookies: self.options.cookies,
             },
             scripts: self.scripts.clone(),
+            description: String::new(),
         }
     }
 }
@@ -1039,6 +1067,8 @@ pub struct MqttRequest {
     /// `Inherit`, `None` or `Basic`; other kinds fail before the connection.
     pub auth: Auth,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl Default for MqttRequest {
@@ -1057,6 +1087,7 @@ impl Default for MqttRequest {
             last_will: None,
             auth: Auth::default(),
             scripts: Scripts::default(),
+            description: String::new(),
         }
     }
 }
@@ -1138,6 +1169,8 @@ pub struct McpRequest {
     pub arguments: String,
     pub timeout_ms: Option<u64>,
     pub scripts: Scripts,
+    /// Markdown notes for people; never sent on the wire.
+    pub description: String,
 }
 
 impl Default for McpRequest {
@@ -1148,6 +1181,7 @@ impl Default for McpRequest {
             arguments: "{}".into(),
             timeout_ms: None,
             scripts: Scripts::default(),
+            description: String::new(),
         }
     }
 }

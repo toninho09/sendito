@@ -50,7 +50,6 @@ fn postman_import_has_no_unexplained_losses() {
         ("(collection)", "variable \"old\" was disabled"),
         ("Users / Get user", ":id in the URL"),
         ("Users / Admin / Ban user", "JavaScript scripts"),
-        ("Orders / Cancel order", "description"),
         ("Auth / OAuth token", "\"oauth2\" auth is not supported"),
         ("Random name", "$randomFirstName"),
         ("Dynamic id", "{{$guid}} became {{$uuid}}"),
@@ -74,7 +73,18 @@ fn postman_import_has_no_unexplained_losses() {
             "missing explanation for {item} ({needle}) in:\n{report}"
         );
     }
-    assert_eq!(r.skipped.len(), 19, "unexpected report entries:\n{report}");
+    assert_eq!(r.skipped.len(), 18, "unexpected report entries:\n{report}");
+    // The request description is imported, not reported.
+    let cancel = r
+        .root
+        .folders
+        .iter()
+        .find(|f| f.name == "Orders")
+        .and_then(|f| f.requests.iter().find(|(n, _)| n == "Cancel order"));
+    assert_eq!(
+        cancel.map(|(_, req)| req.description()),
+        Some("Cancels the order")
+    );
     // A GraphQL body keeps its query and variables apart.
     let gql = r
         .root

@@ -158,6 +158,21 @@ fn request_tabs_http() {
 }
 
 #[test]
+fn request_docs_preview() {
+    each(|h| {
+        open(h, "create user");
+        let t = h.app.tabs.last_mut().must();
+        t.ed.description.set_text(
+            "# Create user\n\nAdds a **user** to the `users` table.\n\n- name is required\n- email must be unique\n\n> Needs the admin role.\n\n```json\n{\"name\": \"ana\"}\n```\n\nSee [the guide](https://example.com/guide).",
+        );
+        t.ed.docs_preview = true;
+        t.req_tab = 6;
+        t.refresh_model();
+        snap("req_docs_preview", h);
+    });
+}
+
+#[test]
 fn request_body_kinds_and_auth() {
     each(|h| {
         open(h, "delete user");

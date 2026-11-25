@@ -6,7 +6,7 @@ expression: screen
 ╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │▾ Orders/                   ││  GET    ▾   {{base_url}}/orders/{{order_id}}  → undefined: order_id        ▶ Send  ^⏎  │
 │└ GET   get order           │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│▸ Users/                    │╭─ Params  Headers  Body  Auth  Scripts  Options ────────────────────────────────────────╮
+│▸ Users/                    │╭─ Params  Headers  Body  Auth  Scripts  Options  Docs ──────────────────────────────────╮
 │  GRPC  echo unary          ││     Name                            Value                                              │
 │  GET   health              ││  +  add name                       │                                                   │
 │                            ││                                                                                        │

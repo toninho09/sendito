@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Descriptions
+
+* Add a Markdown `description` to every request kind and to `folder.toml`; the
+  root `folder.toml` documents the collection. It is never sent and not
+  inherited.
+* Add a Docs tab, the last tab of every request and folder tab. Its View
+  choice switches between the editor and a rendered preview (headings,
+  emphasis, code, lists, task lists, quotes, links, rules and tables).
+* Import the descriptions of Postman, Insomnia, Bruno (`docs` blocks) and
+  OpenAPI (document, tags and operations) in place of reporting them.
+
 ### SSE sessions
 
 * Split HTTP response opening from body collection. Normal HTTP keeps its total

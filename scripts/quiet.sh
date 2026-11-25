@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs a command, keeps the full output in target/<mode>.log and prints only a
-# short summary on success. On failure, dumps the log and exits with an error.
+# short summary on success. On failure, prints the head and the tail of the log
+# (QUIET_FULL=1 prints all of it) and exits with an error.
 #
 # Usage: scripts/quiet.sh <mode> <command...>
 # Modes: test (cargo test), cov (cargo llvm-cov), plain (prints "mode: ok")
@@ -12,7 +13,22 @@ log="target/${mode}.log"
 mkdir -p target
 
 if ! "$@" >"$log" 2>&1; then
-  cat "$log"
+  if [ -n "${QUIET_FULL:-}" ]; then
+    cat "$log"
+  else
+    max=${QUIET_MAX_LINES:-200}
+    head_n=$((max * 3 / 5))
+    tail_n=$((max - head_n))
+    total=$(wc -l <"$log")
+    if [ "$total" -le "$max" ]; then
+      cat "$log"
+    else
+      head -n "$head_n" "$log"
+      printf '\n... %d lines omitted (QUIET_FULL=1 prints all) ...\n\n' \
+        $((total - max))
+      tail -n "$tail_n" "$log"
+    fi
+  fi
   printf '\nFAILED — full log: %s\n' "$log" >&2
   exit 1
 fi
