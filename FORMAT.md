@@ -84,6 +84,7 @@ send:
 | `{{$timestampMs}}` | Unix time, milliseconds |
 | `{{$isoTimestamp}}` | current UTC time, RFC 3339 |
 | `{{$randomInt}}` | random integer 0–1000 |
+| `{{$processEnv.NAME}}` | value of `NAME` in the environment of the Sendito process; a secret; unresolved when `NAME` is not set or is not UTF-8 |
 
 Unresolved placeholders are highlighted in red in the editor. Sending a request
 with unresolved placeholders asks for confirmation; if you confirm they are sent
@@ -748,7 +749,7 @@ lines, then from the process environment). Sendito does not load the file into
 the process environment. A parse error names the file and the line, never the
 line's text.
 
-Values from `local`, `keychain`, `file` and `dotenv` are secrets, and so is any value built
+Values from `local`, `keychain`, `file`, `dotenv` and `{{$processEnv.NAME}}` are secrets, and so is any value built
 from one (for example a header `Bearer {{token}}` or a pre-request variable that
 references a secret). Secrets are masked (`••••••`) in the UI, kept as
 `{{placeholders}}` in `history.jsonl` and in exported curl commands (unless you

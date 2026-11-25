@@ -159,6 +159,12 @@ impl Scope {
                 out.push(r.text);
             }
         }
+        // Process environment values that a render read are secrets too.
+        for (k, v) in self.dynamic.borrow().iter() {
+            if k.starts_with(&PROCESS_ENV[1..]) && v.len() >= 3 && !out.contains(v) {
+                out.push(v.clone());
+            }
+        }
         out.sort_by_key(|s| std::cmp::Reverse(s.len()));
         out
     }
@@ -172,6 +178,9 @@ impl Scope {
     }
 
     pub fn is_defined(&self, name: &str) -> bool {
+        if let Some(k) = process_env_key(name) {
+            return std::env::var_os(k).is_some();
+        }
         name.starts_with('$') && dynamic_known(name) || self.raw(name).is_some()
     }
 
@@ -191,6 +200,13 @@ impl Scope {
     }
 
     fn lookup_uncached(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        if let Some(k) = process_env_key(name) {
+            return self.process_env(k).map(|text| Rendered {
+                text,
+                secret: true,
+                unresolved: vec![],
+            });
+        }
         if let Some(rest) = name.strip_prefix('$')
             && let Some(v) = self.dynamic_value(rest)
         {
@@ -217,6 +233,18 @@ impl Scope {
         self.dynamic
             .borrow_mut()
             .insert(name.to_string(), v.clone());
+        Some(v)
+    }
+
+    /// Reads `key` from the process environment once per scope. A variable
+    /// that is not set or is not UTF-8 gives `None`.
+    fn process_env(&self, key: &str) -> Option<String> {
+        let slot = format!("{}{key}", &PROCESS_ENV[1..]);
+        if let Some(v) = self.dynamic.borrow().get(&slot) {
+            return Some(v.clone());
+        }
+        let v = std::env::var(key).ok()?;
+        self.dynamic.borrow_mut().insert(slot, v.clone());
         Some(v)
     }
 
@@ -299,6 +327,20 @@ fn push_unique(v: &mut Vec<String>, s: String) {
 
 fn dynamic_known(name: &str) -> bool {
     DYNAMIC_VARS.iter().any(|(n, _)| *n == name)
+}
+
+/// Prefix of `{{$processEnv.NAME}}`, which reads `NAME` from the process
+/// environment. The value is a secret.
+const PROCESS_ENV: &str = "$processEnv.";
+
+/// The variable name of a `$processEnv.NAME` placeholder (not empty).
+fn process_env_key(name: &str) -> Option<&str> {
+    name.strip_prefix(PROCESS_ENV).filter(|k| !k.is_empty())
+}
+
+/// True for a built-in name: a dynamic value or `$processEnv.NAME`.
+pub fn is_builtin(name: &str) -> bool {
+    dynamic_known(name) || process_env_key(name).is_some()
 }
 
 fn generate_dynamic(name: &str) -> Option<String> {
@@ -527,6 +569,35 @@ mod tests {
         assert!(s.render("{{$timestampMs}}").text.len() >= 13);
         let c = s.clone();
         assert_eq!(c.render("{{$uuid}}").text, a);
+    }
+
+    #[test]
+    fn process_env_reads_a_secret() {
+        let path = std::env::var("PATH").unwrap();
+        let s = scope();
+        let r = s.render("{{$processEnv.PATH}}");
+        assert_eq!(r.text, path);
+        assert!(r.secret);
+        assert!(r.unresolved.is_empty());
+        assert_eq!(
+            s.render_masked("{{$processEnv.PATH}}"),
+            "{{$processEnv.PATH}}"
+        );
+        assert!(s.secret_values().contains(&path));
+        assert!(s.is_defined("$processEnv.PATH"));
+        assert!(is_builtin("$processEnv.X"));
+        assert!(!is_builtin("$processEnv."));
+    }
+
+    #[test]
+    fn process_env_unset_is_unresolved() {
+        let s = scope();
+        let name = "$processEnv.SENDITO_UNSET_7f3a";
+        let r = s.render(&format!("{{{{{name}}}}}"));
+        assert_eq!(r.text, format!("{{{{{name}}}}}"));
+        assert_eq!(r.unresolved, vec![name.to_string()]);
+        assert!(!s.is_defined(name));
+        assert!(!s.is_defined("$processEnv."));
     }
 
     #[test]

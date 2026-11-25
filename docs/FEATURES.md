@@ -532,6 +532,9 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 * **Dynamic values** are generated once per send:
   `{{$uuid}}`, `{{$timestamp}}` (seconds), `{{$timestampMs}}`,
   `{{$isoTimestamp}}` (RFC 3339 UTC), `{{$randomInt}}` (0–1000).
+* **Process environment**: `{{$processEnv.NAME}}` reads `NAME` from the
+  environment of the Sendito process. The value is a secret; a variable that is
+  not set stays unresolved.
 * **Unresolved placeholders** are red in the editor and named in the status line.
   Sending asks for confirmation; `sendito run` refuses unless
   `--allow-unresolved` is given. A secret that did not load (no keychain entry,

@@ -385,7 +385,9 @@ messages and metadata, auth fields. Collection variables apply to every
 environment; the active environment overrides them; scripts override both.
 Undefined variables are shown in red and named in the status line, and sending
 asks before going ahead. Dynamic values such as `{{$uuid}}`, `{{$timestamp}}` and
-`{{$randomInt}}` are generated once per send.
+`{{$randomInt}}` are generated once per send. `{{$processEnv.NAME}}` reads
+`NAME` from the environment of the Sendito process (for example a CI token); the
+value is a secret, and an unset variable stays unresolved.
 
 ```toml
 # .sendito/environments/local.toml

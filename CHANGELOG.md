@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Process environment variables
+
+* Add `{{$processEnv.NAME}}`: it reads `NAME` from the environment of the
+  Sendito process, in any field. The value is a secret. A variable that is not
+  set stays unresolved.
+
 ### `.env` variables
 
 * Add the `dotenv` variable source: `{ source = "dotenv", key = "API_TOKEN" }`

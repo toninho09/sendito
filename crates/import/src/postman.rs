@@ -73,11 +73,7 @@ fn map_dynamic(text: &str, item: &str, ctx: &mut Ctx) -> String {
         .replace("{{$guid}}", "{{$uuid}}")
         .replace("{{$randomUUID}}", "{{$uuid}}");
     for name in sendito_core::template::var_names(&out.clone()) {
-        if name.starts_with('$')
-            && !sendito_core::vars::DYNAMIC_VARS
-                .iter()
-                .any(|(n, _)| *n == name)
-        {
+        if name.starts_with('$') && !sendito_core::vars::is_builtin(name) {
             ctx.skip(
                 item,
                 format!("{{{{{name}}}}} has no Sendito equivalent; it is sent as written"),
@@ -800,6 +796,15 @@ mod tests {
         {"name": "Weird"}
       ]
     }"#;
+
+    #[test]
+    fn process_env_is_kept_without_a_report() {
+        let mut ctx = Ctx { skipped: vec![] };
+        let out = map_dynamic("{{$processEnv.TOKEN}} {{$nope}}", "r", &mut ctx);
+        assert_eq!(out, "{{$processEnv.TOKEN}} {{$nope}}");
+        assert_eq!(ctx.skipped.len(), 1);
+        assert!(ctx.skipped[0].reason.contains("$nope"));
+    }
 
     #[test]
     fn imports_sample() {
