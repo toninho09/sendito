@@ -584,10 +584,17 @@ The **Scripts** tab has three declarative sections — no JavaScript
 
 * **Pre-request** (`[[scripts.pre]]`) — `var` / `value` pairs that set runtime
   variables before sending, in order, each seeing the previous.
-* **Extract** (`[[scripts.extract]]`) — `var`, `from = jsonpath | header | status`,
-  `expr`, and an optional `secret = true` flag. JSONPath uses `serde_json_path`;
+* **Extract** (`[[scripts.extract]]`) — `var`, `from`, `expr`, and an optional
+  `secret = true` flag. JSONPath uses `serde_json_path`;
   several matches become a JSON array, a single match becomes the unquoted
   string.
+* **Sources** (`from`, for extract and assert) — `jsonpath`, `header`,
+  `status`, `time` (milliseconds: `total`, and on HTTP also `ttfb`, `dns`,
+  `connect`, `tls`, `download`), `size` (bytes: `total`, `body`, `headers`),
+  `hash` (`md5`, `sha1`, `sha256`, `sha512` hex of the body), `xpath` (XPath
+  3.1 on an XML body), `regex` (capture group 1 on the raw body text) and
+  `cookie` (a `Set-Cookie` value of this response, masked as a secret)
+  ([FORMAT.md](../FORMAT.md#script-sources)).
 * **Assertions** (`[[scripts.assert]]`) — `from`, `expr`, `op`, `value`, with
   operators `eq`, `ne`, `contains`, `not_contains`, `exists`, `not_exists`,
   `lt`, `le`, `gt`, `ge`, `matches` (regular expression). Numeric comparison is

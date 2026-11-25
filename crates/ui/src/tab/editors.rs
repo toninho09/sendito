@@ -736,7 +736,7 @@ impl Editors {
                 .into_iter()
                 .map(|r| Extract {
                     var: r.cells[0].text(),
-                    source: Source::ALL[r.cells[1].choice().min(2)],
+                    source: Source::ALL[r.cells[1].choice().min(Source::ALL.len() - 1)],
                     expr: r.cells[2].text(),
                     secret: r.cells[3].toggle(),
                 })
@@ -746,7 +746,7 @@ impl Editors {
                 .values()
                 .into_iter()
                 .map(|r| Assertion {
-                    source: Source::ALL[r.cells[0].choice().min(2)],
+                    source: Source::ALL[r.cells[0].choice().min(Source::ALL.len() - 1)],
                     expr: r.cells[1].text(),
                     op: AssertOp::ALL[r.cells[2].choice().min(AssertOp::ALL.len() - 1)],
                     value: r.cells[3].text(),

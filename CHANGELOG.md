@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Script sources
+
+* Add six sources for `[[scripts.assert]]` and `[[scripts.extract]]`:
+  `time` (milliseconds; `total`, and on HTTP also `ttfb`, `dns`, `connect`,
+  `tls`, `download`), `size` (bytes; `total`, `body`, `headers`), `hash`
+  (`md5`, `sha1`, `sha256`, `sha512` hex of the body), `xpath` (XPath 3.1 on
+  an XML body), `regex` (capture group 1 on the raw body text) and `cookie`
+  (a `Set-Cookie` value of the response).
+* `Set-Cookie` values of an HTTP response or a WebSocket handshake are now
+  masked in assertion results also when the cookie jar is off.
+* A saved rule with an empty `expr` no longer writes `expr = ""`.
+
 ### Favorites and pinned tabs
 
 * Add favorite requests: `f` in the tree (or `Ctrl+W F` for the current tab)

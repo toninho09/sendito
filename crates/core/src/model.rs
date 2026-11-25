@@ -736,28 +736,64 @@ pub struct SetVar {
 pub struct Extract {
     pub var: String,
     pub source: Source,
-    /// JSONPath for `Body`, header name for `Header`, ignored for `Status`.
+    /// What to read from the source; see [`Source`].
     pub expr: String,
     /// Treat the extracted value as a secret (masked in UI and history).
     pub secret: bool,
 }
 
+/// The part of a response a script rule reads. The rule's `expr` selects
+/// inside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
+    /// The JSON body; `expr` is a JSONPath.
     #[default]
     Body,
+    /// A header value; `expr` is the header name.
     Header,
+    /// The status code; `expr` is not used.
     Status,
+    /// A time phase in milliseconds; `expr` is `total` (empty), `ttfb`,
+    /// `dns`, `connect`, `tls` or `download`.
+    Time,
+    /// A size in bytes; `expr` is `total` (empty), `body` or `headers`.
+    Size,
+    /// The lowercase hex digest of the body; `expr` is `md5`, `sha1`,
+    /// `sha256` or `sha512`.
+    Hash,
+    /// The XML body; `expr` is an XPath 3.1 expression.
+    XPath,
+    /// The raw body text; `expr` is a regular expression. The value is
+    /// capture group 1, or the whole match.
+    Regex,
+    /// A cookie of this response's `Set-Cookie` headers; `expr` is its name.
+    Cookie,
 }
 
 impl Source {
-    pub const ALL: [Source; 3] = [Source::Body, Source::Header, Source::Status];
+    pub const ALL: [Source; 9] = [
+        Source::Body,
+        Source::Header,
+        Source::Status,
+        Source::Time,
+        Source::Size,
+        Source::Hash,
+        Source::XPath,
+        Source::Regex,
+        Source::Cookie,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Source::Body => "jsonpath",
             Source::Header => "header",
             Source::Status => "status",
+            Source::Time => "time",
+            Source::Size => "size",
+            Source::Hash => "hash",
+            Source::XPath => "xpath",
+            Source::Regex => "regex",
+            Source::Cookie => "cookie",
         }
     }
 

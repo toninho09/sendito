@@ -313,10 +313,16 @@ pub async fn exec_ws(
         total_ms,
         size,
     } = summary;
+    // Cookie values the handshake set are secret, as on an HTTP response.
+    cookie_secrets.extend(sendito_store::cookies::response_secrets(
+        &set_cookie_headers(&headers),
+    ));
+    let total = total_ms.unwrap_or_else(|| started.elapsed().as_millis() as u64);
     let view = ResponseView {
         status: code,
         headers: &headers,
         body: &body,
+        timing: &[("total", Duration::from_millis(total))],
     };
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
@@ -324,7 +330,6 @@ pub async fn exec_ws(
         &mut results.asserts,
         &[&secrets[..], &cookie_secrets[..]].concat(),
     );
-    let total = total_ms.unwrap_or_else(|| started.elapsed().as_millis() as u64);
     let err = if code == WS_CLEAN_CLOSE {
         None
     } else if reason.is_empty() {

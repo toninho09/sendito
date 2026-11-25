@@ -14,6 +14,10 @@ fastrand.workspace = true
 serde_json_path.workspace = true
 regex.workspace = true
 time.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+xee-xpath.workspace = true
 
 [lints]
 workspace = true

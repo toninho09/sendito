@@ -145,15 +145,41 @@ value = "{{$timestamp}}"
 
 [[scripts.extract]]             # after the response: store a value
 var = "token"
-from = "jsonpath"               # jsonpath | header | status
-expr = "$.access_token"         # JSONPath, header name; omitted for status
+from = "jsonpath"               # a source of "Script sources" below
+expr = "$.access_token"         # what to read in the source; omitted for status
 secret = true                   # mask the value in the UI and history
 
 [[scripts.assert]]              # after the response: check a value
-from = "status"                 # jsonpath | header | status
+from = "status"                 # a source of "Script sources" below
 op = "eq"                       # eq ne contains not_contains exists not_exists lt le gt ge matches
 value = "200"                   # omitted for exists / not_exists; may use {{variables}}
 ```
+
+### Script sources
+
+`[[scripts.extract]]` and `[[scripts.assert]]` read one value from the
+response. `from` names the source and `expr` selects inside it. A source with
+no value (no match, a phase that was not measured) is missing: `exists` fails
+and `not_exists` passes.
+
+| `from` | `expr` | Value |
+|---|---|---|
+| `jsonpath` | a JSONPath | one match as text (strings unquoted); several matches as a JSON array |
+| `header` | a header name (any case) | the first header with that name |
+| `status` | not used | the status code |
+| `time` | `total` (or omitted), `ttfb`, `dns`, `connect`, `tls`, `download` | the phase in milliseconds, with at most 3 decimals |
+| `size` | `total` (or omitted), `body`, `headers` | bytes; `body` is the decompressed body, `headers` counts `name: value` plus 4 per header |
+| `hash` | `md5`, `sha1`, `sha256`, `sha512` | the lowercase hex digest of the decompressed body |
+| `xpath` | an XPath 3.1 expression | the string value of one item; several items as a JSON array. The body must be XML |
+| `regex` | a regular expression (Rust `regex` syntax) | capture group 1 of the first match, or the whole match without a group; applied to the body as text |
+| `cookie` | a cookie name (exact case) | the value of the last `Set-Cookie` with that name in this response, with or without the cookie jar. The value is a secret |
+
+Only HTTP and GraphQL measure the `time` phases; the other kinds give
+`total` alone: gRPC to the final status, WebSocket to the close, SSE and MQTT
+to the end of the stream, MCP to the tool result. `size` and `hash` read the
+body the request kind gives to scripts (the last message for gRPC, the last
+text frame for WebSocket, the last event data for SSE, the last payload for
+MQTT, the result object for MCP) and the headers it gives to `header`.
 
 ### What goes on the wire
 

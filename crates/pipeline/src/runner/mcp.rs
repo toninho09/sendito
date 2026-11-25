@@ -247,6 +247,7 @@ pub async fn exec_mcp(
                 status: u16::from(r.is_error),
                 headers: &[],
                 body: &body,
+                timing: &[("total", started.elapsed())],
             };
             results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
             results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);

@@ -554,6 +554,110 @@ fn cookie_jar_fails_closed_for_insecure_file() {
 /// The cookie jar: a Set-Cookie response stores cookies per environment, the
 /// next request replays them, and `--no-cookies` semantics (cookie_jar off)
 /// send nothing.
+/// The time, size, hash, regex and cookie sources read a real HTTP
+/// response; a cookie value stays masked in the results with the jar off.
+#[test]
+fn http_assertions_on_time_size_hash_regex_and_cookie() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let http = rt.block_on(sendito_testkit::http_echo::start()).unwrap();
+    write(
+        root,
+        "check.toml",
+        &format!(
+            r#"kind = "http"
+url = "{}/set-cookie"
+
+[[scripts.assert]]
+from = "time"
+op = "lt"
+value = "30000"
+
+[[scripts.assert]]
+from = "time"
+expr = "ttfb"
+op = "exists"
+
+[[scripts.assert]]
+from = "size"
+expr = "body"
+op = "gt"
+value = "0"
+
+[[scripts.assert]]
+from = "size"
+op = "gt"
+value = "100"
+
+[[scripts.assert]]
+from = "hash"
+expr = "sha256"
+op = "matches"
+value = "^[0-9a-f]{{64}}$"
+
+[[scripts.assert]]
+from = "regex"
+expr = '"cookies_set": (\d+)'
+op = "eq"
+value = "2"
+
+[[scripts.assert]]
+from = "cookie"
+expr = "session"
+op = "eq"
+value = "corpus-1"
+
+[[scripts.assert]]
+from = "cookie"
+expr = "none"
+op = "not_exists"
+"#,
+            http.url()
+        ),
+    );
+    let p = sendito_pipeline::runner::Project::open_with(
+        root,
+        sendito_pipeline::runner::default_keychain(),
+        None,
+    );
+    let Request::Http(req) = p.coll.load("check.toml").unwrap() else {
+        panic!("not http")
+    };
+    let ctx = sendito_pipeline::runner::RunCtx {
+        root: root.to_path_buf(),
+        send: p.send_options(),
+        history: None,
+        name: "check".into(),
+        path: Some("check.toml".into()),
+        env: None,
+        schemas: Default::default(),
+        grpc_deadline_ms: 0,
+        ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
+        mask_echoed_secrets: false,
+        cookie_jar: false,
+        oauth: None,
+    };
+    let o = rt.block_on(sendito_pipeline::runner::exec_http(
+        &ctx,
+        &req,
+        Default::default(),
+        vec![],
+    ));
+    assert!(o.response.is_ok(), "{:?}", o.response);
+    let asserts = &o.scripts.asserts;
+    assert_eq!(asserts.len(), 8);
+    for a in asserts {
+        assert!(a.pass, "{} failed: {}", a.label, a.actual);
+    }
+    let cookie = &asserts[6];
+    assert_eq!(cookie.label, "cookie session == ••••••");
+    assert!(!cookie.actual.contains("corpus-1"), "{}", cookie.actual);
+    assert!(!root.join(".sendito/cookies.toml").exists());
+}
+
 #[test]
 fn cookie_jar_stores_and_replays() {
     let rt = tokio::runtime::Runtime::new().unwrap();

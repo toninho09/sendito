@@ -1,8 +1,13 @@
 //! Declarative scripts: pre-request variable assignment, post-response
 //! extraction and assertions. No code execution.
 
+use std::time::Duration;
+
+use md5::Md5;
 use serde_json::Value;
 use serde_json_path::JsonPath;
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::model::{AssertOp, Assertion, Extract, SetVar, Source};
 use crate::vars::{Scope, VarValue};
@@ -16,6 +21,17 @@ pub struct ResponseView<'a> {
     pub status: u16,
     pub headers: &'a [(String, String)],
     pub body: &'a [u8],
+    /// The measured time phases by name (`total`, `ttfb`, ...). A phase the
+    /// protocol does not measure is not in the list.
+    pub timing: &'a [(&'a str, Duration)],
+}
+
+/// The time phases the `time` source knows.
+pub const TIME_PHASES: [&str; 6] = ["total", "ttfb", "dns", "connect", "tls", "download"];
+
+/// Approximate size of a header block in bytes: `name: value\r\n` per header.
+pub fn headers_size(headers: &[(String, String)]) -> usize {
+    headers.iter().map(|(n, v)| n.len() + v.len() + 4).sum()
 }
 
 /// Runs pre-request steps in order. Each assignment is visible to the next.
@@ -57,7 +73,11 @@ fn query_parsed(body: &Result<Value, String>, expr: &str) -> Result<Vec<Value>, 
 }
 
 /// The response body parsed once for all the rules of a run.
-type Parsed = std::cell::OnceCell<Result<Value, String>>;
+#[derive(Default)]
+struct Parsed {
+    json: std::cell::OnceCell<Result<Value, String>>,
+    xml: crate::xpath::Xml,
+}
 
 /// String form of a JSON value: strings unquoted, everything else as compact JSON.
 pub fn value_text(v: &Value) -> String {
@@ -73,22 +93,100 @@ fn read(
     resp: &ResponseView<'_>,
     parsed: &Parsed,
 ) -> Result<Option<String>, String> {
+    let expr = expr.trim();
     match source {
         Source::Status => Ok(Some(resp.status.to_string())),
         Source::Header => Ok(resp
             .headers
             .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(expr.trim()))
+            .find(|(n, _)| n.eq_ignore_ascii_case(expr))
             .map(|(_, v)| v.clone())),
         Source::Body => {
-            let nodes = query_parsed(parsed.get_or_init(|| parse_body(resp.body)), expr)?;
+            let nodes = query_parsed(parsed.json.get_or_init(|| parse_body(resp.body)), expr)?;
             Ok(match nodes.len() {
                 0 => None,
                 1 => Some(value_text(&nodes[0])),
                 _ => Some(Value::Array(nodes).to_string()),
             })
         }
+        Source::Time => {
+            let phase = if expr.is_empty() { "total" } else { expr };
+            if !TIME_PHASES.contains(&phase) {
+                return Err(format!(
+                    "unknown time phase '{phase}' ({})",
+                    TIME_PHASES.join(", ")
+                ));
+            }
+            Ok(resp
+                .timing
+                .iter()
+                .find(|(n, _)| *n == phase)
+                .map(|(_, d)| millis(*d)))
+        }
+        Source::Size => {
+            let body = resp.body.len();
+            let headers = headers_size(resp.headers);
+            let n = match expr {
+                "" | "total" => body + headers,
+                "body" => body,
+                "headers" => headers,
+                other => {
+                    return Err(format!(
+                        "unknown size part '{other}' (total, body, headers)"
+                    ));
+                }
+            };
+            Ok(Some(n.to_string()))
+        }
+        Source::Hash => Ok(Some(match expr {
+            "md5" => hex(&Md5::digest(resp.body)),
+            "sha1" => hex(&Sha1::digest(resp.body)),
+            "sha256" => hex(&Sha256::digest(resp.body)),
+            "sha512" => hex(&Sha512::digest(resp.body)),
+            other => {
+                return Err(format!(
+                    "unknown hash '{other}' (md5, sha1, sha256, sha512)"
+                ));
+            }
+        })),
+        Source::XPath => {
+            let items = parsed.xml.query(resp.body, expr)?;
+            Ok(match items.len() {
+                0 => None,
+                1 => items.into_iter().next(),
+                _ => Some(Value::from(items).to_string()),
+            })
+        }
+        Source::Regex => {
+            let re = regex::Regex::new(expr).map_err(|e| format!("invalid regex: {e}"))?;
+            let text = String::from_utf8_lossy(resp.body);
+            Ok(re.captures(&text).and_then(|c| {
+                c.get(1)
+                    .or_else(|| c.get(0))
+                    .map(|m| m.as_str().to_string())
+            }))
+        }
+        Source::Cookie => Ok(resp
+            .headers
+            .iter()
+            .rev()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("set-cookie"))
+            .find_map(|(_, v)| {
+                let pair = v.split(';').next().unwrap_or_default();
+                let (name, value) = pair.split_once('=')?;
+                (name.trim() == expr).then(|| value.trim().to_string())
+            })),
     }
+}
+
+/// A duration in milliseconds, with at most three decimals.
+fn millis(d: Duration) -> String {
+    let s = format!("{:.3}", d.as_secs_f64() * 1000.0);
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Runs extraction rules and stores successful results in the runtime layer.
@@ -98,7 +196,7 @@ pub fn run_extract(
     scope: &mut Scope,
 ) -> Vec<ExtractResult> {
     let mut out = Vec::new();
-    let parsed = Parsed::new();
+    let parsed = Parsed::default();
     for r in rules.iter().filter(|r| !r.var.trim().is_empty()) {
         let value = match read(r.source, &r.expr, resp, &parsed) {
             Ok(Some(v)) => Ok(VarValue {
@@ -133,6 +231,15 @@ pub fn describe(a: &Assertion) -> String {
         Source::Status => "status".to_string(),
         Source::Header => format!("header {}", a.expr.trim()),
         Source::Body => a.expr.trim().to_string(),
+        Source::Time | Source::Size => {
+            let part = a.expr.trim();
+            let part = if part.is_empty() { "total" } else { part };
+            format!("{} {part}", a.source.as_str())
+        }
+        Source::Hash => a.expr.trim().to_string(),
+        Source::XPath | Source::Regex | Source::Cookie => {
+            format!("{} {}", a.source.as_str(), a.expr.trim())
+        }
     };
     if a.op.takes_value() {
         format!("{subject} {} {}", a.op.symbol(), a.value)
@@ -190,7 +297,7 @@ pub fn run_asserts(
     resp: &ResponseView<'_>,
     scope: &Scope,
 ) -> Vec<AssertResult> {
-    let parsed = Parsed::new();
+    let parsed = Parsed::default();
     asserts
         .iter()
         .map(|a| {
@@ -229,6 +336,7 @@ mod tests {
             status: 201,
             headers,
             body,
+            timing: &[],
         }
     }
 
@@ -360,5 +468,99 @@ mod tests {
         assert_eq!(res[0].label, "status == 200");
         assert_eq!(res[3].label, "$.zzz exists");
         assert_eq!(res[3].actual, "(missing)");
+    }
+
+    #[test]
+    fn time_size_hash_xpath_regex_and_cookie_sources() {
+        let headers = vec![
+            ("Set-Cookie".to_string(), "sid=old; Path=/".to_string()),
+            ("set-cookie".to_string(), "sid=abc; HttpOnly".to_string()),
+            ("Set-Cookie".to_string(), "theme=dark".to_string()),
+        ];
+        let body = b"<r><item id=\"1\">a</item><item id=\"2\">b</item></r> token=xyz";
+        let timing = [
+            ("total", Duration::from_micros(12_500)),
+            ("ttfb", Duration::from_millis(7)),
+        ];
+        let view = ResponseView {
+            status: 200,
+            headers: &headers,
+            body,
+            timing: &timing,
+        };
+        let read = |source, expr: &str| read(source, expr, &view, &Parsed::default());
+        assert_eq!(read(Source::Time, ""), Ok(Some("12.5".into())));
+        assert_eq!(read(Source::Time, "ttfb"), Ok(Some("7".into())));
+        assert_eq!(read(Source::Time, "tls"), Ok(None));
+        assert!(read(Source::Time, "lag").unwrap_err().contains("ttfb"));
+        let hs = headers_size(&headers);
+        assert_eq!(read(Source::Size, "body"), Ok(Some(body.len().to_string())));
+        assert_eq!(read(Source::Size, "headers"), Ok(Some(hs.to_string())));
+        assert_eq!(
+            read(Source::Size, ""),
+            Ok(Some((body.len() + hs).to_string()))
+        );
+        assert!(read(Source::Size, "wire").is_err());
+        let empty = ResponseView { body: b"", ..view };
+        let hash = |algo| super::read(Source::Hash, algo, &empty, &Parsed::default());
+        assert_eq!(
+            hash("md5"),
+            Ok(Some("d41d8cd98f00b204e9800998ecf8427e".into()))
+        );
+        assert_eq!(
+            hash("sha1"),
+            Ok(Some("da39a3ee5e6b4b0d3255bfef95601890afd80709".into()))
+        );
+        assert_eq!(
+            hash("sha256"),
+            Ok(Some(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()
+            ))
+        );
+        assert_eq!(hash("sha512").map(|h| h.map(|h| h.len())), Ok(Some(128)));
+        assert!(read(Source::Hash, "crc32").is_err());
+        // The body is not XML as a whole: XPath reports it.
+        assert!(read(Source::XPath, "//item").is_err());
+        let xml = ResponseView {
+            body: b"<r><item id=\"1\">a</item><item id=\"2\">b</item></r>",
+            ..view
+        };
+        let xpath = |expr| super::read(Source::XPath, expr, &xml, &Parsed::default());
+        assert_eq!(xpath("//item[@id='2']"), Ok(Some("b".into())));
+        assert_eq!(xpath("//item"), Ok(Some(r#"["a","b"]"#.into())));
+        assert_eq!(xpath("//none"), Ok(None));
+        assert_eq!(read(Source::Regex, r"token=(\w+)"), Ok(Some("xyz".into())));
+        assert_eq!(read(Source::Regex, r"id=.\d"), Ok(Some("id=\"1".into())));
+        assert_eq!(read(Source::Regex, "nothing"), Ok(None));
+        assert!(read(Source::Regex, "(").is_err());
+        assert_eq!(read(Source::Cookie, "sid"), Ok(Some("abc".into())));
+        assert_eq!(read(Source::Cookie, "theme"), Ok(Some("dark".into())));
+        assert_eq!(read(Source::Cookie, "SID"), Ok(None));
+    }
+
+    #[test]
+    fn labels_of_the_new_sources() {
+        let a = |source, expr: &str, op| Assertion {
+            source,
+            expr: expr.into(),
+            op,
+            value: "1".into(),
+        };
+        assert_eq!(
+            describe(&a(Source::Time, "", AssertOp::Lt)),
+            "time total < 1"
+        );
+        assert_eq!(
+            describe(&a(Source::Size, "body", AssertOp::Le)),
+            "size body <= 1"
+        );
+        assert_eq!(
+            describe(&a(Source::Hash, "sha256", AssertOp::Eq)),
+            "sha256 == 1"
+        );
+        assert_eq!(
+            describe(&a(Source::Cookie, "sid", AssertOp::Exists)),
+            "cookie sid exists"
+        );
     }
 }

@@ -12,6 +12,7 @@ pub mod resolve;
 pub mod script;
 pub mod template;
 pub mod vars;
+mod xpath;
 
 pub use complete::FieldNode;
 pub use model::*;

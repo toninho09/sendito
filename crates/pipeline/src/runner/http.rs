@@ -399,10 +399,13 @@ pub(super) async fn exec_http_inner(
     if let Ok(mut hop_secrets) = jar_hops.secrets.lock() {
         cookie_secrets.append(&mut hop_secrets);
     }
-    if cookies_on && let Ok(resp) = &sent {
+    if let Ok(resp) = &sent {
+        // Cookie values are secret even when the jar is off: a `cookie`
+        // assertion or extraction must not show them.
         let sets = set_cookie_headers(&resp.headers);
         cookie_secrets.extend(sendito_store::cookies::response_secrets(&sets));
-        if !sets.is_empty()
+        if cookies_on
+            && !sets.is_empty()
             && let Err(e) = jar_store(&ctx.root, jar_env, &resp.url, &sets).await
         {
             resolved.notes.push(format!("cookies not stored: {e}"));
@@ -428,10 +431,12 @@ pub(super) async fn exec_http_inner(
     let (response, doc) = match sent {
         Ok(mut resp) => {
             let body = std::mem::take(&mut resp.body);
+            let timing = http_timing(&resp.timing);
             let view = ResponseView {
                 status: resp.status,
                 headers: &resp.headers,
                 body: &body,
+                timing: &timing,
             };
             results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
             // Cookie values and OAuth access tokens remain secret even if an
@@ -723,4 +728,19 @@ pub(super) async fn jwt_token(
     )
     .map(Some)
     .map_err(|e| format!("JWT: {e}"))
+}
+
+/// The measured phases of an HTTP exchange, for the `time` script source.
+fn http_timing(t: &sendito_http::Timing) -> Vec<(&'static str, Duration)> {
+    let mut out = vec![
+        ("total", t.total),
+        ("ttfb", t.ttfb),
+        ("download", t.download),
+    ];
+    for (name, d) in [("dns", t.dns), ("connect", t.connect), ("tls", t.tls)] {
+        if let Some(d) = d {
+            out.push((name, d));
+        }
+    }
+    out
 }

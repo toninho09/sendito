@@ -382,8 +382,10 @@ pub(crate) fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
 
 pub(crate) fn scripts(s: RawScripts) -> Result<Scripts, String> {
     let src = |s: &str| {
-        Source::parse(s)
-            .ok_or_else(|| format!("unknown script source {s:?} (jsonpath, header, status)"))
+        Source::parse(s).ok_or_else(|| {
+            let names: Vec<_> = Source::ALL.iter().map(|s| s.as_str()).collect();
+            format!("unknown script source {s:?} ({})", names.join(", "))
+        })
     };
     Ok(Scripts {
         pre: s
@@ -680,6 +682,14 @@ pub(crate) fn write_auth(w: &mut Writer, a: &Auth) {
     }
 }
 
+/// Writes a script rule's `expr`. Status reads no expression, and an empty
+/// one is the default (`total` for time and size), so neither is written.
+fn write_expr(w: &mut Writer, source: Source, expr: &str) {
+    if source != Source::Status && !expr.is_empty() {
+        w.str("expr", expr);
+    }
+}
+
 pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
     for p in &s.pre {
         w.array_table("scripts.pre");
@@ -690,9 +700,7 @@ pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
         w.array_table("scripts.extract");
         w.str("var", &e.var);
         w.str("from", e.source.as_str());
-        if e.source != Source::Status {
-            w.str("expr", &e.expr);
-        }
+        write_expr(w, e.source, &e.expr);
         if e.secret {
             w.bool("secret", true);
         }
@@ -700,9 +708,7 @@ pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
     for a in &s.asserts {
         w.array_table("scripts.assert");
         w.str("from", a.source.as_str());
-        if a.source != Source::Status {
-            w.str("expr", &a.expr);
-        }
+        write_expr(w, a.source, &a.expr);
         w.str("op", a.op.as_str());
         if a.op.takes_value() {
             w.str("value", &a.value);
@@ -1307,6 +1313,37 @@ mod tests {
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }
+    }
+
+    #[test]
+    fn roundtrip_every_script_source() {
+        let asserts = Source::ALL
+            .into_iter()
+            .map(|source| Assertion {
+                source,
+                expr: match source {
+                    Source::Status | Source::Time => String::new(),
+                    Source::Hash => "sha256".into(),
+                    _ => "x".into(),
+                },
+                op: AssertOp::Exists,
+                value: String::new(),
+            })
+            .collect();
+        let m = Request::Mcp(McpRequest {
+            scripts: Scripts {
+                asserts,
+                ..Scripts::default()
+            },
+            ..McpRequest::default()
+        });
+        let t = to_toml(&m);
+        assert_eq!(parse(&t).ok(), Some(m));
+        // An empty time expression means `total` and is not written.
+        assert!(t.contains("from = \"time\"\nop = \"exists\""), "{t}");
+        let bad = "kind = \"mcp\"\n[[scripts.assert]]\nfrom = \"nope\"\nop = \"exists\"\n";
+        let err = parse(bad).unwrap_err();
+        assert!(err.contains("xpath, regex, cookie"), "{err}");
     }
 
     #[test]

@@ -34,7 +34,10 @@ pub fn resp_tab_names(kind: Kind) -> [&'static str; 4] {
     }
 }
 
-pub const SOURCES: &[&str] = &["jsonpath", "header", "status"];
+/// Script sources as shown in the table (same order as `Source::ALL`).
+pub const SOURCES: &[&str] = &[
+    "jsonpath", "header", "status", "time", "size", "hash", "xpath", "regex", "cookie",
+];
 
 /// Assertion operators as shown in the table (same order as `AssertOp::ALL`).
 pub const OPS: &[&str] = &[
@@ -327,4 +330,18 @@ pub enum Kind {
     Mcp,
     /// The settings of a folder, not a request.
     Folder,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sendito_core::model::{AssertOp, Source};
+
+    #[test]
+    fn choice_lists_follow_the_model_order() {
+        let sources: Vec<_> = Source::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(SOURCES, sources);
+        let ops: Vec<_> = AssertOp::ALL.iter().map(|o| o.symbol()).collect();
+        assert_eq!(OPS, ops);
+    }
 }

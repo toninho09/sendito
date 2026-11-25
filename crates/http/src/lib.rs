@@ -72,10 +72,7 @@ impl HttpResponse {
 
     /// Approximate size of the header block in bytes.
     pub fn headers_size(&self) -> usize {
-        self.headers
-            .iter()
-            .map(|(n, v)| n.len() + v.len() + 4)
-            .sum()
+        sendito_core::script::headers_size(&self.headers)
     }
 
     /// Size of the body as received on the wire: the compressed size when the

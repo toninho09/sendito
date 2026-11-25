@@ -288,6 +288,7 @@ pub async fn exec_mqtt(
             status: MQTT_ACCEPTED,
             headers: &headers,
             body: &last,
+            timing: &[("total", start.elapsed())],
         };
         scripts.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
         for extract in &mut scripts.extracts {

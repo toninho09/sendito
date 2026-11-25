@@ -323,6 +323,7 @@ pub async fn exec_grpc(
         status: code as u16,
         headers: &headers,
         body: &body,
+        timing: &[("total", Duration::from_millis(total))],
     };
     results.extracts = script::run_extract(&req.scripts.extract, &view, &mut scope);
     results.asserts = script::run_asserts(&req.scripts.asserts, &view, &scope);
