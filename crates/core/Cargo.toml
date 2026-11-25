@@ -7,15 +7,18 @@ publish = false
 description = "Sendito request model, variables and scripts"
 
 [dependencies]
-serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 percent-encoding.workspace = true
 base64.workspace = true
 fastrand.workspace = true
 serde_json_path.workspace = true
 regex.workspace = true
 time.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+xee-xpath.workspace = true
+mlua.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,7 @@
+protocol 3.1.1 client-id corpus-08
+< CONNECT protocol 3.1.1 client-id corpus-08 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< PUBLISH topic corpus/retained qos 1 retain true payload kept by the broker
+> PUBACK pkid 1
+< DISCONNECT 
+### done: 0 messages, deadline

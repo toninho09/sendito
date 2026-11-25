@@ -1,7 +1,10 @@
-//! Response documents: pretty JSON with folding, raw text, hex and search.
-//! Documents index lines by offset so 10 MB bodies stay cheap to render.
+//! Response documents: pretty JSON, XML, HTML, YAML and CSV with folding, raw
+//! text, hex and search. Documents index lines by offset so 10 MB bodies stay
+//! cheap to render.
 
 use unicode_width::UnicodeWidthChar;
+
+pub use crate::pretty::BodyFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
@@ -99,9 +102,18 @@ pub struct Doc {
     pub pretty: Option<Lines>,
     /// For each pretty line that opens a multi-line block, the line that closes it.
     fold_end: Vec<u32>,
-    pub is_json: bool,
+    /// The format of `pretty`; `Text` when there is none.
+    pub format: BodyFormat,
     pub valid_utf8: bool,
+    /// Per pretty line: (the line that opens its container, its array index
+    /// or a marker), built on the first [`Doc::json_path`] call.
+    tree: std::sync::OnceLock<Vec<(u32, u32)>>,
 }
+
+/// `Doc::tree` index of a line that is an object member or a top-level value.
+const NO_INDEX: u32 = u32::MAX;
+/// `Doc::tree` index of a line that closes its container.
+const CLOSING: u32 = u32::MAX - 1;
 
 pub const NO_FOLD: u32 = u32::MAX;
 
@@ -113,11 +125,20 @@ impl Doc {
                 .find(|b| !b.is_ascii_whitespace())
                 .is_some_and(|b| *b == b'{' || *b == b'[');
         let is_json = looks_json && serde_json::from_slice::<serde::de::IgnoredAny>(&bytes).is_ok();
-        let (pretty, fold_end) = if is_json {
-            let (p, f) = pretty_json(&bytes);
-            (Some(Lines::new(p)), f)
-        } else {
-            (None, Vec::new())
+        let (mut format, mut pretty) = (BodyFormat::Text, None);
+        if is_json {
+            format = BodyFormat::Json;
+            pretty = Some(pretty_json(&bytes));
+        } else if let Ok(text) = std::str::from_utf8(&bytes) {
+            let f = crate::pretty::detect(text, content_type);
+            pretty = crate::pretty::pretty(text, f);
+            if pretty.is_some() {
+                format = f;
+            }
+        }
+        let (pretty, fold_end) = match pretty {
+            Some((p, f)) => (Some(Lines::new(p)), f),
+            None => (None, Vec::new()),
         };
         let (bytes, raw, valid) = match String::from_utf8(bytes) {
             Ok(s) => (Vec::new(), Lines::new(s), true),
@@ -132,8 +153,9 @@ impl Doc {
             raw,
             pretty,
             fold_end,
-            is_json,
+            format,
             valid_utf8: valid,
+            tree: Default::default(),
         }
     }
 
@@ -161,8 +183,9 @@ impl Doc {
             raw: Lines::new(raw),
             pretty: Some(Lines::new(pretty)),
             fold_end,
-            is_json: true,
+            format: BodyFormat::Json,
             valid_utf8: true,
+            tree: Default::default(),
         }
     }
 
@@ -172,6 +195,10 @@ impl Doc {
             valid_utf8: true,
             ..Default::default()
         }
+    }
+
+    pub fn is_json(&self) -> bool {
+        self.format == BodyFormat::Json
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -233,52 +260,77 @@ impl Doc {
 
     /// The jq path of the JSON value on a pretty line, e.g. `.items[0].email`
     /// (`.` for a top-level value; a closing line gives its container).
-    /// `None` when the document has no pretty form.
+    /// `None` when the document has no pretty JSON form.
     pub fn json_path(&self, line: usize) -> Option<String> {
+        if !self.is_json() {
+            return None;
+        }
         let pretty = self.pretty.as_ref()?;
         if line >= pretty.len() {
             return None;
         }
-        // One entry per open container: (is an array, next index, its segment).
-        let mut stack: Vec<(bool, usize, String)> = Vec::new();
-        let path = |stack: &[(bool, usize, String)], last: Option<&str>| {
-            let mut p: String = stack.iter().map(|f| f.2.as_str()).collect();
-            p.push_str(last.unwrap_or(""));
-            if p.starts_with('.') {
-                p
-            } else {
-                format!(".{p}")
-            }
-        };
-        for i in 0..=line {
-            let t = pretty.line(i).trim_start();
-            if t.starts_with('}') || t.starts_with(']') {
-                if i == line {
-                    return Some(path(&stack, None));
-                }
-                stack.pop();
-                continue;
-            }
-            let (key, value) = split_key(t);
-            let seg = match stack.last_mut() {
-                Some((true, next, _)) => {
-                    *next += 1;
-                    format!("[{}]", *next - 1)
-                }
-                Some(_) => key.map(key_segment).unwrap_or_default(),
-                None => String::new(),
-            };
-            if i == line {
-                return Some(path(&stack, Some(&seg)));
-            }
-            match value.trim_end_matches(',') {
-                "{" => stack.push((false, 0, seg)),
-                "[" => stack.push((true, 0, seg)),
-                _ => {}
-            }
+        let tree = self.tree.get_or_init(|| json_tree(pretty));
+        let mut i = line;
+        // A closing line belongs to its container.
+        if tree[i].1 == CLOSING {
+            i = tree[i].0 as usize;
         }
-        None
+        // Walk up to the top level, then join the segments top-down.
+        let mut segs: Vec<String> = Vec::new();
+        loop {
+            let (parent, index) = tree[i];
+            if parent == NO_FOLD {
+                break;
+            }
+            segs.push(if index == NO_INDEX {
+                split_key(pretty.line(i).trim_start())
+                    .0
+                    .map(key_segment)
+                    .unwrap_or_default()
+            } else {
+                format!("[{index}]")
+            });
+            i = parent as usize;
+        }
+        let p: String = segs.iter().rev().map(String::as_str).collect();
+        Some(if p.starts_with('.') {
+            p
+        } else {
+            format!(".{p}")
+        })
     }
+}
+
+/// For each pretty line, the line that opens its container (`NO_FOLD` at the
+/// top level) and its index in an array (`NO_INDEX` for an object member,
+/// `CLOSING` for a closing line). One pass, so a path costs its depth.
+fn json_tree(pretty: &Lines) -> Vec<(u32, u32)> {
+    let mut tree = Vec::with_capacity(pretty.len());
+    // One entry per open container: (its line, is an array, next index).
+    let mut stack: Vec<(u32, bool, u32)> = Vec::new();
+    for i in 0..pretty.len() {
+        let t = pretty.line(i).trim_start();
+        let parent = stack.last().map(|f| f.0).unwrap_or(NO_FOLD);
+        if t.starts_with('}') || t.starts_with(']') {
+            tree.push((parent, CLOSING));
+            stack.pop();
+            continue;
+        }
+        let index = match stack.last_mut() {
+            Some((_, true, next)) => {
+                *next += 1;
+                *next - 1
+            }
+            _ => NO_INDEX,
+        };
+        tree.push((parent, index));
+        match split_key(t).1.trim_end_matches(',') {
+            "{" => stack.push((i as u32, false, 0)),
+            "[" => stack.push((i as u32, true, 0)),
+            _ => {}
+        }
+    }
+    tree
 }
 
 /// Splits a pretty JSON line into its object key (the quoted source text) and
@@ -428,6 +480,19 @@ pub struct Search {
     /// (line, start char, char length)
     pub matches: Vec<(u32, u32, u32)>,
     pub current: usize,
+    /// The search stopped at [`Search::MAX_MATCHES`]; more matches exist.
+    pub capped: bool,
+}
+
+impl Search {
+    /// Where a search stops collecting matches.
+    pub const MAX_MATCHES: usize = 100_000;
+
+    /// "match 3/12", or "match 3/100000+" when the search was capped.
+    pub fn position_label(&self) -> String {
+        let more = if self.capped { "+" } else { "" };
+        format!("match {}/{}{more}", self.current + 1, self.matches.len())
+    }
 }
 
 /// Columns that continuation rows of a wrapped line are indented by: the
@@ -604,7 +669,7 @@ mod tests {
     #[test]
     fn doc_modes() {
         let d = Doc::from_bytes(b"{\"a\": [1, 2]}".to_vec(), Some("application/json"));
-        assert!(d.is_json);
+        assert!(d.is_json());
         assert_eq!(d.line_count(ViewMode::Pretty), 6);
         assert_eq!(d.line_count(ViewMode::Raw), 1);
         assert_eq!(d.line_count(ViewMode::Hex), 1);
@@ -613,15 +678,38 @@ mod tests {
         let bin = Doc::from_bytes(vec![0xff, 0xfe, b'a'], None);
         assert!(!bin.valid_utf8);
         assert_eq!(bin.bytes(), &[0xff, 0xfe, b'a']);
-        assert!(!bin.is_json);
+        assert!(!bin.is_json());
         let t = Doc::from_bytes(b"line1\r\nline2".to_vec(), Some("text/plain"));
         assert_eq!(t.line(ViewMode::Raw, 0), "line1");
         assert_eq!(t.len(), 12);
         let notjson = Doc::from_bytes(b"{not json".to_vec(), Some("application/json"));
-        assert!(!notjson.is_json);
+        assert!(!notjson.is_json());
         let mut log = Doc::text("a\n");
         log.append_text("b\nc");
         assert_eq!(log.line_count(ViewMode::Raw), 3);
         assert!(Doc::default().is_empty());
+    }
+
+    #[test]
+    fn other_formats_get_a_pretty_form() {
+        let x = Doc::from_bytes(b"<a><b>1</b></a>".to_vec(), Some("text/xml"));
+        assert_eq!(x.format, BodyFormat::Xml);
+        assert_eq!(x.line(ViewMode::Pretty, 1), "  <b>1</b>");
+        assert_eq!(x.fold_end(0), Some(2));
+        // The path bar and the jq filter stay JSON only.
+        assert_eq!(x.json_path(1), None);
+        let y = Doc::from_bytes(b"a:\n  b: 1\n".to_vec(), Some("application/yaml"));
+        assert_eq!(y.format, BodyFormat::Yaml);
+        assert_eq!(
+            y.pretty.as_ref().map(|p| p.text.as_str()),
+            Some("a:\n  b: 1\n")
+        );
+        assert_eq!(y.fold_end(0), Some(1));
+        // A body that does not parse in its format is shown raw.
+        let bad = Doc::from_bytes(b"a,b\n1".to_vec(), Some("text/csv"));
+        assert_eq!(bad.format, BodyFormat::Text);
+        assert!(bad.pretty.is_none());
+        let plain = Doc::from_bytes(b"a,b\n1,2".to_vec(), None);
+        assert!(plain.pretty.is_none());
     }
 }

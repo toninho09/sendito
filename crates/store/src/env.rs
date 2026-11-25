@@ -5,7 +5,8 @@
 //! * `.sendito/secrets.toml` — gitignored local secret values.
 //!
 //! Each variable has exactly one source: plain text in the env file, the local
-//! secrets file, the OS keychain, or the contents of a file.
+//! secrets file, the OS keychain, the contents of a file, or a key of a
+//! `.env` file.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -31,6 +32,9 @@ pub enum VarSource {
     Keychain { key: Option<String> },
     /// Contents of a file (one trailing newline removed).
     File { path: String },
+    /// The environment's `.env` file (see [`EnvFile::dotenv`]), key `key`
+    /// (default: variable name). Read only.
+    Dotenv { key: Option<String> },
 }
 
 impl VarSource {
@@ -40,6 +44,7 @@ impl VarSource {
             VarSource::Local { .. } => "local",
             VarSource::Keychain { .. } => "keychain",
             VarSource::File { .. } => "file",
+            VarSource::Dotenv { .. } => "dotenv",
         }
     }
 
@@ -57,6 +62,9 @@ pub struct EnvVar {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvFile {
     pub name: String,
+    /// Path of the `.env` file that `dotenv` variables read; `None` means
+    /// `.env` at the collection root.
+    pub dotenv: Option<String>,
     pub vars: Vec<EnvVar>,
 }
 
@@ -64,6 +72,7 @@ impl EnvFile {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            dotenv: None,
             vars: Vec::new(),
         }
     }
@@ -89,9 +98,17 @@ pub fn parse_env(name: &str, text: &str) -> std::result::Result<EnvFile, String>
     let t: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
     let mut env = EnvFile::new(name);
     for k in t.keys() {
-        if k != "variables" {
-            return Err(format!("unknown key {k:?} (expected [variables])"));
+        if !matches!(k.as_str(), "variables" | "dotenv") {
+            return Err(format!(
+                "unknown key {k:?} (expected `dotenv` or [variables])"
+            ));
         }
+    }
+    if let Some(p) = t.get("dotenv") {
+        let p = p
+            .as_str()
+            .ok_or_else(|| "`dotenv` must be a string (a path)".to_string())?;
+        env.dotenv = Some(p.to_string());
     }
     let Some(vars) = t.get("variables") else {
         return Ok(env);
@@ -112,13 +129,14 @@ pub fn parse_env(name: &str, text: &str) -> std::result::Result<EnvFile, String>
                 match get("source").as_deref() {
                     Some("local") => VarSource::Local { key: get("key") },
                     Some("keychain") => VarSource::Keychain { key: get("key") },
+                    Some("dotenv") => VarSource::Dotenv { key: get("key") },
                     Some("file") => VarSource::File {
                         path: get("path")
                             .ok_or_else(|| format!("variable {k:?}: file source needs `path`"))?,
                     },
                     o => {
                         return Err(format!(
-                            "variable {k:?}: source must be \"local\", \"keychain\" or \"file\", got {o:?}"
+                            "variable {k:?}: source must be \"local\", \"keychain\", \"file\" or \"dotenv\", got {o:?}"
                         ));
                     }
                 }
@@ -140,6 +158,9 @@ pub fn parse_env(name: &str, text: &str) -> std::result::Result<EnvFile, String>
 
 pub fn env_to_toml(env: &EnvFile) -> String {
     let mut w = Writer::new();
+    if let Some(p) = &env.dotenv {
+        w.str("dotenv", p);
+    }
     w.table("variables");
     for v in &env.vars {
         match &v.source {
@@ -155,6 +176,10 @@ pub fn env_to_toml(env: &EnvFile) -> String {
             VarSource::File { path } => {
                 w.inline_table(&v.name, &[("source", "file"), ("path", path)])
             }
+            VarSource::Dotenv { key } => match key {
+                Some(k) => w.inline_table(&v.name, &[("source", "dotenv"), ("key", k)]),
+                None => w.inline_table(&v.name, &[("source", "dotenv")]),
+            },
         }
     }
     w.finish()
@@ -373,20 +398,64 @@ impl Envs {
         }
     }
 
+    /// The `.env` file that the `dotenv` variables of `env` read.
+    pub fn dotenv_path(&self, env: &EnvFile) -> PathBuf {
+        expand(&self.root, env.dotenv.as_deref().unwrap_or(".env"))
+    }
+
+    /// Reads the `.env` file of `env`. An error names the file and the line,
+    /// never the line's text: it can hold a secret.
+    fn load_dotenv(&self, env: &EnvFile) -> std::result::Result<BTreeMap<String, String>, String> {
+        let path = self.dotenv_path(env);
+        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut out = BTreeMap::new();
+        for item in dotenvy::from_read_iter(text.as_bytes()) {
+            match item {
+                Ok((k, v)) => {
+                    out.insert(k, v);
+                }
+                Err(dotenvy::Error::LineParse(line, _)) => {
+                    // The failing line is a part of the file text.
+                    let at = (!line.is_empty())
+                        .then(|| text.find(&line))
+                        .flatten()
+                        .map(|i| text[..i].matches('\n').count() + 1);
+                    return Err(match at {
+                        Some(l) => format!("{} line {l}: cannot parse the line", path.display()),
+                        None => format!("{}: cannot parse the file", path.display()),
+                    });
+                }
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+        Ok(out)
+    }
+
+    /// How many keys the `.env` file of `env` holds. An error names the file
+    /// and the line, never the line's text.
+    pub fn dotenv_keys(&self, env: &EnvFile) -> std::result::Result<usize, String> {
+        self.load_dotenv(env).map(|m| m.len())
+    }
+
     /// Whether a secret has a value, when that can be known without blocking:
-    /// `Some` for `local` (secrets.toml) and `file` (the file exists), `None`
-    /// for plain values and the keychain.
-    pub fn is_set(&self, env: &str, var: &EnvVar) -> Option<bool> {
+    /// `Some` for `local` (secrets.toml), `file` (the file exists) and
+    /// `dotenv` (the `.env` file has the key), `None` for plain values and
+    /// the keychain.
+    pub fn is_set(&self, env: &EnvFile, var: &EnvVar) -> Option<bool> {
         match &var.source {
             VarSource::Local { key } => {
                 let k = key.as_deref().unwrap_or(&var.name);
                 Some(self.load_local().ok().is_some_and(|t| {
-                    t.get(env)
+                    t.get(&env.name)
                         .and_then(|s| s.get(k))
                         .is_some_and(|x| x.is_str())
                 }))
             }
             VarSource::File { path } => Some(expand(&self.root, path).is_file()),
+            VarSource::Dotenv { key } => {
+                let k = key.as_deref().unwrap_or(&var.name);
+                Some(self.load_dotenv(env).is_ok_and(|m| m.contains_key(k)))
+            }
             _ => None,
         }
     }
@@ -396,6 +465,7 @@ impl Envs {
     pub fn resolve(&self, env: &EnvFile) -> ResolvedVars {
         let mut out = ResolvedVars::default();
         let mut local: Option<std::result::Result<toml::Table, String>> = None;
+        let mut dotenv: Option<std::result::Result<BTreeMap<String, String>, String>> = None;
         for v in &env.vars {
             let r: std::result::Result<String, String> = match &v.source {
                 VarSource::Plain(s) => {
@@ -432,6 +502,18 @@ impl Envs {
                         .map(strip_one_newline)
                         .map_err(|e| format!("{}: {e}", p.display()))
                 }
+                VarSource::Dotenv { key } => {
+                    let map = dotenv.get_or_insert_with(|| self.load_dotenv(env));
+                    match map {
+                        Err(e) => Err(e.clone()),
+                        Ok(m) => {
+                            let k = key.as_deref().unwrap_or(&v.name);
+                            m.get(k).cloned().ok_or_else(|| {
+                                format!("{k} not set in {}", self.dotenv_path(env).display())
+                            })
+                        }
+                    }
+                }
             };
             match r {
                 Ok(s) => {
@@ -443,10 +525,12 @@ impl Envs {
         out
     }
 
-    /// Stores a secret value in the variable's own source (local file or keychain).
+    /// Stores a secret value in the variable's own source (local file,
+    /// keychain or file). A `dotenv` variable is read only.
     pub fn store_secret(&self, env: &str, var: &EnvVar, value: &str) -> Result<()> {
         match &var.source {
-            VarSource::Local { key } => {
+            // Locked: two processes that save a secret at once both keep it.
+            VarSource::Local { key } => crate::fsio::with_dir_lock(&self.meta(), || {
                 let mut t = self.load_local().map_err(StoreError::Invalid)?;
                 let section = t
                     .entry(env.to_string())
@@ -461,7 +545,7 @@ impl Envs {
                     toml::Value::String(value.into()),
                 );
                 write_private(&self.secrets_path(), secrets_to_toml(&t).as_bytes())
-            }
+            }),
             VarSource::Keychain { key } => self
                 .keychain
                 .set(&self.keychain_account(env, &var.name, key), value)
@@ -472,6 +556,9 @@ impl Envs {
             }
             VarSource::Plain(_) => Err(StoreError::Invalid(
                 "plain variables are stored in the environment file".into(),
+            )),
+            VarSource::Dotenv { .. } => Err(StoreError::Invalid(
+                "dotenv variables are read from the .env file; edit that file".into(),
             )),
         }
     }
@@ -484,16 +571,18 @@ fn secrets_to_toml(t: &toml::Table) -> String {
         if let toml::Value::Table(vals) = vals {
             w.table(&crate::tomlfmt::bare_or_quoted_key(section));
             for (k, v) in vals {
-                if let Some(s) = v.as_str() {
-                    w.str(k, s);
+                match v.as_str() {
+                    Some(s) => w.str(k, s),
+                    // Values this program does not write survive a save.
+                    None => w.raw_line(&format!("{} = {v}", crate::tomlfmt::bare_or_quoted_key(k))),
                 }
             }
-        } else if let Some(s) = vals.as_str() {
-            w.raw_line(&format!(
-                "{} = {}",
-                crate::tomlfmt::bare_or_quoted_key(section),
-                quote_basic(s)
-            ));
+        } else {
+            let key = crate::tomlfmt::bare_or_quoted_key(section);
+            match vals.as_str() {
+                Some(s) => w.raw_line(&format!("{key} = {}", quote_basic(s))),
+                None => w.raw_line(&format!("{key} = {vals}")),
+            }
         }
     }
     w.finish()
@@ -558,6 +647,7 @@ mod tests {
             back,
             EnvFile {
                 name: "dev".into(),
+                dotenv: None,
                 vars: env.vars.clone(),
             }
         );
@@ -605,21 +695,24 @@ mod tests {
         e.save(&env).unwrap();
         e.save(&env).unwrap();
         assert_eq!(e.list(), vec!["dev".to_string()]);
-        assert_eq!(e.is_set("dev", env.get("loc").unwrap()), Some(false));
+        assert_eq!(e.is_set(&env, env.get("loc").unwrap()), Some(false));
         e.store_secret("dev", env.get("loc").unwrap(), "local-secret")
             .unwrap();
-        assert_eq!(e.is_set("dev", env.get("loc").unwrap()), Some(true));
-        assert_eq!(e.is_set("prod", env.get("loc").unwrap()), Some(false));
-        assert_eq!(e.is_set("dev", env.get("f").unwrap()), Some(true));
-        assert_eq!(e.is_set("dev", env.get("kc").unwrap()), None);
-        assert_eq!(e.is_set("dev", env.get("plain").unwrap()), None);
+        assert_eq!(e.is_set(&env, env.get("loc").unwrap()), Some(true));
+        assert_eq!(
+            e.is_set(&EnvFile::new("prod"), env.get("loc").unwrap()),
+            Some(false)
+        );
+        assert_eq!(e.is_set(&env, env.get("f").unwrap()), Some(true));
+        assert_eq!(e.is_set(&env, env.get("kc").unwrap()), None);
+        assert_eq!(e.is_set(&env, env.get("plain").unwrap()), None);
         let gone = EnvVar {
             name: "g".into(),
             source: VarSource::File {
                 path: "nope.txt".into(),
             },
         };
-        assert_eq!(e.is_set("dev", &gone), Some(false));
+        assert_eq!(e.is_set(&env, &gone), Some(false));
         e.store_secret("dev", env.get("kc").unwrap(), "kc-secret")
             .unwrap();
         assert!(
@@ -640,6 +733,116 @@ mod tests {
         assert_eq!(e.keychain_account("dev", "kc", &None), "acme/dev/kc");
         e.store_secret("dev", env.get("f").unwrap(), "new").unwrap();
         assert_eq!(e.resolve(&loaded).vars["f"], VarValue::secret("new"));
+    }
+
+    #[test]
+    fn dotenv_parse_and_write() {
+        let text = "dotenv = \".env.dev\"\n\n[variables]\ntok = { source = \"dotenv\", key = \"API_TOKEN\" }\nuser = { source = \"dotenv\" }\n";
+        let env = parse_env("dev", text).unwrap();
+        assert_eq!(env.dotenv.as_deref(), Some(".env.dev"));
+        assert_eq!(
+            env.get("tok").map(|v| &v.source),
+            Some(&VarSource::Dotenv {
+                key: Some("API_TOKEN".into())
+            })
+        );
+        assert_eq!(
+            env.get("user").map(|v| &v.source),
+            Some(&VarSource::Dotenv { key: None })
+        );
+        assert_eq!(env_to_toml(&env), text);
+        assert_eq!(parse_env("dev", &env_to_toml(&env)).unwrap(), env);
+        assert!(VarSource::Dotenv { key: None }.is_secret());
+        assert_eq!(VarSource::Dotenv { key: None }.label(), "dotenv");
+        assert!(parse_env("x", "dotenv = 1").is_err());
+        assert!(
+            parse_env(
+                "x",
+                "[variables]\na = { source = \"dotenv\", path = \"p\" }"
+            )
+            .is_ok()
+        );
+        assert!(parse_env("x", "other = \"x\"").is_err());
+    }
+
+    #[test]
+    fn dotenv_values_resolve_as_secrets() {
+        let (d, e) = envs();
+        fs::write(
+            d.path().join(".env"),
+            "# comment\nexport API_TOKEN=abc123\nuser=\"ann b\"\n",
+        )
+        .unwrap();
+        let mut env = EnvFile::new("dev");
+        env.set(EnvVar {
+            name: "tok".into(),
+            source: VarSource::Dotenv {
+                key: Some("API_TOKEN".into()),
+            },
+        });
+        env.set(EnvVar {
+            name: "user".into(),
+            source: VarSource::Dotenv { key: None },
+        });
+        env.set(EnvVar {
+            name: "gone".into(),
+            source: VarSource::Dotenv { key: None },
+        });
+        let r = e.resolve(&env);
+        assert_eq!(r.vars["tok"], VarValue::secret("abc123"));
+        assert_eq!(r.vars["user"], VarValue::secret("ann b"));
+        assert_eq!(r.errors.len(), 1);
+        assert_eq!(r.errors[0].0, "gone");
+        assert!(
+            r.errors[0].1.contains("gone not set in"),
+            "{}",
+            r.errors[0].1
+        );
+        assert_eq!(e.is_set(&env, env.get("tok").unwrap()), Some(true));
+        assert_eq!(e.is_set(&env, env.get("gone").unwrap()), Some(false));
+        assert!(e.store_secret("dev", env.get("tok").unwrap(), "x").is_err());
+        assert!(
+            fs::read_to_string(d.path().join(".env"))
+                .unwrap()
+                .contains("abc123")
+        );
+
+        // A custom path, relative to the collection root.
+        fs::create_dir_all(d.path().join("conf")).unwrap();
+        fs::write(d.path().join("conf/.env.dev"), "API_TOKEN=other\n").unwrap();
+        env.dotenv = Some("conf/.env.dev".into());
+        assert_eq!(e.resolve(&env).vars["tok"], VarValue::secret("other"));
+
+        // A missing file fails every dotenv variable.
+        env.dotenv = Some("nope.env".into());
+        let r = e.resolve(&env);
+        assert!(r.vars.is_empty());
+        assert_eq!(r.errors.len(), 3);
+        assert!(r.errors[0].1.contains("nope.env"), "{}", r.errors[0].1);
+        assert_eq!(e.is_set(&env, env.get("tok").unwrap()), Some(false));
+    }
+
+    #[test]
+    fn a_dotenv_error_does_not_quote_the_secret() {
+        let (d, e) = envs();
+        fs::write(d.path().join(".env"), "A=1\nB=2\nTOKEN=\"s3cr3t\n").unwrap();
+        let mut env = EnvFile::new("dev");
+        env.set(EnvVar {
+            name: "A".into(),
+            source: VarSource::Dotenv { key: None },
+        });
+        let r = e.resolve(&env);
+        assert_eq!(r.errors.len(), 1);
+        let msg = &r.errors[0].1;
+        assert!(!msg.contains("s3cr3t"), "{msg}");
+        assert!(msg.contains("line 3"), "{msg}");
+    }
+
+    #[test]
+    fn secrets_toml_keeps_values_it_does_not_write() {
+        let t: toml::Table = "[dev]\ntoken = \"a\"\nport = 8080\n".parse().unwrap();
+        let back: toml::Table = secrets_to_toml(&t).parse().unwrap();
+        assert_eq!(back, t);
     }
 
     #[cfg(unix)]

@@ -3,17 +3,17 @@
 pub mod app;
 pub mod complete;
 pub mod draw;
-pub mod editor;
+pub use sendito_widgets::{editor, form, icons, list};
 pub mod filter;
-pub mod form;
-pub mod icons;
 pub mod keymap;
-pub mod list;
+pub mod keymap_editor;
 pub mod overlay;
+pub mod records;
 pub use sendito_pipeline::runner;
 pub mod tab;
 pub mod theme;
 pub mod tree;
+pub mod units;
 pub mod viewer;
 
 use std::io::{self, Write};
@@ -144,12 +144,13 @@ fn write_osc52(text: &str) {
 
 /// Runs the interactive UI until the user quits.
 pub fn run(
-    project: runner::Project,
+    mut project: runner::Project,
     opts: RunOptions,
     rt: &tokio::runtime::Runtime,
 ) -> io::Result<()> {
-    let session =
+    let (session, warning) =
         sendito_store::session::load(&sendito_store::session::session_path(&project.root));
+    project.warnings.extend(warning);
     let mouse = project.config.ui.mouse;
     let mut app = App::new(project, session, rt.handle().clone());
     let script = match &opts.script {

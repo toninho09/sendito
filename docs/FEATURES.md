@@ -4,9 +4,8 @@ Everything Sendito does, grouped by area. Each section says where the feature
 lives (key, command, flag or config table) and links to the deeper document.
 Screenshots and recordings are in [media/](media/README.md).
 
-Sendito is a terminal API client for **HTTP**, **gRPC**, **WebSocket** and
-**MCP tools**. It
-runs locally, works with the mouse, conventional keys or vim keys, and keeps
+Sendito is a terminal API client for **HTTP**, **gRPC**, **WebSocket**,
+**SSE**, **MQTT** and **MCP tools**. It runs locally, works with the mouse, conventional keys or vim keys, and keeps
 requests as plain TOML files that you can version in git.
 
 ## At a glance
@@ -15,17 +14,22 @@ requests as plain TOML files that you can version in git.
 |---|---|---|---|
 | HTTP requests | yes | `sendito run` | [HTTP](#http) |
 | gRPC calls | yes | `sendito run` | [gRPC](#grpc) |
+| SSE sessions | yes | `sendito run` | [SSE](#sse) |
+| MQTT sessions | yes | `sendito run` | [MQTT](#mqtt) |
 | WebSocket sessions | yes | `sendito run` | [WebSocket](#websocket) |
 | MCP tool calls | yes | `sendito run` | [MCP](#mcp) |
 | Environments and secrets | yes | `--env`, `run` | [Variables and secrets](#variables-and-secrets) |
 | Scripts (set / extract / assert) | yes | `run` | [Scripts](#scripts) |
 | Collections on disk | yes | all commands | [Storage](#storage) |
-| Import (Postman / Insomnia / Bruno / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
+| Folder settings (inherited headers, auth, variables, scripts) | yes | `run`, exports | [Folder settings](#folder-settings) |
+| Saved example responses | yes | — | [Saved examples](#saved-examples) |
+| Descriptions (Markdown, per request and folder) | yes | — | [Descriptions](#descriptions) |
+| Import (Postman / Insomnia / Bruno / OpenAPI / `.http` / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
 | Export (curl / `.http`) | yes | `sendito curl`, `sendito http` | [Import and export](#import-and-export) |
 | History | yes | `run` records it | [Storage](#storage) |
 | Cookie jar | yes | `--no-cookies` | [HTTP](#http) |
 | OAuth 2 (HTTP) | yes | `sendito auth` | [HTTP](#http) |
-| OAuth 2.1 (MCP) | uses tokens | `sendito mcp login` | [MCP](#mcp) |
+| OAuth 2.1 (MCP) | yes | `sendito mcp login` | [MCP](#mcp) |
 | Themes and icons | yes | `sendito theme` | [Themes and icons](#themes-and-icons) |
 | Folders of requests in CI | — | `sendito run <folder>` | [Headless and CI](#headless-and-ci) |
 
@@ -56,18 +60,40 @@ The wire rules are exact and spelled out in
   * `none`;
   * `raw` with a `content_type`;
   * `json` (sent as `application/json`);
+  * `graphql`: separate Query, Variables and Operation name editors. Sends a JSON
+    object with `query`, optional `variables` and optional `operationName`.
+    Variables must be a JSON object. Postman and Bruno GraphQL imports keep
+    these fields separate. `:graphqlschema` loads introspection in the background.
+    It uses the request's auth, cookies, TLS and proxy settings. The Query editor
+    completes fields, unused arguments (`name: `) and inline-fragment types.
+    It skips fields already selected at that level. Completion loads a missing
+    schema in the background. A failed load requires `:graphqlschema` to retry.
+    Query parsing is heuristic, not GraphQL validation;
   * `form` (`application/x-www-form-urlencoded`, `space → +`, `*-._` literal,
     everything else `%XX`);
   * `multipart` with text and file parts (filename and content type guessed from
     the extension, explicit boundary);
   * `file` (raw bytes of a path, relative to the collection root, `~/` expands).
 * **Auth** — one of:
+  * `inherit` (the default: the auth of the nearest folder that sets one, see
+    [Folder settings](#folder-settings));
   * `none`;
   * `basic` (`Authorization: Basic base64(user:pass)`);
   * `bearer`;
   * `apikey`, sent as a header or as a query parameter;
-  * `oauth`, naming an identity from `[oauth.<name>]` (authorization code +
-    PKCE, tokens in the OS keychain, one refresh and retry on `401`).
+  * `oauth`, naming an identity from `[oauth.<name>]` (tokens in the OS
+    keychain, one refresh and retry on `401`). The grant is authorization code
+    + PKCE (a browser sign-in), device code (a code to enter on another
+    device), or client credentials / password (no sign-in: a token is
+    requested when a request needs one, also in CI);
+  * `digest` (RFC 7616: SHA-256 or MD5, `qop=auth`; the first send gets the
+    server's challenge and the request is sent once more with the answer);
+  * `awsv4` (AWS Signature Version 4 over the request as it is sent: access
+    key, secret key, optional session token, region, service; not for a
+    multipart body);
+  * `jwt` (a JWT signed at send time from the claims: HS256/384/512 with a
+    secret, RS256/ES256 with a PEM key file; `expires_in_s` adds `iat` and
+    `exp`; also for gRPC and WebSocket).
 * **Per-request options**: `timeout_ms`, `follow_redirects` (default on, up to
   10 hops, no `Referer` added; authentication stays behind on a redirect to
   another origin), `verify_tls`, `cookies`.
@@ -116,10 +142,29 @@ The wire rules are exact and spelled out in
   still shows the size on the wire. Any other coding (`zstd`, stacked) or a
   truncated stream is shown as received. Sendito never sends `Accept-Encoding`,
   so it only decodes what the server chose to send.
-* **Body views**: pretty JSON with folding, raw text and hex, each with line
-  numbers, search and a scrollbar. In the pretty view the bottom border shows
-  the jq path of the line at the cursor (`.items[0].email`): `f` filters the
-  body to that value and `Y` copies the path.
+* **Body views**: pretty, raw text and hex, each with line numbers, search
+  and a scrollbar. In the pretty view the bottom border shows the jq path of
+  the line at the cursor (`.items[0].email`): `f` filters the body to that
+  value and `Y` copies the path (JSON only).
+* **Copy**: `y` and `Ctrl+W u` copy through the terminal clipboard (OSC 52).
+  In tmux, enable it with `set -g set-clipboard on`.
+* **Pretty formats**: the Content-Type chooses the format; with none that
+  names one, a body that starts with `{` or `[` is JSON, `<?xml` is XML and
+  `<!doctype html` or `<html` is HTML. YAML and CSV need their Content-Type.
+  A body that does not parse in its format shows raw.
+  * **JSON**: re-indented, highlighted, a fold per object and array.
+  * **XML** (`xml`, `+xml`): one tag per line, two spaces per level, a fold
+    per element. Text, comments and CDATA keep their bytes. Closing tags that
+    do not match show the body raw.
+  * **HTML** (`text/html`, `xhtml`): the same layout. `br`, `img` and the
+    other void elements open no level; the content of `pre`, `script`,
+    `style` and `textarea` shows as received; an element left open (`<p>`,
+    `<li>`) ends before the closing tag of its parent.
+  * **YAML** (`yaml`, `yml`): the text as received (comments, anchors, key
+    order), highlighted, a fold per indented block.
+  * **CSV and TSV** (`text/csv`, `text/tab-separated-values`): aligned
+    columns with a bold header row; a line break in a cell shows as `⏎`.
+    Bodies larger than 10 MB, or with rows of different lengths, show raw.
 * **Query bar**: `/` (search) and `j` (vim `J`, jq filter) open a bar on the
   first row of the response view; there is no dialog. The view follows the
   text as you type. On the right the bar shows `2 results`, `match 3/12`,
@@ -146,8 +191,9 @@ The wire rules are exact and spelled out in
 * **Cookie jar** (opt-in): RFC 6265 with the public suffix list, stored in a
   private `0600` file with a cross-process lock and atomic replacement, isolated
   per environment. Secure cookies require HTTPS; public-suffix `Domain`
-  attributes are rejected. **Redirects are not followed while the jar is
-  enabled**, so a forwarded `Cookie` cannot escape its scope.
+  attributes are rejected. On a redirect, **each hop gets the jar's `Cookie`
+  for its own URL** (cookies the redirect response sets are stored first), so
+  a cookie does not leave its scope.
 
 **Watch**: `Ctrl+W m` or `:watch [seconds]` re-sends the active HTTP request on
 an interval (`[ui] watch_interval_s`, default 5, also in Settings). The status
@@ -210,6 +256,78 @@ A request is one TOML file with `kind = "grpc"` ([FORMAT.md](../FORMAT.md#grpc-r
 
 ---
 
+## SSE
+
+* **A separate request kind** — `kind = "sse"`, not an HTTP body type.
+  GET URL, query parameters, headers, inherited HTTP authentication and cookies.
+* **Live sessions** — `:newsse` or Ctrl+W E creates a request. The response has
+  an event list, data payload, jq, headers, timing and log views.
+  `[` / `]` selects older events or returns to the latest event.
+* **Bounds** — event storage follows `ui.stream_messages_kept`. UI delivery uses
+  a bounded channel with acknowledgement; a slow screen does not accumulate events.
+  The event log also has a size bound.
+* **Controls** — `:end` ends a session; Cancel stops it. Optional `max_events`
+  and `deadline_ms` finish a session successfully. Server EOF also finishes it.
+* **Timeout** — `[sse] timeout_ms = 30000` controls opening only, including redirects.
+  A request can override it. The open stream has no total request timeout.
+* **HTTP rules** — auth, proxy, TLS, cookie storage and redirect credential removal
+  use the HTTP pipeline, including OAuth and Digest 401 retries.
+  The client adds Accept only when absent.
+* **Scripts and history** — pre-request sets run before opening. Extractions and
+  assertions run at the end, against the HTTP status/headers and last event data.
+  History contains one session entry. Secret values stay masked in the UI/history.
+* **CLI** — data lines go to stdout; progress goes to stderr. JSON reports include
+  `events`. Folder runs chain extracted variables. curl exports add `-N`;
+  .http exports use GET and `Accept: text/event-stream`.
+* **Limits** — no automatic reconnect or Last-Event-ID, retry is display-only,
+  compressed streams are refused, and each event is limited to 1 MiB.
+  Saved response examples and watch mode do not apply to SSE.
+
+## MQTT
+
+* **A separate request kind** — `kind = "mqtt"`. One session per send: connect,
+  subscribe, publish, then receive messages. Protocol 3.1.1 or 5, TCP
+  (`mqtt://`, port 1883) or TLS (`mqtts://`, port 8883), QoS 0 to 2, retained
+  publishes and an optional Last Will. Schema in `FORMAT.md`.
+* **Editor** — `:newmqtt` or Ctrl+W M creates a request; the new-request dialog
+  also offers MQTT. Tabs: Topics (subscriptions with `+` and `#` wildcards and
+  a QoS each), Publish (topic, payload, QoS, retain, base64), Will (the Last
+  Will), Auth (user name and password, or Basic auth), Scripts and Options
+  (client ID, protocol, clean session, keep-alive, CONNACK timeout, deadline,
+  TLS verification).
+* **Refused subscriptions** — when the broker refuses a subscription, the Log
+  and the status bar show "subscription refused" with the topic filter, and
+  the CLI prints it to stderr. The session continues.
+* **Client ID** — an empty client ID sends `sendito-` and 8 random hex digits.
+* **Credentials** — the user name and password fields win; when they are
+  empty, a Basic auth (own or from a folder) gives them. Other auth kinds stop
+  the session before it connects.
+* **Live sessions** — the response has Messages (a list and the selected
+  payload, with jq), Connection (broker, client ID, CONNACK), Timing and Log.
+  `[` / `]` selects older messages. Send on an open session publishes the
+  selected row of the Publish tab; the button reads "Publish". `:end` (Ctrl+W d)
+  disconnects; Cancel (Ctrl+W x) aborts without DISCONNECT, so the broker sends
+  the Last Will.
+* **Bounds** — message storage follows `ui.stream_messages_kept`. UI delivery
+  uses a bounded channel with acknowledgement. The log also has a size bound.
+* **Timeout** — `[mqtt] timeout_ms = 30000` is the time to wait for CONNACK
+  (0 = no limit). A request can override it. The setting is "MQTT timeout".
+  An optional `deadline_ms` ends a session successfully.
+* **Scripts and history** — pre-request sets run before the connection.
+  Extractions and assertions run at the end when the broker accepted the
+  connection: `status` is 0, the headers are `connack` and `session-present`,
+  and the body is the last payload. History has one session entry. Secret
+  values stay masked in topics and payloads on screen and in history.
+* **Folders** — folder scripts and auth apply; folder headers do not, and a
+  note says so.
+* **CLI** — each payload goes to stdout as one block (`--include` adds a
+  `# topic qos=N` line); progress goes to stderr. A deadline ends with exit 0;
+  a refused CONNACK or a transport error ends with exit 2; Ctrl+C cancels.
+  JSON reports include `messages`.
+* **Limits** — no curl or `.http` export, no MQTT over WebSocket, no proxy, no
+  automatic reconnect, v5 properties and enhanced auth are not exposed.
+  Saved response examples and watch mode do not apply to MQTT.
+
 ## WebSocket
 
 A WebSocket request (`kind = "websocket"`) opens one session: the handshake, the
@@ -265,7 +383,9 @@ from the request.
 * **Transports**:
   * **stdio** — a child process (`command`, `args`, `env` entries added to the
     inherited environment), one UTF-8 JSON object per line on stdin/stdout,
-    stderr shown in the log, killed when the request ends.
+    stderr shown in the log. When the request ends, its stdin is closed and
+    it is killed if it has not exited after 0.5 s. A stdout line that is not
+    JSON shows in the log as `stdout: …`.
   * **Streamable HTTP** — one POST per message (`Content-Type: application/json`,
     `Accept: application/json, text/event-stream`), configured extra headers,
     `Mcp-Session-Id` and `Mcp-Protocol-Version` sent after initialization, JSON
@@ -278,23 +398,43 @@ from the request.
   servers; F2 on the tool field lists the tools and, when the arguments editor is
   empty or `{}`, fills an argument template from the tool's input schema.
   `:mcpservers` and `:mcptools` run the same pickers from the palette.
-* **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) opens the
-  servers as a table — name, kind (`http`/`stdio`) and the URL or command line —
-  and `Ctrl+S` writes `[mcp.servers]` to the project config
-  (`.sendito/config.toml`), keeping the rest of the file. It shows and writes
-  only the project file's servers: servers from the global config are used but
-  never copied into the project file. While the project config has an error,
-  the editor and `:mcpadd` show it and write nothing. Rows whose name and
-  URL/command line did not change keep their `args`, `env`, `headers` and `auth`,
-  which are edited in the file. `:mcpadd <name>` asks for the URL or command and
-  adds one server at once.
+* **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) lists
+  the servers on the left (name and kind) and shows the form of the selected
+  one on the right. The form shows only what applies: an `http` server has a
+  URL, the auth (`none`/`bearer`/`oauth`), the token (bearer only), Verify TLS,
+  a Headers table and the OAuth overrides (`oauth` only: client ID, client
+  secret, authorize, token and register URLs, scopes; empty lets discovery
+  find them); a `stdio` server has a command, an Arguments table (one argument
+  per row, as typed: spaces and quotes stay part of it) and an Environment
+  table. A whole command line typed in Command, with no rows in Arguments,
+  splits on spaces. The line under the form explains the focused field.
+  Enter (or a click) opens the form, Esc returns to the list, Tab and ↑↓ move
+  between fields, ← → change a choice, `Ctrl+N` adds a server and `Ctrl+D`
+  deletes the selected one. `Ctrl+S` writes `[mcp.servers]` to the config
+  file chosen in Settings (global or project; the title says which), keeping
+  the rest of the file. It shows and writes only that file's servers: a
+  server from the other file is used, never copied. While that config has an
+  error, the editor and `:mcpadd` show it and write nothing. `Ctrl+T` tests
+  the selected saved server: it lists its tools and shows "✓ N tools" or the
+  error. A plain token or client secret, or a plain value in a header whose
+  name says it holds a credential (`authorization`, `*key*`, `*token*`,
+  `*secret*`), shows "⚠ plain text" and gets a warning on save.
+  `:mcpedit <name>` opens the editor of the file that holds that server with
+  its form open; `:mcpedit` alone opens the list. `:mcpadd <name>` asks for
+  the URL or command and adds one server at once to the chosen file.
 * **Auth**:
   * static **bearer** (`{{variables}}` allowed);
   * **OAuth 2.1** — metadata discovery (RFC 9728 / RFC 8414), PKCE, dynamic
     client registration (RFC 7591), refresh with a 30 s expiry slack, one retry
     after a `401`. Tokens live in the OS keychain under `<collection>/mcp/<server>`.
-    Sign in from a shell with `sendito mcp login <server>` before calling; `:auth
-    login` in the app is for HTTP OAuth identities only.
+    Sign in with `:auth login <server>` in the app or `sendito mcp login <server>`
+    in a shell.
+  * **Sign-in when asked** — a `401` with a Bearer challenge (when the config
+    sends no `Authorization` header), or no valid saved sign-in, opens a
+    "Sign in now?" dialog for a server of `[mcp.servers]`. Sign in opens the
+    browser, then runs the call or the tool list again. A server without an
+    auth table gets `type = "oauth"` in the config file that defines it.
+    Background tool completion does not open the dialog.
 * **Results**: `isError: true` is treated as a result, not a transport failure —
   it is exit code 1 in `sendito run`. `content` items and `structuredContent` are
   visible to scripts. Tabs: **Body · Request · Timing · Log**.
@@ -316,17 +456,92 @@ token = "{{token}}"
 
 ---
 
+## Folder settings
+
+A folder, and the collection root, can hold a `folder.toml`
+([FORMAT.md](../FORMAT.md#folder-settings)). Its headers, auth, variables and
+scripts apply to every request below it.
+
+* **Auth**: a request without its own auth inherits the auth of the nearest
+  folder that sets one. "No auth" (`type = "none"`) in the request turns that
+  off. MCP requests do not inherit an auth.
+* **Headers**: sent before the request's own; a request header of the same
+  name replaces the folder's, and a disabled request row stops it. gRPC
+  requests get them as metadata.
+* **Variables**: above the environment, below the runtime variables.
+* **Scripts**: the folder's rows run before the request's.
+* **Folder tab**: `s` on a tree folder (on a request: its folder) or
+  `:folder` opens the settings in a tab with **Headers · Auth · Vars ·
+  Scripts · Docs**. The card names the folder and how many requests the settings
+  reach. `Ctrl+S` writes `folder.toml`; empty settings remove it. A folder tab
+  is never sent.
+* **In a request tab**: the Auth tab offers **Inherit** and names the folder
+  the auth comes from (`→ Bearer token from Users`); the Headers tab lists
+  the headers the folders add under the table ("From folders").
+* **Everywhere**: `sendito run`, folder runs, the curl and `.http` exports
+  and the history use the request with what it inherits. A `folder.toml`
+  that cannot be read stops the send and names the file.
+* **Imports**: Postman and Insomnia folder auth and Bruno `folder.bru` /
+  `collection.bru` become `folder.toml`.
+
+---
+
+## Descriptions
+
+Every request, every folder and the collection root can carry a Markdown
+description, like the documentation of a Postman request or folder
+([FORMAT.md](../FORMAT.md#description)).
+
+* **Docs tab**: the last tab of every request kind and of a folder tab. Its
+  **View** choice switches between **Edit** (a multi-line editor for the
+  Markdown) and **Preview** (the rendered text: headings, bold, italic,
+  inline code and code blocks, lists, task lists, quotes, links with their
+  URL, rules and tables). A request with a description opens on Preview.
+* **Preview keys**: `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End` (vim: `j`/`k`,
+  `g`/`G`) scroll; Enter switches to Edit; `↑` on the first line goes back to
+  View. The tab label shows `Docs•` when there is a description.
+* **Files**: `description = '''…'''` in the request file or `folder.toml`;
+  the root `folder.toml` documents the collection. It is never sent and not
+  inherited.
+* **Imports**: the descriptions of Postman (collection, folders, requests),
+  Insomnia (workspace, folders, requests), Bruno (`docs` blocks) and OpenAPI
+  (`info.description`, tag descriptions, operation summary and description).
+
+---
+
+## Saved examples
+
+An HTTP request can keep example responses next to its file
+(`<name>.examples/`, [FORMAT.md](../FORMAT.md#saved-examples)).
+
+* **`:saveexample [name]`** saves the response on screen: status, headers and
+  body (as received, before a jq filter). The default name is the status and
+  reason (`200-ok`). Credential headers (`Set-Cookie`, `Authorization`, …) are
+  masked, and so are the secrets the server echoed.
+* **`:examples`** lists them with their status; Enter shows one in the
+  response pane, marked `example: <name>` in the border. `:examples delete
+  <name>` deletes one.
+* Renaming, moving, duplicating or deleting the request takes its examples
+  along. The tree does not show the `.examples` directories.
+* **Imports**: Postman saved responses become examples.
+
+---
+
 ## Variables and secrets
 
 Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 
 * **Lookup order, last wins**: collection variables → active environment →
-  runtime variables set by scripts.
+  the variables of the request's folders (`folder.toml`) → runtime variables
+  set by scripts.
 * **Nesting**: a value may contain `{{other}}`, resolved up to 8 levels; cycles
   stay unresolved.
 * **Dynamic values** are generated once per send:
   `{{$uuid}}`, `{{$timestamp}}` (seconds), `{{$timestampMs}}`,
   `{{$isoTimestamp}}` (RFC 3339 UTC), `{{$randomInt}}` (0–1000).
+* **Process environment**: `{{$processEnv.NAME}}` reads `NAME` from the
+  environment of the Sendito process. The value is a secret; a variable that is
+  not set stays unresolved.
 * **Unresolved placeholders** are red in the editor and named in the status line.
   Sending asks for confirmation; `sendito run` refuses unless
   `--allow-unresolved` is given. A secret that did not load (no keychain entry,
@@ -334,7 +549,7 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   a watch stops. An active-environment secret that did not load never falls
   back to the collection's value for the same name, and while the active
   environment file cannot be read no collection value stands in for it.
-* **Four secret sources**, mixable in one environment:
+* **Five secret sources**, mixable in one environment:
 
 | `source` | Value lives in | Secret |
 |---|---|---|
@@ -342,8 +557,10 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 | `local` | `.sendito/secrets.toml` (`[<env>]`, `[_collection]`), gitignored | yes |
 | `keychain` | the OS keychain (Secret Service / macOS Keychain) | yes |
 | `file` | the contents of a path (one trailing newline removed) | yes |
+| `dotenv` | a key of the environment's `.env` file (top-level `dotenv = "<path>"`, default `.env` at the collection root); read only | yes |
 
-* `key = …` selects an explicit key/account in `secrets.toml` or the keychain;
+* `key = …` selects an explicit key/account in `secrets.toml`, the keychain or
+  the `.env` file;
   otherwise the variable name is used.
 * **Derived values inherit secrecy**: `Bearer {{token}}` and any value built from
   a secret is a secret too.
@@ -352,8 +569,42 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   server echoes is masked as it was sent and when it comes back JSON-escaped or
   percent-encoded (form or query); other encodings, such as base64, are not
   recognised, and secrets shorter than 3 characters are not masked in echoes.
-* The **environment editor** (`Ctrl+W V`) edits variables in a table, writes
-  secret values to their source, and shows whether each one is set.
+* The **environment editor** (`Ctrl+W V`) edits variables in a table:
+  Variable, Type (Space changes it) and Value. Value takes what the type
+  needs:
+
+  | Type | Value | In the file |
+  |---|---|---|
+  | `text` | the value | `name = "value"` |
+  | `secret` | the secret, masked; `Ctrl+S` writes it to `secrets.toml` | `source = "local"` |
+  | `secret key` | the name of an entry in `secrets.toml` | `source = "local", key = "…"` |
+  | `keychain` | the secret, masked; `Ctrl+S` writes it to the OS keychain | `source = "keychain"` |
+  | `keychain key` | the name of an account in the keychain | `source = "keychain", key = "…"` |
+  | `file` | the path (F2 browses; a pasted path works) | `source = "file", path = "…"` |
+  | `.env` | the key in the `.env` file (empty = the variable name) | `source = "dotenv"` |
+
+  Changing between a secret type and another clears the Value, so a secret
+  never shows as text. An empty Value says whether a secret is set or the
+  `.env` file has the key.
+* **F2** on the Value of a `file` row, or on the `.env` file line, opens a
+  file picker: `../` and the folders open, the filter narrows the list, and
+  a file fills in its path (relative to the collection, else with `~`). Esc
+  goes back to the editor with its edits.
+* The **.env file** line above the table sets the file that the `.env`
+  variables read (the `dotenv` key; empty = `.env` at the collection root).
+  It says "✓ found · N keys", "✗ not found" or the parse error while you
+  type, and the `.env` rows update. Up on the first row goes to the line;
+  Tab completes the path, and Tab, Down or Enter go back to the table.
+  Sendito only reads the file.
+* **Plain credentials in a request**: a password, token, API key value, AWS
+  secret key or session token, JWT secret or MQTT password typed without
+  `{{variable}}` shows "⚠ plain text" and a help line. `Ctrl+W K` moves the
+  value into a secret: it asks a name, writes the value to
+  `.sendito/secrets.toml` for the active environment (or the collection
+  variables when none is active), adds the `local` variable to that
+  environment and writes `{{name}}` in the field. A name the environment
+  already has is refused. With **Hide plain secrets** on, such a value shows
+  as `••••••`; `Ctrl+W *` shows it.
 * Environment names cannot start with `_`, and `runtime` is reserved.
   `_collection` holds the collection-level variables' secrets.
 * The editor never loses edits: switching (`Ctrl+PageUp`/`Ctrl+PageDown`) and
@@ -369,21 +620,45 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 
 ## Scripts
 
-The **Scripts** tab has three declarative sections — no JavaScript
-([FORMAT.md](../FORMAT.md#http-request), [DEBT.md](DEBT.md)).
+The **Scripts** tab has three declarative sections and two Lua scripts
+([FORMAT.md](../FORMAT.md#http-request)). The section choice at the top
+switches between them; an empty script shows "(empty)".
 
 * **Pre-request** (`[[scripts.pre]]`) — `var` / `value` pairs that set runtime
   variables before sending, in order, each seeing the previous.
-* **Extract** (`[[scripts.extract]]`) — `var`, `from = jsonpath | header | status`,
-  `expr`, and an optional `secret = true` flag. JSONPath uses `serde_json_path`;
+* **Extract** (`[[scripts.extract]]`) — `var`, `from`, `expr`, and an optional
+  `secret = true` flag. JSONPath uses `serde_json_path`;
   several matches become a JSON array, a single match becomes the unquoted
   string.
+* **Sources** (`from`, for extract and assert) — `jsonpath`, `header`,
+  `status`, `time` (milliseconds: `total`, and on HTTP also `ttfb`, `dns`,
+  `connect`, `tls`, `download`), `size` (bytes: `total`, `body`, `headers`),
+  `hash` (`md5`, `sha1`, `sha256`, `sha512` hex of the body), `xpath` (XPath
+  3.1 on an XML body), `regex` (capture group 1 on the raw body text) and
+  `cookie` (a `Set-Cookie` value of this response, masked as a secret)
+  ([FORMAT.md](../FORMAT.md#script-sources)).
 * **Assertions** (`[[scripts.assert]]`) — `from`, `expr`, `op`, `value`, with
   operators `eq`, `ne`, `contains`, `not_contains`, `exists`, `not_exists`,
   `lt`, `le`, `gt`, `ge`, `matches` (regular expression). Numeric comparison is
   numeric; otherwise string comparison.
-* Results appear in the **Results** tab (gRPC: **Log**) and decide the exit code
-  of `sendito run` (`1` when any assertion fails).
+* **Lua scripts** (`[scripts.lua]`, `pre` and `post`) — code in
+  [Lua 5.4](https://www.lua.org), for logic that the rows cannot express
+  ([FORMAT.md](../FORMAT.md#lua-scripts)). The pre script runs after the
+  pre-request rows: it sets variables (`vars.set`, `vars.set_secret`) and
+  changes the request (`request.url`, `request.method`, headers, query
+  parameters, the body text). The post script runs after the assertions: it
+  reads `response` (status, headers, body, `json()`, `time()`), sets
+  variables and records `test(name, pass)` results. A value that holds a
+  secret, a cookie value or the OAuth token of the send stays a secret.
+  `print` writes to the script output, secrets masked. Helpers: `render`, `hash`, `base64_encode`, `base64_decode`,
+  `json_parse`, `json_stringify`. Folder scripts run first. The scripts cannot
+  reach files, the network or processes, and stop at fixed instruction and
+  memory limits. An error in a pre script stops the send; an error in a post
+  script is a failed test.
+* Results appear in the **Results** tab (gRPC: **Log**): assertions and tests,
+  the variables set, and the script output. They decide the exit code of
+  `sendito run` (`1` when an assertion or a test fails, `2` when a pre script
+  fails).
 
 ---
 
@@ -397,8 +672,8 @@ The **Scripts** tab has three declarative sections — no JavaScript
 * **Discovery**: the root is the nearest `.sendito/`; hidden entries and
   `[collection] ignore` directories are skipped; natural sort, folders first.
 * **Session restore** (`.sendito/session.toml`, gitignored): open tabs, drafts,
-  active tab and environment, layout, expanded folders and non-secret runtime
-  variables.
+  active tab and environment, layout, expanded folders, non-secret runtime
+  variables and the config scope of the settings.
 * **History** (`.sendito/history.jsonl`, gitignored): one JSON object per sent
   request, the request as written with `{{variables}}` (no bodies), trimmed at
   `[history] max_entries` (default 10 000) plus 10 % slack.
@@ -415,22 +690,46 @@ Full schema and the directory diagram: [FORMAT.md](../FORMAT.md).
 ## Import and export
 
 **Import** — `Ctrl+W i`, `:import [path]` or `sendito import <file|dir>`
-(`--into <folder>` to import into a subfolder):
+(`--into <folder>` to import into a subfolder; the CLI must run inside a
+collection):
 
 * **Postman Collection v2.1** — folders, requests (method, URL, query, headers,
-  every body mode, basic / bearer / API-key auth with inheritance), collection
-  variables, dynamic-variable aliases. Scripts, saved examples, OAuth 2, Digest
-  and descriptions are **reported**, not converted.
-* **Insomnia v4/v5** — folders, supported HTTP requests, selectable
-  environments, `{{ _.name }}` templates where expressible. Private
+  every body mode, basic / bearer / API-key / Digest / AWS SigV4 / JWT auth;
+  folder and collection auth go to `folder.toml`), collection
+  variables, dynamic-variable aliases, saved responses (as examples) and
+  descriptions. Scripts, OAuth 2 and a JWT private key are **reported**, not
+  converted.
+* **Insomnia v4/v5** — folders, supported HTTP requests, descriptions,
+  selectable environments, `{{ _.name }}` templates where expressible. Private
   environments are not imported.
-* **Bruno directory** — folders, supported HTTP requests, environments; secret
+* **Bruno directory** — folders, supported HTTP requests, `docs` blocks,
+  environments; secret
   variables are reported.
+* **OpenAPI 3.0 / 3.1 and Swagger 2.0** (JSON, or YAML with `.yaml`/`.yml`) —
+  one request per operation, one folder per first tag, `{{baseUrl}}` from the
+  first server (each server also becomes an environment when there are
+  several), path parameters as `{{name}}` collection variables, query and
+  header parameters (required ones enabled), the request body from its
+  example or a sample of its schema (JSON, form, multipart), the response
+  examples as saved examples, and basic / bearer / Digest / API-key security
+  (the document's security goes to the root `folder.toml`; an operation's own
+  security to the request), and the descriptions of the document, its tags and
+  its operations. OAuth 2 and OpenID Connect security, cookie
+  parameters and external `$ref`s are reported.
+* **`.http` / `.rest` file** (JetBrains HTTP client, VS Code REST Client) —
+  `###` blocks, `@name = value` variables, `# @name`, `# @timeout`,
+  `# @no-redirect`, multi-line queries, headers, JSON / form / raw / `< file`
+  bodies, `Authorization: Basic|Digest user password` and `Bearer token` as
+  auth, and the environments of `http-client.env.json` next to it. Response
+  handlers and `http-client.private.env.json` are reported.
 * **curl paste** — paste a `curl …` command into the URL field or the import
   dialog. Supported flags include `-X -H -d --data-* -F/--form/--form-string
   -u -A -e -b -G -I -L -k -m --url --json --compressed --http* -x`. curl
   semantics are reproduced: `-H 'Name:'` becomes a disabled row, `-H 'Name;'`
   an empty value.
+* An imported environment gets a unique name: a name that already exists in
+  the collection gets ` (2)`, ` (3)` and so on, and a reserved name (`_…`,
+  `runtime`) gets the prefix `env-`.
 * The import **report dialog** groups items as Needs action / Skipped /
   Imported with changes; `y` copies it and `:report` reopens it.
 
@@ -478,10 +777,24 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   one row without a border (WebSocket then shows a `WS` badge).
 * **Sidebar**: **Requests** (the tree, with `├ └` connectors, open-in-tab
   accent, filter with `/`, request and folder counts) or **History** (grouped
-  by day, status in colour). It can sit on the right and be resized.
-* **Request tabs**: HTTP `Params · Headers · Body · Auth · Scripts · Options`;
-  gRPC `Message · Metadata · Auth · Scripts · Options`; MCP
-  `Tool · Args · Scripts · Options`, in the pane's top border. A tab shows its
+  by day, status in colour). It can sit on the right and be resized. While the
+  tree scrolls, the folders of the top row stay pinned above the list (at most
+  half its height, the last one underlined); a click on a pinned folder
+  selects it and scrolls the tree to it (`ui.sticky_folders`).
+* **Favorites**: `f` on a request in the tree (or `Ctrl+W F` for the current
+  tab) adds it to the favorites or removes it. A **★ Favorites** section at the
+  top of the tree lists them (hidden while the filter is set); Enter opens one.
+  In the tree, a favorite ends with `★`. A rename or a move keeps the favorite,
+  a delete removes it. Folders and never-saved tabs cannot be favorites.
+  Favorites belong to the user (`session.toml`, gitignored), not to the
+  collection.
+* **Pinned tabs**: `Ctrl+W P` pins or unpins the current tab. Pinned tabs stay
+  before the other tabs and show `◆` before the method; new tabs open after
+  them. A pinned tab closes like any other. The pin stays after a restart.
+* **Request tabs**: HTTP
+  `Params · Headers · Body · Auth · Scripts · Options · Docs`; gRPC
+  `Message · Metadata · Auth · Scripts · Options · Docs`; MCP
+  `Tool · Args · Scripts · Options · Docs`, in the pane's top border. A tab shows its
   row count or `•` when set. The bottom border shows the request's folder path
   on the left and, for editors (with line numbers), `✓ JSON` /
   `✗ JSON: line, col` plus `Ln, Col` on the right. A click on the JSON error
@@ -515,7 +828,8 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   on the bar. A pane narrower than 70 columns hides the list and shows
   `◀ 3/12 ▶` in the bottom border.
 * **Start screen** (no tab open): a pixel wordmark, a collection summary, the
-  getting-started keys and the most recent requests (click one to open).
+  getting-started keys, the favorites (up to 6) and the most recent requests
+  (click one to open).
 * **Footer**: one row. On the left, status segments (vim mode, collection,
   unsaved count, undefined variables, watch state, running/stream state). On
   the right, the key hints for what is focused, with short key names (`^S`,
@@ -531,7 +845,21 @@ Import gaps are listed in [DEBT.md](DEBT.md).
 * **Overlays** over a dimmed backdrop: command palette, help (searchable, two
   columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
-  folder), the environment editor, the import dialog and the report dialog.
+  folder, theme, OAuth sign-in, OAuth identity, cookie jar), the environment
+  editor, the MCP servers, OAuth and keymap editors, the import dialog and the
+  report dialog. With a filter typed, a picker's title says how many items
+  match ("2 of 8") and the matched letters are marked; the environment picker
+  shows how many variables each environment has.
+* **Name prompts** (new request, new folder, save, rename) show the file the
+  name creates (`→ Orders/get order.toml`) and say at once when the name is
+  not valid or already taken. A choice row whose options fit shows them all
+  (the request type: HTTP, gRPC, WebSocket, MCP, SSE, MQTT).
+* **Import dialog**: the line under the instructions says what the text
+  would import ("✓ curl · POST https://…", "✓ Postman "shop" · 24 requests")
+  or why it cannot ("✗ no file or directory at …"); Tab completes a path.
+* **Undefined variables**: the question before a send offers **Define**,
+  which opens the environment editor of the active environment (or the
+  collection variables) with a row for each missing variable.
   Clicks inside a dialog act inside it; only the controls do something. A
   settings row is selected by a click and changed by its value chip (or a
   double click), like ←/→ on the keyboard.
@@ -540,7 +868,10 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   40×8 a message replaces the layout; 120×40 and 200×60 are the tested sizes.
 
 **Command palette** (`Ctrl+P` or `:`): actions with their keys, all requests,
-all environments, and the `:commands`.
+all environments, every setting ("Setting: …" with its value; Enter opens the
+settings dialog on that row) and the `:commands`. The search finds commands
+without the `:`; a command that needs an argument puts `:<command> ` in the
+input and waits for it. Rows that hold the typed text as written come first.
 
 | Command | Does |
 |---|---|
@@ -549,20 +880,24 @@ all environments, and the `:commands`.
 | `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment |
-| `:envs` | Edit environments |
-| `:auth login <identity>` / `:auth logout <identity>` | HTTP OAuth sign in / out |
+| `:envs`, `:newenv` | Edit environments / create one |
+| `:auth login [name]` / `:auth logout [name]` | OAuth sign in / out: an `[oauth]` identity, else an MCP server; without a name, a picker lists them |
 | `:w`, `:saveas <name>`, `:wq`, `:q`, `:q!` | Save / save as / save and quit / quit / quit without saving |
 | `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request |
 | `:mcpservers`, `:mcptools` | Choose an MCP server / discover and choose a tool |
-| `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the project config / add one |
+| `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the config file chosen in Settings / add one |
+| `:mcpedit [name]` | Edit an MCP server (the servers list without a name) |
+| `:method`, `:bodytype`, `:authtype`, `:grpcmethod` | Open the method, body type, auth type or gRPC method picker of the active request |
+| `:rescan` | Read the collection from disk again |
 | `:import [path]` | Import a collection or paste curl |
 | `:curl`, `:curl!`, `:httpfile`, `:httpfile!` | Export (without / with secrets) |
-| `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar |
+| `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar: `:cookies` lists the cookies; Enter deletes one, the last row clears all |
 | `:history`, `:clearhistory` | Show / clear history |
 | `:format` | Pretty-print the JSON body |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
-| `:settings`, `:theme <name>`, `:theme reload`, `:help` | Settings / theme / help |
+| `:settings`, `:theme [name]`, `:theme reload`, `:help` | Settings / theme (a picker without a name) / help |
+| `:oauth`, `:keymap` | Edit the HTTP OAuth identities / your key bindings |
 | `:report`, `:savebody [path]` | Reopen the last report / save the response body |
 
 **Mouse**: click to focus, select rows, switch and close tabs (middle-click
@@ -571,7 +906,8 @@ onto a folder to move it; drag pane borders to resize; the wheel scrolls the
 pane under the pointer. Inside a dialog, clicks act inside it: fields take the
 caret, list rows and buttons act, and its own frame is inert; the wheel acts
 only while the pointer is over the dialog. A click truly outside closes it,
-except confirmations and the environment/MCP editors, which ask to save first,
+except confirmations and the environment, MCP, OAuth and keymap editors,
+which ask to save first,
 and a prompt or import dialog with typed text, which asks before discarding it.
 
 **Vim mode** (`[ui] vim_mode` or Settings): modal editors (normal / insert /
@@ -596,20 +932,82 @@ in-app help, and can be remapped in `[keymap.all]`, `[keymap.conventional]` or
 
 ## Settings
 
-`Ctrl+W ,` or `:settings`. Changes take effect at once and are written to the
-global config.
+`Ctrl+W ,` or `:settings`. Changes take effect at once. The **Save to** tabs
+on top (Tab switches, or a click) choose the file: **Global**
+(`~/.config/sendito/config.toml`, every collection, the default) or
+**Project** (`.sendito/config.toml`, this collection, shared through git). A
+`•` before a setting marks a value the chosen file sets. The project file wins
+over the global one: on the Global tab, a value the project file also sets
+shows "project wins", and a change to it says so in the status. The choice is
+kept in `session.toml`, per user and collection; it starts at Global.
+
+Typing filters the settings by name or config key (Esc clears the filter);
+↑↓ move. On/off and choice rows change with ← → or Space. Number, path and
+text rows are edited in place: Enter starts with the value selected, Enter
+saves it after a check (a refused value stays, with the reason under the
+list) and Esc gives it up; an empty path or text removes the key. Timeouts
+show and take a time with its unit (`30 s`, `500 ms`, `2 min`; a bare number
+is milliseconds); the file keeps milliseconds. Three rows open editors of
+their own.
 
 | Setting | Config key | Effect |
 |---|---|---|
 | Theme | `ui.theme` | Colors; `auto` follows the terminal background |
 | Icons | `ui.icons` | `unicode` (any font) or `nerd` (needs a Nerd Font) |
 | Key hints | `ui.hints` | Footer hints: `full`, `short` (default) or `off` |
+| Hide plain secrets | `ui.hide_plain_secrets` | Show `••••••` for a password, token or key typed as plain text in a request (`Ctrl+W *` shows it); default off |
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
+| Key bindings | `keymap.*` | Opens the keymap editor (`:keymap`) |
 | Sidebar position | `ui.sidebar` | `left` or `right` |
+| Pin folders while scrolling | `ui.sticky_folders` | Keep the folders of the top tree row pinned (default on) |
 | Mouse support | `ui.mouse` | Clicks, wheel, dragging tree items and borders |
 | Confirm quit with unsaved changes | `ui.confirm_quit` | Ask before quitting with unsaved tabs |
 | Record history | `history.enabled` | Keep sent requests in History |
-| Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends |
+| History entries kept | `history.max_entries` | The oldest entries go first (1 or more) |
+| Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends (1 or more) |
+| Stream messages kept | `ui.stream_messages_kept` | Messages a gRPC or WebSocket stream keeps in the response; the oldest go first, the counts and sizes still cover all (1 or more, default 10000) |
+| HTTP request timeout | `http.timeout_ms` | When a request sets none (1 or more) |
+| gRPC deadline | `grpc.deadline_ms` | When a request sets none; 0 = none |
+| WebSocket handshake timeout | `websocket.timeout_ms` | When a request sets none; 0 = none |
+| MCP call timeout | `mcp.timeout_ms` | When a request sets none (1 or more) |
+| MCP servers | `mcp.servers.*` | Opens the servers editor (`Ctrl+W S`); the value counts the servers of the chosen file |
+| Largest response body | `http.max_body_mb` | Larger bodies are cut (1 or more) |
+| Cookie jar | `http.cookie_jar` | When a request's `[options] cookies` says nothing |
+| Proxy | `http.proxy` | `env` or a proxy URL, checked before it is saved |
+| OAuth identities | `oauth.*` | Opens the OAuth editor (`:oauth`) |
+| CA certificates (PEM) | `http.tls.ca` | The file must exist |
+| Client certificate (PEM) | `http.tls.client_cert` | The file must exist; a missing key is reported |
+| Client key (PEM) | `http.tls.client_key` | The file must exist; a missing certificate is reported |
+| Collection name | `collection.name` | Always saved to the project file. Keychain secrets are stored under it: after a change, set them again (the dialog and the status say so) |
+| Skipped directories | `collection.ignore` | Comma-separated; empty = the defaults |
+
+**OAuth editor** (`:oauth`): the identities on the left, the form of the
+selected one on the right — name, grant (Authorization code, Client
+credentials, Password, Device code), then only the fields of that grant:
+authorize URL (authorization code) or device URL (device code), token URL,
+client ID, client secret, username and password (password grant) and scopes
+(separated by spaces). The name, the token URL and the client ID are
+required, and so are the URL or username the grant needs; a missing one
+selects the identity and says what to set. A client secret or password
+without `{{variable}}` shows "⚠ plain text" and is saved with a warning.
+`Ctrl+L` signs in with the selected saved identity (the grants that need a
+sign-in). In a request, F2 on the OAuth identity field lists the identities;
+"New identity…" opens this editor on a new one.
+
+**Keymap editor** (`:keymap`): every action, grouped as in the help, with
+its keys in the selected mode tab (`all` for both editing modes,
+`conventional` or `vim` for one; Tab switches). Typing filters the actions by
+description, id or key. Enter records new keys for the selected action:
+press them (a sequence such as `Ctrl+W x` too) and a pause of one second
+keeps them; Esc cancels. `Ctrl+A` records a key added to the current ones,
+Del restores the default keys and `Ctrl+D` leaves the action without a key.
+Changed keys show "(changed)". A key that another action of the same place
+also uses, or that starts a longer key, gets a warning line. `Ctrl+S` writes
+`[keymap.<mode>]` and the keys apply at once; entries of the file the editor
+does not know are kept. Esc cannot be recorded.
+
+Both editors read and write only the chosen file, and refuse to write while
+that file has an error.
 
 ---
 
@@ -654,7 +1052,7 @@ Terminals without 24-bit color get the nearest of 256.
   `bg` alone gives a consistent theme.
 * `sendito theme list` shows every theme, its file and any problems;
   `sendito theme print <name>` prints a complete file to start from;
-  `:theme <name>` applies one and `:theme reload` re-reads the files.
+  `:theme <name>` applies one, `:theme` lists them, `:theme reload` re-reads the files.
 * Problems (unknown token, bad color, an `extends` loop, low contrast) are
   reported and skipped; they never stop startup.
 * **Icons** `unicode` (works with any font) or `nerd` (folders, sidebar modes,
@@ -682,60 +1080,12 @@ knowing up front:
 * HTTP library differences: `Accept: */*` is added when you define none, HTTP/1
   header names go out Title-Case, and header order between different names may
   differ.
-* No JavaScript scripts; no HTTP/3 or gRPC-Web.
+* Scripts are Lua, not JavaScript (Postman scripts are not converted); no
+  HTTP/3 or gRPC-Web.
 * WebSocket: HTTP(S) CONNECT proxies only (no SOCKS, no `proxy = "env"`), no
   `permessage-deflate`, and `curl ws://…` is refused rather than imported.
-* gRPC ignores `[http] proxy`; OAuth endpoints ignore `[http.tls]` and the proxy.
-* Redirects are not followed while the cookie jar is enabled.
+* gRPC ignores `[http] proxy`.
 * `zstd` and stacked `Content-Encoding` are shown as received.
 * MCP: tools only (no resources or prompts), a session per list/call, no legacy
   HTTP+SSE and no server GET stream.
 * Windows is not a target.
-
----
-
-## Coverage checklist
-
-Where each part of the surface is written down, so a gap is visible in one
-place. `—` means it is described only here.
-
-| Surface | TUI | CLI | Format | Keys |
-|---|---|---|---|---|
-| HTTP request fields | [HTTP](#http) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
-| HTTP wire rules | [HTTP](#http) | — | [FORMAT §wire](../FORMAT.md#what-goes-on-the-wire) | — |
-| Proxy | [HTTP](#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
-| TLS / mTLS | [HTTP](#http) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | — |
-| Cookie jar | [HTTP](#http) | [`--no-cookies`](CLI.md#sendito-run-request) | [FORMAT §jar](../FORMAT.md#cookie-jar) | `:cookies` |
-| Watch | [HTTP](#http) | — | `ui.watch_interval_s` | `Ctrl+W m`, `:watch` |
-| gRPC | [gRPC](#grpc) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §gRPC](../FORMAT.md#grpc-request) | `Ctrl+W d` |
-| WebSocket | [WebSocket](#websocket) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §WS](../FORMAT.md#websocket-request) | `Ctrl+W y`, `Ctrl+W d` |
-| MCP | [MCP](#mcp) | [CLI mcp](CLI.md#sendito-mcp-login-server--logout) | [FORMAT §MCP](../FORMAT.md#mcp-request) | F2, `:mcptools` |
-| MCP / HTTP OAuth | [MCP](#mcp) | [CLI auth](CLI.md#sendito-auth-login-identity--logout) | [FORMAT §config](../FORMAT.md#project-and-global-config) | `:auth login` |
-| Variables and secrets | [Variables](#variables-and-secrets) | [`--env`](CLI.md#sendito-run-request) | [FORMAT §vars](../FORMAT.md#variables) | `F4`, `Ctrl+W V` |
-| Scripts | [Scripts](#scripts) | [CLI run](CLI.md#sendito-run-request) | [FORMAT §HTTP](../FORMAT.md#http-request) | — |
-| Import | [Import](#import-and-export) | [CLI import](CLI.md#sendito-import-file-or-directory) | — | `Ctrl+W i` |
-| Export | [Import](#import-and-export) | [CLI curl/http](CLI.md#sendito-curl-request) | — | `Ctrl+W u`, `:httpfile` |
-| History / session | [Storage](#storage) | [`--no-history`](CLI.md#sendito-run-request) | [FORMAT §state](../FORMAT.md#local-state-files) | `F7` |
-| Theme / icons | [Themes](#themes-and-icons) | [CLI theme](CLI.md#sendito-theme-list--print) | [THEMES](THEMES.md) | `:theme` |
-| Settings | [Settings](#settings) | — | [FORMAT §config](../FORMAT.md#project-and-global-config) | `Ctrl+W ,` |
-| Folder runs | [Headless](#headless-and-ci) | [CLI run](CLI.md#sendito-run-request) | — | — |
-| Mouse / vim | [TUI](#tui) | — | — | [KEYMAP](../KEYMAP.md) |
-| Exit codes | — | [CLI codes](CLI.md#exit-codes) | — | — |
-| Hidden flags | — | [CLI internal](CLI.md#internal-flags-hidden) | — | — |
-
----
-
-## Documentation map
-
-| Document | Answers |
-|---|---|
-| [README](../README.md) | What it is, install, quick start, gallery |
-| [FORMAT.md](../FORMAT.md) | Request, environment and config files; exact wire rules |
-| [KEYMAP.md](../KEYMAP.md) | Every key, generated |
-| [CLI.md](CLI.md) | Every subcommand, flag, exit code |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Crates, data flow, tests, extending |
-| [MAP.md](MAP.md) | Which file and symbol implements each feature, and its tests |
-| [THEMES.md](THEMES.md) | Theme format and color tokens |
-| [DEBT.md](DEBT.md) | Known limitations |
-| [media/README.md](media/README.md) | Screenshots and GIFs |
-| [docs index](README.md) | Everything above, in one table |

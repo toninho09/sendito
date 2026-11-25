@@ -2,43 +2,21 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││  GET    ▾   {{base_url}}/users  → http://127.0.0.1:9/users                 ▶ Send  ^⏎  │
-│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────╮
-│├ DEL   delete user         ││     Name                            Value                                              │
-│└ GET   list users          ││ [✓] page                           │1                                               │× │
-│  GRPC  echo unary          ││  +  add name                       │                                                   │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────── 200 OK  14 ms 219 B ─╮
-│                            ││ Phase                       Time  0                        14.3 ms                     │
-│                            ││ DNS lookup                1.2 ms  ██▋·····························                     │
-│                            ││ TCP connect               0.8 ms  ··▐█▌···························                     │
-│                            ││ TLS handshake                  —  skipped (not HTTPS)                                  │
-│                            ││ Waiting for first byte   12.0 ms  ····▐██████████████████████████▍                     │
-│                            ││ Download                  0.3 ms  ·······························▐                     │
-│                            ││ Total                    14.3 ms                                                       │
-│                            ││                                                                                        │
-│                            ││ Protocol        HTTP/1.1                                                               │
-│                            ││ Final URL       http://127.0.0.1:9/users?page=1                                        │
-│                            ││ Body size       219 B (219 bytes)                                                      │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────── Ln 1/12 ─╯
- demo                                                       Alt+1-4 tabs · y copy · ^P commands · ^W menu · F1 all keys
+╭─ Body  Headers  Timing  Results 2/2 ✓ ─────────────────────────── 200 OK  14 ms 219 B ─╮
+│ Phase                       Time  0                        14.3 ms                     │
+│ DNS lookup                1.2 ms  ██▋·····························                     │
+│ TCP connect               0.8 ms  ··▐█▌···························                     │
+│ TLS handshake                  —  skipped (not HTTPS)                                  │
+│ Waiting for first byte   12.0 ms  ····▐██████████████████████████▍                     │
+│ Download                  0.3 ms  ·······························▐                     │
+│ Total                    14.3 ms                                                       │
+│                                                                                        │
+│ Protocol        HTTP/1.1                                                               │
+│ Final URL       http://127.0.0.1:9/users?page=1                                        │
+│ Body size       219 B (219 bytes)                                                      │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────── Ln 1/12 ─╯

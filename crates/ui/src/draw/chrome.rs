@@ -51,9 +51,10 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         .collect();
     let tab_w = |i: usize| -> u16 {
         let t = &app.tabs[i];
-        // " BADGE title ● × "
+        // " ◆ BADGE title ● × "
         (short_method(&t.badge()).width() + labels[i].width() + 6) as u16
             + if t.dirty() { 2 } else { 0 }
+            + if t.pinned { 2 } else { 0 }
     };
     let mut start = 0;
     while start < app.active {
@@ -94,6 +95,10 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         fill(buf, rect, base);
         let badge = tab.badge();
         let mut cx = put(buf, x, area.y, " ", 1, base);
+        if tab.pinned {
+            cx = put(buf, cx, area.y, icons.pin, 1, base.patch(theme.accent()));
+            cx = put(buf, cx, area.y, " ", 1, base);
+        }
         // The method keeps its color over the tab's own background.
         let bst =
             method_style(theme, &badge).patch(Style::default().bg(base.bg.unwrap_or(theme.bar_bg)));
@@ -281,7 +286,8 @@ pub(super) fn draw_footer(
     }
     // Variables the current request uses but nothing defines.
     if let Some(t) = app.tab() {
-        let un = crate::runner::unresolved(&t.model, &app.names);
+        let (req, names) = app.effective(t);
+        let un = crate::runner::unresolved(&req, &names);
         if !un.is_empty() {
             let text = match un.as_slice() {
                 [one] => format!("{{{{{one}}}}} undefined"),

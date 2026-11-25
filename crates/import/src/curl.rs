@@ -269,7 +269,7 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
     let mut data: Vec<String> = Vec::new();
     let mut data_file: Option<String> = None;
     let mut form: Vec<MultipartPart> = Vec::new();
-    let mut auth = Auth::None;
+    let mut auth = Auth::Inherit;
     let mut get = false;
     let mut head = false;
     let mut json = false;
@@ -513,7 +513,7 @@ pub fn import(cmd: &str) -> Result<CurlImport, CurlError> {
             body,
             auth,
             options,
-            scripts: Scripts::default(),
+            common: RequestCommon::default(),
         },
         notes,
     })
@@ -554,16 +554,29 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
     };
     let mut r = resolve_http(&no_auth, sc, base_dir);
     crate::preserve_export_templates(&no_auth, sc, &mut r);
-    if let Auth::OAuth { name } = &src.auth
-        && !r
-            .headers
-            .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case("authorization"))
-    {
-        r.headers.push((
-            "Authorization".into(),
-            format!("Bearer {}", crate::oauth_placeholder(&sc.render(name).text)),
-        ));
+    if let ResolvedBody::Invalid(message) = &r.body {
+        return format!("# cannot export: {message}");
+    }
+    let own_authorization = r
+        .headers
+        .iter()
+        .any(|(n, _)| n.eq_ignore_ascii_case("authorization"));
+    if !own_authorization {
+        match &src.auth {
+            Auth::OAuth { name } => r.headers.push((
+                "Authorization".into(),
+                format!("Bearer {}", crate::oauth_placeholder(&sc.render(name).text)),
+            )),
+            // Signed when Sendito sends: a JWT has no value until then.
+            Auth::Jwt { .. } => r.headers.push((
+                "Authorization".into(),
+                format!("Bearer {}", crate::JWT_PLACEHOLDER),
+            )),
+            Auth::AwsSigV4 { session_token, .. } if !session_token.is_empty() => r
+                .headers
+                .push(("X-Amz-Security-Token".into(), sc.render(session_token).text)),
+            _ => {}
+        }
     }
     let mut args: Vec<String> = vec!["curl".into()];
     let has_body = !matches!(r.body, ResolvedBody::None);
@@ -578,13 +591,40 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
         }
     }
     args.push(shell_quote(&r.url));
-    if let Auth::Basic { username, password } = &src.auth {
-        args.push("-u".into());
-        args.push(shell_quote(&format!(
-            "{}:{}",
-            sc.render(username).text,
-            sc.render(password).text
-        )));
+    match &src.auth {
+        _ if own_authorization => {}
+        Auth::Basic { username, password } | Auth::Digest { username, password } => {
+            if matches!(src.auth, Auth::Digest { .. }) {
+                args.push("--digest".into());
+            }
+            args.push("-u".into());
+            args.push(shell_quote(&format!(
+                "{}:{}",
+                sc.render(username).text,
+                sc.render(password).text
+            )));
+        }
+        Auth::AwsSigV4 {
+            access_key,
+            secret_key,
+            region,
+            service,
+            ..
+        } => {
+            args.push("--aws-sigv4".into());
+            args.push(shell_quote(&format!(
+                "aws:amz:{}:{}",
+                sc.render(region).text,
+                sc.render(service).text
+            )));
+            args.push("-u".into());
+            args.push(shell_quote(&format!(
+                "{}:{}",
+                sc.render(access_key).text,
+                sc.render(secret_key).text
+            )));
+        }
+        _ => {}
     }
     for (n, v) in &r.headers {
         args.push("-H".into());
@@ -639,6 +679,7 @@ pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir:
                 }
             }
         }
+        ResolvedBody::Invalid(_) => {}
     }
     if r.follow_redirects {
         args.push("-L".into());

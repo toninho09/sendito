@@ -1,0 +1,22 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Body  Headers  Timing  Log ────────────────────── 3 events · max events  350 ms 81 B ─╮
+│ Events received 3                                                                      │
+│ Bytes received 81                                                                      │
+│ First event Some(100ms)                                                                │
+│ Duration Some(350ms)                                                                   │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────── Ln 1/5 ─╯

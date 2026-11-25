@@ -10,7 +10,6 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 
 use cookie_store::{CookieDomain, CookieStore, RawCookie};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -39,24 +38,7 @@ fn parse_url(url: &str) -> Result<Url> {
 
 /// Acquire a lock independent of the atomically replaced cookie file.
 fn with_lock<T>(root: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    let dir = root.join(".sendito");
-    fs::create_dir_all(&dir).map_err(|e| StoreError::io(&dir, e))?;
-    let lock_path = dir.join("cookies.lock");
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let lock = options
-        .open(&lock_path)
-        .map_err(|e| StoreError::io(&lock_path, e))?;
-    lock.lock_exclusive()
-        .map_err(|e| StoreError::io(&lock_path, e))?;
-    let result = f();
-    let _ = FileExt::unlock(&lock);
-    result
+    crate::fsio::with_lock(&root.join(".sendito/cookies.lock"), f)
 }
 
 fn read_file(root: &Path) -> Result<FileContents> {
@@ -176,11 +158,7 @@ fn write_file(root: &Path, file: &FileContents) -> Result<()> {
     }
     let text = toml::to_string(file)
         .map_err(|e| StoreError::Invalid(format!("cannot serialize cookie jar: {e}")))?;
-    let mut tmp = tempfile::NamedTempFile::new_in(&dir).map_err(|e| StoreError::io(&dir, e))?;
-    tmp.write_all(text.as_bytes())
-        .map_err(|e| StoreError::io(&p, e))?;
-    tmp.persist(&p).map_err(|e| StoreError::io(&p, e.error))?;
-    Ok(())
+    crate::fsio::write_private(&p, text.as_bytes())
 }
 
 fn public_suffix(domain: &str) -> bool {

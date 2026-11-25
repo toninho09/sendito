@@ -1,7 +1,8 @@
 # Sendito — recurring commands (`make help` lists the targets)
 # Lean output by default: targets that call cargo go through
 # scripts/quiet.sh, which keeps the full output in target/<target>.log and prints
-# a one-line summary on success (on failure, it dumps the log and exits with an error).
+# a one-line summary on success. On failure it prints the head and the tail of the
+# log (QUIET_FULL=1 prints all of it) and exits with an error.
 
 # cargo jobs and test threads (heavy suite; see AGENTS.md)
 J ?= 4
@@ -11,7 +12,7 @@ F :=
 OUT ?= target/critic-bundles  # destination of make bundles
 
 .DEFAULT_GOAL := help
-.PHONY: help build check run servers fmt fmt-check lint deny ci test docs corpus corpus-update keymap snap media render bundles cov bench
+.PHONY: help build check run servers fmt fmt-check lint deny ci test docs site site-serve corpus corpus-update keymap snap media render bundles cov bench
 
 help: ## List the available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -53,6 +54,13 @@ test: ## Full suite, one summary line (P=<package> for one crate, F=<name> filte
 
 docs: ## Check that the paths, symbols and make targets the documentation cites exist
 	@bash scripts/quiet.sh docs cargo test -j $(J) -q --test docs
+
+site: ## Build the documentation site into book/book (needs mdbook)
+	@scripts/build-site.sh
+
+site-serve: ## Build the documentation site and serve it on localhost
+	@scripts/build-site.sh
+	@mdbook serve book --open
 
 # --- goldens and generated files ---
 

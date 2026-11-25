@@ -8,13 +8,10 @@ description = "Sendito terminal UI"
 
 [dependencies]
 sendito-core.workspace = true
-sendito-http.workspace = true
-sendito-grpc.workspace = true
-sendito-mcp.workspace = true
-sendito-ws.workspace = true
 sendito-store.workspace = true
 sendito-pipeline.workspace = true
 sendito-import.workspace = true
+sendito-widgets.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 tokio.workspace = true
@@ -25,7 +22,6 @@ jaq-all.workspace = true
 base64.workspace = true
 time.workspace = true
 toml.workspace = true
-url.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

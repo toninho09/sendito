@@ -1,0 +1,11 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-11"
+
+[options]
+deadline_ms = 300
+
+[auth]
+type = "basic"
+username = "ana"
+password = "{{basic_password}}"

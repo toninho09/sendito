@@ -12,6 +12,7 @@ sendito-http.workspace = true
 sendito-grpc.workspace = true
 sendito-mcp.workspace = true
 sendito-ws.workspace = true
+sendito-mqtt.workspace = true
 sendito-store.workspace = true
 tokio.workspace = true
 serde.workspace = true
@@ -20,6 +21,7 @@ base64.workspace = true
 time.workspace = true
 url.workspace = true
 unicode-width.workspace = true
+csv.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "sendito-mqtt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sendito MQTT client: v3.1.1 and v5 sessions, subscriptions, publishes, TLS"
+
+[dependencies]
+sendito-http.workspace = true
+tokio.workspace = true
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-rustls"] }
+rustls.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sendito-testkit.workspace = true
+tempfile.workspace = true

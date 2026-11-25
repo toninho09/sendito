@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Topics 1  Publish  Will  Auth  Scripts  Options  Docs ────────────────────────────────╮
+│ Will topic     none                                                                    │
+│ Will QoS       0 ▾  delivery guarantee of the Last Will message                        │
+│ Will retain    [ ] Off  the broker keeps the Last Will for new subscribers             │
+│ Base64         [ ] Off  the payload below is base64; the broker gets the bytes         │
+│   1                                                                                    │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯

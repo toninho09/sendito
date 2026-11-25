@@ -15,10 +15,7 @@ use crate::viewer::ViewMode;
 use super::kit::*;
 
 pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Theme) {
-    let focused = matches!(
-        app.focus,
-        Focus::RespTabs | Focus::RespBody | Focus::RespQuery
-    );
+    let focused = app.focus.in_response();
     let frame_no = app.anim_frame;
     let tab = &app.tabs[app.active];
     let running = tab
@@ -42,6 +39,13 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
         };
         spans.push((
             format!(" {what} {:.1}s ", el.as_secs_f64()),
+            theme.bold(theme.fg(theme.accent)),
+        ));
+    }
+    // A saved example, not a response: named before its status.
+    if let Some(name) = tab.response.as_ref().and_then(|r| r.example.as_ref()) {
+        spans.push((
+            format!(" example: {} ", truncate(name, 30)),
             theme.bold(theme.fg(theme.accent)),
         ));
     }
@@ -378,7 +382,11 @@ fn draw_query_bar(app: &mut App, buf: &mut Buffer, view: Rect, theme: &Theme) ->
     };
     let live = r.live_jq();
     let (jq, outputs) = (r.jq.clone(), r.jq_outputs);
-    let search = r.viewer_mut(tab.resp_tab).search.clone();
+    let search = r
+        .viewer_mut(tab.resp_tab)
+        .search
+        .as_ref()
+        .map(|s| (s.matches.is_empty(), s.position_label()));
     let Some(q) = r.query.as_mut() else {
         return view;
     };
@@ -396,14 +404,11 @@ fn draw_query_bar(app: &mut App, buf: &mut Buffer, view: Rect, theme: &Theme) ->
                 theme.fg(theme.ok),
             )),
         },
-        QueryMode::Find => search.map(|s| {
-            if s.matches.is_empty() {
+        QueryMode::Find => search.map(|(empty, label)| {
+            if empty {
                 ("no match".into(), theme.fg(theme.warn))
             } else {
-                (
-                    format!("match {}/{}", s.current + 1, s.matches.len()),
-                    theme.fg(theme.ok),
-                )
+                (label, theme.fg(theme.ok))
             }
         }),
     };
@@ -466,26 +471,37 @@ fn draw_stream_split(
     let Some(r) = tab.response.as_ref().filter(|_| tab.resp_tab == 0) else {
         return (view, None);
     };
-    let msgs = r.stream_messages();
-    let n = msgs.len();
+    let n = r.stream.kept();
     if n < 2 {
         return (view, None);
     }
     let cur = r.stream_sel.unwrap_or(n - 1);
     let live = r.stream_sel.is_none();
+    // Numbers count every message, the dropped ones too.
+    let (first, total) = (r.stream.dropped, r.stream.received);
     if view.width < 70 || view.height < 3 {
         let pos = if live {
-            format!("{n}/{n} live")
+            format!("{total}/{total} live")
         } else {
-            format!("◀ {}/{n} ▶", cur + 1)
+            format!("◀ {}/{total} ▶", first + cur + 1)
         };
         return (view, Some(pos));
     }
     let lw = (view.width * 2 / 5).min(38);
-    let head = if live {
-        format!("{n} messages · live")
+    let kept = if first > 0 {
+        format!(" ({first} older dropped)")
     } else {
-        format!("{n} messages · {}/{n}", cur + 1)
+        String::new()
+    };
+    let unit = if tab.ed.kind == Kind::Sse {
+        "events"
+    } else {
+        "messages"
+    };
+    let head = if live {
+        format!("{total} {unit}{kept} · live")
+    } else {
+        format!("{total} {unit}{kept} · {}/{total}", first + cur + 1)
     };
     put(
         buf,
@@ -498,13 +514,13 @@ fn draw_stream_split(
     // The selected row stays in sight; live mode shows the newest rows.
     let rows = (view.height - 1) as usize;
     let top = (cur + 1).saturating_sub(rows);
-    let num_w = n.to_string().len();
+    let num_w = total.to_string().len();
     let mut hits = Vec::new();
-    for (k, m) in msgs.iter().enumerate().skip(top).take(rows) {
+    for (k, m) in r.messages().enumerate().skip(top).take(rows) {
         let y = view.y + 1 + (k - top) as u16;
         let line = format!(
             "#{:<num_w$} +{:.3}s {:>6} {}",
-            k + 1,
+            first + k + 1,
             m.at.as_secs_f64(),
             human_size(m.size as u64),
             m.preview.replace(['\n', '\r'], " ")

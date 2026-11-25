@@ -2,43 +2,20 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
-│▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│├ POST  create user         │╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options ───────────────────────────────────╮
-│├ DEL   delete user         ││     Name                            Value                                              │
-│└ GET   list users          ││ [✓] page                           │1                                               │× │
-│  GRPC  echo unary          ││  +  add name                       │                                                   │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            │╰─ Users › list users ───────────────────────────────────────────────────────────────────╯
-│                            │╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
-│                            ││                                                                                        │
-│                            ││                               The response appears here.                               │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                        ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys
+╭─ Params 1  Headers 1  Body  Auth•  Scripts  Options  Docs ─────────────────────────────╮
+│     Name                            Value                                              │
+│ [✓] page                           │1                                               │× │
+│  +  add name                       │                                                   │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ Users › list users ───────────────────────────────────────────────────────────────────╯

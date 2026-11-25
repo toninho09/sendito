@@ -2,43 +2,40 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                        ╭─ Settings ─────────────────────────────────────────────────────────╮                        │
-│                        │                                                                    │                        │
-│                        │  Appearance                                                        │                        │
-│                        │    Theme                              ███████  ‹ auto › (1 of 7)   │                        │
-│                        │    Icons                                             ‹ unicode ›   │                        │
-│                        │    Key hints                                           ‹ short ›   │                        │
-│                        │  Editing                                                           │                        │
-│                        │    Vim mode                                              ‹ Off ›   │                        │
-│                        │  Layout                                                            │                        │
-│                        │    Sidebar position                                     ‹ left ›   │                        │
-│                        │  Behavior                                                          │                        │
-│                        │    Mouse support                                          ‹ On ›   │ ds)                    │
-│                        │    Confirm quit with unsaved changes                      ‹ On ›   │ nd                     │
-│                        │    Record history                                         ‹ On ›   │                        │
-│                        │    Watch interval                                        ‹ 5 s ›   │ the mouse)             │
-│                        │ ────────────────────────────────────────────────────────────────── │ ide                    │
-│                        │  Colors: auto follows the terminal; ansi uses your terminal        │                        │
-│                        │  palette; contrast is high-contrast. Add your own in themes/       │                        │
-│                        │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                        │
-│                        │                                                                    │                        │
-│                        │  Changes apply at once and are saved to                            │                        │
-│                        │  ~/.config/sendito/config.toml                                     │                        │
-│                        ╰────────────────────────────────────────────────────────────────────╯                        │
-│                                                                                                                      │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                             ↑↓ move · ←→ Space change · Esc close
+╭─ Settings ─────────────────────────────────────────────────────────────╮
+│  Save to  Global  Project                                              │
+│  ▍  type to filter settings                                            │
+│                                                                        │
+│  Appearance                                                            │
+│    Theme                                  ███████  ‹ auto › (1 of 7)   │
+│    Icons                                                 ‹ unicode ›   │
+│    Key hints                                               ‹ short ›   │
+│    Hide plain secrets                                        ‹ Off ›   │
+│  Editing                                                               │
+│    Vim mode                                                  ‹ Off ›   │
+│    Key bindings                                        ‹ 0 changes ›   │
+│  Layout                                                                │
+│    Sidebar position                                         ‹ left ›   │
+│    Pin folders while scrolling                                ‹ On ›   │
+│  Behavior                                                              │
+│    Mouse support                                              ‹ On ›   │
+│    Confirm quit with unsaved changes                          ‹ On ›   │
+│    Record history                                             ‹ On ›   │
+│    History entries kept                                    ‹ 10000 ›   │
+│    Watch interval                                            ‹ 5 s ›   │
+│    Stream messages kept                                    ‹ 10000 ›   │
+│  Timeouts                                                              │
+│    HTTP request timeout                                     ‹ 30 s ›   │
+│    gRPC deadline                                            ‹ none ›   │
+│    WebSocket handshake timeout                              ‹ none ›   │
+│    SSE opening timeout                                      ‹ 30 s ›   │
+│    MQTT timeout                                             ‹ 30 s ›   │
+│    MCP call timeout                                         ‹ 30 s ›   │
+│  MCP                                                                   │
+│ ────────────────────────────────────────────────────────────────────── │
+│  Colors: auto follows the terminal; ansi uses your terminal palette;   │
+│  contrast is high-contrast. Add your own in themes/ (sendito theme     │
+│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi  (←…  │
+│  Changes apply at once and are saved to                                │
+│  ~/.config/sendito/config.toml                                         │
+╰────────────────────────────────────────────────────────────────────────╯

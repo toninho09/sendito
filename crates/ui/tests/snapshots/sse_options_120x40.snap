@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Params  Headers 1  Auth  Scripts  Options  Docs ──────────────────────────────────────╮
+│ Timeout       ▍  default · 30 s (Settings)                                             │
+│ Deadline       5000                                                                    │
+│ Max events     3                                                                       │
+│ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
+│ Verify TLS     [✓] On  turn off for self-signed certificates                           │
+│ Cookie jar     Config default ▾                                                        │
+│                                                                                        │
+│ The longest wait for the stream to open: 30 s, 500 ms (a bare number is ms).           │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯

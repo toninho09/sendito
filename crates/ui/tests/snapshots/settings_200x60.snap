@@ -2,63 +2,54 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                                                                                                        │
-│▸ Users/                    ││                                                                                                                                                                        │
-│  GRPC  echo unary          ││                                                                                                                                                                        │
-│  GET   health              ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                  ╭─ Settings ─────────────────────────────────────────────────────────╮                                                                │
-│                            ││                                  │                                                                    │                                                                │
-│                            ││                                  │  Appearance                                                        │                                                                │
-│                            ││                                  │    Theme                              ███████  ‹ auto › (1 of 7)   │                                                                │
-│                            ││                                  │    Icons                                             ‹ unicode ›   │                                                                │
-│                            ││                                  │    Key hints                                           ‹ short ›   │                                                                │
-│                            ││                                  │  Editing                                                           │                                                                │
-│                            ││                                  │    Vim mode                                              ‹ Off ›   │                                                                │
-│                            ││                                  │  Layout                                                            │                                                                │
-│                            ││                            Start │    Sidebar position                                     ‹ left ›   │ t                                                              │
-│                            ││                             Ctrl+│  Behavior                                                          │ sts you send appear here.                                      │
-│                            ││                             n / N│    Mouse support                                          ‹ On ›   │                                                                │
-│                            ││                             Enter│    Confirm quit with unsaved changes                      ‹ On ›   │ all history                                                    │
-│                            ││                             Ctrl+│    Record history                                         ‹ On ›   │                                                                │
-│                            ││                             Ctrl+│    Watch interval                                        ‹ 5 s ›   │                                                                │
-│                            ││                             F4   │ ────────────────────────────────────────────────────────────────── │                                                                │
-│                            ││                             m    │  Colors: auto follows the terminal; ansi uses your terminal        │                                                                │
-│                            ││                             Ctrl+│  palette; contrast is high-contrast. Add your own in themes/       │                                                                │
-│                            ││                             F1   │  Theme: auto / dusk / daylight / ember / linen / contrast / ansi…  │                                                                │
-│                            ││                             Ctrl+│                                                                    │                                                                │
-│                            ││                                  │  Changes apply at once and are saved to                            │                                                                │
-│                            ││                                  │  ~/.config/sendito/config.toml                                     │                                                                │
-│                            ││                                  ╰────────────────────────────────────────────────────────────────────╯                                                                │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-│                            ││                                                                                                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                                                                                                             ↑↓ move · ←→ Space change · Esc close
+╭─ Settings ─────────────────────────────────────────────────────────────╮
+│  Save to  Global  Project                                              │
+│  ▍  type to filter settings                                            │
+│                                                                        │
+│  Appearance                                                            │
+│    Theme                                  ███████  ‹ auto › (1 of 7)   │
+│    Icons                                                 ‹ unicode ›   │
+│    Key hints                                               ‹ short ›   │
+│    Hide plain secrets                                        ‹ Off ›   │
+│  Editing                                                               │
+│    Vim mode                                                  ‹ Off ›   │
+│    Key bindings                                        ‹ 0 changes ›   │
+│  Layout                                                                │
+│    Sidebar position                                         ‹ left ›   │
+│    Pin folders while scrolling                                ‹ On ›   │
+│  Behavior                                                              │
+│    Mouse support                                              ‹ On ›   │
+│    Confirm quit with unsaved changes                          ‹ On ›   │
+│    Record history                                             ‹ On ›   │
+│    History entries kept                                    ‹ 10000 ›   │
+│    Watch interval                                            ‹ 5 s ›   │
+│    Stream messages kept                                    ‹ 10000 ›   │
+│  Timeouts                                                              │
+│    HTTP request timeout                                     ‹ 30 s ›   │
+│    gRPC deadline                                            ‹ none ›   │
+│    WebSocket handshake timeout                              ‹ none ›   │
+│    SSE opening timeout                                      ‹ 30 s ›   │
+│    MQTT timeout                                             ‹ 30 s ›   │
+│    MCP call timeout                                         ‹ 30 s ›   │
+│  MCP                                                                   │
+│    MCP servers                                         ‹ 0 servers ›   │
+│  HTTP                                                                  │
+│    Largest response body                                  ‹ 100 MB ›   │
+│    Cookie jar                                                ‹ Off ›   │
+│    Proxy                                                 ‹ not set ›   │
+│    OAuth identities                                 ‹ 0 identities ›   │
+│  TLS                                                                   │
+│    CA certificates (PEM)                                 ‹ not set ›   │
+│    Client certificate (PEM)                              ‹ not set ›   │
+│    Client key (PEM)                                      ‹ not set ›   │
+│  Collection                                                            │
+│    Collection name                            project wins  ‹ demo ›   │
+│    Skipped directories ‹ target, node_modules, vendor, dist, build ›   │
+│                                                                        │
+│ ────────────────────────────────────────────────────────────────────── │
+│  Colors: auto follows the terminal; ansi uses your terminal palette;   │
+│  contrast is high-contrast. Add your own in themes/ (sendito theme     │
+│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi  (←…  │
+│  Changes apply at once and are saved to                                │
+│  ~/.config/sendito/config.toml                                         │
+╰────────────────────────────────────────────────────────────────────────╯

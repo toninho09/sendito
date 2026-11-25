@@ -59,10 +59,13 @@ actions! {
     Quit => "quit", "Quit Sendito";
     NewRequest => "new_request", "Open a new unsaved HTTP request tab";
     NewGrpcRequest => "new_grpc_request", "Open a new unsaved gRPC request tab";
+    NewSseRequest => "new_sse_request", "Open a new unsaved SSE request tab";
+    NewMqttRequest => "new_mqtt_request", "Open a new unsaved MQTT request tab";
     NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
+    TogglePin => "toggle_pin", "Pin or unpin the current tab (pinned tabs stay first)";
     FocusLeft => "focus_left", "Focus the pane to the left";
     FocusDown => "focus_down", "Focus the pane below";
     FocusUp => "focus_up", "Focus the pane above";
@@ -82,12 +85,14 @@ actions! {
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
-    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the project config";
+    ManageMcpServers => "manage_mcp_servers", "Edit the MCP servers in the config file chosen in Settings";
     History => "history", "Show request history in the sidebar (toggle)";
     ToggleSidebar => "toggle_sidebar", "Show or hide the sidebar";
     Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
+    MoveToSecret => "move_to_secret", "Move the plain value of the focused credential field into an environment secret";
+    RevealSecrets => "reveal_secrets", "Show or hide credentials typed as plain text (with Hide plain secrets on)";
     Zoom => "zoom", "Maximize or restore the focused pane";
     GrowSidebar => "grow_sidebar", "Widen the sidebar";
     ShrinkSidebar => "shrink_sidebar", "Narrow the sidebar";
@@ -99,17 +104,19 @@ actions! {
     TreeNewRequest => "tree_new_request", "New request in the selected folder";
     TreeNewFolder => "tree_new_folder", "New folder in the selected folder";
     TreeRename => "tree_rename", "Rename the selected item";
+    TreeFolderSettings => "tree_folder_settings", "Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit)";
     TreeDuplicate => "tree_duplicate", "Duplicate the selected item";
     TreeDelete => "tree_delete", "Delete the selected item (asks first)";
     TreeMove => "tree_move", "Move the selected item to another folder";
     TreeFilter => "tree_filter", "Filter the tree by name";
+    ToggleFavorite => "toggle_favorite", "Add or remove the request from the favorites";
     CursorUp => "up", "Move up";
     CursorDown => "down", "Move down";
     PageUp => "page_up", "Page up";
     PageDown => "page_down", "Page down";
     Top => "top", "Go to the first line";
     Bottom => "bottom", "Go to the last line";
-    ViewPretty => "view_pretty", "Body view: pretty (JSON formatted and highlighted)";
+    ViewPretty => "view_pretty", "Body view: pretty (formatted and highlighted)";
     ViewRaw => "view_raw", "Body view: raw text";
     ViewHex => "view_hex", "Body view: hex dump";
     Search => "search", "Search in the response";
@@ -120,9 +127,9 @@ actions! {
     NextMessage => "next_message", "Show the next message of a stream (the last one follows new ones)";
     SearchNext => "search_next", "Next search match";
     SearchPrev => "search_prev", "Previous search match";
-    FoldToggle => "fold_toggle", "Fold or unfold the JSON block at the cursor";
-    FoldAll => "fold_all", "Fold all JSON blocks";
-    UnfoldAll => "unfold_all", "Unfold all JSON blocks";
+    FoldToggle => "fold_toggle", "Fold or unfold the block at the cursor";
+    FoldAll => "fold_all", "Fold all blocks";
+    UnfoldAll => "unfold_all", "Unfold all blocks";
     ToggleWrap => "toggle_wrap", "Wrap long lines on/off";
     CopyBody => "copy_body", "Copy the response body to the clipboard";
     SaveBody => "save_body", "Save the response body to a file";
@@ -328,9 +335,13 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (NewRequest, Global, Both, &["ctrl+n", "ctrl+w t"]),
         (NewGrpcRequest, Global, Both, &["ctrl+w g"]),
         (NewWsRequest, Global, Both, &["ctrl+w y"]),
+        (NewSseRequest, Global, Both, &["ctrl+w E"]),
+        (NewMqttRequest, Global, Both, &["ctrl+w M"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
+        (TogglePin, Global, Both, &["ctrl+w P"]),
+        (ToggleFavorite, Global, Both, &["ctrl+w F"]),
         (FocusLeft, Global, Both, &["ctrl+w h", "ctrl+w left"]),
         (FocusDown, Global, Both, &["ctrl+w j", "ctrl+w down"]),
         (FocusUp, Global, Both, &["ctrl+w k", "ctrl+w up"]),
@@ -356,6 +367,8 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Import, Global, Both, &["ctrl+w i"]),
         (ExportCurl, Global, Both, &["ctrl+w u"]),
         (FormatBody, Global, Both, &["ctrl+w f"]),
+        (MoveToSecret, Global, Both, &["ctrl+w K"]),
+        (RevealSecrets, Global, Both, &["ctrl+w *"]),
         (Zoom, Global, Both, &["ctrl+w z"]),
         (GrowSidebar, Global, Both, &["ctrl+w >"]),
         (ShrinkSidebar, Global, Both, &["ctrl+w <"]),
@@ -369,10 +382,12 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (TreeNewRequest, Tree, Both, &["n"]),
         (TreeNewFolder, Tree, Both, &["N"]),
         (TreeRename, Tree, Both, &["r", "f2"]),
+        (TreeFolderSettings, Tree, Both, &["s"]),
         (TreeDuplicate, Tree, Both, &["d"]),
         (TreeDelete, Tree, Both, &["delete", "x"]),
         (TreeMove, Tree, Both, &["m"]),
         (TreeFilter, Tree, Both, &["/"]),
+        (ToggleFavorite, Tree, Both, &["f"]),
         (CursorUp, Tree, Conventional, &["up"]),
         (CursorUp, Tree, Vim, &["k", "up"]),
         (CursorDown, Tree, Conventional, &["down"]),
@@ -676,12 +691,18 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         WatchToggle => (G::Request, "watch"),
         Save => (G::Request, "save"),
         FormatBody => (G::Request, "format body"),
+        MoveToSecret => (G::Request, "move to secret"),
+        RevealSecrets => (G::Request, "show secrets"),
         ExportCurl => (G::Request, "copy as curl"),
         NewRequest => (G::Tabs, "new HTTP"),
         NewGrpcRequest => (G::Tabs, "new gRPC"),
         NewWsRequest => (G::Tabs, "new WebSocket"),
+        NewSseRequest => (G::Tabs, "new SSE"),
+        NewMqttRequest => (G::Tabs, "new MQTT"),
         NextTab | PrevTab => (G::Tabs, "next / previous"),
         CloseTab => (G::Tabs, "close"),
+        TogglePin => (G::Tabs, "pin"),
+        ToggleFavorite => (G::Request, "favorite"),
         FocusLeft | FocusDown | FocusUp | FocusRight => (G::Layout, "focus"),
         FocusNext | FocusPrev => (G::Layout, "next / previous pane"),
         NextSubTab | PrevSubTab => (G::Layout, "pane tab"),
@@ -876,6 +897,12 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     ("••••••", "a secret value, masked"),
 ];
 
+/// Escapes text for a Markdown table cell: `|` ends the cell and `<` starts
+/// an HTML tag (`:<command>` would show as `:`).
+fn md_text(s: &str) -> String {
+    s.replace('|', "\\|").replace('<', "\\<")
+}
+
 /// Renders KEYMAP.md from the default key map.
 pub fn keymap_markdown() -> String {
     let km = Keymap::defaults();
@@ -907,20 +934,25 @@ pub fn keymap_markdown() -> String {
             action.id(),
             cell(&conv),
             cell(&vim),
-            action.description()
+            md_text(action.description())
         ));
     }
     out.push_str("\n## Fixed keys\n\nThese are handled by the widgets themselves and cannot be remapped.\n\n| Where | Keys | What |\n|---|---|---|\n");
     for (w, k, d) in FIXED_KEYS {
-        out.push_str(&format!("| {w} | {} | {d} |\n", k.replace('|', "\\|")));
+        out.push_str(&format!(
+            "| {} | {} | {} |\n",
+            md_text(w),
+            md_text(k),
+            md_text(d)
+        ));
     }
     out.push_str("\n## Symbols\n\n| Symbol | Meaning |\n|---|---|\n");
     for (s, m) in SYMBOLS {
-        out.push_str(&format!("| {s} | {m} |\n"));
+        out.push_str(&format!("| {} | {} |\n", md_text(s), md_text(m)));
     }
     out.push_str("\n## Commands\n\nTyped in the command palette (`Ctrl+P`, or `:` in vim normal mode).\n\n| Command | What |\n|---|---|\n");
     for (c, d) in crate::overlay::COMMANDS {
-        out.push_str(&format!("| `{c}` | {d} |\n"));
+        out.push_str(&format!("| `{c}` | {} |\n", md_text(d)));
     }
     out.push_str("\n## Customizing\n\nOverride any action in `~/.config/sendito/config.toml` or `<collection>/.sendito/config.toml`.\nSections are `[keymap.all]`, `[keymap.conventional]` and `[keymap.vim]`; values are a key or a list of keys.\n\n```toml\n[keymap.all]\nsend = [\"f9\", \"ctrl+w e\"]\n\n[keymap.vim]\ntree_delete = \"D\"\n```\n");
     out

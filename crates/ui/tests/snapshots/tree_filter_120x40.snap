@@ -2,43 +2,41 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▍/ user                     ││                                                                                        │
-│▾ Users/                    ││                                                                                        │
-│├ POST  create user         ││                                                                                        │
-│├ DEL   delete user         ││                                                                                        │
-│└ GET   list users          ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
-│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
-│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
-│                            ││                                                                                        │
-│                            ││                            HTTP and gRPC, from the terminal                            │
-│                            ││                      demo  ·  6 requests · 2 folders  ·  ● local                       │
-│                            ││                                                                                        │
-│                            ││        Start                                                                           │
-│                            ││         Ctrl+N       New HTTP request tab                                              │
-│                            ││         n / N        New request / folder in the sidebar                               │
-│                            ││         Enter        Open the selected request                                         │
-│                            ││         Ctrl+P       Command palette (actions, requests, :commands)                    │
-│                            ││         Ctrl+W i     Import a Postman collection or a curl command                     │
-│                            ││         F4           Choose the environment                                            │
-│                            ││         m            Move the selected request (or drag it with the mouse)             │
-│                            ││         Ctrl+W ,     Settings: vim mode, theme, icons, sidebar side                    │
-│                            ││         F1           All keys                                                          │
-│                            ││         Ctrl+W q     Quit                                                              │
-│                            ││                                                                                        │
-│                            ││        Recent                                                                          │
-│                            ││        Requests you send appear here.                                                  │
-│                            ││                                                                                        │
-│                            ││         F7  all history                                                                │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                  type filter · ⏎/↓ to results · Esc clear · ^W menu · F1 all keys
+╭ Requests  History ─────────╮
+│▍/ user                     │
+│▾ Users/                    │
+│├ POST  create user         │
+│├ DEL   delete user         │
+│└ GET   list users          │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+│                            │
+╰─── 6 requests · 2 folders ─╯

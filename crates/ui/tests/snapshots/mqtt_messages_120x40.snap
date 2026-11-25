@@ -1,0 +1,22 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│ 3 messages · live                 │  1 ▾ {                                             │
+│ #1 +0.100s   31 B sensors/kitchen…│  2     "room": "garage",                           │
+│ #2 +0.200s   30 B sensors/office/…│  3     "celsius": 22                               │
+│ #3 +0.300s   30 B sensors/garage/…│  4   }                                             │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+│                                   │                                                    │
+╰─ Pretty  Raw  Hex ──────────────────────────────────────────────────────────── Ln 1/4 ─╯

@@ -1,0 +1,6 @@
+GET /jwt HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjb3JwdXMiLCJyb2xlIjoidGVzdGVyIn0.zYnSo752rfvk0nd3QaENFgv2I9--WpPX2c4Z1K3iOIY
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

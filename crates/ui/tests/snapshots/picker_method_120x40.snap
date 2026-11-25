@@ -2,43 +2,38 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET get order ×    +                                                                ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
-│▾ Orders/                   ││  GET    ▾   {{base_url}}/orders/{{order_id}}  → undefined: order_id        ▶ Send  ^⏎  │
-│└ GET   get order           │╰────────────────────────────────────────────────────────────────────────────────────────╯
-│▸ Users/                    │╭─ Params  Headers  Body  Auth  Scripts  Options ────────────────────────────────────────╮
-│  GRPC  echo unary          ││     Name                            Value                                              │
-│  GET   health              ││  +  add name                       │                                                   │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││          ╭─ HTTP method ──────────────────────╮                                        │
-│                            ││          │ ▍  type to filter                  │                                        │
-│                            ││          │                                    │                                        │
-│                            ││          │▌ GET                               │                                        │
-│                            ││          │  POST                              │                                        │
-│                            ││          │  PUT                               │                                        │
-│                            ││          │  PATCH                             │                                        │
-│                            ││          │  DELETE                            │                                        │
-│                            ││          │  HEAD                              │                                        │
-│                            │╰─ Orders ›│  OPTIONS                           │ ───────────────────────────────────────╯
-│                            │╭─ Body  He│  TRACE                             │ ───────────────────────────────────────╮
-│                            ││          │  CONNECT                           │                                        │
-│                            ││          │  Custom…                           │                                        │
-│                            ││          │                                    │                                        │
-│                            ││          │                                    │                                        │
-│                            ││          ╰────────────────────────────────────╯                                        │
-│                            ││                                                                                        │
-│                            ││                          Press  Ctrl+Enter  or  F5  to send.                           │
-│                            ││                                                                                        │
-│                            ││                               The response appears here.                               │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo   {{order_id}} undefined                                             type filter · ↑↓ move · ⏎ choose · Esc close
+╭─ Params  Headers  Body  Auth  Scripts  Options  Docs ──────────────────────────────────╮
+│     Name                            Value                                              │
+│  +  add name                       │                                                   │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│          ╭─ HTTP method ──────────────────────╮                                        │
+│          │ ▍  type to filter                  │                                        │
+│          │                                    │                                        │
+│          │▌ GET                               │                                        │
+│          │  POST                              │                                        │
+│          │  PUT                               │                                        │
+│          │  PATCH                             │                                        │
+│          │  DELETE                            │                                        │
+│          │  HEAD                              │                                        │
+╰─ Orders ›│  OPTIONS                           │ ───────────────────────────────────────╯
+╭─ Body  He│  TRACE                             │ ───────────────────────────────────────╮
+│          │  CONNECT                           │                                        │
+│          │  Custom…                           │                                        │
+│          │                                    │                                        │
+│          │                                    │                                        │
+│          ╰────────────────────────────────────╯                                        │
+│                                                                                        │
+│                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                                                                                        │
+│                               The response appears here.                               │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯

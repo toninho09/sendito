@@ -1,0 +1,9 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-02"
+protocol = "5"
+clean_session = false
+keep_alive_s = 30
+
+[options]
+deadline_ms = 300

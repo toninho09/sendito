@@ -2,43 +2,20 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
-│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
-│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
-│         ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮         │
-│         │                                                                                                  │         │
-│         │  Paste a curl command, or enter a Postman/Insomnia JSON file or Bruno directory.                 │         │
-│         │  Relative paths: the folder where you started Sendito, then the collection.                      │         │
-│         │  Enter = new line; F5 / Ctrl+S imports.                                                          │         │
-│         │                                                                                                  │         │
-│         │  ▍  curl https://…   or   path/to/collection.json or Bruno directory                             │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │                                                                                                  │         │
-│         │   Import (F5 / Ctrl+S)    Cancel (Esc)                                                           │         │
-│         ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
-│                                                                                                                      │
-│                            ││                                                                                        │
-│                            ││         F7  all history                                                                │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                                       F5 / ^S import · Esc cancel
+╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│  Paste curl or a collection, or type a path: Postman, Insomnia, OpenAPI, .http or Bruno.         │
+│  Paths start where you started Sendito, then the collection. Tab completes; F5 imports.          │
+│                                                                                                  │
+│                                                                                                  │
+│  ▍  curl https://…   or   a collection, OpenAPI, .http file or Bruno directory                   │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│   Import (F5 / Ctrl+S)    Cancel (Esc)                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

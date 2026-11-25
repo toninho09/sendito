@@ -1,0 +1,22 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│ Connected after Some(12ms)                                                             │
+│ Messages received 3                                                                    │
+│ Bytes received 91                                                                      │
+│ Published 0                                                                            │
+│ First message Some(100ms)                                                              │
+│ Duration Some(5s)                                                                      │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────── Ln 1/7 ─╯

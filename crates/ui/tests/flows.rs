@@ -74,6 +74,84 @@ fn flow_mcp_direct_url_server() {
     );
 }
 
+/// A server that answers 401 with a Bearer challenge offers a sign-in, also
+/// when the config has no auth table for it. Cancel leaves the config as is.
+#[test]
+fn flow_mcp_server_asking_for_a_sign_in_offers_it() {
+    use sendito_ui::overlay::{ConfirmAction, McpAfterLogin, Overlay};
+    let rt = tokio::runtime::Runtime::new().must();
+    let srv = rt.block_on(sendito_testkit::mcp_auth::start()).must();
+    let config = format!(
+        "[collection]\nname = \"demo\"\n[mcp.servers.secure]\nurl = \"{}\"\n",
+        srv.mcp_url()
+    );
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(d, ".sendito/config.toml", &config);
+    });
+    h.app.run_command("newmcp");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.type_text("secure");
+    h.app.run_command("mcptools");
+    let sc = h.wait_for("asks you to sign in", 10);
+    assert!(sc.contains("Sign in"), "{sc}");
+    assert!(matches!(
+        &h.app.overlay,
+        Some(Overlay::Confirm(c)) if matches!(
+            &c.action,
+            ConfirmAction::McpLogin { server, after: McpAfterLogin::Tools { open_picker: true }, .. }
+                if server == "secure"
+        )
+    ));
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert_eq!(text, config, "cancel writes nothing");
+}
+
+/// The servers editor shows and writes the auth of an HTTP server.
+#[test]
+fn flow_mcp_editor_shows_and_writes_auth() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = Harness::with(160, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/config.toml",
+            "[collection]\nname = \"demo\"\n\
+             [mcp.servers.a]\nurl = \"https://a.test/mcp\"\n\
+             [mcp.servers.a.auth]\ntype = \"oauth\"\nscopes = [\"read\"]\n\
+             [mcp.servers.b]\nurl = \"https://b.test/mcp\"\n",
+        );
+    });
+    save_to_project(&mut h);
+    h.key("ctrl+w S");
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(_))));
+    // The form of a shows its auth and the OAuth section.
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("Auth") && sc.contains(" oauth "), "{sc}");
+    assert!(sc.contains("Scopes") && sc.contains("read"), "{sc}");
+    // Server b: Auth to bearer (name, kind, URL, auth) and a token variable.
+    h.key("esc down enter");
+    h.key("down down down right");
+    let sc = h.screen();
+    assert!(sc.contains("Token") && !sc.contains("Scopes"), "{sc}");
+    h.key("down");
+    h.type_text("{{tok}}");
+    h.key("ctrl+s");
+    let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    // a keeps its OAuth fields; b gets the bearer token.
+    assert!(
+        text.contains("type = \"oauth\"") && text.contains("\"read\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("type = \"bearer\"") && text.contains("{{tok}}"),
+        "{text}"
+    );
+}
+
 #[test]
 fn flow_mcp_discover_and_call() {
     let rt = tokio::runtime::Runtime::new().must();
@@ -307,6 +385,102 @@ fn flow_create_folder_and_request() {
     assert!(!h.dir.path().join("Payments/refund.toml").exists());
 }
 
+/// `f` marks a request as a favorite: it shows in the Favorites section and
+/// on the start screen, follows a rename, and survives a restart.
+#[test]
+fn flow_favorites() {
+    let mut h = Harness::new(100, 30);
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("health.toml");
+    h.key("f");
+    assert_eq!(h.app.tree.favorites, vec!["health.toml"]);
+    let sc = h.screen();
+    assert!(sc.contains("★ Favorites"), "{sc}");
+    assert!(sc.contains("added to favorites: health"), "{sc}");
+    // The Favorites section opens the request with Enter.
+    let fav = h
+        .app
+        .tree
+        .rows
+        .iter()
+        .position(|r| r.fav && !r.is_section());
+    h.app.tree.selected = fav.must();
+    h.key("enter");
+    assert_eq!(
+        h.app.tab().and_then(|t| t.path.as_deref()),
+        Some("health.toml")
+    );
+    // A folder cannot be a favorite.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("Users");
+    h.key("f");
+    assert!(h.screen().contains("only requests can be favorites"));
+    // A rename keeps the favorite.
+    h.app.tree.select_rel("health.toml");
+    h.key("r");
+    h.key("ctrl+a");
+    h.type_text("status");
+    h.key("enter");
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    // Ctrl+W F toggles the active tab's request.
+    h.key("ctrl+w l");
+    h.key("ctrl+w F");
+    assert!(h.app.tree.favorites.is_empty());
+    h.key("ctrl+w F");
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    // The favorites survive a restart and show on the start screen.
+    h.key("ctrl+w c");
+    h.reopen();
+    assert_eq!(h.app.tree.favorites, vec!["status.toml"]);
+    let sc = h.screen();
+    assert!(sc.contains("Favorites") && sc.contains("Recent"), "{sc}");
+    // A delete removes the favorite.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("status.toml");
+    h.key("delete");
+    h.key("left enter");
+    assert!(h.app.tree.favorites.is_empty());
+    assert!(!h.screen().contains("★ Favorites"));
+}
+
+/// A tab that was never saved cannot be a favorite.
+#[test]
+fn flow_favorite_needs_a_saved_request() {
+    let mut h = Harness::new(100, 30);
+    h.key("ctrl+n");
+    h.key("ctrl+w F");
+    assert!(h.screen().contains("save the request first"));
+    assert!(h.app.tree.favorites.is_empty());
+}
+
+/// Ctrl+W P pins a tab: it moves before the others, shows the pin icon, and
+/// stays pinned after a restart. Closing it needs no confirmation.
+#[test]
+fn flow_pin_tab() {
+    let mut h = Harness::new(120, 30);
+    open(&mut h, "health");
+    open(&mut h, "get order");
+    assert_eq!(h.app.active, 1);
+    h.key("ctrl+w P");
+    let names: Vec<&str> = h.app.tabs.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["get order", "health"]);
+    assert!(h.app.tabs[0].pinned && h.app.active == 0);
+    assert!(h.screen().contains("◆ GET get order"));
+    // A new tab opens after the pinned ones.
+    open(&mut h, "list users");
+    assert_eq!(h.app.tabs[0].name, "get order");
+    h.reopen();
+    assert!(h.app.tabs[0].pinned && h.app.tabs[0].name == "get order");
+    assert!(h.app.tabs[1..].iter().all(|t| !t.pinned));
+    // Unpinning moves the tab to the start of the others.
+    h.app.active = 0;
+    h.key("ctrl+w P");
+    assert!(h.app.tabs.iter().all(|t| !t.pinned));
+    h.key("ctrl+w P");
+    h.key("ctrl+w c");
+    assert!(h.app.tabs.iter().all(|t| t.name != "get order"));
+}
+
 /// A large tree can be browsed with the mouse wheel without snapping back
 /// to the selection; moving the selection still scrolls it into view.
 #[test]
@@ -364,6 +538,50 @@ fn flow_tree_wheel_scrolls_freely() {
         .trim_end_matches(".toml")
         .to_string();
     assert!(h.screen().contains(&name), "{name} not visible");
+}
+
+/// While the tree scrolls, the folder of the top row stays pinned above the
+/// list; a click on it selects the folder and scrolls the tree to it.
+#[test]
+fn flow_tree_pins_folders_while_scrolling() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    for i in 0..60 {
+        common::write(
+            h.dir.path(),
+            &format!("Big/route {i:02}.toml"),
+            "kind = \"http\"\nmethod = \"GET\"\nurl = \"http://x\"\n",
+        );
+    }
+    h.app.rescan();
+    h.app.tree.select_rel("Big/route 00.toml");
+    h.draw();
+    let tr = h.app.areas.tree;
+    let top = |h: &mut Harness| -> String {
+        h.screen()
+            .lines()
+            .nth(tr.y as usize)
+            .unwrap_or_default()
+            .to_string()
+    };
+    for _ in 0..10 {
+        h.scroll(tr.x + 4, tr.y + 4, true);
+    }
+    assert!(
+        top(&mut h).contains("Big/"),
+        "folder not pinned\n{}",
+        h.screen()
+    );
+    h.click(tr.x + 6, tr.y);
+    assert_eq!(h.app.tree.selected_rel().as_deref(), Some("Big"));
+    h.draw();
+    assert_eq!(h.app.tree.rows[h.app.tree.scroll].rel, "Big");
+    // Off: the top line is a request row.
+    h.app.project.config.ui.sticky_folders = false;
+    for _ in 0..10 {
+        h.scroll(tr.x + 4, tr.y + 4, true);
+    }
+    assert!(!top(&mut h).contains("Big/"), "{}", h.screen());
 }
 
 /// The history sidebar behaves the same way: free wheel browsing, selection
@@ -512,6 +730,31 @@ fn flow_send_get_and_post_json() {
     let sc = h.screen();
     assert!(sc.contains("0000") && sc.contains("│"), "{sc}");
     h.key("p");
+}
+
+/// The Scripts tab edits the Lua pre script; the send runs it and the
+/// Messages tab shows its output.
+#[test]
+fn flow_lua_pre_script() {
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    open(&mut h, "health");
+    // Scripts tab, the section choice, then section 4: the Lua pre script.
+    h.key("alt+5");
+    h.key("enter");
+    h.key("right right right");
+    assert!(h.screen().contains("Pre-request: Lua script (empty)"));
+    h.key("down");
+    h.type_text("request:set_header(\"X-Flow\", \"lua\") print(\"hi\")");
+    h.key("ctrl+enter");
+    h.wait_idle(10);
+    let caps = s.http.take();
+    let c = caps.last().must();
+    assert_eq!(c.header("x-flow").as_deref(), Some("lua"));
+    h.key("ctrl+w j alt+4");
+    let sc = h.screen();
+    assert!(sc.contains("Script output:"), "{sc}");
+    assert!(sc.contains("  hi"), "{sc}");
 }
 
 #[test]
@@ -707,7 +950,7 @@ fn flow_switch_env() {
     h.key("ctrl+w V");
     let sc = h.screen();
     assert!(
-        sc.contains("Environments") && sc.contains("Source says where a value lives"),
+        sc.contains("Environments") && sc.contains("Type says where a value lives"),
         "{sc}"
     );
     assert!(!sc.contains("s3cr3t-token"));
@@ -840,7 +1083,7 @@ fn flow_http_oauth_invalid_endpoint_reports_error() {
 }
 
 #[test]
-fn flow_cookie_jar_report_and_delete() {
+fn flow_cookie_jar_list_and_delete() {
     let mut h = Harness::new(120, 40);
     h.app.set_env(Some("local".into()));
     sendito_store::cookies::store_response(
@@ -853,9 +1096,16 @@ fn flow_cookie_jar_report_and_delete() {
     h.app.run_command("cookies");
     let screen = h.wait_for("Cookie jar", 5);
     assert!(screen.contains("session"), "{screen}");
+    assert!(screen.contains("Clear all cookies"), "{screen}");
     assert!(!screen.contains("private-value"));
-    h.key("esc");
-    h.app.run_command("cookies delete 1");
+    // Enter on the cookie asks first; Delete removes it.
+    h.key("enter");
+    assert!(matches!(
+        h.app.overlay,
+        Some(sendito_ui::overlay::Overlay::Confirm(_))
+    ));
+    h.key("left");
+    h.key("enter");
     h.wait_for("cookie deleted", 5);
     assert!(
         sendito_store::cookies::describe(h.dir.path(), "local")
@@ -983,8 +1233,9 @@ fn flow_vim_mode_editing() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
     h.key("ctrl+w ,");
-    // Vim mode is the fourth setting (after Theme, Icons and Key hints).
-    h.key("down down down enter esc");
+    // Vim mode is the fifth setting (after Theme, Icons, Key hints and Hide
+    // plain secrets).
+    h.key("down down down down enter esc");
     assert!(h.app.vim);
     open(&mut h, "delete user");
     let sc = h.screen();
@@ -1097,6 +1348,129 @@ fn flow_env_editor_outside_click_asks_when_dirty() {
     assert!(h.app.overlay.is_none());
 }
 
+/// The env editor shows and edits the `dotenv` path: the line says whether
+/// the file exists, Tab completes the path, and an empty line removes the key.
+#[test]
+fn flow_env_editor_edits_the_dotenv_path() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 100, 30);
+    let dotenv = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Env(e)) => (e.dotenv.text(), e.on_dotenv),
+        _ => panic!("the env editor is not open"),
+    };
+    // The editor opens on the active environment.
+    let p = h.dir.path().join(".sendito/environments/local.toml");
+    std::fs::write(&p, "dotenv = \".env.x\"\n\n[variables]\na = \"1\"\n").must();
+    std::fs::write(h.dir.path().join(".env.x"), "A=1\nB=2\n").must();
+    h.key("ctrl+w V");
+    let screen = h.screen();
+    assert!(screen.contains(".env file"), "{screen}");
+    assert!(screen.contains("found · 2 keys"), "{screen}");
+
+    // Up from the first row goes to the line; a path that is not there says so.
+    h.key("up");
+    assert_eq!(dotenv(&h), (".env.x".to_string(), true));
+    h.type_text("y");
+    assert!(h.screen().contains("not found"));
+
+    // Tab completes the path, then a second Tab goes to the table.
+    h.key("backspace backspace");
+    h.key("tab");
+    assert_eq!(dotenv(&h), (".env.x".to_string(), true));
+    h.key("tab");
+    assert_eq!(dotenv(&h), (".env.x".to_string(), false));
+
+    // An edited path is saved; an empty line removes the key.
+    h.key("up");
+    h.type_text("y");
+    h.key("ctrl+s");
+    let after = std::fs::read_to_string(&p).must();
+    assert_eq!(after, "dotenv = \".env.xy\"\n\n[variables]\na = \"1\"\n");
+    h.key("up");
+    for _ in 0..7 {
+        h.key("backspace");
+    }
+    assert!(h.screen().contains(".env (default)"));
+    h.key("ctrl+s");
+    let after = std::fs::read_to_string(&p).must();
+    assert_eq!(after, "[variables]\na = \"1\"\n");
+}
+
+/// A secret or keychain entry under another name is its own type, and the
+/// name is the row's Value: one field per row.
+#[test]
+fn flow_env_editor_key_types_use_the_value() {
+    let s = servers();
+    let mut h = harness(&s, 120, 30);
+    let p = h.dir.path().join(".sendito/environments/local.toml");
+    std::fs::write(
+        &p,
+        "[variables]\nadmin_pw = { source = \"local\", key = \"admin\" }\n",
+    )
+    .must();
+    h.key("ctrl+w V");
+    let screen = h.screen();
+    assert!(screen.contains("secret key"), "{screen}");
+    assert!(screen.contains("admin"), "{screen}");
+    assert!(!screen.contains("Key (optional)"), "{screen}");
+    // A save writes the same file back.
+    h.key("ctrl+s");
+    let after = std::fs::read_to_string(&p).must();
+    assert!(after.contains("key = \"admin\""), "{after}");
+}
+
+/// F2 on the Value of a `file` row browses for the file: a folder opens,
+/// a file fills the Value relative to the collection, and Esc goes back.
+#[test]
+fn flow_env_editor_browses_for_a_file() {
+    use sendito_ui::overlay::{Overlay, PickAction};
+    let s = servers();
+    let mut h = harness(&s, 120, 30);
+    std::fs::create_dir_all(h.dir.path().join("keys")).must();
+    std::fs::write(h.dir.path().join("keys/a.pem"), "x").must();
+    h.key("ctrl+w V");
+    // Walk down to the trailing "add" row.
+    for _ in 0..32 {
+        let at_add = match &h.app.overlay {
+            Some(Overlay::Env(e)) => e.table.sel_row >= e.table.rows.len(),
+            _ => false,
+        };
+        if at_add {
+            break;
+        }
+        h.key("down");
+    }
+    h.type_text("cert");
+    h.key("right");
+    for _ in 0..5 {
+        h.key("space"); // type: file
+    }
+    h.key("right");
+    assert!(h.screen().contains("F2 browses"));
+
+    // Esc in the picker goes back to the editor, edits kept.
+    h.key("f2");
+    assert!(matches!(
+        h.app.overlay,
+        Some(Overlay::Picker(ref p)) if matches!(p.action, PickAction::EnvFile { .. })
+    ));
+    h.key("esc");
+    assert!(matches!(h.app.overlay, Some(Overlay::Env(ref e)) if e.dirty));
+
+    h.key("f2");
+    h.type_text("keys/");
+    h.key("enter");
+    assert!(h.screen().contains("Choose a file · keys"));
+    h.type_text("a.pem");
+    h.key("enter");
+    let value = match &h.app.overlay {
+        Some(Overlay::Env(e)) => e.table.rows[e.table.sel_row].cells[2].text(),
+        _ => panic!("the env editor did not come back"),
+    };
+    assert_eq!(value, "keys/a.pem");
+}
+
 /// A secret typed into a new env row is masked on screen right away,
 /// not only after a save reloads the table.
 #[test]
@@ -1118,8 +1492,9 @@ fn flow_env_editor_masks_new_secrets() {
     }
     h.type_text("tok");
     h.key("right");
-    h.key("space"); // source: secrets
-    h.key("right right");
+    h.key("space"); // type: secret
+    // The secret is typed in the Value column, masked.
+    h.key("right");
     h.type_text("hunter2");
     let screen = h.screen();
     assert!(!screen.contains("hunter2"));
@@ -1851,9 +2226,9 @@ fn flow_websocket_snapshot_state() {
     assert!(sc.contains("WS"), "{sc}");
 }
 
-/// Servers can be added, renamed and removed from the interface: the project
-/// config keeps its other content, and settings the table does not show
-/// (auth, headers, env) survive a save that leaves the entry alone.
+/// The servers editor lists the servers and shows the form of the selected
+/// one; a new server is added with Ctrl+N, and a save keeps every field of
+/// the others (TLS check, headers, auth, arguments).
 #[test]
 fn flow_mcp_editor_adds_and_keeps_servers() {
     use sendito_ui::overlay::Overlay;
@@ -1875,38 +2250,26 @@ fn flow_mcp_editor_adds_and_keeps_servers() {
         None,
     );
 
+    save_to_project(&mut h);
     h.key("ctrl+w S");
-    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(_))));
     let sc = h.screen();
     assert!(sc.contains("MCP servers"), "{sc}");
     assert!(sc.contains("remote") && sc.contains("files"), "{sc}");
-    // stdio rows read back as the command line they start.
-    assert!(sc.contains("npx -y @mcp/server-fs ."), "{sc}");
-
-    // Walk to the trailing row and add an HTTP server.
-    for _ in 0..10 {
-        let at_add = match &h.app.overlay {
-            Some(Overlay::Mcp(m)) => m.table.sel_row >= m.table.rows.len(),
-            _ => false,
-        };
-        if at_add {
-            break;
-        }
-        h.key("down");
-    }
-    h.type_text("ledger");
-    h.key("tab");
-    assert_eq!(
-        h.app.overlay.as_ref().map(|o| match o {
-            Overlay::Mcp(m) => m.table.rows.last().map(|r| r.cells[1].choice()),
-            _ => None,
-        }),
-        Some(Some(0)),
-        "a new row starts as http"
+    // A stdio server shows its command and one argument per row.
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("Command") && sc.contains("npx"), "{sc}");
+    assert!(
+        sc.contains("@mcp/server-fs") && !sc.contains("URL "),
+        "{sc}"
     );
-    h.key("tab");
+
+    // Ctrl+N adds an HTTP server: name, then (after the kind) the URL.
+    h.key("ctrl+n");
+    h.type_text("ledger");
+    h.key("down down");
     h.type_text("http://127.0.0.1:9/mcp");
-    // Ctrl+S writes the table back.
     h.key("ctrl+s");
     let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
     assert!(text.contains("[mcp.servers.ledger]"), "{text}");
@@ -1915,19 +2278,21 @@ fn flow_mcp_editor_adds_and_keeps_servers() {
     assert!(text.contains("verify_tls = false"), "{text}");
     assert!(text.contains("x-key"), "{text}");
     assert!(text.contains("type = \"bearer\""), "{text}");
-    // So did the stdio entry's split args.
+    // So did the stdio entry's arguments.
     assert!(text.contains("\"@mcp/server-fs\""), "{text}");
     assert_eq!(h.app.project.config.mcp.servers.len(), 3);
 }
 
-/// The editor shows and writes only the project file's servers: a server
-/// from the global config (which may hold a literal token) never reaches the
-/// versioned project file, and it stays usable after a save.
+/// With the project scope, the editor shows and writes only the project
+/// file's servers: a server from the global config (which may hold a literal
+/// token) never reaches the versioned project file, and it stays usable after
+/// a save.
 #[test]
 fn flow_mcp_editor_never_copies_global_servers() {
     use sendito_ui::overlay::Overlay;
     let s = servers();
     let mut h = harness(&s, 120, 40);
+    save_to_project(&mut h);
     let global = h.dir.path().join("global.toml");
     std::fs::write(
         &global,
@@ -1949,13 +2314,73 @@ fn flow_mcp_editor_never_copies_global_servers() {
     let sc = h.screen();
     assert!(sc.contains("files") && !sc.contains("github"), "{sc}");
     h.key("ctrl+s");
-    assert!(!matches!(h.app.overlay, Some(Overlay::Mcp(ref m)) if m.error.is_some()));
+    assert!(!matches!(h.app.overlay, Some(Overlay::Records(ref m)) if m.error.is_some()));
     let text = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
     assert!(
         !text.contains("github") && !text.contains("ghp_literal"),
         "{text}"
     );
     assert_eq!(h.app.project.config.mcp.servers.len(), 2);
+}
+
+/// With the global scope (the default), the editor shows, adds and edits the
+/// global file's servers and writes that file only; `:mcpadd` does the same.
+/// The details of a server open in the file that holds it.
+#[test]
+fn flow_mcp_editor_edits_the_global_scope() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let global = h.dir.path().join(".config/sendito/config.toml");
+    std::fs::write(&global, "[mcp.servers.github]\ncommand = \"gh-mcp\"\n").must();
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[mcp.servers.files]\ncommand = \"npx\"\n",
+    );
+    // Read the two files again, as a start does.
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        Some(global.clone()),
+    );
+    h.key("ctrl+w S");
+    let sc = h.screen();
+    assert!(sc.contains("MCP servers · global config"), "{sc}");
+    assert!(sc.contains("github") && !sc.contains("files"), "{sc}");
+    // A new server goes to the global file.
+    h.key("ctrl+n");
+    h.type_text("ledger");
+    h.key("down down");
+    h.type_text("http://127.0.0.1:9/mcp");
+    h.key("ctrl+s");
+    let text = std::fs::read_to_string(&global).must();
+    assert!(text.contains("[mcp.servers.ledger]"), "{text}");
+    assert!(text.contains("[mcp.servers.github]"), "{text}");
+    assert!(!project_file(&h).contains("ledger"));
+    assert_eq!(h.app.project.config.mcp.servers.len(), 3);
+
+    // The environment of the global stdio server (the first entry): after
+    // the name, the kind, the command and the empty arguments table.
+    h.key("esc up enter");
+    assert!(h.screen().contains("Environment"), "{}", h.screen());
+    h.key("down down down down");
+    h.type_text("GITHUB_TOKEN");
+    h.key("enter");
+    h.type_text("{{token}}");
+    h.key("ctrl+s");
+    let text = std::fs::read_to_string(&global).must();
+    assert!(text.contains("GITHUB_TOKEN = \"{{token}}\""), "{text}");
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(_))));
+
+    // `:mcpadd` writes to the scope's file too.
+    h.key("esc esc");
+    h.app.run_command("mcpadd probe");
+    h.type_text("http://127.0.0.1:9/mcp");
+    h.key("enter");
+    let text = std::fs::read_to_string(&global).must();
+    assert!(text.contains("[mcp.servers.probe]"), "{text}");
+    assert!(!project_file(&h).contains("probe"));
 }
 
 /// `Esc` on a dirty editor asks before discarding; Discard drops the edit and
@@ -1965,17 +2390,20 @@ fn flow_mcp_editor_asks_before_discarding() {
     use sendito_ui::overlay::{ConfirmAction, Overlay};
     let s = servers();
     let mut h = harness(&s, 120, 40);
+    save_to_project(&mut h);
     h.key("ctrl+w S");
+    h.key("ctrl+n");
     h.type_text("only");
-    h.key("esc");
+    // Esc returns from the form to the list, then asks.
+    h.key("esc esc");
     assert!(matches!(
         h.app.overlay,
-        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::McpClose)
+        Some(Overlay::Confirm(ref c)) if matches!(c.action, ConfirmAction::RecordsClose)
     ));
-    assert!(h.screen().contains("Unsaved MCP server changes"));
-    // Cancel keeps the editor and the typed row.
+    assert!(h.screen().contains("Unsaved changes"));
+    // Cancel keeps the editor and the new entry.
     h.key("right right enter");
-    assert!(matches!(h.app.overlay, Some(Overlay::Mcp(_))));
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(ref e)) if e.records.len() == 1));
     // Discard closes without writing.
     h.key("esc right enter");
     assert!(h.app.overlay.is_none());
@@ -1983,11 +2411,13 @@ fn flow_mcp_editor_asks_before_discarding() {
     assert!(!text.contains("[mcp.servers"), "{text}");
 }
 
-/// `:mcpadd` asks for the URL (or command) and writes the server at once.
+/// `:mcpadd` asks for the URL (or command) and writes the server at once to
+/// the config file of the Settings scope.
 #[test]
 fn flow_mcp_add_command_writes_the_project_config() {
     let s = servers();
     let mut h = harness(&s, 120, 40);
+    save_to_project(&mut h);
     h.app.run_command("mcpadd ledger");
     h.type_text("http://127.0.0.1:9/mcp");
     h.key("enter");
@@ -2167,7 +2597,7 @@ fn flow_table_add_row_takes_the_mouse() {
     }
 }
 
-/// Ctrl+N in the MCP editor adds a row, and the button does the same.
+/// Ctrl+N in the MCP editor adds a server, and the button does the same.
 #[test]
 fn flow_mcp_editor_adds_rows() {
     use sendito_ui::overlay::Overlay;
@@ -2178,17 +2608,17 @@ fn flow_mcp_editor_adds_rows() {
     h.type_text("echo");
     h.draw();
     match &h.app.overlay {
-        Some(Overlay::Mcp(m)) => {
-            assert_eq!(m.table.rows.len(), 1, "Ctrl+N created the row");
-            assert_eq!(m.table.rows[0].cells[0].text(), "echo");
+        Some(Overlay::Records(e)) => {
+            assert_eq!(e.records.len(), 1, "Ctrl+N created the entry");
+            assert_eq!(e.records[0].name(), "echo");
         }
         _ => panic!("the MCP editor closed"),
     }
-    let (x, y) = h.find("Add row (Ctrl+N)").must();
+    let (x, y) = h.find("New (Ctrl+N)").must();
     h.click(x + 1, y);
     h.draw();
     match &h.app.overlay {
-        Some(Overlay::Mcp(m)) => assert_eq!(m.table.rows.len(), 2, "the button added a row"),
+        Some(Overlay::Records(e)) => assert_eq!(e.records.len(), 2, "the button added one"),
         _ => panic!("the MCP editor closed"),
     }
 }
@@ -2286,7 +2716,7 @@ fn flow_wheel_over_the_dialog() {
     h.app.run_command("settings");
     h.draw();
     let sel = |h: &Harness| match &h.app.overlay {
-        Some(sendito_ui::overlay::Overlay::Settings { sel }) => *sel,
+        Some(sendito_ui::overlay::Overlay::Settings(v)) => v.sel,
         _ => usize::MAX,
     };
     // Outside the dialog (sidebar) does nothing.
@@ -2512,4 +2942,903 @@ fn flow_url_card_on_low_screen() {
     open(&mut h, "health");
     let sc = h.screen();
     assert!(!sc.contains("╭ HTTP ") && sc.contains("Send"), "{sc}");
+}
+
+/// The status line text.
+fn status(h: &Harness) -> String {
+    h.app
+        .status
+        .as_ref()
+        .map(|s| s.0.clone())
+        .unwrap_or_default()
+}
+
+/// Selects the settings row labelled `label` (the dialog must be open).
+fn select_setting(h: &mut Harness, label: &str) {
+    let i = sendito_ui::overlay::SETTINGS
+        .iter()
+        .position(|(_, l)| *l == label)
+        .must();
+    if let Some(sendito_ui::overlay::Overlay::Settings(v)) = &mut h.app.overlay {
+        v.sel = i;
+    }
+}
+
+/// A number setting is typed in a dialog: a bad value keeps the dialog open
+/// with the reason, a good one applies at once and returns to the settings.
+/// Saved to project, it lands in the project config.
+#[test]
+fn flow_settings_typed_values_and_scope() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("settings");
+    // Tab switches the file the changes go to.
+    h.key("tab");
+    assert_eq!(
+        h.app.config_scope,
+        sendito_ui::overlay::ConfigScope::Project
+    );
+
+    // A number is edited in place.
+    select_setting(&mut h, "HTTP request timeout");
+    h.key("enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Settings(ref v)) if v.edit.is_some()));
+    assert!(h.screen().contains("30 s"), "{}", h.screen());
+    h.key("ctrl+a");
+    h.type_text("zero");
+    h.key("enter");
+    h.draw();
+    assert!(
+        h.screen().contains("type a time such as 30 s"),
+        "{}",
+        h.screen()
+    );
+    h.key("ctrl+a");
+    h.type_text("1500");
+    h.key("enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Settings(ref v)) if v.edit.is_none()));
+    assert_eq!(h.app.project.config.http.timeout_ms, 1500);
+    // The project file sets it now: the row has the dot.
+    assert!(
+        h.screen().contains("• HTTP request timeout"),
+        "{}",
+        h.screen()
+    );
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(file.contains("[http]\ntimeout_ms = 1500"), "{file}");
+    assert!(file.contains("name = \"demo\""), "{file}");
+
+    // A text setting checks its value; empty removes the key.
+    select_setting(&mut h, "Proxy");
+    h.key("enter");
+    h.type_text("ftp://x");
+    h.key("enter");
+    h.draw();
+    assert!(
+        h.screen().contains("invalid [http] proxy"),
+        "{}",
+        h.screen()
+    );
+    h.key("ctrl+a");
+    h.type_text("env");
+    h.key("enter");
+    assert_eq!(h.app.project.config.http.proxy.as_deref(), Some("env"));
+    select_setting(&mut h, "Proxy");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.key("backspace");
+    h.key("enter");
+    assert_eq!(h.app.project.config.http.proxy, None);
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(!file.contains("proxy"), "{file}");
+
+    // Esc leaves the value as it was.
+    select_setting(&mut h, "Largest response body");
+    h.key("enter");
+    h.type_text("9");
+    h.key("esc");
+    assert!(matches!(h.app.overlay, Some(Overlay::Settings(ref v)) if v.edit.is_none()));
+    assert_eq!(h.app.project.config.http.max_body_mb, 100);
+
+    // Saved to the global file while the project file sets the same key:
+    // the row and the status say the project value wins.
+    h.key("tab");
+    assert!(h.screen().contains("project wins"), "{}", h.screen());
+    select_setting(&mut h, "HTTP request timeout");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.type_text("2000");
+    h.key("enter");
+    assert!(
+        status(&h).contains("project config also sets"),
+        "{}",
+        status(&h)
+    );
+    let global = std::fs::read_to_string(h.dir.path().join(".config/sendito/config.toml")).must();
+    assert!(global.contains("timeout_ms = 2000"), "{global}");
+}
+
+/// A TLS path must name a file, and a client certificate without its key is
+/// reported; the collection name change warns about keychain secrets.
+#[test]
+fn flow_settings_tls_and_collection_name() {
+    let mut h = harness(&servers(), 120, 40);
+    common::write(h.dir.path(), "certs/client.pem", "x");
+    h.app.run_command("settings");
+    select_setting(&mut h, "Client certificate (PEM)");
+    h.key("enter");
+    h.type_text("certs/none.pem");
+    h.key("enter");
+    h.draw();
+    assert!(h.screen().contains("no file at"), "{}", h.screen());
+    h.key("ctrl+a");
+    h.type_text("certs/client.pem");
+    h.key("enter");
+    assert_eq!(
+        h.app.project.config.http.tls.client_cert.as_deref(),
+        Some("certs/client.pem")
+    );
+    assert!(h.app.project.tls.client_cert.is_some());
+    assert!(status(&h).contains("client_key"), "{}", status(&h));
+
+    select_setting(&mut h, "Collection name");
+    h.key("enter");
+    h.key("ctrl+a");
+    h.type_text("renamed");
+    h.key("enter");
+    assert_eq!(h.app.project.name, "renamed");
+    assert_eq!(h.app.project.envs.collection_name, "renamed");
+    assert!(status(&h).contains("keychain"), "{}", status(&h));
+    let file = std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must();
+    assert!(file.contains("name = \"renamed\""), "{file}");
+}
+
+/// The "MCP servers" row counts the servers of the chosen file (what Enter
+/// opens), and Enter opens the servers editor of that scope.
+#[test]
+fn flow_settings_opens_the_mcp_servers_editor() {
+    use sendito_ui::overlay::Overlay;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[mcp.servers.files]\ncommand = \"npx\"\n",
+    );
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        None,
+    );
+    save_to_project(&mut h);
+    h.app.run_command("settings");
+    select_setting(&mut h, "MCP servers");
+    h.draw();
+    let sc = h.screen();
+    assert!(sc.contains("1 server"), "{sc}");
+    assert!(sc.contains("Enter opens the editor"), "{sc}");
+    h.key("enter");
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(_))));
+    assert!(h.screen().contains("files"), "{}", h.screen());
+}
+
+/// The scope chosen in Settings is kept in `session.toml`: a start restores
+/// it, and a session without it starts at global.
+#[test]
+fn flow_settings_scope_survives_a_restart() {
+    use sendito_ui::overlay::ConfigScope;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    assert_eq!(h.app.config_scope, ConfigScope::Global);
+    h.app.run_command("settings");
+    h.key("tab");
+    assert_eq!(h.app.config_scope, ConfigScope::Project);
+    h.reopen();
+    assert_eq!(h.app.config_scope, ConfigScope::Project);
+    h.app.run_command("settings");
+    assert!(h.screen().contains("project"), "{}", h.screen());
+}
+
+/// Opens the settings, sets the scope to the project file and closes them.
+fn save_to_project(h: &mut Harness) {
+    h.app.config_scope = sendito_ui::overlay::ConfigScope::Project;
+}
+
+fn project_file(h: &Harness) -> String {
+    std::fs::read_to_string(h.dir.path().join(".sendito/config.toml")).must()
+}
+
+/// The form of a server shows what applies to it: the TLS check, headers
+/// and OAuth overrides of an http server, the arguments and environment of a
+/// stdio one. Ctrl+S writes them; a plain header value gets a warning.
+#[test]
+fn flow_mcp_server_details() {
+    let mut h = harness(&servers(), 120, 40);
+    common::write(
+        h.dir.path(),
+        ".sendito/config.toml",
+        "[collection]\nname = \"demo\"\n\n\
+         [mcp.servers.files]\ncommand = \"npx\"\n\n\
+         [mcp.servers.remote]\nurl = \"https://example.test/mcp\"\n\
+         [mcp.servers.remote.auth]\ntype = \"oauth\"\n",
+    );
+    h.app.project = sendito_ui::runner::Project::open_with(
+        h.dir.path(),
+        sendito_ui::runner::default_keychain(),
+        None,
+    );
+    save_to_project(&mut h);
+    h.key("ctrl+w S");
+    // Entries are sorted by name: files, remote.
+    h.key("down enter");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Verify TLS") && sc.contains("Client ID"),
+        "{sc}"
+    );
+    // Name, kind, URL, auth, TLS check, then the headers table.
+    h.key("down down down down down");
+    h.type_text("x-api-key");
+    h.key("enter");
+    h.type_text("plain");
+    // Down twice leaves the table for the client ID.
+    h.key("down down");
+    h.type_text("my-app");
+    h.key("ctrl+s");
+    let file = project_file(&h);
+    assert!(file.contains("client_id = \"my-app\""), "{file}");
+    assert!(file.contains("x-api-key = \"plain\""), "{file}");
+    assert!(status(&h).contains("plain text"), "{}", status(&h));
+
+    // The stdio server: one argument per row keeps its spaces and quotes.
+    h.key("esc up enter");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Arguments") && sc.contains("Environment"),
+        "{sc}"
+    );
+    h.key("down down down");
+    h.type_text("-y");
+    h.key("down");
+    h.type_text("say \"hi\"");
+    h.key("down down");
+    h.type_text("DEBUG");
+    h.key("enter");
+    h.type_text("1");
+    h.key("ctrl+s");
+    let file = project_file(&h);
+    assert!(file.contains("args = [\"-y\", 'say \"hi\"']"), "{file}");
+    assert!(file.contains("DEBUG = \"1\""), "{file}");
+    // The test uses the saved server: unsaved changes are refused.
+    h.key("up up up up up up");
+    h.type_text("x");
+    h.key("ctrl+t");
+    assert!(h.screen().contains("save (Ctrl+S) first"), "{}", h.screen());
+}
+
+/// The connection test reports the number of tools in the editor.
+#[test]
+fn flow_mcp_editor_test_result() {
+    use sendito_ui::app::AppMsg;
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+w S");
+    h.app.on_msg(AppMsg::McpTest {
+        server: "echo".into(),
+        result: Ok(3),
+    });
+    assert!(
+        h.screen().contains("✓ echo answered: 3 tools"),
+        "{}",
+        h.screen()
+    );
+    h.app.on_msg(AppMsg::McpTest {
+        server: "echo".into(),
+        result: Err("connection refused".into()),
+    });
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Records(e)) if e.error.as_deref() == Some("echo: connection refused"))
+    );
+}
+
+/// The OAuth editor writes [oauth.<name>] to the file the settings choose:
+/// the grant is a choice that shows only its fields, missing fields are
+/// reported, a plain secret is saved with a warning.
+#[test]
+fn flow_oauth_editor() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    save_to_project(&mut h);
+    h.app.run_command("oauth");
+    assert!(matches!(h.app.overlay, Some(Overlay::Records(_))));
+    h.key("ctrl+n");
+    h.type_text("gh");
+    // The browser grant: no username or password fields.
+    let sc = h.screen();
+    assert!(
+        sc.contains("Authorize URL") && !sc.contains("Username"),
+        "{sc}"
+    );
+    h.key("ctrl+s");
+    assert!(
+        h.screen().contains("gh: set the authorize URL"),
+        "{}",
+        h.screen()
+    );
+    // The password grant shows the username and the password instead.
+    h.key("down right right");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Username") && !sc.contains("Authorize URL"),
+        "{sc}"
+    );
+    h.key("left left down");
+    h.type_text("https://github.com/login/oauth/authorize");
+    h.key("ctrl+s");
+    assert!(
+        h.screen().contains("gh: set the token URL"),
+        "{}",
+        h.screen()
+    );
+    h.key("down");
+    h.type_text("https://github.com/login/oauth/access_token");
+    h.key("down");
+    h.type_text("abc");
+    h.key("down");
+    h.type_text("{{gh_secret}}");
+    h.key("down");
+    h.type_text("repo read:user");
+    h.key("ctrl+s");
+    assert!(status(&h).starts_with("saved to"), "{}", status(&h));
+    let id = &h.app.project.config.oauth["gh"];
+    assert_eq!(id.client_id, "abc");
+    assert_eq!(id.client_secret.as_deref(), Some("{{gh_secret}}"));
+    assert_eq!(id.scopes, vec!["repo", "read:user"]);
+    assert_eq!(
+        id.grant,
+        sendito_store::config::OAuthGrant::AuthorizationCode
+    );
+    assert!(
+        project_file(&h).contains("[oauth.gh]"),
+        "{}",
+        project_file(&h)
+    );
+}
+
+/// F2 on a request's OAuth identity lists the identities; choosing one
+/// fills the field, and "New identity…" opens the editor on a new entry.
+#[test]
+fn flow_oauth_identity_picker() {
+    use sendito_ui::app::Focus;
+    use sendito_ui::overlay::Overlay;
+    use sendito_ui::tab::Field;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.project.config.oauth.insert(
+        "service".into(),
+        sendito_store::config::OAuthIdentity::default(),
+    );
+    h.key("ctrl+n");
+    let t = h.app.tab_mut().must();
+    t.ed.auth_kind = sendito_core::AuthKind::OAuth;
+    t.req_tab = 3;
+    t.field = t
+        .fields()
+        .iter()
+        .position(|f| *f == Field::AuthOAuthName)
+        .must();
+    h.app.focus = Focus::ReqBody;
+    h.key("f2");
+    match &h.app.overlay {
+        Some(Overlay::Picker(p)) => {
+            assert_eq!(
+                p.items,
+                vec!["service".to_string(), "New identity…".to_string()]
+            )
+        }
+        _ => panic!("no picker"),
+    }
+    h.key("enter");
+    assert_eq!(h.app.tab_mut().must().ed.auth_oauth_name.text(), "service");
+    // The editor reads the config file (the identity above is in memory
+    // only) and opens on a new entry.
+    h.key("f2");
+    h.key("down enter");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Records(e)) if e.records.len() == 1
+            && e.pane == sendito_ui::records::Pane::Form),
+        "{}",
+        h.screen()
+    );
+}
+
+/// The keymap editor lists every action with its keys: Enter records new
+/// keys (a pause ends the recording), Ctrl+A adds one, Del restores the
+/// default, and Ctrl+S applies and writes them.
+#[test]
+fn flow_keymap_editor() {
+    use sendito_ui::keymap::{Action, Chord, Ctx, Lookup};
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    save_to_project(&mut h);
+    h.app.run_command("settings");
+    select_setting(&mut h, "Key bindings");
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("Key bindings · project config"), "{sc}");
+    assert!(sc.contains("Send the request"), "{sc}");
+    // The filter finds the action; Enter records Ctrl+G.
+    h.type_text("save the request");
+    assert!(h.screen().contains("Ctrl+S"), "{}", h.screen());
+    h.key("enter");
+    assert!(h.screen().contains("press the keys"), "{}", h.screen());
+    h.key("ctrl+g");
+    // The recording ends after a pause.
+    if let Some(Overlay::Keymap(e)) = &mut h.app.overlay
+        && let Some(c) = &mut e.capture
+    {
+        c.at -= sendito_ui::keymap_editor::CAPTURE_PAUSE;
+    }
+    h.app.tick();
+    assert!(h.screen().contains("Ctrl+G  (changed)"), "{}", h.screen());
+    // Ctrl+A adds F9 after it.
+    h.key("ctrl+a");
+    h.key("f9");
+    if let Some(Overlay::Keymap(e)) = &mut h.app.overlay
+        && let Some(c) = &mut e.capture
+    {
+        c.at -= sendito_ui::keymap_editor::CAPTURE_PAUSE;
+    }
+    h.app.tick();
+    h.key("ctrl+s");
+    let g = Chord::parse("ctrl+g").must();
+    assert_eq!(
+        h.app.keymap.lookup(&[Ctx::Global], false, &[g]),
+        Lookup::Action(Action::Save)
+    );
+    let file = project_file(&h);
+    assert!(file.contains("[keymap.all]"), "{file}");
+    assert!(file.contains("save = [\"Ctrl+G\", \"F9\"]"), "{file}");
+    // Esc cancels a recording; Del restores the default keys.
+    h.key("enter esc");
+    assert!(h.screen().contains("recording cancelled"), "{}", h.screen());
+    h.key("delete");
+    assert!(!h.screen().contains("(changed)"), "{}", h.screen());
+    h.key("ctrl+s");
+    assert!(!project_file(&h).contains("save ="), "{}", project_file(&h));
+}
+
+/// The palette finds settings and commands without a ':' prefix.
+#[test]
+fn flow_palette_finds_settings_and_commands() {
+    use sendito_ui::overlay::{Overlay, SETTINGS, SettingId};
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+p");
+    h.type_text("setting: vim mode");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Settings(v)) => assert_eq!(SETTINGS[v.sel].0, SettingId::Vim),
+        _ => panic!("the settings dialog did not open"),
+    }
+    h.key("esc");
+    // A command that needs an argument waits for it in the input.
+    h.key("ctrl+p");
+    h.type_text("saveas");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Palette(p)) => assert_eq!(p.input.text(), ":saveas "),
+        _ => panic!("the palette closed"),
+    }
+    h.key("esc");
+    // The typed text as written wins over scattered matches.
+    h.key("ctrl+p");
+    h.type_text("rescan");
+    h.key("enter");
+    assert!(h.screen().contains("collection read from disk again"));
+}
+
+#[test]
+fn flow_theme_picker_applies_the_theme() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("theme");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme"));
+    h.type_text("daylight");
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "daylight");
+}
+
+#[test]
+fn flow_auth_and_mcp_pickers() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    // Nothing to sign in to: the status says so.
+    h.app.run_command("auth login");
+    assert!(h.app.overlay.is_none());
+    assert!(h.screen().contains("no OAuth identities"));
+    h.app.project.config.oauth.insert(
+        "service".into(),
+        sendito_store::config::OAuthIdentity::default(),
+    );
+    h.app.run_command("auth logout");
+    match &h.app.overlay {
+        Some(Overlay::Picker(p)) => {
+            assert_eq!(p.items, vec!["service".to_string()]);
+            assert_eq!(p.details, vec!["HTTP identity".to_string()]);
+        }
+        _ => panic!("the sign-out picker did not open"),
+    }
+    h.key("esc");
+    h.app.run_command("mcpadd ledger");
+    h.type_text("https://mcp.example.test/mcp");
+    h.key("enter");
+    // Without a name, the editor lists the servers; with one, its form opens.
+    h.app.run_command("mcpedit");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Records(e)) if e.records.iter().any(|r| r.name() == "ledger"))
+    );
+    h.key("esc");
+    h.app.run_command("mcpedit ledger");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Records(e)) if e.pane == sendito_ui::records::Pane::Form),
+        "{}",
+        h.screen()
+    );
+}
+
+#[test]
+fn flow_request_pickers_follow_the_request_kind() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("newgrpc");
+    h.app.run_command("method");
+    assert!(h.app.overlay.is_none());
+    assert!(
+        h.screen()
+            .contains("the method is not available for gRPC requests")
+    );
+    h.app.run_command("new");
+    h.app.run_command("method");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "HTTP method"));
+    h.key("esc");
+    h.app.run_command("bodytype");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(_))));
+    h.key("esc");
+    h.app.run_command("newenv");
+    h.type_text("staging");
+    h.key("enter");
+    assert!(h.app.project.envs.list().contains(&"staging".to_string()));
+}
+
+/// `s` on a tree folder opens its settings; saved headers and variables go
+/// out with the requests below it, and the request shows what it inherits.
+#[test]
+fn flow_folder_settings_apply_to_requests() {
+    let s = servers();
+    let mut h = harness(&s, 140, 40);
+    h.key("ctrl+w h");
+    assert!(h.app.tree.select_rel("Users"));
+    h.key("s");
+    let t = &mut h.app.tabs[h.app.active];
+    assert_eq!(t.folder.as_deref(), Some("Users"));
+    t.ed.headers.push_texts(true, &["X-Team", "{{team}}"]);
+    t.ed.vars.push_texts(true, &["team", "blue"]);
+    t.refresh_model();
+    assert!(t.dirty());
+    let sc = h.screen();
+    assert!(
+        sc.contains("FOLDER") && sc.contains("applies to 3 requests"),
+        "{sc}"
+    );
+    // Its own variables are defined while the folder edits them.
+    assert!(!sc.contains("undefined"), "{sc}");
+    // A folder tab is not sent.
+    h.key("f5");
+    assert!(h.app.tabs[h.app.active].running.is_none());
+    h.key("ctrl+s");
+    let file = std::fs::read_to_string(h.dir.path().join("Users/folder.toml")).must();
+    assert!(file.contains("X-Team") && file.contains("blue"), "{file}");
+    assert!(!h.app.tabs[h.app.active].dirty());
+    // A request of the folder lists the inherited header and sends it.
+    open(&mut h, "delete user");
+    h.app.tabs[h.app.active].req_tab = 1;
+    let sc = h.screen();
+    assert!(
+        sc.contains("From folders") && sc.contains("X-Team: {{team}}"),
+        "{sc}"
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    let caps = s.http.take();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0].header("x-team").as_deref(), Some("blue"));
+    // The folder tab comes back with the session.
+    let session = h.app.session();
+    assert!(
+        session
+            .tabs
+            .iter()
+            .any(|t| t.folder.as_deref() == Some("Users"))
+    );
+    // Renaming the folder moves the open folder tab with it.
+    h.key("ctrl+w h");
+    h.app.tree.select_rel("Users");
+    h.key("r");
+    h.key("ctrl+a");
+    h.type_text("People");
+    h.key("enter");
+    assert!(
+        h.app
+            .tabs
+            .iter()
+            .any(|t| t.folder.as_deref() == Some("People")),
+        "{:?}",
+        h.app
+            .tabs
+            .iter()
+            .map(|t| t.folder.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `:saveexample` saves the response next to the request, with credential
+/// headers masked; `:examples` lists the examples and shows one.
+#[test]
+fn flow_save_and_show_an_example() {
+    let s = servers();
+    let mut h = harness(&s, 140, 40);
+    open(&mut h, "list users");
+    // Nothing to save before a send.
+    h.app.run_command("saveexample");
+    assert!(
+        status(&h).contains("send the request first"),
+        "{}",
+        status(&h)
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    h.app.run_command("saveexample");
+    assert!(
+        status(&h).contains("saved example 200-ok"),
+        "{}",
+        status(&h)
+    );
+    let file =
+        std::fs::read_to_string(h.dir.path().join("Users/list users.examples/200-ok.toml")).must();
+    assert!(file.starts_with("status = 200\n"), "{file}");
+    // The echo body names the request's headers: the bearer token is masked.
+    assert!(!file.contains("s3cr3t-token"), "{file}");
+    // The examples directory is not a folder in the tree.
+    h.app.rescan();
+    assert!(
+        h.app
+            .tree
+            .root
+            .find_folder("Users/list users.examples")
+            .is_none()
+    );
+    h.app.run_command("examples");
+    assert!(h.screen().contains("Saved examples"), "{}", h.screen());
+    h.key("enter");
+    let sc = h.screen();
+    assert!(sc.contains("example: 200-ok"), "{sc}");
+    h.app.run_command("examples delete 200-ok");
+    assert!(!h.dir.path().join("Users/list users.examples").exists());
+}
+
+/// Opens a new HTTP tab with Basic auth and `pass` typed in the password,
+/// with the focus on the password field.
+fn basic_auth_tab(h: &mut Harness, pass: &str) {
+    use sendito_ui::app::Focus;
+    use sendito_ui::tab::Field;
+    h.key("ctrl+n");
+    let t = h.app.tab_mut().must();
+    t.ed.auth_kind = sendito_core::AuthKind::Basic;
+    t.ed.auth_pass.set_text(pass);
+    t.req_tab = 3;
+    t.field = t.fields().iter().position(|f| *f == Field::AuthPass).must();
+    t.refresh_model();
+    h.app.focus = Focus::ReqBody;
+    h.draw();
+}
+
+/// A password typed as plain text is marked, and Ctrl+W K moves it into a
+/// secret of the active environment: the field becomes {{name}}.
+#[test]
+fn flow_move_plain_password_into_a_secret() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = Harness::new(120, 40);
+    h.app.set_env(Some("local".into()));
+    basic_auth_tab(&mut h, "hunter2");
+    let screen = h.screen();
+    assert!(screen.contains("⚠ plain text"), "{screen}");
+    assert!(
+        screen.contains("Plain text: the request file keeps it"),
+        "{screen}"
+    );
+    h.key("ctrl+w K");
+    match &h.app.overlay {
+        Some(Overlay::Prompt(p)) => assert_eq!(p.input.text(), "password"),
+        _ => panic!("no prompt"),
+    }
+    h.key("enter");
+    assert!(h.app.overlay.is_none());
+    assert_eq!(h.app.tab_mut().must().ed.auth_pass.text(), "{{password}}");
+    let env = h.app.project.envs.load("local").must();
+    assert!(matches!(
+        env.get("password").map(|v| &v.source),
+        Some(sendito_store::env::VarSource::Local { key: None })
+    ));
+    let secrets = std::fs::read_to_string(h.dir.path().join(".sendito/secrets.toml")).must();
+    assert!(secrets.contains("hunter2"), "{secrets}");
+    assert!(!h.screen().contains("⚠ plain text"));
+
+    // A name the environment already has is refused; nothing changes.
+    basic_auth_tab(&mut h, "other");
+    h.key("ctrl+w K");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Prompt(p)) => {
+            assert!(p.error.as_deref().must().contains("already defined"))
+        }
+        _ => panic!("the prompt closed"),
+    }
+    assert_eq!(h.app.tab_mut().must().ed.auth_pass.text(), "other");
+}
+
+/// With Hide plain secrets on, a plain password shows as dots until
+/// Ctrl+W * shows it.
+#[test]
+fn flow_hide_plain_secrets() {
+    let mut h = Harness::new(120, 40);
+    h.app.project.config.ui.hide_plain_secrets = true;
+    basic_auth_tab(&mut h, "hunter2");
+    let screen = h.screen();
+    assert!(!screen.contains("hunter2"), "{screen}");
+    assert!(screen.contains("•••"), "{screen}");
+    h.key("ctrl+w *");
+    assert!(h.screen().contains("hunter2"));
+}
+
+/// An empty timeout says what applies; a typed "2s" is 2000 ms in the
+/// request, and the help line explains the field.
+#[test]
+fn flow_timeout_shows_the_default_and_takes_units() {
+    use sendito_ui::app::Focus;
+    let mut h = Harness::new(120, 40);
+    h.key("ctrl+n");
+    let t = h.app.tab_mut().must();
+    t.req_tab = 5;
+    t.field = 0;
+    h.app.focus = Focus::ReqBody;
+    let screen = h.screen();
+    assert!(screen.contains("default · 30 s (Settings)"), "{screen}");
+    assert!(
+        screen.contains("The longest time the request may take"),
+        "{screen}"
+    );
+    h.type_text("2s");
+    assert_eq!(h.app.tab_mut().must().ed.timeout.text(), "2s");
+    let Some(sendito_core::Request::Http(r)) = h.app.tab().map(|t| t.model.clone()) else {
+        panic!("not http")
+    };
+    assert_eq!(r.options.timeout_ms, Some(2000));
+}
+
+/// A timeout setting shows and takes a time with its unit.
+#[test]
+fn flow_setting_timeout_in_seconds() {
+    use sendito_ui::overlay::{Overlay, SettingId};
+    let mut h = Harness::new(120, 40);
+    h.app.open_settings(SettingId::HttpTimeout);
+    assert!(h.screen().contains("‹ 30 s ›"));
+    // Enter edits the value in place, selected.
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Settings(v)) => assert_eq!(v.edit.as_ref().must().text(), "30 s"),
+        _ => panic!("the settings closed"),
+    }
+    h.type_text("5s");
+    h.key("enter");
+    assert_eq!(h.app.project.config.http.timeout_ms, 5000);
+    h.key("enter");
+    h.key("ctrl+a");
+    h.type_text("soon");
+    h.key("enter");
+    match &h.app.overlay {
+        Some(Overlay::Settings(v)) => {
+            assert!(v.error.as_deref().must().contains("30 s"));
+            assert!(v.edit.is_some(), "the value stays to be fixed");
+        }
+        _ => panic!("the settings closed"),
+    }
+}
+
+/// "Define" in the undefined-variables dialog opens the environment editor
+/// with a row for each missing variable, ready for its value.
+#[test]
+fn flow_undefined_variables_define() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    open(&mut h, "get order");
+    h.key("f5");
+    assert!(h.screen().contains("Define (d)"), "{}", h.screen());
+    h.key("d");
+    match &h.app.overlay {
+        Some(Overlay::Env(e)) => {
+            let row = e.table.rows.get(e.table.sel_row).must();
+            assert_eq!(row.cells[0].text(), "order_id");
+            assert_eq!(e.table.sel_col, 2, "the value cell is selected");
+            assert!(e.dirty);
+        }
+        _ => panic!("the environment editor did not open"),
+    }
+    h.type_text("42");
+    h.key("ctrl+s");
+    let env = h.app.project.envs.load("local").must();
+    assert!(env.get("order_id").is_some());
+}
+
+/// A name prompt shows the file it creates, and a name already taken
+/// before Enter.
+#[test]
+fn flow_new_request_previews_the_file() {
+    let mut h = harness(&servers(), 120, 40);
+    h.app.tree.select_rel("Orders");
+    h.key("ctrl+w h n");
+    h.type_text("get order");
+    assert!(
+        h.screen().contains("already exists in /Orders"),
+        "{}",
+        h.screen()
+    );
+    h.type_text("s");
+    assert!(
+        h.screen().contains("→ Orders/get orders.toml"),
+        "{}",
+        h.screen()
+    );
+}
+
+/// The import dialog says what the text would import, and Tab completes
+/// a path.
+#[test]
+fn flow_import_preview_and_completion() {
+    use sendito_ui::overlay::Overlay;
+    let mut h = harness(&servers(), 120, 40);
+    common::write(
+        h.dir.path(),
+        "exports/shop.postman_collection.json",
+        r#"{"info":{"name":"shop","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[{"name":"list","request":{"method":"GET","url":"https://shop.test/items"}}]}"#,
+    );
+    h.key("ctrl+w i");
+    h.type_text("curl -X POST https://example.test/a");
+    assert!(
+        h.screen().contains("✓ curl · POST https://example.test/a"),
+        "{}",
+        h.screen()
+    );
+    let dir = h.dir.path().join("exports").display().to_string();
+    if let Some(Overlay::Import(i)) = &mut h.app.overlay {
+        i.input.set_text(&format!("{dir}/sh"));
+        i.input.move_to_end();
+    }
+    h.key("tab");
+    let text = match &h.app.overlay {
+        Some(Overlay::Import(i)) => i.input.text(),
+        _ => panic!("the import dialog closed"),
+    };
+    assert!(text.ends_with("/shop.postman_collection.json"), "{text}");
+    assert!(
+        h.screen().contains("\"shop\" · 1 request"),
+        "{}",
+        h.screen()
+    );
+    if let Some(Overlay::Import(i)) = &mut h.app.overlay {
+        i.input.set_text("no/such/file.json");
+    }
+    assert!(
+        h.screen().contains("✗ no file or directory"),
+        "{}",
+        h.screen()
+    );
 }

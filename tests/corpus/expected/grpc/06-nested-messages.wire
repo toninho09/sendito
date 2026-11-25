@@ -2,7 +2,7 @@ method: /sendito.test.v1.Echo/Unary
 metadata received:
   te: trailers
   content-type: application/grpc
-  user-agent: sendito/0.2.0 tonic/0.14.9
+  user-agent: sendito/0.3.0 tonic/0.14.9
 messages received: 1
   json: {"inner":{"child":{"child":{"label":"deepest"},"label":"inner"},"label":"outer","values":[1,2]}}
   protobuf (base64): igEfCgVvdXRlchICAQIaEgoFaW5uZXIaCQoHZGVlcGVzdA==

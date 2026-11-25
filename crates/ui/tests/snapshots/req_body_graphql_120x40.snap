@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs ───────────────────────────────╮
+│ Body type      None   JSON   Raw   Form   Multipart   File   GraphQL            → json │
+│ Section        Query ▾                                                                 │
+│   1 query Lookup($id: ID!) {                                                           │
+│   2   hero(id: $id) {                                                                  │
+│   3     name                                                                           │
+│   4   }                                                                                │
+│   5 }                                                                                  │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ Users › create user ──────────────────────────────────────────────────── Ln 1, Col 1 ─╯

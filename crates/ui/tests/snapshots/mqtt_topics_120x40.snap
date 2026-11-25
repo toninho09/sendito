@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Topics 1  Publish  Will  Auth  Scripts  Options  Docs ────────────────────────────────╮
+│     Topic filter                                                                QoS    │
+│ [✓] sensors/+/temperature                                                      │‹1› │× │
+│  +  add topic filter                                                           │       │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯

@@ -69,17 +69,28 @@ allows `accept` as a transport header.
 
 ## 3. Product limits worth knowing
 
-* No JavaScript scripting: scripts are declarative (set, extract, assert). Postman
-  scripts are reported as not imported.
+* No JavaScript scripting: scripts are declarative rows (set, extract, assert)
+  or Lua code (`[scripts.lua]`). Postman, Bruno and `.http` scripts are
+  JavaScript: they are reported as not imported, not converted. The request
+  editor does not run Lua scripts, so it highlights a variable that only a
+  script sets as undefined.
+* The Lua scripts use `mlua` with Lua 5.4 built from source (`vendored`): a
+  build needs a C compiler for the target.
 * Folder runs (`sendito run <folder>`) are sequential and share one variable
   scope in tree order; there is no parallelism, no per-request retry and no
   JUnit/TAP writer (the JSON report is the machine format). A request that
   fails does not stop the run unless `--fail-fast` is given, and a request with
   unresolved variables is reported as an error and skipped.
-* Postman import covers v2.1 collections; OAuth 2 and Digest auth are not imported
-  (reported), and neither are saved example responses. Bruno and Insomnia imports
+* Postman import covers v2.1 collections; OAuth 2 auth and a JWT private key are
+  not imported (reported). Bruno and Insomnia imports
   cover supported HTTP requests and environments, not arbitrary scripts or template
   engines; skipped features and secret environments are reported.
+* OpenAPI import follows local `$ref`s only (an external one is reported), takes
+  the first security requirement and the first scheme in it, does not import
+  OAuth 2 / OpenID Connect security, cookie parameters, callbacks or links, and
+  makes a request body from an example or the schema (arrays stay empty). A
+  `.http` import reads the `< file` path as relative to the collection, not to
+  the `.http` file (reported), and keeps multipart bodies as raw text.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
 * MCP supports tools only; resources and prompts are not implemented. Each list
@@ -106,19 +117,25 @@ allows `accept` as a transport header.
   characters is never masked in what a server sends back. Closing the gap needs
   decoding the response by content type before matching.
 * HTTP/3 is not supported.
+* **AWS SigV4 cannot sign a multipart body.** `reqwest` makes the multipart
+  boundary when it sends, so the body bytes (and their hash) are not known
+  before. The send stops with a message; a file or raw body can be signed.
+  Fixing it means building the multipart body in Sendito.
+* **Digest answers `qop=auth` only.** `auth-int` would hash the body, and the
+  `userhash` and `username*` parameters are not used; a username with
+  non-ASCII characters is sent as UTF-8 in a quoted string.
 * gRPC connections do not use `[http] proxy`: the tonic connector has no proxy
   support yet. HTTP requests, MCP servers over Streamable HTTP and WebSocket
   sessions do.
 * `[http.tls]` is read when a connection is TLS: a plain `http://` request
   ignores the PEM paths entirely, so a missing file only fails (with its name)
-  on an `https://` request or gRPC channel. The same material is loaded once
-  per request; a folder run re-reads it for every TLS request.
-* OAuth endpoints (HTTP `[oauth]` identities and MCP server OAuth) do not use
-  `[http.tls]` or `[http] proxy` yet: authorize/token requests always verify
-  with the platform roots, send no client certificate and ignore the
-  configured proxy.
-* HTTP requests with the cookie jar enabled do not follow redirects, so an
-  automatically forwarded Cookie header cannot escape its path or origin scope.
+  on an `https://` request or gRPC channel. The PEM bytes are kept and read
+  again only when a file's size or time changes; the TLS configuration is
+  still built for each request.
+* Each HTTP send uses a new client, so connections are not reused (a folder
+  run or a watch does a TCP and TLS handshake per request). This keeps the
+  DNS / connect / TLS timing of every send; reuse would need the timing marks
+  per request instead of per client.
 * Response bodies with a `Content-Encoding` other than `gzip`, `deflate` and
   `br` (e.g. `zstd`, stacked codings) are shown as received; `gzip`, `deflate`
   and `br` are decompressed automatically. A truncated body is never decompressed.
@@ -149,8 +166,36 @@ allows `accept` as a transport header.
   timeout before the first frame, and terminals that do not answer (or multiplexers
   that swallow the reply) must not delay start-up. Set `theme` explicitly meanwhile.
 
+## SSE transport limits
+
+SSE does not reconnect or send Last-Event-ID. Retry values are informational.
+The transport rejects compressed streams and limits each event to 1 MiB.
+curl and .http exports omit the opening timeout. Their timeout settings do not
+match an SSE opening-only timeout. SSE has no watch mode or saved response examples.
+
+## GraphQL body limits
+
+GraphQL currently sends operations through HTTP POST or the method in the file.
+Query completion uses a heuristic parser, not a GraphQL AST. Subscriptions, GET transport,
+persisted queries, SDL files, a schema tab and schema-based variable validation
+are not implemented.
+
+## MQTT limits
+
+MQTT has no WebSocket transport and no HTTP proxy. It does not reconnect after
+a drop. Version 5 properties and enhanced authentication are not exposed.
+MQTT requests have no curl or `.http` export, because neither format can
+describe a session. In the TUI, the Publish tab edits each payload in a
+one-line table cell; a payload with line breaks is kept, but it shows on one
+line.
+The `rumqttc` crate pins `rustls-webpki` 0.102, which has five advisories
+(`RUSTSEC-2026-0049`, `-0098`, `-0099`, `-0104`, `-0382`). Sendito always
+passes `TlsConfiguration::Rustls` with its own rustls 0.23 configuration, so
+the 0.102 verifier is never used. `deny.toml` ignores those advisories until
+`rumqttc` accepts `rustls-webpki` 0.103.
+
 ## 4. Housekeeping
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  48 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.

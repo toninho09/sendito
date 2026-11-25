@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Topics 1  Publish  Will  Auth  Scripts  Options  Docs ────────────────────────────────╮
+│ Client ID      sendito-demo                                                            │
+│ Protocol       3.1.1 ▾  MQTT version the broker speaks                                 │
+│ Clean session  [✓] On  start without the session the broker kept                       │
+│ Keep alive s   60                                                                      │
+│ Timeout        default · 30 s (Settings)                                               │
+│ Deadline       5000                                                                    │
+│ Verify TLS     [✓] On  turn off for self-signed certificates                           │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ untitled · no file yet (Ctrl+S saves it) ─────────────────────────────────────────────╯

@@ -523,14 +523,33 @@ pub fn parse_messages(
 
 macro_rules! reflect_impl {
     ($name:ident, $pb:path) => {
-        async fn $name(channel: Channel) -> Result<Vec<FileDescriptorProto>, tonic::Status> {
+        async fn $name(
+            channel: Channel,
+            metadata: &tonic::metadata::MetadataMap,
+        ) -> Result<Vec<FileDescriptorProto>, tonic::Status> {
             use pb::ServerReflectionRequest;
             use pb::server_reflection_client::ServerReflectionClient;
             use pb::server_reflection_request::MessageRequest;
             use pb::server_reflection_response::MessageResponse;
             use $pb as pb;
 
-            let mut client = ServerReflectionClient::new(channel);
+            let md = metadata.clone();
+            let mut client = ServerReflectionClient::with_interceptor(
+                channel,
+                move |mut req: tonic::Request<()>| {
+                    for kv in md.iter() {
+                        match kv {
+                            tonic::metadata::KeyAndValueRef::Ascii(k, v) => {
+                                req.metadata_mut().insert(k, v.clone());
+                            }
+                            tonic::metadata::KeyAndValueRef::Binary(k, v) => {
+                                req.metadata_mut().insert_bin(k, v.clone());
+                            }
+                        }
+                    }
+                    Ok(req)
+                },
+            );
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ServerReflectionRequest>();
             let req = |m: MessageRequest| ServerReflectionRequest {
                 host: String::new(),
@@ -621,10 +640,19 @@ fn well_known(name: &str) -> Option<FileDescriptorProto> {
 
 /// Loads the schema of a server through gRPC reflection (v1, then v1alpha).
 pub async fn from_reflection(channel: Channel) -> Result<Schema, GrpcError> {
-    let files = match reflect_v1(channel.clone()).await {
+    from_reflection_with(channel, &[]).await
+}
+
+/// Like [`from_reflection`], with `metadata` on every reflection request.
+pub async fn from_reflection_with(
+    channel: Channel,
+    metadata: &[(String, String)],
+) -> Result<Schema, GrpcError> {
+    let meta = crate::metadata_map(metadata)?;
+    let files = match reflect_v1(channel.clone(), &meta).await {
         Ok(f) => f,
         Err(s) if s.code() == tonic::Code::Unimplemented => {
-            reflect_v1alpha(channel).await.map_err(|s| {
+            reflect_v1alpha(channel, &meta).await.map_err(|s| {
                 GrpcError::Reflection(format!(
                     "{}: {}",
                     crate::code_name(s.code() as i32),

@@ -47,40 +47,75 @@ pub fn history_path(root: &Path) -> PathBuf {
 }
 
 /// Appends an entry. When the file exceeds `max` entries by 10% it is trimmed
-/// to the newest `max`.
+/// to the newest `max`. Appends and trims from other Sendito processes wait
+/// for each other, so a trim does not drop a line another process just wrote.
 pub fn append(path: &Path, entry: &HistoryEntry, max: usize) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
-    }
+    let dir = path.parent().unwrap_or(Path::new("."));
     let line = serde_json::to_string(entry).map_err(|e| StoreError::Invalid(e.to_string()))?;
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .open(path)
-        .map_err(|e| StoreError::io(path, e))?;
-    // Requests are stored as written, with any literal token: owner-only.
-    crate::collection::make_private(path);
-    // A crash can leave a last line with no newline: end it first, so this
-    // entry does not join it and become unreadable.
-    if ends_without_newline(&mut f) {
-        writeln!(f).map_err(|e| StoreError::io(path, e))?;
-    }
-    writeln!(f, "{line}").map_err(|e| StoreError::io(path, e))?;
-    drop(f);
-    let count = count_lines(path);
-    if max > 0 && count > max + max / 10 {
-        let entries = load(path, max)?;
-        let mut out = String::new();
-        for e in &entries {
-            out.push_str(
-                &serde_json::to_string(e).map_err(|e| StoreError::Invalid(e.to_string()))?,
-            );
+    crate::fsio::with_dir_lock(dir, || {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(path)
+            .map_err(|e| StoreError::io(path, e))?;
+        // Requests are stored as written, with any literal token: owner-only.
+        crate::collection::make_private(path);
+        // A crash can leave a last line with no newline: end it first, so this
+        // entry does not join it and become unreadable. One write keeps the
+        // line whole.
+        let mut out = String::with_capacity(line.len() + 2);
+        if ends_without_newline(&mut f) {
             out.push('\n');
         }
-        crate::collection::write_private(path, out.as_bytes())?;
+        out.push_str(&line);
+        out.push('\n');
+        f.write_all(out.as_bytes())
+            .map_err(|e| StoreError::io(path, e))?;
+        drop(f);
+        let count = bump_count(path);
+        if max > 0 && count > max + max / 10 {
+            let entries = load(path, max)?;
+            let mut out = String::new();
+            for e in &entries {
+                out.push_str(
+                    &serde_json::to_string(e).map_err(|e| StoreError::Invalid(e.to_string()))?,
+                );
+                out.push('\n');
+            }
+            crate::collection::write_private(path, out.as_bytes())?;
+            set_count(path, entries.len());
+        }
+        Ok(())
+    })
+}
+
+/// Entries per history file, counted once per process and then kept up to
+/// date, so an append does not read the whole file. Appends from other
+/// processes are not seen; that only delays a trim.
+fn counts() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
+    static COUNTS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    > = std::sync::OnceLock::new();
+    COUNTS.get_or_init(Default::default)
+}
+
+/// The entry count after one more append.
+fn bump_count(path: &Path) -> usize {
+    let Ok(mut map) = counts().lock() else {
+        return count_lines(path);
+    };
+    let n = map
+        .entry(path.to_path_buf())
+        .and_modify(|n| *n += 1)
+        .or_insert_with(|| count_lines(path));
+    *n
+}
+
+fn set_count(path: &Path, n: usize) {
+    if let Ok(mut map) = counts().lock() {
+        map.insert(path.to_path_buf(), n);
     }
-    Ok(())
 }
 
 fn ends_without_newline(f: &mut fs::File) -> bool {
@@ -121,6 +156,7 @@ pub fn load(path: &Path, limit: usize) -> Result<Vec<HistoryEntry>> {
 }
 
 pub fn clear(path: &Path) -> Result<()> {
+    set_count(path, 0);
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -196,5 +232,27 @@ mod tests {
         clear(&p).unwrap();
         assert!(load(&p, 10).unwrap().is_empty());
         assert!(history_path(d.path()).ends_with("history.jsonl"));
+    }
+
+    #[test]
+    fn concurrent_appends_with_trims_keep_every_line_whole() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join(".sendito/history.jsonl");
+        std::thread::scope(|s| {
+            for t in 0..4 {
+                let p = &p;
+                s.spawn(move || {
+                    for i in 0..30 {
+                        append(p, &entry(t * 100 + i), 20).unwrap();
+                    }
+                });
+            }
+        });
+        let text = fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() <= 22, "{}", lines.len());
+        for l in &lines {
+            assert!(serde_json::from_str::<HistoryEntry>(l).is_ok(), "{l}");
+        }
     }
 }

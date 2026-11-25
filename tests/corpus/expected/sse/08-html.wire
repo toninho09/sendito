@@ -1,0 +1,6 @@
+GET /sse/html HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### done: 0 events, error
+### error: SSE requires Content-Type: text/event-stream

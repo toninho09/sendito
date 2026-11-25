@@ -2,43 +2,13 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                   ● local ▾   F1  all keys
-╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────╮
-│▸ Orders/                   ││                                                                                        │
-│▸ Users/                    ││                                                                                        │
-│  GRPC  echo unary          ││                                                                                        │
-│  GET   health              ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                            ▄▀▀▀ █▀▀▀ █▄ █ █▀▀▄ ▀█▀ ▀█▀ ▄▀▀▄                            │
-│                            ││                             ▀▀▄ █▀▀  █ ▀█ █  █  █   █  █  █                            │
-│                            ││                            ▀▀▀  ▀▀▀▀ ▀  ▀ ▀▀▀  ▀▀▀  ▀   ▀▀                             │
-│                            ││                                                                                        │
-│                            ││                            HTTP and gRPC, from the terminal                            │
-│                            ││                      demo  ·  6 requests · 2 folders  ·  ● local                       │
-│                            ││          ╭─ Environment ──────────────────────╮                                        │
-│                            ││        St│ ▍  type to filter                  │                                        │
-│                            ││         C│                                    │                                        │
-│                            ││         n│  ● (no environment)                │  sidebar                               │
-│                            ││         E│▌ ● local                           │                                        │
-│                            ││         C│  ● staging                         │ equests, :commands)                    │
-│                            ││         C│  ● Manage environments…            │  or a curl command                     │
-│                            ││         F│                                    │                                        │
-│                            ││         m│                                    │ or drag it with the mouse)             │
-│                            ││         C╰────────────────────────────────────╯ icons, sidebar side                    │
-│                            ││         F1                                                                             │
-│                            ││         Ctrl+W q     Quit                                                              │
-│                            ││                                                                                        │
-│                            ││        Recent                                                                          │
-│                            ││        Requests you send appear here.                                                  │
-│                            ││                                                                                        │
-│                            ││         F7  all history                                                                │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-│                            ││                                                                                        │
-╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                                                      type filter · ↑↓ move · ⏎ choose · Esc close
+╭─ Environment ──────────────────────╮
+│ ▍  type to filter                  │
+│                                    │
+│  ● (no environment)                │
+│▌ ● local  3 variables              │
+│  ● staging  1 variable             │
+│  ● Manage environments…  Ctrl+W V  │
+│                                    │
+│                                    │
+╰────────────────────────────────────╯

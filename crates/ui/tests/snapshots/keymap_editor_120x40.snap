@@ -1,0 +1,40 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Key bindings · project config ────────────────────────────────────────────────────────────────────────────╮
+│ ▍  type to filter actions                                                Mode  all  conventional  vim      │
+│                                                                                                            │
+│ Global                                                                                                     ┃
+│ ▌ Send the request (or start the gRPC call)                    Ctrl+Enter, F5, Ctrl+W e                    ┃
+│   Cancel the running request or stream                         Ctrl+W x                                    ┃
+│   Finish sending on a client/bidi stream (half-close)          Ctrl+W d                                    ┃
+│   Re-send the active request on an interval (watch)            Ctrl+W m                                    ┃
+│   Save the request to its file (asks for a name if new)        Ctrl+S, Ctrl+W s                            ┃
+│   Quit Sendito                                                 Ctrl+W q, Ctrl+Q                            ┃
+│   Open a new unsaved HTTP request tab                          Ctrl+N, Ctrl+W t                            │
+│   Open a new unsaved gRPC request tab                          Ctrl+W g                                    │
+│   Open a new unsaved SSE request tab                           Ctrl+W E                                    │
+│   Open a new unsaved MQTT request tab                          Ctrl+W M                                    │
+│   Open a new unsaved WebSocket request tab                     Ctrl+W y                                    │
+│   Close the current tab                                        Ctrl+W c                                    │
+│   Next open request tab                                        Ctrl+W n, Ctrl+PageDown                     │
+│   Previous open request tab                                    Ctrl+W p, Ctrl+PageUp                       │
+│   Pin or unpin the current tab (pinned tabs stay first)        Ctrl+W P                                    │
+│   Focus the pane to the left                                   Ctrl+W h, Ctrl+W Left                       │
+│   Focus the pane below                                         Ctrl+W j, Ctrl+W Down                       │
+│   Focus the pane above                                         Ctrl+W k, Ctrl+W Up                         │
+│   Focus the pane to the right                                  Ctrl+W l, Ctrl+W Right                      │
+│   Move focus to the next field or pane                         Tab, Ctrl+W w                               │
+│   Move focus to the previous field or pane                     Shift+Tab, Ctrl+W W                         │
+│   Next tab of the focused pane (e.g. Params → Headers)         Ctrl+W ]                                    │
+│   Previous tab of the focused pane                             Ctrl+W [                                    │
+│   Jump to tab 1 of the focused pane                            Alt+1                                       │
+│   Jump to tab 2 of the focused pane                            Alt+2                                       │
+│   Jump to tab 3 of the focused pane                            Alt+3                                       │
+│   Jump to tab 4 of the focused pane                            Alt+4                                       │
+│                                                                                                            │
+│ Enter records new keys, Ctrl+A adds one, Del restores the default. Tab: all: both editing modes.           │
+│                                                                                                            │
+│  Save (Ctrl+S)    Change (Enter)    Default (Del)    Close (Esc)                                           │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

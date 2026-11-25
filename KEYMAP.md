@@ -27,9 +27,13 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `new_request` | `Ctrl+N`, `Ctrl+W t` | `Ctrl+N`, `Ctrl+W t` | Open a new unsaved HTTP request tab |
 | `new_grpc_request` | `Ctrl+W g` | `Ctrl+W g` | Open a new unsaved gRPC request tab |
 | `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
+| `new_sse_request` | `Ctrl+W E` | `Ctrl+W E` | Open a new unsaved SSE request tab |
+| `new_mqtt_request` | `Ctrl+W M` | `Ctrl+W M` | Open a new unsaved MQTT request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
+| `toggle_pin` | `Ctrl+W P` | `Ctrl+W P` | Pin or unpin the current tab (pinned tabs stay first) |
+| `toggle_favorite` | `Ctrl+W F` | `Ctrl+W F` | Add or remove the request from the favorites |
 | `focus_left` | `Ctrl+W h`, `Ctrl+W Left` | `Ctrl+W h`, `Ctrl+W Left` | Focus the pane to the left |
 | `focus_down` | `Ctrl+W j`, `Ctrl+W Down` | `Ctrl+W j`, `Ctrl+W Down` | Focus the pane below |
 | `focus_up` | `Ctrl+W k`, `Ctrl+W Up` | `Ctrl+W k`, `Ctrl+W Up` | Focus the pane above |
@@ -49,12 +53,14 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
-| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the project config |
+| `manage_mcp_servers` | `Ctrl+W S` | `Ctrl+W S` | Edit the MCP servers in the config file chosen in Settings |
 | `history` | `F7`, `Ctrl+W r` | `F7`, `Ctrl+W r` | Show request history in the sidebar (toggle) |
 | `toggle_sidebar` | `Ctrl+B`, `Ctrl+W b` | `Ctrl+B`, `Ctrl+W b` | Show or hide the sidebar |
 | `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
+| `move_to_secret` | `Ctrl+W K` | `Ctrl+W K` | Move the plain value of the focused credential field into an environment secret |
+| `reveal_secrets` | `Ctrl+W *` | `Ctrl+W *` | Show or hide credentials typed as plain text (with Hide plain secrets on) |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
 | `grow_sidebar` | `Ctrl+W >` | `Ctrl+W >` | Widen the sidebar |
 | `shrink_sidebar` | `Ctrl+W <` | `Ctrl+W <` | Narrow the sidebar |
@@ -72,10 +78,12 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `tree_new_request` | `n` | `n` | New request in the selected folder |
 | `tree_new_folder` | `N` | `N` | New folder in the selected folder |
 | `tree_rename` | `r`, `F2` | `r`, `F2` | Rename the selected item |
+| `tree_folder_settings` | `s` | `s` | Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit) |
 | `tree_duplicate` | `d` | `d` | Duplicate the selected item |
 | `tree_delete` | `Delete`, `x` | `Delete`, `x` | Delete the selected item (asks first) |
 | `tree_move` | `m` | `m` | Move the selected item to another folder |
 | `tree_filter` | `/` | `/` | Filter the tree by name |
+| `toggle_favorite` | `f` | `f` | Add or remove the request from the favorites |
 | `up` | `Up` | `k`, `Up` | Move up |
 | `down` | `Down` | `j`, `Down` | Move down |
 | `page_up` | `PageUp` | `PageUp` | Page up |
@@ -114,7 +122,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `bottom` | `End`, `Ctrl+End` | `G`, `End` | Go to the last line |
 | `scroll_left` | `Left` | `h`, `Left` | Scroll left |
 | `scroll_right` | `Right` | `l`, `Right` | Scroll right |
-| `view_pretty` | `p` | `p` | Body view: pretty (JSON formatted and highlighted) |
+| `view_pretty` | `p` | `p` | Body view: pretty (formatted and highlighted) |
 | `view_raw` | `r` | `r` | Body view: raw text |
 | `view_hex` | `x` | `x` | Body view: hex dump |
 | `search` | `/`, `Ctrl+F` | `/`, `Ctrl+F` | Search in the response |
@@ -125,9 +133,9 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `next_message` | `]` | `]` | Show the next message of a stream (the last one follows new ones) |
 | `search_next` | `n`, `F3` | `n`, `F3` | Next search match |
 | `search_prev` | `N`, `Shift+F3` | `N`, `Shift+F3` | Previous search match |
-| `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the JSON block at the cursor |
-| `fold_all` | `-` | `z M`, `-` | Fold all JSON blocks |
-| `unfold_all` | `+`, `=` | `z R`, `+`, `=` | Unfold all JSON blocks |
+| `fold_toggle` | `Enter`, `Space` | `z a`, `Enter`, `Space` | Fold or unfold the block at the cursor |
+| `fold_all` | `-` | `z M`, `-` | Fold all blocks |
+| `unfold_all` | `+`, `=` | `z R`, `+`, `=` | Unfold all blocks |
 | `toggle_wrap` | `w` | `w` | Wrap long lines on/off |
 | `copy_body` | `y`, `Ctrl+C` | `y y`, `Ctrl+C` | Copy the response body to the clipboard |
 | `save_body` | `s` | `s` | Save the response body to a file |
@@ -161,7 +169,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
 | MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
-| Command palette | :<command> | Type a command (listed under Commands) or pick from the list |
+| Command palette | :\<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |
 | Vim mode | h j k l  w b e  0 ^ $  gg G | Motions (normal and visual) |
@@ -208,8 +216,9 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:end` | Finish sending on a client/bidi stream |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
-| `:auth login <identity>` | Sign in to an HTTP OAuth identity |
-| `:auth logout <identity>` | Remove HTTP OAuth tokens for this environment |
+| `:newenv` | Create an environment (asks for the name) |
+| `:auth login [name]` | Sign in to an HTTP OAuth identity or an MCP server (lists them without a name) |
+| `:auth logout [name]` | Remove the OAuth tokens of an identity or an MCP server (lists them without a name) |
 | `:w` | Save the request |
 | `:saveas <name>` | Save the request under a new name |
 | `:wq` | Save and quit |
@@ -217,18 +226,29 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:q!` | Quit without saving |
 | `:new` | New HTTP request (Ctrl+N) |
 | `:newgrpc` | New gRPC request (Ctrl+W g) |
+| `:newsse` | New SSE request (Ctrl+W E) |
+| `:newmqtt` | New MQTT request (Ctrl+W M) |
 | `:newws` | New WebSocket request (Ctrl+W y) |
 | `:newmcp` | New MCP request |
 | `:mcpservers` | Choose an MCP server |
-| `:mcpservers edit` | Edit the MCP servers in the project config (Ctrl+W S) |
-| `:mcpadd <name>` | Add an MCP server to the project config (asks for the URL or command) |
+| `:mcpservers edit` | Edit the MCP servers in the config file chosen in Settings (Ctrl+W S) |
+| `:mcpadd <name>` | Add an MCP server to the config file chosen in Settings (asks for the URL or command) |
+| `:mcpedit [name]` | Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name) |
 | `:mcptools` | Discover and choose an MCP tool |
-| `:import [path]` | Import a Postman/Insomnia file or Bruno directory, or paste curl |
+| `:method` | Choose the HTTP method |
+| `:bodytype` | Choose the body type of the HTTP request |
+| `:authtype` | Choose the auth type of the request |
+| `:grpcmethod` | Choose the gRPC service and method |
+| `:rescan` | Read the collection from disk again |
+| `:saveexample [name]` | Save the response on screen as an example of the request |
+| `:examples` | List the request's saved examples and show one (:examples delete \<name> deletes) |
+| `:folder` | Edit the settings of the active request's folder (headers, auth, variables, scripts) |
+| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
 | `:httpfile` | Copy the request as an .http file |
 | `:httpfile!` | Copy the .http file including secret values |
-| `:cookies` | List the active environment's cookies (values masked) |
+| `:cookies` | Manage the active environment's cookies: delete one or clear all (values masked) |
 | `:cookies clear` | Clear the active environment's cookies |
 | `:cookies delete <number>` | Delete one cookie from the active environment |
 | `:history` | Show history |
@@ -237,8 +257,11 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
+| `:graphqlschema` | Reload the GraphQL schema for the HTTP request |
 | `:settings` | Open settings |
-| `:theme <name>` | Switch theme; :theme reload reads your theme files again |
+| `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
+| `:keymap` | Edit your key bindings (the file Settings saves to) |
+| `:theme [name]` | Switch theme (lists them without a name); :theme reload reads your theme files again |
 | `:help` | Show keys |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |

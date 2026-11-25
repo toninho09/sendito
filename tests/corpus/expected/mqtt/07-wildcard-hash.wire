@@ -1,0 +1,13 @@
+protocol 3.1.1 client-id corpus-07
+< CONNECT protocol 3.1.1 client-id corpus-07 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< SUBSCRIBE topic corpus/hash/# qos 0
+> SUBACK granted [0]
+< PUBLISH topic corpus/hash/a qos 0 retain false payload first
+> PUBLISH topic corpus/hash/a qos 0 retain false payload first
+< PUBLISH topic corpus/hash/a/b/c qos 0 retain false payload hex 00 01 02 ff
+> PUBLISH topic corpus/hash/a/b/c qos 0 retain false payload hex 00 01 02 ff
+< DISCONNECT 
+### message {"topic":"corpus/hash/a","qos":0,"retain":false,"payload":"first"}
+### message {"topic":"corpus/hash/a/b/c","qos":0,"retain":false,"payload":{"hex":"00 01 02 ff"}}
+### done: 2 messages, deadline

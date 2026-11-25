@@ -1,0 +1,15 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-05"
+
+[options]
+deadline_ms = 300
+
+[[subscriptions]]
+topic = "corpus/qos2"
+qos = 2
+
+[[publish]]
+topic = "corpus/qos2"
+payload = "exactly once"
+qos = 2

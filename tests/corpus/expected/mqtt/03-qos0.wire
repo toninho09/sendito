@@ -1,0 +1,10 @@
+protocol 3.1.1 client-id corpus-03
+< CONNECT protocol 3.1.1 client-id corpus-03 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< SUBSCRIBE topic corpus/qos0 qos 0
+> SUBACK granted [0]
+< PUBLISH topic corpus/qos0 qos 0 retain false payload at most once
+> PUBLISH topic corpus/qos0 qos 0 retain false payload at most once
+< DISCONNECT 
+### message {"topic":"corpus/qos0","qos":0,"retain":false,"payload":"at most once"}
+### done: 1 messages, deadline

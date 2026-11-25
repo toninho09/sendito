@@ -9,9 +9,9 @@ sendito [PATH]                       # open the TUI
 sendito <command> [args]             # headless
 ```
 
-`args_conflicts_with_subcommands = true`: `sendito PATH` opens the TUI for
-`PATH`; the first word is only read as a subcommand when it is one
-(`init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme`, `import`).
+`sendito PATH` opens the TUI for `PATH`. The first word is a subcommand only
+when it is one of `init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme` and
+`import`.
 
 `PATH` defaults to the nearest directory above the current one that contains
 `.sendito/`, else the current directory.
@@ -71,8 +71,9 @@ Sends a request without the UI, or runs every request in a folder.
 | `--fail-fast` | Stop at the first failed or errored request (folder runs only) |
 | `--report <text\|json>` | Folder report format; `text` (default) writes lines to stderr, `json` writes the summary to stdout |
 
-One request: the response body goes to **stdout**, and the status, timing and
-assertion results go to **stderr**. A failure is signalled by the exit code (see
+One request: the response body goes to **stdout**, and the status, timing,
+assertion and test results go to **stderr**, with the Lua script output as
+`log:` lines. A failure is signalled by the exit code (see
 below), so `sendito run x > body.txt` is safe: redirected output holds the body
 bytes unchanged (a line break is added only when stdout is a terminal). A body
 cut at `[http] max_body_mb` prints a warning on stderr. A variable whose secret
@@ -97,6 +98,46 @@ after it, so a login followed by its dependent calls runs as one command.
 
 Folder runs honour `[history]` the same way single requests do.
 
+### SSE sessions
+
+For `kind = "sse"`, stdout contains each event's data, one line per data line.
+Connection and end messages go to stderr. `-i` includes opening response headers.
+The client exits successfully on server EOF, maximum event count or session deadline.
+Invalid Content-Type, status, compression and transport errors return exit code 2.
+A failed assertion returns 1; unresolved variables return 3. Ctrl+C cancels the session.
+
+`--report json` also works for a single SSE request. Its result contains `kind`,
+`outcome`, `events`, `status` and `failed_asserts`. Data does not precede the JSON.
+Folder report entries for SSE contain `events`; variables extracted from the last
+event are available to the next request. `--no-cookies` also applies to SSE.
+
+Set `[sse] timeout_ms = 30000` in config for the default opening timeout.
+Use request `[options] deadline_ms` or `max_events` to bound a live session.
+
+### MQTT sessions
+
+For `kind = "mqtt"`, stdout contains each received payload as one block: the
+payload bytes as received, then a line break when the payload does not end with
+one. `-i` adds a `# <topic> qos=<n>[ retain][ dup]` line before each payload.
+Connection, subscription, publish and end messages go to stderr, and a folder
+that sets headers prints a note (MQTT has no headers).
+
+The session ends successfully at the request's `[options] deadline_ms`. Without
+a deadline it runs until Ctrl+C, which cancels it and returns exit code 2 (as
+for SSE). A refused CONNACK, a CONNACK timeout, a TLS error, a transport error
+or an invalid request (URL, auth kind, base64 payload) returns exit code 2 with
+a short message on stderr. A failed assertion returns 1; unresolved variables
+return 3.
+
+`--report json` also works for a single MQTT request. Its result contains
+`kind`, `outcome`, `messages`, `status` and `failed_asserts`. Folder report
+entries for MQTT contain `messages`; variables extracted from the last payload
+are available to the next request.
+
+Set `[mqtt] timeout_ms = 30000` in config for the default CONNACK timeout
+(0 = no limit). `sendito curl` and `sendito http` refuse MQTT requests with exit
+code 3.
+
 ### The JSON report
 
 With `--report json` the summary is printed to stdout:
@@ -113,7 +154,7 @@ With `--report json` the summary is printed to stdout:
   "duration_ms": 412,
   "requests": [
     {
-      "name": "Users/list users",
+      "path": "Users/list users.toml",
       "kind": "http",
       "outcome": "pass",
       "status": "200 OK",
@@ -128,8 +169,8 @@ With `--report json` the summary is printed to stdout:
 ```
 
 `passed + failed + errors == total`. A request skipped because of unresolved
-variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`
-or `mcp`. The exact per-request fields depend on the protocol; a request that
+variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`,
+`websocket`, `sse`, `mqtt` or `mcp`. The exact per-request fields depend on the protocol; a request that
 never ran has `status` and `duration_ms` set to `null` and an `error` message.
 
 ---
@@ -173,8 +214,16 @@ secrets).
 
 ## `sendito auth login <identity>` / `logout`
 
-Signs in or out of a named HTTP OAuth identity (authorization code + PKCE).
-Tokens are stored in the OS keychain per collection, environment and identity.
+Signs in or out of a named HTTP OAuth identity. Tokens are stored in the OS
+keychain per collection, environment and identity.
+
+* `authorization_code` (default grant): opens the browser for a sign-in with
+  PKCE and waits for the redirect on a loopback port.
+* `device_code`: prints the page and the code to enter there (and opens the
+  page), then waits until the sign-in on the other device ends.
+* `client_credentials` and `password`: need no sign-in; `login` gets a token
+  at once to check the credentials and prints the token endpoint's error code
+  when they are refused.
 
 | Subcommand | Flags |
 |---|---|
@@ -193,13 +242,14 @@ Runs (or forgets) the OAuth login for an MCP server from `[mcp.servers]`.
 
 | Subcommand | Arguments |
 |---|---|
-| `mcp login <server>` | server name |
+| `mcp login <server> [--env <name>]` | server name; the environment renders `{{variables}}` in the URL and OAuth settings |
 | `mcp logout <server>` | server name |
 
 The authorization URL is printed and a browser is opened when available; the
 redirect must reach Sendito's local loopback listener. Tokens are stored in the
 OS keychain under `<collection>/mcp/<server>`. Use it before calling a server
-whose auth table has `type = "oauth"`.
+whose auth table has `type = "oauth"`. In the app, `:auth login <server>` does the
+same, and a server that asks for a sign-in offers it.
 
 ---
 
@@ -218,12 +268,17 @@ whose auth table has `type = "oauth"`.
 
 ## `sendito import <file-or-directory>`
 
-Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, or a
-Bruno collection directory.
+Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, a
+Bruno collection directory, an OpenAPI 3.x or Swagger 2.0 document (JSON, or
+YAML with a `.yaml`/`.yml` extension), or a `.http`/`.rest` file (with the
+environments of the `http-client.env.json` next to it).
 
 | Flag | Meaning |
 |---|---|
 | `--into <folder>` | Folder (relative to the collection root) to import into. Default: the root |
+
+The command must run inside a collection (`sendito init` makes one); outside
+one it exits with code 3 and writes nothing.
 
 A report of imported, changed and skipped items is printed. The same import is
 available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
@@ -237,30 +292,13 @@ available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 | Code | Meaning |
 |---:|---|
 | `0` | Success: every assertion passed (and, for a folder run, every request succeeded) |
-| `1` | A failed assertion, or an MCP tool returned `isError: true` |
-| `2` | The request failed: network error, a gRPC status other than `OK`, or a WebSocket close other than `1000` |
+| `1` | A failed assertion or Lua `test`, an error in a Lua post script, or an MCP tool returned `isError: true` |
+| `2` | The request failed: an error in a Lua pre script (nothing is sent), network error, a gRPC status other than `OK`, a WebSocket close other than `1000`, an SSE transport/response validation error, or an MQTT session error (refused CONNACK, CONNACK timeout, transport error) |
 | `3` | Usage error, including unresolved variables |
 
 For a folder run the exit code is the worst of the four over all requests:
 `3` if any request had unresolved variables or usage failed, else `2` if any
 request failed, else `1` if any assertion or tool failed, else `0`.
-
----
-
-## Internal flags (hidden)
-
-These are hidden from `--help` and used by the benchmarks, the key-map
-generation and the tests. They are documented for contributors; they are not a
-stable interface.
-
-| Flag | Use |
-|---|---|
-| `--exit-after-first-frame` | Quit after drawing the first frame (cold-start benchmark) |
-| `--frame-log <file>` | Write per-frame render times (µs) to a file |
-| `--script <file>` | Replay scripted input from a file |
-| `--print-keymap` | Print [KEYMAP.md](../KEYMAP.md) to stdout (`make keymap`) |
-
-The TUI path is used by `make bench`, `make keymap` and the UI test harness.
 
 ---
 
@@ -276,6 +314,6 @@ documented in [FORMAT.md](../FORMAT.md):
 * `[grpc]` — `deadline_ms`;
 * `[mcp]`, `[mcp.servers.<name>]`, `[mcp.servers.<name>.auth]`;
 * `[history]` — `enabled`, `max_entries`;
-* `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `mouse`, `confirm_quit`,
-  `watch_interval_s`;
+* `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `sticky_folders`, `mouse`,
+  `confirm_quit`, `watch_interval_s`;
 * `[keymap.all]`, `[keymap.conventional]`, `[keymap.vim]`.

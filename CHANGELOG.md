@@ -1,5 +1,484 @@
 # Changelog
 
+## 0.3.0 — 2026-11-25
+
+### Documentation site
+
+* The documentation is published to GitHub Pages as an mdBook site
+  (`.github/workflows/pages.yml`). `make site` builds it into `book/book` and
+  `make site-serve` serves it locally.
+* New pages: `docs/GUIDES.md` (first collection, login flow, CI with GitHub
+  Actions, import from Postman, Insomnia or Bruno, gRPC) and
+  `docs/TROUBLESHOOTING.md`.
+* README: SSE and MQTT in the overview, the install step uses the directory
+  inside the release archive, and a build from source starts with
+  `git clone`. The development notes moved to `docs/ARCHITECTURE.md` and
+  `AGENTS.md`.
+* `docs/CLI.md`: the JSON report shows `path` (the request file) and every
+  `kind` value.
+
+### Lua scripts
+
+* Requests and `folder.toml` take Lua 5.4 code in `[scripts.lua]`: `pre` runs
+  after the pre-request rows and `post` after the assertions, folder scripts
+  first. Every request kind runs them.
+* A pre script sets variables and changes the request: `request.url`,
+  `request.method`, `request:set_header`/`remove_header` (gRPC metadata),
+  `request:set_param`/`remove_param` and `request.body`. What it sets is sent
+  as if the file defined it.
+* A post script reads `response` (status, headers, body, `json()`,
+  `time(phase)`), sets variables and records `test(name, pass)` results next to
+  the assertions.
+* Helpers: `vars.get`, `vars.has`, `vars.set`, `vars.set_secret`, `render`,
+  `hash`, `base64_encode`, `base64_decode`, `json_parse`, `json_stringify`.
+  `print` lines appear in the Results tab and as `log:` lines of
+  `sendito run`.
+* The scripts cannot reach files, the network or processes (no `io`, `os`,
+  `package`, `debug`, `load` or `dofile`) and stop at fixed instruction and
+  memory limits.
+* An error in a pre script stops the send (`sendito run` exits 2); a failed
+  test or an error in a post script exits 1.
+* The Scripts tab has two new sections, "Pre-request: Lua script" and "After
+  response: Lua script", each with a multi-line editor.
+* The check for unresolved variables runs the pre phase on a copy, so a
+  variable that only a pre script sets is not reported.
+* A value a post script sets is a secret when it holds a cookie value or the
+  OAuth token of the send, as for an extract rule; `print` masks these values.
+* When a pre script fails, the Headers tab shows the request with its secrets
+  masked, as after a send.
+
+### MCP servers in the interface
+
+* The MCP servers editor (`Ctrl+W S`, `:mcpservers edit`) and `:mcpadd` write
+  to the config file chosen in Settings (global or project), as the OAuth and
+  keymap editors do; the title says which file. A server defined in the global
+  file is now edited from the interface: switch "Save changes to" to global,
+  or open its details with `:mcpedit <name>`, which edits the file that holds
+  the server. Nothing is copied from one file to the other.
+* Settings has an "MCP servers" row that counts the configured servers; Enter
+  opens the editor.
+* The details of a stdio server have an Arguments tab, one argument per row:
+  an argument keeps its spaces and quotes, which the command line of the
+  servers table cannot hold.
+* "Save changes to" in Settings is kept in `session.toml` (per user and
+  collection), so the editors open on the same file after a start; it starts
+  at `global`.
+
+### Forms and dialogs
+
+* The Will, Auth and Options tabs of an MQTT request label every field (Will
+  topic, Will QoS, Will retain, Base64, User name, Password, Client ID,
+  Protocol, Clean session, Keep alive); the choices and toggles say what they
+  do.
+* The environment editor explains the `dotenv` source; the OAuth identities
+  editor lists the four grants.
+* A help line under the request fields explains the focused field (what it
+  does, what an empty value means, the units it takes).
+* An empty timeout or gRPC deadline shows the value that applies, e.g.
+  "default · 30 s (Settings)".
+* Timeouts and deadlines show and take a time with its unit: `30 s`,
+  `500 ms`, `2 min`; a bare number is still milliseconds and the files still
+  keep milliseconds. This covers the request Options tabs and the timeout
+  rows of Settings.
+* A password, token, key or secret typed as plain text in a request shows
+  "⚠ plain text". `Ctrl+W K` moves it into a secret of the active
+  environment (`.sendito/secrets.toml`) and writes `{{name}}` in the field.
+* New setting **Hide plain secrets** (`[ui] hide_plain_secrets`, default off):
+  such values show as `••••••`; `Ctrl+W *` shows them.
+* The MCP servers editor (`Ctrl+W S`) is a list of servers with a form for
+  the selected one. The form shows only the fields of the server's kind and
+  auth, with labels and a help line: no more `verify_tls` / `client_id` typed
+  as field names, and no separate details editor (`Ctrl+O` is gone; `:mcpedit
+  <name>` opens the form). Verify TLS is a toggle; the arguments and the
+  environment of a stdio server are tables. `Ctrl+T` tests the selected server
+  and shows how many tools it has.
+* The OAuth identities editor (`:oauth`) uses the same list and form. The
+  grant is a choice, and only its fields show (the device URL for device
+  code, the username and password for the password grant). `Ctrl+L` signs in.
+* F2 on a request's OAuth identity field lists the identities; "New
+  identity…" opens the OAuth editor.
+* The environment editor has the columns Variable, Type and Value: one field
+  per row. The types are `text`, `secret`, `secret key`, `keychain`,
+  `keychain key`, `file` and `.env`. A secret or keychain value is typed in
+  Value (masked, stored outside the file); a "key" type takes the name of an
+  existing entry instead, and `file` and `.env` take the path and the key.
+  Changing between a secret type and another clears the Value, so a secret
+  never shows as text. An empty Value says whether a secret is set or `.env`
+  has the key.
+* F2 on the Value of a `file` row, or on the `.env` file line, browses for
+  the file: folders open, a file fills in its path (relative to the
+  collection, or with `~`). A typed or pasted path still works.
+* The environment editor edits the `.env` file of the environment (the
+  `dotenv` key) on a line above the table. The line says whether the file
+  exists and how many keys it holds; Tab completes the path, and an empty
+  line means `.env` at the collection root.
+* Settings: **Save to** tabs (Global / Project, Tab switches) replace the
+  "Save changes to" row; typing filters the settings; numbers, paths and text
+  are edited in place instead of in a separate dialog; `•` marks a value the
+  chosen file sets, and "project wins" a global value the project file
+  overrides.
+* Name prompts show the file the name creates and say at once when the name
+  is not valid or taken; the request type shows all six kinds.
+* The import dialog says what the text would import (or why it cannot) as
+  you type, and Tab completes a path.
+* The undefined-variables question has a **Define** button: the environment
+  editor opens with a row for each missing variable.
+* Pickers say how many items match the filter and mark the matched letters;
+  the environment picker shows how many variables each environment has.
+* The key bindings editor (`:keymap`) lists every action with its keys,
+  grouped as in the help, with a filter. Enter records the new keys (a pause
+  of one second keeps them), `Ctrl+A` adds a key, Del restores the default,
+  `Ctrl+D` removes the keys. A key that clashes with another action gets a
+  warning. Action ids and key names are no longer typed by hand.
+
+### Script sources
+
+* Add six sources for `[[scripts.assert]]` and `[[scripts.extract]]`:
+  `time` (milliseconds; `total`, and on HTTP also `ttfb`, `dns`, `connect`,
+  `tls`, `download`), `size` (bytes; `total`, `body`, `headers`), `hash`
+  (`md5`, `sha1`, `sha256`, `sha512` hex of the body), `xpath` (XPath 3.1 on
+  an XML body), `regex` (capture group 1 on the raw body text) and `cookie`
+  (a `Set-Cookie` value of the response).
+* `Set-Cookie` values of an HTTP response or a WebSocket handshake are now
+  masked in assertion results also when the cookie jar is off.
+* A saved rule with an empty `expr` no longer writes `expr = ""`.
+
+### Favorites and pinned tabs
+
+* Add favorite requests: `f` in the tree (or `Ctrl+W F` for the current tab)
+  adds the request to the favorites or removes it. The favorites show in a
+  Favorites section at the top of the tree, with `★` after the name in the
+  tree, and on the start screen. A rename or a move keeps a favorite; a delete
+  removes it. Favorites are kept per user in `session.toml`.
+* Add pinned tabs: `Ctrl+W P` pins or unpins the current tab. Pinned tabs stay
+  before the others, show `◆` before the method, and stay pinned after a
+  restart.
+
+### Process environment variables
+
+* Add `{{$processEnv.NAME}}`: it reads `NAME` from the environment of the
+  Sendito process, in any field. The value is a secret. A variable that is not
+  set stays unresolved.
+
+### `.env` variables
+
+* Add the `dotenv` variable source: `{ source = "dotenv", key = "API_TOKEN" }`
+  reads a key of a `.env` file (default key: the variable name). The value is a
+  secret. Sendito only reads the file.
+* An environment file sets the path with a top-level `dotenv = "<path>"`; the
+  default is `.env` at the collection root.
+* The environment editor offers `dotenv` as a source and shows whether the key
+  is set.
+
+### Descriptions
+
+* Add a Markdown `description` to every request kind and to `folder.toml`; the
+  root `folder.toml` documents the collection. It is never sent and not
+  inherited.
+* Add a Docs tab, the last tab of every request and folder tab. Its View
+  choice switches between the editor and a rendered preview (headings,
+  emphasis, code, lists, task lists, quotes, links, rules and tables).
+* Import the descriptions of Postman, Insomnia, Bruno (`docs` blocks) and
+  OpenAPI (document, tags and operations) in place of reporting them.
+
+### SSE sessions
+
+* Split HTTP response opening from body collection. Normal HTTP keeps its total
+  timeout, decoding, size limit and redirect rules.
+* Add a live SSE transport with an opening-only timeout, including redirects.
+  It rejects non-200 responses, non-event-stream content and compressed streams.
+* Add an incremental SSE parser with UTF-8 replacement, BOM, CR/LF/CRLF, multiline
+  data, persistent IDs, retry values and a 1 MiB event limit. No reconnect.
+* Add `kind = "sse"` request files with query parameters, headers, inherited auth,
+  cookies, scripts, maximum event count and session deadline.
+* Add live event lists, payload/jq views, headers, timing and logs to the TUI.
+  `:newsse` and Ctrl+W E create requests; `:end` and Cancel stop sessions.
+* Headless runs print data lines to stdout and progress to stderr. JSON reports
+  include event counts. Folder runs, history and curl/.http exports support SSE.
+* Add `[sse] timeout_ms = 30000` and its Settings row. Add 13 SSE wire cases.
+
+### MQTT sessions
+
+* Add `kind = "mqtt"` request files: `mqtt://` and `mqtts://` URLs, protocol
+  3.1.1 or 5, client ID (empty generates `sendito-<8 hex>`), user name and
+  password or Basic auth, clean session, keep-alive, subscriptions with QoS,
+  ordered publishes with text or base64 payloads, retain and an optional Last
+  Will.
+* Add a live MQTT session to the pipeline: pre-request scripts, a CONNACK
+  timeout (`[mqtt] timeout_ms = 30000`, the "MQTT timeout" setting), deadline,
+  disconnect, cancel, secret masking, end scripts on the last payload and one
+  history entry.
+* Add MQTT to the TUI: `:newmqtt`, Ctrl+W M and the new-request dialog; Topics,
+  Publish, Will, Auth, Scripts and Options tabs; Messages, Connection, Timing
+  and Log responses. Send on an open session publishes the selected Publish
+  row; `:end` disconnects and Cancel aborts.
+* Headless runs print each payload to stdout and progress to stderr. A deadline
+  ends with exit 0; a refused CONNACK ends with exit 2. JSON reports include
+  `messages`. curl and `.http` exports refuse MQTT requests.
+* The MQTT client sends DISCONNECT before it ends a session on a deadline or a
+  disconnect, so the broker does not send the Last Will.
+* Add a TLS listener to the test broker and 13 MQTT wire cases. The media add
+  `14-mqtt-session.gif` (one recording per feature, not a combined SSE and MQTT
+  recording).
+
+### GraphQL body
+
+* HTTP requests have a GraphQL body with separate Query, Variables and Operation
+  name editors. Variables must be a JSON object. Empty optional fields stay off
+  the wire. Request files preserve drafts and placeholders.
+* Postman and Bruno imports keep GraphQL bodies instead of converting them to JSON.
+* `:graphqlschema` fetches and caches introspection through the HTTP authentication
+  pipeline. It preserves the draft request and refreshes the cache on each command.
+* The Query editor completes GraphQL fields, unused arguments and inline-fragment
+  types from introspection. It loads missing schemas in the background and does
+  not retry a failed load until `:graphqlschema` requests a refresh.
+
+### Folder settings
+
+* **`folder.toml` in a folder** (or the collection root) holds headers, an
+  auth, variables and scripts that every request below it inherits. The
+  nearest folder's auth wins; a request header replaces a folder header of
+  the same name, and a disabled request row stops it; folder variables sit
+  between the environment and the runtime variables; folder scripts run
+  first. gRPC requests get the headers as metadata; MCP requests inherit
+  only variables and scripts.
+* **Behaviour change: a request without `[auth]` now inherits** its folder's
+  auth. Without a `folder.toml` nothing changes. `type = "none"` turns
+  inheritance off and is now written to the file; `type = "inherit"` is
+  accepted too. New requests inherit.
+* **Folder tab.** `s` on a tree folder (or on a request: its folder) or
+  `:folder` opens the folder's settings in a tab with Headers, Auth, Vars and
+  Scripts. `Ctrl+S` writes `folder.toml`; empty settings remove the file. The
+  tab comes back with the session.
+* **What a request inherits is shown.** The Auth tab offers "Inherit" and
+  names the folder the auth comes from; the Headers tab lists the folder
+  headers under the table.
+* **Everywhere a request is sent.** `sendito run` (one request or a folder),
+  the curl and `.http` exports and the history use the request as it is
+  sent. A `folder.toml` that cannot be read stops the send and names the file.
+* **Imports keep folder auth.** Postman folder and collection auth, Bruno
+  `folder.bru`/`collection.bru` (auth, headers, pre-request variables) and
+  Insomnia folder auth now go to `folder.toml` instead of being copied into
+  each request. A request named `folder` is imported as `folder (2)`.
+
+### Import OpenAPI, Swagger and .http files
+
+* **OpenAPI 3.0 / 3.1 and Swagger 2.0**, JSON or YAML: a request per
+  operation in a folder per tag, `{{baseUrl}}` and one environment per server,
+  path parameters as variables, query and header parameters, bodies from
+  their example or a sample of the schema, response examples as saved
+  examples, and the security as auth (the document's in the root
+  `folder.toml`). OAuth 2 security and external references are reported.
+* A schema that refers to itself gives `null` at the second visit, so a
+  recursive schema with many such fields does not make a huge sample body.
+* **`.http` / `.rest` files**: `###` blocks, `@variables`, `# @name`,
+  `# @timeout`, `# @no-redirect`, headers, bodies and the auth forms both
+  editors use, with the environments of `http-client.env.json`. A file
+  exported by `sendito http` imports back to the same request with basic,
+  bearer, API-key or Digest auth; an OAuth, JWT or AWS SigV4 auth comes back
+  as the header the export wrote (`Bearer {{…}}` or `AWS …`).
+* `sendito import` and `:import` pick the format from the file.
+
+### Saved examples
+
+* **`:saveexample [name]`** saves the response on screen as an example of the
+  request, in `<name>.examples/<example>.toml` next to its file (a body that
+  is not UTF-8 goes to a `.bin` file). Credential headers are masked.
+* **`:examples`** lists a request's examples and shows one in the response
+  pane (`example: <name>` in the border); `:examples delete <name>` deletes
+  one.
+* Renaming, moving, duplicating and deleting a request take its examples
+  along; the tree does not show the `.examples` directories, and a folder
+  name cannot end in `.examples`.
+* Postman saved responses are imported as examples.
+
+### More auth types
+
+* **Digest** (RFC 7616): SHA-256 or MD5, `qop=auth`, `-sess`. The first send
+  gets the server's `401` challenge; the request is sent once more with the
+  answer, in the same timeout.
+* **AWS Signature Version 4** (`type = "awsv4"`): access key, secret key,
+  optional session token, region and service. The signature covers the
+  request as it is sent (the jar's cookies included); `X-Amz-Date`,
+  `X-Amz-Content-Sha256` (s3) and `X-Amz-Security-Token` are added. A
+  multipart body cannot be signed.
+* **JWT** (`type = "jwt"`): signed at send time with HS256/384/512 (a secret)
+  or RS256/ES256 (a PEM key file); `expires_in_s` adds `iat` and `exp`. HTTP,
+  gRPC and WebSocket send it as a bearer token.
+* The Auth tab has their fields; curl export writes `--digest` and
+  `--aws-sigv4`; the `.http` export writes `Digest user password` and `AWS …`;
+  a JWT is exported as `{{sendito_jwt}}`. Postman `digest`, `awsv4` and `jwt`
+  auth are imported (a JWT private key is reported).
+* A gRPC or WebSocket request with OAuth, Digest or AWS SigV4 auth (also when
+  it inherits one) fails with a message.
+
+### OAuth grants
+
+* **`grant` in `[oauth.<name>]`**: `authorization_code` (the default, as
+  before), `client_credentials`, `password` or `device_code`.
+* **client_credentials and password need no sign-in.** A request gets a token
+  when it needs one, a new one when it expires or after a `401`; it works in
+  CI, also without a keychain. `sendito auth login` checks the credentials.
+* **device_code**: `sendito auth login` and `:auth login` show the page and
+  the code to enter on another device, open the page and wait for the sign-in.
+* The `:oauth` editor has Grant, Username and Password columns; the URL column
+  holds the device URL for `device_code`. A plain password gets a warning.
+
+### MCP sign-in from the app
+
+* **Sign in when the server asks.** When an MCP call or the tool list gets a
+  `401` with a Bearer challenge, or the saved sign-in is missing or expired,
+  the app asks "Sign in now?". Sign in opens the browser, stores the tokens,
+  and runs the call (or the tool list) again. A server without an auth table
+  gets `type = "oauth"` written to its config file after the sign-in.
+* **`:auth login|logout <server>`** signs in to or out of an MCP server in the
+  app. An `[oauth]` identity with the same name wins.
+* **Auth and Token columns** in the MCP servers editor (`Ctrl+W S`): none,
+  bearer (with its token) or oauth. OAuth fields in the file stay as they are.
+  A token without `{{variable}}` gets a warning on save.
+* **`sendito mcp login <server> [--env <name>]`** renders `{{variables}}` in
+  the server URL and the OAuth settings. Tokens are bound to the rendered URL.
+* `sendito run` prints `sign in with sendito mcp login <server>` when an MCP
+  server asks for a sign-in.
+
+### Config fields in the interface
+
+* **Settings chooses the file.** A "Save changes to" row writes to the global
+  file or to the project file (`.sendito/config.toml`). A change saved to the
+  global file while the project file sets the same key gets a warning.
+* **Typed settings.** HTTP timeout, gRPC deadline, WebSocket and MCP timeouts,
+  largest response body, history entries kept, watch interval, proxy, the TLS
+  CA, client certificate and key, collection name and skipped directories.
+  Enter opens a dialog; the value is checked before it is saved (a proxy URL,
+  a PEM file that exists, a number in range). The watch interval is typed now
+  instead of chosen from 5 / 10 / 30 / 60. The cookie jar is an on/off row.
+* **Collection name warning.** It is always saved to the project file, and the
+  dialog and the status say that keychain secrets must be set again.
+* **MCP server details.** `Ctrl+O` in the servers table (`Ctrl+W S`) edits the
+  env of a stdio server, or the headers, `verify_tls` and OAuth overrides of an
+  HTTP server.
+* **`:oauth`** edits the `[oauth.<name>]` identities in a table. A plain client
+  secret is saved with a warning.
+* **`:keymap`** edits `[keymap.all]`, `[keymap.conventional]` and
+  `[keymap.vim]`. Saved keys apply at once.
+
+### Command palette
+
+* **Settings in the palette.** Every settings row is a "Setting: …" entry with
+  its current value. Enter opens the settings dialog on that row.
+* **Commands without `:`.** The search lists the `:commands` too. A command
+  that needs an argument puts `:<command> ` in the input and waits for it.
+  Rows that hold the typed text as written come first.
+* **Pickers.** `:theme` lists the themes, `:auth login` and `:auth logout`
+  list the OAuth identities and the MCP servers with OAuth, and `:mcpedit`
+  lists the MCP servers and opens the details editor of the one you choose.
+* **Cookie jar.** `:cookies` lists the cookies (values masked). Enter on a
+  cookie deletes it after a question; the last row clears all of them.
+* **New commands.** `:method`, `:bodytype`, `:authtype` and `:grpcmethod` open
+  the picker of the active request. `:rescan` reads the collection from disk
+  again. `:newenv` creates an environment.
+
+### Pretty XML, HTML, YAML and CSV
+
+* The pretty body view formats XML and HTML (one tag per line, a fold per
+  element), YAML (as received, a fold per indented block) and CSV/TSV
+  (aligned columns, bold header), with colors for each format.
+* The Content-Type chooses the format; without one, `<?xml` and
+  `<!doctype html` / `<html` bodies are recognized. A body that does not
+  parse in its format shows raw. The jq path and filter stay JSON only.
+
+### Streams and large responses
+
+* **`[ui] stream_messages_kept`** (default 10000, also in Settings): a gRPC or
+  WebSocket stream keeps this many messages in the response; the oldest go
+  first. The list says "N older dropped" and numbers every message; the
+  counts, sizes and timing still cover all of them. The runner no longer
+  keeps every event of a session in memory.
+* Each stream message costs the same however long the stream is (the size,
+  the timing and the live message were recomputed from every event).
+* The response viewer draws long and wrapped lines, search matches and the
+  JSON path of the cursor without going through the whole document on each
+  frame. A growing log wraps only its new lines.
+* Undo keeps at most 32 MB of copies per text, in addition to 200 steps.
+* `{{variables}}` that reference each other many times render once per name;
+  one render stops at 1 MB.
+* Extract and assert rules parse the response body once per run.
+
+### Redirects
+
+* **Redirects are followed with the cookie jar enabled.** Each hop gets the
+  jar's `Cookie` header for its own URL, and the cookies a redirect response
+  sets are stored before the next hop (they were not followed, and a note said
+  so).
+* **File bodies are sent while they are read** (a request body `< file` and
+  multipart file parts), not loaded into memory first. A 307 or 308 redirect
+  sends the file again. The bytes on the wire are the same.
+
+### Sidebar
+
+* **Pinned folders.** While the tree scrolls, the folders of the top row stay
+  pinned above the list, at most half its height. A click on a pinned folder
+  selects it and scrolls the tree to it. The "Pin folders while scrolling"
+  setting (`ui.sticky_folders`, on by default) turns it off.
+
+### Fixes
+
+* **A request with a comment after `kind` no longer disappears** from the tree
+  and from `sendito run` (`kind = "http" # main`, or a quoted key).
+* **Filtering the tree by some non-Latin names no longer crashes** the app.
+* **The 401 retry with OAuth stays inside the request timeout**: the first
+  send, the token refresh and the retry share it. The error says why the token
+  or the refresh failed.
+* **OAuth token, discovery and registration requests use `[http] tls` and
+  `[http] proxy`**, like the API requests.
+* **Two requests that refresh the same OAuth token at once** spend the refresh
+  token once; the second uses the new token.
+* **An MCP stdio server that prints a line that is not JSON-RPC** to stdout no
+  longer breaks the call; the line shows as a log (`stdout: …`). Lines are
+  limited to 100 MB (stdout) and split at 64 KB (stderr logs). When a call
+  ends, the server's stdin is closed and it gets 0.5 s to exit before it is
+  killed.
+* **MCP Streamable HTTP**: a keep-alive before the reply in one chunk no longer
+  reads as a closed stream; bodies are limited to 100 MB; an SSE body is
+  searched once per byte.
+* **`sendito import` outside a collection exits with code 3** and writes
+  nothing (it made a collection of the current directory).
+* Folder paths with `.` or `..` parts are refused (create, move, import).
+* The import report dialog is as tall as its wrapped text.
+* A search that stops at 100000 matches says so (`match 1/100000+`), and case
+  folding is the same on every line.
+* **Saves are durable**: request, environment, config, secrets, session and
+  cookie files are written to a unique temporary file, flushed, and renamed;
+  the directory is synced. History appends are locked across processes and
+  written in one piece, so a trim does not drop another process's entry.
+  Secret and config edits are locked across processes too, and `secrets.toml`
+  keeps values it does not write.
+* **A session file that does not parse is kept** as `session.toml.corrupt`
+  (with a warning) instead of being overwritten.
+* A config file with a literal OAuth `client_secret` is written owner-only.
+
+### Code layout
+
+No change in behaviour.
+
+* **Large files are split by domain.** The send pipeline (`runner/`) has one
+  module per protocol plus project, scope, OAuth and history. The CLI commands
+  are in `src/cli/`. The HTTP client has `tls`, `proxy`, `timing`, `body` and
+  `redirect` modules. The UI tab, overlays, request pane, MCP OAuth and the
+  WebSocket session are split the same way.
+* **New crate `sendito-widgets`**: the text editor, the editable table, list
+  movement, icons and color themes, with no app state.
+* **`sendito-ui` reaches HTTP, gRPC, WebSocket and MCP only through
+  `sendito-pipeline`**, which re-exports the types the UI reads.
+* **Smaller changes per feature.** The fields every request kind has
+  (scripts, description) are one `RequestCommon` in the model; the request
+  file parser reads them once. The six runners share `response_phase`
+  (extracts, assertions, Lua post scripts). A UI snapshot keeps only the pane
+  or dialog of its test, and only the layout tests run at 200×60. The
+  screenshots and GIFs are regenerated before a release only. The README
+  keeps the overview, the install and the quick start; the features are in
+  `docs/FEATURES.md`.
+
 ## 0.2.0 — 2026-11-24
 
 ### Response query bar and body type chips

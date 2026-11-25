@@ -1,0 +1,39 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs ───────────────────────────────╮
+│ Body type      None   JSON   Raw   Form   Multipart   File   GraphQL            → json │
+│ Section        Query ▾                                                                 │
+│   1 query Lookup {                                                                     │
+│   2   hero(                                                                            │
+│            ╭──────────────────────╮                                                    │
+│            │id       ID           │                                                    │
+│            │limit    Int          │                                                    │
+│            ╰──────────────────────╯                                                    │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ Users › create user ──────────────────────────────────────────────────── Ln 2, Col 8 ─╯
+╭─ Body  Headers  Timing  Results ───────────────────────────────────────────────────────╮
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                          Press  Ctrl+Enter  or  F5  to send.                           │
+│                                                                                        │
+│                               The response appears here.                               │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯

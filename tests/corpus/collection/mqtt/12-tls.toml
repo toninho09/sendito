@@ -1,0 +1,14 @@
+kind = "mqtt"
+url = "{{mqtt_tls_url}}"
+client_id = "corpus-12"
+
+[options]
+deadline_ms = 300
+verify_tls = false
+
+[[subscriptions]]
+topic = "corpus/tls"
+
+[[publish]]
+topic = "corpus/tls"
+payload = "over tls"

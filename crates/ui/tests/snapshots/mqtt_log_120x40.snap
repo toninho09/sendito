@@ -1,0 +1,22 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│ connecting to mqtts://broker.example.test                                              │
+│ +0.012s connected (session present: no)                                                │
+│ +0.015s subscribed sensors/+/temperature (QoS 1)                                       │
+│ +0.100s message sensors/kitchen/temperature qos=1 retain (31 bytes)                    │
+│ +0.200s message sensors/office/temperature qos=1 (30 bytes)                            │
+│ +0.300s message sensors/garage/temperature qos=1 (30 bytes)                            │
+│ deadline                                                                               │
+│                                                                                        │
+│ No scripts or assertions for this request. Add them in the Scripts tab.                │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰────────────────────────────────────────────────────────────────────── Ln 10/10 · wrap ─╯

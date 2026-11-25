@@ -1,0 +1,6 @@
+GET /sse/status HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### done: 0 events, error
+### error: SSE requires HTTP 200, received 204

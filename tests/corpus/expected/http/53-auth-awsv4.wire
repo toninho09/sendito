@@ -1,0 +1,10 @@
+POST /aws/items?b=2&a=1 HTTP/1.1
+Content-Type: application/json
+X-Amz-Date: <amz-date>
+Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/<date>/eu-west-1/execute-api/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=<signature>
+Accept: */*
+Host: 127.0.0.1:<port>
+Content-Length: 10
+
+{"id": 1}
+### client saw: 200 OK

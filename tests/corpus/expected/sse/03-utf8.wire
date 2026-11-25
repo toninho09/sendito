@@ -1,0 +1,6 @@
+GET /sse/utf8 HTTP/1.1
+Accept: text/event-stream
+Host: 127.0.0.1:<port>
+
+### event {"event":"message","data":"héllo","id":"","retry_ms":null}
+### done: 1 events, server closed

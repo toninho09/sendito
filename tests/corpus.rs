@@ -76,6 +76,8 @@ struct Env {
     mcp: mcp_echo::McpEcho,
     ws: sendito_testkit::ws_echo::WsEcho,
     ws_tls: sendito_testkit::ws_echo::WsEcho,
+    mqtt: sendito_testkit::mqtt_broker::MqttBroker,
+    mqtt_tls: sendito_testkit::mqtt_broker::MqttBroker,
     keychain: Arc<MemoryKeychain>,
 }
 
@@ -89,6 +91,12 @@ async fn setup() -> Env {
     let ws = sendito_testkit::ws_echo::start().await.must();
     let certs = sendito_testkit::tls::generate().must();
     let ws_tls = sendito_testkit::ws_echo::start_tls(&certs).await.must();
+    let mqtt = sendito_testkit::mqtt_broker::MqttBroker::start()
+        .await
+        .must();
+    let mqtt_tls = sendito_testkit::mqtt_broker::MqttBroker::start_tls(&certs)
+        .await
+        .must();
     let env_path = dir.path().join(".sendito/environments/corpus.toml");
     let text = std::fs::read_to_string(&env_path)
         .must()
@@ -102,10 +110,12 @@ async fn setup() -> Env {
             &format!("grpc_target = \"{}\"", grpc.target()),
         );
     let text = format!(
-        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\n",
+        "{text}\nmcp_url = \"{}\"\nws_url = \"{}\"\nws_tls_url = \"{}\"\nmqtt_url = \"{}\"\nmqtt_tls_url = \"{}\"\n",
         mcp.url(),
         ws.url("").trim_end_matches('/'),
-        ws_tls.url("").trim_end_matches('/')
+        ws_tls.url("").trim_end_matches('/'),
+        mqtt.url(),
+        mqtt_tls.url()
     );
     std::fs::write(&env_path, text).must();
     let mut secrets = BTreeMap::new();
@@ -146,6 +156,8 @@ async fn setup() -> Env {
         mcp,
         ws,
         ws_tls,
+        mqtt,
+        mqtt_tls,
         keychain,
     }
 }
@@ -165,6 +177,8 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         schemas: Default::default(),
         grpc_deadline_ms: 0,
         ws_timeout_ms: 0,
+        sse_timeout_ms: 30_000,
+        mqtt_timeout_ms: 30_000,
         mask_echoed_secrets: false,
         cookie_jar: false,
         oauth: None,
@@ -232,7 +246,60 @@ fn normalize_http(
     let s = format!("{head}{body_text}")
         .replace(&format!("127.0.0.1:{port}"), "127.0.0.1:<port>")
         .replace(&format!("localhost:{port}"), "localhost:<port>");
-    mask_secrets(s, secrets)
+    mask_secrets(mask_per_send(&s), secrets)
+}
+
+/// Masks the values that change at each send: the AWS SigV4 time and
+/// signature, and the Digest client nonce and answer (the echo server checks
+/// the Digest answer itself).
+fn mask_per_send(s: &str) -> String {
+    // HTTP lines end in CRLF: split on LF only and keep each line's CR.
+    s.split('\n')
+        .map(|raw| {
+            let (line, cr) = match raw.strip_suffix('\r') {
+                Some(l) => (l, "\r"),
+                None => (raw, ""),
+            };
+            let lower = line.to_ascii_lowercase();
+            let masked = if lower.starts_with("x-amz-date:") {
+                "X-Amz-Date: <amz-date>".to_string()
+            } else if lower.starts_with("authorization: aws4-hmac-sha256") {
+                let line = mask_value(line, "Signature=", "<signature>");
+                // Credential=<key>/<date>/<region>/...
+                match line.split_once("Credential=") {
+                    Some((head, rest)) => match rest.split_once('/') {
+                        Some((key, rest)) => {
+                            let rest = rest.split_once('/').map_or(rest, |(_, r)| r);
+                            format!("{head}Credential={key}/<date>/{rest}")
+                        }
+                        None => line.clone(),
+                    },
+                    None => line.clone(),
+                }
+            } else if lower.starts_with("authorization: digest") {
+                let line = mask_value(line, "cnonce=\"", "<cnonce>");
+                mask_value(&line, "response=\"", "<response>")
+            } else {
+                line.to_string()
+            };
+            format!("{masked}{cr}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Replaces the value after `key` (up to `"`, `,` or the end) with `with`.
+fn mask_value(line: &str, key: &str, with: &str) -> String {
+    match line.find(key) {
+        Some(i) => {
+            let start = i + key.len();
+            let end = line[start..]
+                .find(['"', ','])
+                .map_or(line.len(), |j| start + j);
+            format!("{}{with}{}", &line[..start], &line[end..])
+        }
+        None => line.to_string(),
+    }
 }
 
 fn find(h: &[u8], n: &[u8]) -> Option<usize> {
@@ -261,6 +328,11 @@ fn hex(b: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[path = "corpus/mqtt.rs"]
+mod mqtt;
+#[path = "corpus/sse.rs"]
+mod sse;
 
 fn expected_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/expected")
@@ -300,13 +372,23 @@ fn check_with_capture(
     }
 }
 
+/// The case files of `sub`, and those of its folders as `folder/file` (the
+/// folder settings files are not cases).
 fn cases(dir: &Path, sub: &str) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir.join(sub))
-        .must()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".toml"))
-        .collect();
+    let mut v = Vec::new();
+    for e in std::fs::read_dir(dir.join(sub)).must().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if e.path().is_dir() {
+            for f in std::fs::read_dir(e.path()).must().flatten() {
+                let file = f.file_name().to_string_lossy().into_owned();
+                if file.ends_with(".toml") && file != sendito_store::folder::FILE {
+                    v.push(format!("{name}/{file}"));
+                }
+            }
+        } else if name.ends_with(".toml") {
+            v.push(name);
+        }
+    }
     v.sort();
     v
 }
@@ -396,7 +478,13 @@ fn oracle_http(
                 // reqwest adds `Accept: */*` to every request (see docs/DEBT.md).
                 | "accept"
         ) || (matches!(&req.auth, sendito_core::Auth::ApiKey { key, location: sendito_core::ApiKeyLocation::Header, .. } if key.eq_ignore_ascii_case(&n)))
-            || (n == "cookie" && req.options.cookies == Some(true));
+            || (n == "cookie" && req.options.cookies == Some(true))
+            // AWS SigV4 adds its time, payload hash (s3) and session token.
+            || (matches!(req.auth, sendito_core::Auth::AwsSigV4 { .. })
+                && matches!(
+                    n.as_str(),
+                    "x-amz-date" | "x-amz-content-sha256" | "x-amz-security-token"
+                ));
         if !derived && !defined.contains(&n) {
             failures.push(format!("{case}: header {n} was sent but not defined"));
         }
@@ -618,25 +706,55 @@ async fn http_corpus() {
     for file in &names {
         let case = file.trim_end_matches(".toml");
         let rel = format!("http/{file}");
-        let Request::Http(req) = p.coll.load(&rel).must() else {
+        let (mut scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+        assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
+        // What the folders of the case give it (folder.toml).
+        let chain = p.coll.chain(&rel).must();
+        let Request::Http(req) =
+            runner::with_folders(&p.coll.load(&rel).must(), &chain, &mut scope)
+        else {
             panic!("{rel} is not HTTP")
         };
-        let (scope, errors) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
-        assert!(errors.is_empty(), "{case}: scope errors {errors:?}");
         let before = failures.len();
         e.http.take();
         let mut run = ctx(&e, &p, &rel);
         run.oauth = Some(runner::OAuthRunInfo::of(&p));
         let o = runner::exec_http(&run, &req, scope.clone(), vec![]).await;
+        if case == "57-graphql-variables-not-object" {
+            assert!(matches!(&o.response, Err(e) if e.contains("variables must be a JSON object")));
+            assert!(
+                e.http.take().is_empty(),
+                "invalid variables must not reach the server"
+            );
+            check(
+                "http",
+                case,
+                "### error: GraphQL body: variables must be a JSON object\n",
+                &mut failures,
+            );
+            passed += usize::from(failures.len() == before);
+            continue;
+        }
         if let Err(err) = &o.response {
             failures.push(format!("{case}: request failed: {err}"));
             continue;
         }
         let caps = e.http.take();
-        // Pre-request script variables are part of the request definition.
+        // The pre-request rows and Lua scripts are part of the request
+        // definition: the variables they set and the fields they change.
         let mut oscope = scope.clone();
-        sendito_core::script::run_pre(&req.scripts.pre, &mut oscope);
-        oracle_http(&req, &caps, &oscope, case, &mut failures);
+        sendito_core::script::run_pre(&req.common.scripts.pre, &mut oscope);
+        let mut defined = Request::Http(req.clone());
+        sendito_core::lua_script::run_lua_pre(
+            &req.common.scripts.lua_pre,
+            &mut defined,
+            &mut oscope,
+        )
+        .must();
+        let Request::Http(defined) = defined else {
+            panic!("{rel}: a script changed the request kind")
+        };
+        oracle_http(&defined, &caps, &oscope, case, &mut failures);
         let mut dump = String::new();
         for (i, c) in caps.iter().enumerate() {
             if caps.len() > 1 {

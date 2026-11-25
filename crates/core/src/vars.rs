@@ -14,6 +14,15 @@ use crate::template::{self, Segment};
 
 pub const MAX_DEPTH: usize = 8;
 
+/// The longest text one render produces. Values that reference each other
+/// several times grow fast (8 levels of 10 references is 10^8 copies); a
+/// reference that would go past this limit stays unresolved.
+pub const MAX_RENDERED: usize = 1024 * 1024;
+
+/// Results of one top-level render, by (name, depth): a value referenced many
+/// times is resolved once.
+type Memo = HashMap<(String, usize), Option<Rendered>>;
+
 /// Placeholder shown instead of secret values.
 pub const MASK: &str = "••••••";
 
@@ -103,6 +112,17 @@ impl Scope {
         &self.layers
     }
 
+    /// Inserts `layers` just below the first layer named `above` (on top
+    /// when there is none), keeping their order.
+    pub fn insert_below(&mut self, above: &str, layers: Vec<Layer>) {
+        let at = self
+            .layers
+            .iter()
+            .position(|l| l.name == above)
+            .unwrap_or(self.layers.len());
+        self.layers.splice(at..at, layers);
+    }
+
     /// Sets a variable in the top layer named `layer`, creating it if needed.
     pub fn set(&mut self, layer: &str, name: impl Into<String>, value: VarValue) {
         if let Some(l) = self.layers.iter_mut().find(|l| l.name == layer) {
@@ -139,6 +159,12 @@ impl Scope {
                 out.push(r.text);
             }
         }
+        // Process environment values that a render read are secrets too.
+        for (k, v) in self.dynamic.borrow().iter() {
+            if k.starts_with(&PROCESS_ENV[1..]) && v.len() >= 3 && !out.contains(v) {
+                out.push(v.clone());
+            }
+        }
         out.sort_by_key(|s| std::cmp::Reverse(s.len()));
         out
     }
@@ -152,15 +178,35 @@ impl Scope {
     }
 
     pub fn is_defined(&self, name: &str) -> bool {
+        if let Some(k) = process_env_key(name) {
+            return std::env::var_os(k).is_some();
+        }
         name.starts_with('$') && dynamic_known(name) || self.raw(name).is_some()
     }
 
     /// Fully resolves one variable.
     pub fn lookup(&self, name: &str) -> Option<Rendered> {
-        self.lookup_depth(name, 0)
+        self.lookup_depth(name, 0, &mut Memo::new())
     }
 
-    fn lookup_depth(&self, name: &str, depth: usize) -> Option<Rendered> {
+    fn lookup_depth(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        let key = (name.to_string(), depth);
+        if let Some(r) = memo.get(&key) {
+            return r.clone();
+        }
+        let r = self.lookup_uncached(name, depth, memo);
+        memo.insert(key, r.clone());
+        r
+    }
+
+    fn lookup_uncached(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        if let Some(k) = process_env_key(name) {
+            return self.process_env(k).map(|text| Rendered {
+                text,
+                secret: true,
+                unresolved: vec![],
+            });
+        }
         if let Some(rest) = name.strip_prefix('$')
             && let Some(v) = self.dynamic_value(rest)
         {
@@ -174,7 +220,7 @@ impl Scope {
         if depth >= MAX_DEPTH {
             return None;
         }
-        let mut r = self.render_depth(&v.value, depth + 1);
+        let mut r = self.render_depth(&v.value, depth + 1, memo);
         r.secret |= v.secret;
         Some(r)
     }
@@ -190,12 +236,24 @@ impl Scope {
         Some(v)
     }
 
-    /// Renders a template, replacing every resolvable placeholder.
-    pub fn render(&self, s: &str) -> Rendered {
-        self.render_depth(s, 0)
+    /// Reads `key` from the process environment once per scope. A variable
+    /// that is not set or is not UTF-8 gives `None`.
+    fn process_env(&self, key: &str) -> Option<String> {
+        let slot = format!("{}{key}", &PROCESS_ENV[1..]);
+        if let Some(v) = self.dynamic.borrow().get(&slot) {
+            return Some(v.clone());
+        }
+        let v = std::env::var(key).ok()?;
+        self.dynamic.borrow_mut().insert(slot, v.clone());
+        Some(v)
     }
 
-    fn render_depth(&self, s: &str, depth: usize) -> Rendered {
+    /// Renders a template, replacing every resolvable placeholder.
+    pub fn render(&self, s: &str) -> Rendered {
+        self.render_depth(s, 0, &mut Memo::new())
+    }
+
+    fn render_depth(&self, s: &str, depth: usize, memo: &mut Memo) -> Rendered {
         if !s.contains("{{") {
             return Rendered {
                 text: s.to_string(),
@@ -206,15 +264,15 @@ impl Scope {
         for seg in template::parse(s) {
             match seg {
                 Segment::Text(t) => out.text.push_str(t),
-                Segment::Var { name, span } => match self.lookup_depth(name, depth) {
-                    Some(r) => {
+                Segment::Var { name, span } => match self.lookup_depth(name, depth, memo) {
+                    Some(r) if out.text.len() + r.text.len() <= MAX_RENDERED => {
                         out.text.push_str(&r.text);
                         out.secret |= r.secret;
                         for u in r.unresolved {
                             push_unique(&mut out.unresolved, u);
                         }
                     }
-                    None => {
+                    _ => {
                         out.text.push_str(&s[span]);
                         push_unique(&mut out.unresolved, name.to_string());
                     }
@@ -269,6 +327,20 @@ fn push_unique(v: &mut Vec<String>, s: String) {
 
 fn dynamic_known(name: &str) -> bool {
     DYNAMIC_VARS.iter().any(|(n, _)| *n == name)
+}
+
+/// Prefix of `{{$processEnv.NAME}}`, which reads `NAME` from the process
+/// environment. The value is a secret.
+const PROCESS_ENV: &str = "$processEnv.";
+
+/// The variable name of a `$processEnv.NAME` placeholder (not empty).
+fn process_env_key(name: &str) -> Option<&str> {
+    name.strip_prefix(PROCESS_ENV).filter(|k| !k.is_empty())
+}
+
+/// True for a built-in name: a dynamic value or `$processEnv.NAME`.
+pub fn is_builtin(name: &str) -> bool {
+    dynamic_known(name) || process_env_key(name).is_some()
 }
 
 fn generate_dynamic(name: &str) -> Option<String> {
@@ -394,6 +466,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn values_that_reference_each_other_many_times_render_fast_and_bounded() {
+        // v0 = "x"; vN = ten references to vN-1: 10^7 copies of "x" in v7.
+        let mut vars = BTreeMap::new();
+        vars.insert("v0".to_string(), VarValue::plain("x"));
+        for n in 1..8 {
+            vars.insert(
+                format!("v{n}"),
+                VarValue::plain(format!("{{{{v{}}}}}", n - 1).repeat(10)),
+            );
+        }
+        let s = Scope::new().with_layer("env", vars);
+        let started = std::time::Instant::now();
+        let r = s.render("{{v5}}");
+        assert_eq!(r.text.len(), 100_000);
+        assert!(r.unresolved.is_empty());
+        let r = s.render("{{v7}}");
+        assert!(r.text.len() <= MAX_RENDERED + 64, "{}", r.text.len());
+        assert!(r.unresolved.iter().any(|u| u.starts_with('v')));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
     fn secret_values_and_scrub_bytes() {
         let s = scope();
         assert_eq!(s.secret_values(), vec!["s3cret".to_string()]);
@@ -475,6 +569,35 @@ mod tests {
         assert!(s.render("{{$timestampMs}}").text.len() >= 13);
         let c = s.clone();
         assert_eq!(c.render("{{$uuid}}").text, a);
+    }
+
+    #[test]
+    fn process_env_reads_a_secret() {
+        let path = std::env::var("PATH").unwrap();
+        let s = scope();
+        let r = s.render("{{$processEnv.PATH}}");
+        assert_eq!(r.text, path);
+        assert!(r.secret);
+        assert!(r.unresolved.is_empty());
+        assert_eq!(
+            s.render_masked("{{$processEnv.PATH}}"),
+            "{{$processEnv.PATH}}"
+        );
+        assert!(s.secret_values().contains(&path));
+        assert!(s.is_defined("$processEnv.PATH"));
+        assert!(is_builtin("$processEnv.X"));
+        assert!(!is_builtin("$processEnv."));
+    }
+
+    #[test]
+    fn process_env_unset_is_unresolved() {
+        let s = scope();
+        let name = "$processEnv.SENDITO_UNSET_7f3a";
+        let r = s.render(&format!("{{{{{name}}}}}"));
+        assert_eq!(r.text, format!("{{{{{name}}}}}"));
+        assert_eq!(r.unresolved, vec![name.to_string()]);
+        assert!(!s.is_defined(name));
+        assert!(!s.is_defined("$processEnv."));
     }
 
     #[test]

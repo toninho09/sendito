@@ -1,5 +1,6 @@
 //! Read-only document viewer for response bodies and message logs: pretty
-//! JSON with folding and highlighting, raw text, hex, wrapping and search.
+//! JSON, XML, HTML, YAML and CSV with folding and highlighting, raw text, hex,
+//! wrapping and search.
 //! Documents index lines by offset so 10 MB bodies stay cheap to render.
 
 use std::collections::BTreeSet;
@@ -146,6 +147,27 @@ impl Viewer {
         self.rows_lines = total;
     }
 
+    /// Adds the wrapped rows of lines appended since the last build. The old
+    /// last line is wrapped again, as an append can extend it.
+    fn extend_rows(&mut self, width: u16) {
+        let total = self.doc.line_count(self.mode);
+        let from = self.rows_lines.saturating_sub(1);
+        let w = width.max(1) as usize;
+        let Some(mut rows) = self.rows.take() else {
+            return;
+        };
+        while rows.last().is_some_and(|r| r.0 as usize >= from) {
+            rows.pop();
+        }
+        for i in from..total {
+            let line = self.doc.line_ref(self.mode, i);
+            rows.push((i as u32, 0));
+            wrap_breaks(&line, w, |idx| rows.push((i as u32, idx as u32)));
+        }
+        self.rows = Some(rows);
+        self.rows_lines = total;
+    }
+
     pub fn row_count(&self) -> usize {
         match &self.rows {
             Some(r) => r.len(),
@@ -268,38 +290,31 @@ impl Viewer {
             self.search = None;
             return 0;
         }
-        let q: Vec<char> = query.to_lowercase().chars().collect();
+        let q: Vec<char> = query.chars().map(fold).collect();
         let mut matches = Vec::new();
+        let mut capped = false;
+        let mut lower: Vec<char> = Vec::new();
         let total = self.doc.line_count(self.mode);
-        for i in 0..total {
+        'lines: for i in 0..total {
             let line = self.doc.line_ref(self.mode, i);
             if line.len() < q.len() {
                 continue;
             }
-            let lower: Vec<char> = line.chars().flat_map(|c| c.to_lowercase()).collect();
-            if lower.len() != line.chars().count() {
-                // Lowercasing changed the length; fall back to ASCII matching.
-                let l = line.to_ascii_lowercase();
-                let ql = query.to_ascii_lowercase();
-                let mut from = 0;
-                while let Some(p) = l[from..].find(&ql) {
-                    let start = l[..from + p].chars().count();
-                    matches.push((i as u32, start as u32, ql.chars().count() as u32));
-                    from += p + ql.len().max(1);
-                }
-                continue;
-            }
+            // One folded char per char, so match offsets are char offsets.
+            lower.clear();
+            lower.extend(line.chars().map(fold));
             let mut j = 0;
             while j + q.len() <= lower.len() {
                 if lower[j..j + q.len()] == q[..] {
+                    if matches.len() == Search::MAX_MATCHES {
+                        capped = true;
+                        break 'lines;
+                    }
                     matches.push((i as u32, j as u32, q.len() as u32));
                     j += q.len();
                 } else {
                     j += 1;
                 }
-            }
-            if matches.len() > 100_000 {
-                break;
             }
         }
         let n = matches.len();
@@ -307,6 +322,7 @@ impl Viewer {
             query: query.to_string(),
             matches,
             current: 0,
+            capped,
         });
         if n > 0 {
             // Start at the first match at or after the cursor.
@@ -398,7 +414,7 @@ impl Viewer {
             if se.matches.is_empty() {
                 s.push_str(&format!(" · no match for \"{}\"", se.query));
             } else {
-                s.push_str(&format!(" · match {}/{}", se.current + 1, se.matches.len()));
+                s.push_str(&format!(" · {}", se.position_label()));
             }
         }
         s
@@ -428,7 +444,18 @@ impl Viewer {
         let gutter = folds + num_w;
         let text_w = area.width.saturating_sub(gutter);
         self.height = area.height;
-        if (self.wrap || self.folds_active())
+        let lines = self.doc.line_count(self.mode);
+        if self.wrap
+            && !self.folds_active()
+            && self.mode != ViewMode::Hex
+            && self.rows.is_some()
+            && self.rows_width == text_w
+            && lines > self.rows_lines
+            && self.rows_lines > 0
+        {
+            // A log grew at its end: wrap only the new lines.
+            self.extend_rows(text_w);
+        } else if (self.wrap || self.folds_active())
             && (self.rows.is_none()
                 || self.rows_width != text_w
                 || self.rows_lines != self.doc.line_count(self.mode))
@@ -445,7 +472,9 @@ impl Viewer {
         self.cursor = self.cursor.min(total.saturating_sub(1));
         self.scroll = crate::list::keep_visible(self.cursor, self.scroll, h);
         let base = theme.base();
-        let pretty_json = self.mode == ViewMode::Pretty && self.doc.pretty.is_some();
+        let pretty =
+            (self.mode == ViewMode::Pretty && self.doc.pretty.is_some()).then_some(self.doc.format);
+        let mut line_cache: Option<LineCache> = None;
         for i in 0..h {
             let v = self.scroll + i;
             if v >= total {
@@ -500,27 +529,40 @@ impl Viewer {
                         .patch(Style::default().bg(row_style.bg.unwrap_or(theme.bg))),
                 );
             }
-            let spans = if pretty_json {
-                json_line_spans(&line, theme)
-            } else if self.mode != ViewMode::Hex {
-                syntax_spans(self.syntax, &line, theme)
-            } else {
-                Vec::new()
+            // The rows of one wrapped line share its spans, matches and indent.
+            if line_cache.as_ref().is_none_or(|c| c.0 != line_no) {
+                let spans = match pretty {
+                    Some(format) => pretty_spans(format, &line, line_no, theme),
+                    None if self.mode != ViewMode::Hex => syntax_spans(self.syntax, &line, theme),
+                    None => Vec::new(),
+                };
+                let matches: Vec<(u32, u32)> = self
+                    .search
+                    .as_ref()
+                    .map(|s| {
+                        // Matches are sorted by line: find this line's run.
+                        let first = s.matches.partition_point(|m| (m.0 as usize) < line_no);
+                        s.matches[first..]
+                            .iter()
+                            .take_while(|m| m.0 as usize == line_no)
+                            .enumerate()
+                            .map(|(k, m)| {
+                                let cur = if first + k == s.current { 1 << 30 } else { 0 };
+                                (m.1, m.1 + m.2 + cur)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let indent = if self.wrap && self.mode != ViewMode::Hex {
+                    wrap_indent(&line, text_w as usize)
+                } else {
+                    0
+                };
+                line_cache = Some((line_no, spans, matches, indent));
+            }
+            let Some((_, spans, matches, indent)) = line_cache.as_ref() else {
+                continue;
             };
-            let matches: Vec<(u32, u32)> = self
-                .search
-                .as_ref()
-                .map(|s| {
-                    s.matches
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, m)| m.0 as usize == line_no)
-                        .map(|(idx, m)| {
-                            (m.1, m.1 + m.2 + if idx == s.current { 1 << 30 } else { 0 })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
             let skip = if self.wrap { 0 } else { self.hscroll };
             // A wrapped row ends where the next row of the same line starts.
             let end_char = if self.wrap {
@@ -532,11 +574,7 @@ impl Viewer {
                 usize::MAX
             };
             let mut x = 0usize;
-            let mut sx = if self.wrap && start_char > 0 && self.mode != ViewMode::Hex {
-                wrap_indent(&line, text_w as usize)
-            } else {
-                0
-            };
+            let mut sx = if start_char > 0 { *indent } else { 0 };
             let mut span_idx = 0;
             let mut clipped = false;
             for (ci, ch) in line.chars().enumerate().skip(start_char) {
@@ -559,7 +597,7 @@ impl Viewer {
                 if span_idx < spans.len() && spans[span_idx].0 <= ci && ci < spans[span_idx].1 {
                     st = st.patch(spans[span_idx].2);
                 }
-                for (ms, me) in &matches {
+                for (ms, me) in matches {
                     let current = *me >= (1 << 30);
                     let me = me & ((1 << 30) - 1);
                     if (ci as u32) >= *ms && (ci as u32) < me {
@@ -613,9 +651,201 @@ impl Viewer {
     }
 }
 
+/// Character spans for line `line_no` of a pretty body: sorted and not
+/// overlapping.
+pub fn pretty_spans(
+    format: BodyFormat,
+    line: &str,
+    line_no: usize,
+    theme: &Theme,
+) -> Vec<(usize, usize, Style)> {
+    match format {
+        BodyFormat::Json => json_line_spans(line, theme),
+        BodyFormat::Xml | BodyFormat::Html => markup_line_spans(line, theme),
+        BodyFormat::Yaml => yaml_line_spans(line, theme),
+        BodyFormat::Csv(_) => table_line_spans(line, line_no == 0, theme),
+        BodyFormat::Text => Vec::new(),
+    }
+}
+
+/// Tags: `<`, `/` and `>` dim, the name in the key color, attribute names in
+/// the number color and quoted values in the string color. A comment,
+/// doctype, CDATA or processing instruction line is all dim.
+fn markup_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut out = Vec::new();
+    let t = line.trim_start();
+    if t.starts_with("<!") || t.starts_with("<?") {
+        out.push((
+            n - t.chars().count(),
+            n,
+            theme.dim().add_modifier(Modifier::ITALIC),
+        ));
+        return out;
+    }
+    let mut push = |s: usize, e: usize, st: Style| {
+        if e > s {
+            out.push((s, e, st));
+        }
+    };
+    let mut i = 0;
+    while i < n {
+        if chars[i] != '<'
+            || !chars
+                .get(i + 1)
+                .is_some_and(|c| c.is_alphabetic() || *c == '/')
+        {
+            i += 1;
+            continue;
+        }
+        let s = i;
+        i += if chars[i + 1] == '/' { 2 } else { 1 };
+        push(s, i, theme.dim());
+        let s = i;
+        while i < n && !chars[i].is_whitespace() && !matches!(chars[i], '>' | '/') {
+            i += 1;
+        }
+        push(s, i, theme.fg(theme.json_key));
+        while i < n && chars[i] != '>' {
+            let s = i;
+            match chars[i] {
+                q @ ('"' | '\'') => {
+                    i += 1;
+                    while i < n && chars[i] != q {
+                        i += 1;
+                    }
+                    i = (i + 1).min(n);
+                    push(s, i, theme.fg(theme.json_str));
+                }
+                '/' => {
+                    i += 1;
+                    push(s, i, theme.dim());
+                }
+                c if c.is_whitespace() || c == '=' => i += 1,
+                _ => {
+                    while i < n && !chars[i].is_whitespace() && !matches!(chars[i], '=' | '>' | '/')
+                    {
+                        i += 1;
+                    }
+                    push(s, i, theme.fg(theme.json_num));
+                }
+            }
+        }
+        if i < n {
+            push(i, i + 1, theme.dim());
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Keys in the key color; quoted and plain values in the string color,
+/// numbers and `true`/`false`/`null`/`~` in the number and literal colors;
+/// comments, `- `, `---` and block indicators dim.
+fn yaml_line_spans(line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut out = Vec::new();
+    let mut i = chars.iter().take_while(|c| **c == ' ').count();
+    let rest: String = chars[i..].iter().collect();
+    if rest.starts_with('#') || matches!(rest.trim_end(), "---" | "...") {
+        out.push((i, n, theme.dim()));
+        return out;
+    }
+    if chars.get(i) == Some(&'-') && chars.get(i + 1).is_none_or(|c| *c == ' ') {
+        out.push((i, i + 1, theme.dim()));
+        i += 1;
+        while i < n && chars[i] == ' ' {
+            i += 1;
+        }
+    }
+    // A comment starts at a `#` after a space, outside quotes.
+    let mut end = n;
+    let mut quote = None;
+    for j in i..n {
+        match (quote, chars[j]) {
+            (None, q @ ('"' | '\'')) => quote = Some(q),
+            (Some(q), c) if c == q => quote = None,
+            (None, '#') if j == i || chars[j - 1] == ' ' => {
+                end = j;
+                break;
+            }
+            _ => {}
+        }
+    }
+    // The key ends at the first `: ` (or a final `:`) outside quotes.
+    let mut quote = None;
+    let colon = (i..end).find(|&j| match (quote, chars[j]) {
+        (None, q @ ('"' | '\'')) if j == i => {
+            quote = Some(q);
+            false
+        }
+        (Some(q), c) if c == q => {
+            quote = None;
+            false
+        }
+        (None, ':') => j + 1 == end || chars[j + 1] == ' ',
+        _ => false,
+    });
+    if let Some(c) = colon {
+        out.push((i, c, theme.fg(theme.json_key)));
+        i = c + 1;
+        while i < end && chars[i] == ' ' {
+            i += 1;
+        }
+    }
+    let value: String = chars[i..end].iter().collect();
+    let v = value.trim_end();
+    let v_end = i + v.chars().count();
+    let style = if v.is_empty() {
+        None
+    } else if v.starts_with(['|', '>']) && v.len() <= 3 {
+        Some(theme.dim())
+    } else if matches!(v, "true" | "false" | "null" | "~") {
+        Some(theme.fg(theme.json_lit))
+    } else if v.parse::<f64>().is_ok() {
+        Some(theme.fg(theme.json_num))
+    } else {
+        Some(theme.fg(theme.json_str))
+    };
+    if let Some(st) = style {
+        out.push((i, v_end, st));
+    }
+    if end < n {
+        out.push((end, n, theme.dim()));
+    }
+    out
+}
+
+/// The column separators dim; the first row (the header) bold in the key
+/// color.
+fn table_line_spans(line: &str, header: bool, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    let sep = sendito_pipeline::pretty::COLUMN_SEPARATOR;
+    let sep_len = sep.chars().count();
+    let bold = theme.fg(theme.json_key).add_modifier(Modifier::BOLD);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (k, cell) in line.split(sep).enumerate() {
+        if k > 0 {
+            out.push((start, start + sep_len, theme.dim()));
+            start += sep_len;
+        }
+        let len = cell.chars().count();
+        if header && len > 0 {
+            out.push((start, start + len, bold));
+        }
+        start += len;
+    }
+    out
+}
+
 /// Character spans for one line of a [`Syntax`] document: sorted and not
 /// overlapping.
 pub fn syntax_spans(syntax: Syntax, line: &str, theme: &Theme) -> Vec<(usize, usize, Style)> {
+    if syntax == Syntax::Plain {
+        return Vec::new();
+    }
     let chars: Vec<char> = line.chars().collect();
     let n = chars.len();
     let heading = theme.fg(theme.title).add_modifier(Modifier::BOLD);
@@ -781,9 +1011,99 @@ fn is_bar(c: char) -> bool {
     matches!(c, '█' | '▉' | '▊' | '▋' | '▌' | '▍' | '▎' | '▏' | '▐' | '▕')
 }
 
+/// What the rows of one line share while a frame is drawn: the line, its
+/// syntax spans, its search matches and its wrap indent.
+type LineCache = (usize, Vec<(usize, usize, Style)>, Vec<(u32, u32)>, usize);
+
+/// Case folding for search: the lowercase form when it is one char (most
+/// scripts), else the char itself, so a line keeps its char count.
+fn fold(c: char) -> char {
+    let mut l = c.to_lowercase();
+    match (l.next(), l.next()) {
+        (Some(one), None) => one,
+        _ => c,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The text and style of each span.
+    fn parts(line: &str, spans: &[(usize, usize, Style)]) -> Vec<(String, Style)> {
+        let chars: Vec<char> = line.chars().collect();
+        for w in spans.windows(2) {
+            assert!(w[0].1 <= w[1].0, "{spans:?}");
+        }
+        spans
+            .iter()
+            .map(|(s, e, st)| (chars[*s..*e].iter().collect(), *st))
+            .collect()
+    }
+
+    #[test]
+    fn markup_colors() {
+        let t = Theme::dusk();
+        let line = "  <user id=\"1\" ok/>x < y</user>";
+        let p = parts(line, &pretty_spans(BodyFormat::Xml, line, 3, &t));
+        let texts: Vec<&str> = p.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "<", "user", "id", "\"1\"", "ok", "/", ">", "</", "user", ">"
+            ]
+        );
+        assert_eq!(p[1].1, t.fg(t.json_key));
+        assert_eq!(p[2].1, t.fg(t.json_num));
+        assert_eq!(p[3].1, t.fg(t.json_str));
+        let c = pretty_spans(BodyFormat::Html, "  <!-- note -->", 0, &t);
+        assert_eq!((c[0].0, c[0].1), (2, 15));
+    }
+
+    #[test]
+    fn yaml_colors() {
+        let t = Theme::dusk();
+        let line = "  - name: \"a # b\" # c";
+        let p = parts(line, &pretty_spans(BodyFormat::Yaml, line, 0, &t));
+        assert_eq!(
+            p,
+            [
+                ("-".into(), t.dim()),
+                ("name".into(), t.fg(t.json_key)),
+                ("\"a # b\"".into(), t.fg(t.json_str)),
+                ("# c".into(), t.dim()),
+            ]
+        );
+        let p = parts(
+            "port: 443",
+            &pretty_spans(BodyFormat::Yaml, "port: 443", 0, &t),
+        );
+        assert_eq!(p[1], ("443".into(), t.fg(t.json_num)));
+        let p = parts(
+            "on: true",
+            &pretty_spans(BodyFormat::Yaml, "on: true", 0, &t),
+        );
+        assert_eq!(p[1], ("true".into(), t.fg(t.json_lit)));
+        assert_eq!(pretty_spans(BodyFormat::Yaml, "# x", 0, &t)[0].2, t.dim());
+    }
+
+    #[test]
+    fn table_colors() {
+        let t = Theme::dusk();
+        let line = "name │ São";
+        let head = parts(line, &pretty_spans(BodyFormat::Csv(b','), line, 0, &t));
+        let bold = t.fg(t.json_key).add_modifier(Modifier::BOLD);
+        assert_eq!(
+            head,
+            [
+                ("name".into(), bold),
+                (" │ ".into(), t.dim()),
+                ("São".into(), bold)
+            ]
+        );
+        let body = parts(line, &pretty_spans(BodyFormat::Csv(b','), line, 1, &t));
+        assert_eq!(body, [(" │ ".into(), t.dim())]);
+    }
 
     #[test]
     fn syntax_colors() {
@@ -815,6 +1135,37 @@ mod tests {
         for w in s.windows(2) {
             assert!(w[0].1 <= w[1].0);
         }
+    }
+
+    #[test]
+    fn a_growing_wrapped_log_gets_the_same_rows_as_a_rebuild() {
+        let area = Rect::new(0, 0, 12, 5);
+        let theme = Theme::dusk();
+        let mut buf = Buffer::empty(area);
+        let mut v = Viewer::new(Doc::text("short\n"));
+        v.wrap = true;
+        v.render(area, &mut buf, &theme, false);
+        v.doc.append_text("a line that wraps more than once\nand ");
+        v.render(area, &mut buf, &theme, false);
+        v.doc.append_text("this one too, after the append\n");
+        v.render(area, &mut buf, &theme, false);
+        let grown = v.rows.clone();
+        v.rows = None;
+        v.render(area, &mut buf, &theme, false);
+        assert_eq!(grown, v.rows);
+    }
+
+    #[test]
+    fn search_folds_case_per_char_and_marks_a_capped_count() {
+        // "İ" lowercases to two chars; the line must still match by char.
+        let mut v = Viewer::new(Doc::text("İstanbul Éclair\ncafé"));
+        assert_eq!(v.search("é"), 2);
+        let s = v.search.as_ref().map(|s| s.matches.clone());
+        assert_eq!(s, Some(vec![(0, 9, 1), (1, 3, 1)]));
+        let many = "a".repeat(Search::MAX_MATCHES + 5);
+        let mut v = Viewer::new(Doc::text(&many));
+        assert_eq!(v.search("a"), Search::MAX_MATCHES);
+        assert!(v.status().ends_with("+"), "{}", v.status());
     }
 
     #[test]

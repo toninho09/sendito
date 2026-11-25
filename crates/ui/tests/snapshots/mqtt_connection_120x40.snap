@@ -1,0 +1,22 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Messages  Connection  Timing  Log ────────────── 3 messages · deadline  5000 ms 91 B ─╮
+│ Broker     mqtts://broker.example.test                                                 │
+│ Client ID  sendito-demo                                                                │
+│ Protocol   3.1.1                                                                       │
+│ User name  (none)                                                                      │
+│ Clean      true                                                                        │
+│ Keep alive 60 s                                                                        │
+│ CONNACK    accepted (session present: no)                                              │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰──────────────────────────────────────────────────────────────────────── Ln 1/8 · wrap ─╯

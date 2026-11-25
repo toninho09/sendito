@@ -1,0 +1,11 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = "{}"
+
+[scripts.lua]
+pre = '''
+request:set_header("x-request-id", vars.get("user") .. "-lua")
+request.body = json_stringify({ text = "from " .. vars.get("user") })
+'''

@@ -1,0 +1,11 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/inherit/none"
+
+[[headers]]
+name = "X-Folder"
+value = "off"
+enabled = false
+
+[auth]
+type = "none"

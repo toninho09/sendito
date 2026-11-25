@@ -1,0 +1,7 @@
+protocol 3.1.1 client-id corpus-13
+< CONNECT protocol 3.1.1 client-id corpus-13 clean true keep-alive 60 user  will 
+> CONNACK code 0
+< SUBSCRIBE topic corpus/silent qos 0
+> SUBACK granted [0]
+< DISCONNECT 
+### done: 0 messages, deadline

@@ -8,7 +8,7 @@ use crate::tomlfmt::Writer;
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawKv {
+pub(crate) struct RawKv {
     name: String,
     #[serde(default)]
     value: String,
@@ -29,6 +29,7 @@ struct RawOptions {
     cookies: Option<bool>,
     tls: Option<bool>,
     deadline_ms: Option<u64>,
+    max_events: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -59,11 +60,17 @@ struct RawBody {
     fields: Vec<RawKv>,
     #[serde(default)]
     parts: Vec<RawPart>,
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    variables: String,
+    #[serde(default)]
+    operation_name: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawAuth {
+pub(crate) struct RawAuth {
     #[serde(rename = "type")]
     kind: String,
     #[serde(default)]
@@ -80,6 +87,23 @@ struct RawAuth {
     value: String,
     #[serde(rename = "in", default)]
     location: Option<String>,
+    #[serde(default)]
+    access_key: String,
+    #[serde(default)]
+    secret_key: String,
+    #[serde(default)]
+    session_token: String,
+    #[serde(default)]
+    region: String,
+    #[serde(default)]
+    service: String,
+    algorithm: Option<String>,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    private_key: String,
+    claims: Option<String>,
+    expires_in_s: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -124,19 +148,150 @@ struct RawAssert {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawScripts {
+pub(crate) struct RawScripts {
     #[serde(default)]
     pre: Vec<RawSet>,
     #[serde(default)]
     extract: Vec<RawExtract>,
     #[serde(default, rename = "assert")]
     asserts: Vec<RawAssert>,
+    lua: Option<RawLua>,
+}
+
+/// `[scripts.lua]`: the Lua code that runs before the send and after the
+/// response.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLua {
+    #[serde(default)]
+    pre: String,
+    #[serde(default)]
+    post: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSubscription {
+    topic: String,
+    #[serde(default)]
+    qos: u8,
+    #[serde(default = "yes")]
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMessage {
+    #[serde(default)]
+    topic: String,
+    payload: Option<String>,
+    payload_base64: Option<String>,
+    #[serde(default)]
+    qos: u8,
+    #[serde(default)]
+    retain: bool,
+}
+
+fn mqtt_message(m: RawMessage, what: &str) -> Result<MqttMessage, String> {
+    let payload = match (m.payload, m.payload_base64) {
+        (Some(_), Some(_)) => {
+            return Err(format!("{what}: set payload or payload_base64, not both"));
+        }
+        (Some(text), None) => MqttPayload::text(text),
+        (None, Some(text)) => MqttPayload { text, base64: true },
+        (None, None) => MqttPayload::default(),
+    };
+    if m.qos > 2 {
+        return Err(format!("{what}: qos must be 0, 1 or 2, not {}", m.qos));
+    }
+    Ok(MqttMessage {
+        topic: m.topic,
+        payload,
+        qos: m.qos,
+        retain: m.retain,
+    })
+}
+
+fn mqtt(r: RawRequest, common: RequestCommon) -> Result<Request, String> {
+    if r.method.is_some() || r.body.is_some() || !r.headers.is_empty() || !r.params.is_empty() {
+        return Err("MQTT does not support method, body, headers or params fields".into());
+    }
+    // Auth kinds MQTT does not support are refused at send time, so a
+    // draft the editor saves can always be opened again.
+    let auth = auth(r.auth)?;
+    let protocol = match r.protocol.as_deref() {
+        None => MqttProtocol::default(),
+        Some(p) => MqttProtocol::parse(p)
+            .ok_or_else(|| format!("protocol must be \"3.1.1\" or \"5\", not {p:?}"))?,
+    };
+    let subscriptions = r
+        .subscriptions
+        .into_iter()
+        .map(|s| {
+            if s.qos > 2 {
+                return Err(format!(
+                    "subscription {:?}: qos must be 0, 1 or 2, not {}",
+                    s.topic, s.qos
+                ));
+            }
+            Ok(MqttSubscription {
+                topic: s.topic,
+                qos: s.qos,
+                enabled: s.enabled,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(Request::Mqtt(MqttRequest {
+        url: r.url.unwrap_or_default(),
+        client_id: r.client_id.unwrap_or_default(),
+        username: r.username.unwrap_or_default(),
+        password: r.password.unwrap_or_default(),
+        protocol,
+        clean_session: r.clean_session.unwrap_or(true),
+        keep_alive_s: r.keep_alive_s.unwrap_or(MQTT_KEEP_ALIVE_S),
+        options: MqttOptions {
+            timeout_ms: r.options.timeout_ms,
+            deadline_ms: r.options.deadline_ms,
+            verify_tls: r.options.verify_tls.unwrap_or(true),
+        },
+        subscriptions,
+        publish: r
+            .publish
+            .into_iter()
+            .map(|m| mqtt_message(m, "publish"))
+            .collect::<Result<_, String>>()?,
+        last_will: r
+            .last_will
+            .map(|m| mqtt_message(m, "last_will"))
+            .transpose()?,
+        auth,
+        common,
+    }))
+}
+
+fn write_mqtt_message(w: &mut Writer, m: &MqttMessage) {
+    w.str("topic", &m.topic);
+    w.str(
+        if m.payload.base64 {
+            "payload_base64"
+        } else {
+            "payload"
+        },
+        &m.payload.text,
+    );
+    if m.qos != 0 {
+        w.int("qos", u64::from(m.qos));
+    }
+    if m.retain {
+        w.bool("retain", true);
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawRequest {
     kind: String,
+    description: Option<String>,
     method: Option<String>,
     url: Option<String>,
     target: Option<String>,
@@ -161,9 +316,20 @@ struct RawRequest {
     schema: Option<RawSchema>,
     #[serde(default)]
     scripts: RawScripts,
+    client_id: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    protocol: Option<String>,
+    clean_session: Option<bool>,
+    keep_alive_s: Option<u64>,
+    #[serde(default)]
+    subscriptions: Vec<RawSubscription>,
+    #[serde(default)]
+    publish: Vec<RawMessage>,
+    last_will: Option<RawMessage>,
 }
 
-fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
+pub(crate) fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
     v.into_iter()
         .map(|k| KeyValue {
             name: k.name,
@@ -173,9 +339,11 @@ fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
         .collect()
 }
 
-fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
-    let Some(a) = a else { return Ok(Auth::None) };
+pub(crate) fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
+    // No `[auth]` table: the request inherits its folder's auth.
+    let Some(a) = a else { return Ok(Auth::Inherit) };
     Ok(match a.kind.as_str() {
+        "inherit" => Auth::Inherit,
         "none" => Auth::None,
         "basic" => Auth::Basic {
             username: a.username,
@@ -196,16 +364,44 @@ fn auth(a: Option<RawAuth>) -> Result<Auth, String> {
                 }
             },
         },
+        "digest" => Auth::Digest {
+            username: a.username,
+            password: a.password,
+        },
+        "awsv4" => Auth::AwsSigV4 {
+            access_key: a.access_key,
+            secret_key: a.secret_key,
+            session_token: a.session_token,
+            region: a.region,
+            service: a.service,
+        },
+        "jwt" => Auth::Jwt {
+            algorithm: match a.algorithm.as_deref() {
+                None => JwtAlgorithm::Hs256,
+                Some(s) => JwtAlgorithm::parse(s).ok_or_else(|| {
+                    format!("auth.algorithm must be HS256, HS384, HS512, RS256 or ES256, got {s:?}")
+                })?,
+            },
+            secret: a.secret,
+            private_key: a.private_key,
+            claims: a.claims.unwrap_or_else(|| "{}".into()),
+            expires_in_s: a.expires_in_s,
+        },
         o => return Err(format!("unknown auth type {o:?}")),
     })
 }
 
-fn scripts(s: RawScripts) -> Result<Scripts, String> {
+pub(crate) fn scripts(s: RawScripts) -> Result<Scripts, String> {
     let src = |s: &str| {
-        Source::parse(s)
-            .ok_or_else(|| format!("unknown script source {s:?} (jsonpath, header, status)"))
+        Source::parse(s).ok_or_else(|| {
+            let names: Vec<_> = Source::ALL.iter().map(|s| s.as_str()).collect();
+            format!("unknown script source {s:?} ({})", names.join(", "))
+        })
     };
+    let lua = s.lua.unwrap_or_default();
     Ok(Scripts {
+        lua_pre: LuaScript::own(lua.pre).into_iter().collect(),
+        lua_post: LuaScript::own(lua.post).into_iter().collect(),
         pre: s
             .pre
             .into_iter()
@@ -288,13 +484,29 @@ fn body(b: Option<RawBody>) -> Result<Body, String> {
                 })
                 .collect::<Result<_, String>>()?,
         },
+        // `variables` is JSON text kept as written (a half-typed object is a
+        // valid draft); the sender checks that it is an object.
+        "graphql" => Body::GraphQL {
+            query: b.query,
+            variables: b.variables,
+            operation_name: b.operation_name.unwrap_or_default(),
+        },
         o => return Err(format!("unknown body type {o:?}")),
     })
 }
 
 /// Parses a request file.
+/// The fields every request kind has (see `RequestCommon`), taken out of `r`.
+fn common(r: &mut RawRequest) -> Result<RequestCommon, String> {
+    Ok(RequestCommon {
+        scripts: scripts(std::mem::take(&mut r.scripts))?,
+        description: r.description.take().unwrap_or_default(),
+    })
+}
+
 pub fn parse(text: &str) -> Result<Request, String> {
-    let r: RawRequest = toml::from_str(text).map_err(|e| e.to_string())?;
+    let mut r: RawRequest = toml::from_str(text).map_err(|e| e.to_string())?;
+    let common = common(&mut r)?;
     match r.kind.as_str() {
         "http" => Ok(Request::Http(HttpRequest {
             method: r.method.unwrap_or_else(|| "GET".into()),
@@ -309,7 +521,25 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 verify_tls: r.options.verify_tls.unwrap_or(true),
                 cookies: r.options.cookies,
             },
-            scripts: scripts(r.scripts)?,
+            common,
+        })),
+        "sse" if r.method.is_some() || r.body.is_some() => {
+            Err("SSE does not support method or body fields".into())
+        }
+        "sse" => Ok(Request::Sse(SseRequest {
+            url: r.url.unwrap_or_default(),
+            params: kvs(r.params),
+            headers: kvs(r.headers),
+            auth: auth(r.auth)?,
+            common,
+            options: SseOptions {
+                timeout_ms: r.options.timeout_ms,
+                deadline_ms: r.options.deadline_ms,
+                max_events: r.options.max_events,
+                follow_redirects: r.options.follow_redirects.unwrap_or(true),
+                verify_tls: r.options.verify_tls.unwrap_or(true),
+                cookies: r.options.cookies,
+            },
         })),
         "grpc" => Ok(Request::Grpc(GrpcRequest {
             target: r.target.unwrap_or_default(),
@@ -332,7 +562,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                     o => return Err(format!("unknown schema source {o:?}")),
                 },
             },
-            scripts: scripts(r.scripts)?,
+            common,
         })),
         "mcp" => {
             // `arguments` is JSON text. It is not validated here: a half-typed
@@ -344,7 +574,7 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 tool: r.tool.unwrap_or_default(),
                 arguments,
                 timeout_ms: r.options.timeout_ms,
-                scripts: scripts(r.scripts)?,
+                common,
             }))
         }
         "websocket" => Ok(Request::Ws(WebSocketRequest {
@@ -362,15 +592,16 @@ pub fn parse(text: &str) -> Result<Request, String> {
                 tls: r.options.tls.unwrap_or(false),
                 cookies: r.options.cookies,
             },
-            scripts: scripts(r.scripts)?,
+            common,
         })),
+        "mqtt" => mqtt(r, common),
         o => Err(format!(
-            "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\" or \"mcp\")"
+            "unknown request kind {o:?} (expected \"http\", \"grpc\", \"websocket\", \"sse\", \"mqtt\" or \"mcp\")"
         )),
     }
 }
 
-fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
+pub(crate) fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
     for kv in v {
         w.array_table(table);
         w.str("name", &kv.name);
@@ -381,9 +612,14 @@ fn write_kvs(w: &mut Writer, table: &str, v: &[KeyValue]) {
     }
 }
 
-fn write_auth(w: &mut Writer, a: &Auth) {
+pub(crate) fn write_auth(w: &mut Writer, a: &Auth) {
     match a {
-        Auth::None => {}
+        Auth::Inherit => {}
+        // Written out: an absent `[auth]` means "inherit".
+        Auth::None => {
+            w.table("auth");
+            w.str("type", "none");
+        }
         Auth::Basic { username, password } => {
             w.table("auth");
             w.str("type", "basic");
@@ -417,10 +653,62 @@ fn write_auth(w: &mut Writer, a: &Auth) {
                 },
             );
         }
+        Auth::Digest { username, password } => {
+            w.table("auth");
+            w.str("type", "digest");
+            w.str("username", username);
+            w.str("password", password);
+        }
+        Auth::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        } => {
+            w.table("auth");
+            w.str("type", "awsv4");
+            w.str("access_key", access_key);
+            w.str("secret_key", secret_key);
+            if !session_token.is_empty() {
+                w.str("session_token", session_token);
+            }
+            w.str("region", region);
+            w.str("service", service);
+        }
+        Auth::Jwt {
+            algorithm,
+            secret,
+            private_key,
+            claims,
+            expires_in_s,
+        } => {
+            w.table("auth");
+            w.str("type", "jwt");
+            w.str("algorithm", algorithm.as_str());
+            if !secret.is_empty() {
+                w.str("secret", secret);
+            }
+            if !private_key.is_empty() {
+                w.str("private_key", private_key);
+            }
+            w.str("claims", claims);
+            if let Some(s) = expires_in_s {
+                w.int("expires_in_s", *s);
+            }
+        }
     }
 }
 
-fn write_scripts(w: &mut Writer, s: &Scripts) {
+/// Writes a script rule's `expr`. Status reads no expression, and an empty
+/// one is the default (`total` for time and size), so neither is written.
+fn write_expr(w: &mut Writer, source: Source, expr: &str) {
+    if source != Source::Status && !expr.is_empty() {
+        w.str("expr", expr);
+    }
+}
+
+pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
     for p in &s.pre {
         w.array_table("scripts.pre");
         w.str("var", &p.var);
@@ -430,9 +718,7 @@ fn write_scripts(w: &mut Writer, s: &Scripts) {
         w.array_table("scripts.extract");
         w.str("var", &e.var);
         w.str("from", e.source.as_str());
-        if e.source != Source::Status {
-            w.str("expr", &e.expr);
-        }
+        write_expr(w, e.source, &e.expr);
         if e.secret {
             w.bool("secret", true);
         }
@@ -440,12 +726,22 @@ fn write_scripts(w: &mut Writer, s: &Scripts) {
     for a in &s.asserts {
         w.array_table("scripts.assert");
         w.str("from", a.source.as_str());
-        if a.source != Source::Status {
-            w.str("expr", &a.expr);
-        }
+        write_expr(w, a.source, &a.expr);
         w.str("op", a.op.as_str());
         if a.op.takes_value() {
             w.str("value", &a.value);
+        }
+    }
+    // A file holds the request's (or folder's) own script only.
+    let code = |v: &[LuaScript]| v.first().map(|r| r.code.clone()).unwrap_or_default();
+    let (pre, post) = (code(&s.lua_pre), code(&s.lua_post));
+    if !pre.trim().is_empty() || !post.trim().is_empty() {
+        w.table("scripts.lua");
+        if !pre.trim().is_empty() {
+            w.str("pre", &pre);
+        }
+        if !post.trim().is_empty() {
+            w.str("post", &post);
         }
     }
 }
@@ -458,6 +754,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("kind", "http");
             w.str("method", &h.method);
             w.str("url", &h.url);
+            write_description(&mut w, req.description());
             let o = &h.options;
             if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls || o.cookies.is_some()
             {
@@ -527,8 +824,23 @@ pub fn to_toml(req: &Request) -> String {
                         }
                     }
                 }
+                Body::GraphQL {
+                    query,
+                    variables,
+                    operation_name,
+                } => {
+                    w.table("body");
+                    w.str("type", "graphql");
+                    w.str("query", query);
+                    if !variables.is_empty() {
+                        w.str("variables", variables);
+                    }
+                    if !operation_name.is_empty() {
+                        w.str("operation_name", operation_name);
+                    }
+                }
             }
-            write_scripts(&mut w, &h.scripts);
+            write_scripts(&mut w, &h.common.scripts);
         }
         Request::Grpc(g) => {
             w.str("kind", "grpc");
@@ -536,6 +848,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("service", &g.service);
             w.str("method", &g.method);
             w.str("message", &g.message);
+            write_description(&mut w, req.description());
             if g.tls || !g.verify_tls || g.deadline_ms.is_some() {
                 w.table("options");
                 if g.tls {
@@ -560,7 +873,7 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_kvs(&mut w, "metadata", &g.metadata);
             write_auth(&mut w, &g.auth);
-            write_scripts(&mut w, &g.scripts);
+            write_scripts(&mut w, &g.common.scripts);
         }
         Request::Mcp(m) => {
             w.str("kind", "mcp");
@@ -569,11 +882,99 @@ pub fn to_toml(req: &Request) -> String {
             if m.arguments != "{}" {
                 w.str("arguments", &m.arguments);
             }
+            write_description(&mut w, req.description());
             if let Some(t) = m.timeout_ms {
                 w.table("options");
                 w.int("timeout_ms", t);
             }
-            write_scripts(&mut w, &m.scripts);
+            write_scripts(&mut w, &m.common.scripts);
+        }
+        Request::Sse(s) => {
+            w.str("kind", "sse");
+            w.str("url", &s.url);
+            write_description(&mut w, req.description());
+            let o = &s.options;
+            if o != &SseOptions::default() {
+                w.table("options");
+                if let Some(v) = o.timeout_ms {
+                    w.int("timeout_ms", v);
+                }
+                if let Some(v) = o.deadline_ms {
+                    w.int("deadline_ms", v);
+                }
+                if let Some(v) = o.max_events {
+                    w.int("max_events", v);
+                }
+                if !o.follow_redirects {
+                    w.bool("follow_redirects", false);
+                }
+                if !o.verify_tls {
+                    w.bool("verify_tls", false);
+                }
+                if let Some(v) = o.cookies {
+                    w.bool("cookies", v);
+                }
+            }
+            write_kvs(&mut w, "params", &s.params);
+            write_kvs(&mut w, "headers", &s.headers);
+            write_auth(&mut w, &s.auth);
+            write_scripts(&mut w, &s.common.scripts);
+        }
+        Request::Mqtt(m) => {
+            w.str("kind", "mqtt");
+            w.str("url", &m.url);
+            for (key, value) in [
+                ("client_id", &m.client_id),
+                ("username", &m.username),
+                ("password", &m.password),
+            ] {
+                if !value.is_empty() {
+                    w.str(key, value);
+                }
+            }
+            if m.protocol != MqttProtocol::default() {
+                w.str("protocol", m.protocol.as_str());
+            }
+            if !m.clean_session {
+                w.bool("clean_session", false);
+            }
+            if m.keep_alive_s != MQTT_KEEP_ALIVE_S {
+                w.int("keep_alive_s", m.keep_alive_s);
+            }
+            write_description(&mut w, req.description());
+            let o = &m.options;
+            if o != &MqttOptions::default() {
+                w.table("options");
+                if let Some(v) = o.timeout_ms {
+                    w.int("timeout_ms", v);
+                }
+                if let Some(v) = o.deadline_ms {
+                    w.int("deadline_ms", v);
+                }
+                if !o.verify_tls {
+                    w.bool("verify_tls", false);
+                }
+            }
+            for sub in &m.subscriptions {
+                w.array_table("subscriptions");
+                w.str("topic", &sub.topic);
+                if sub.qos != 0 {
+                    w.int("qos", u64::from(sub.qos));
+                }
+                if !sub.enabled {
+                    w.bool("enabled", false);
+                }
+            }
+            for p in &m.publish {
+                w.array_table("publish");
+                write_mqtt_message(&mut w, p);
+            }
+            if let Some(will) = &m.last_will {
+                w.table("last_will");
+                write_mqtt_message(&mut w, will);
+            }
+            write_auth(&mut w, &m.auth);
+            write_scripts(&mut w, &m.common.scripts);
         }
         Request::Ws(wq) => {
             w.str("kind", "websocket");
@@ -584,6 +985,7 @@ pub fn to_toml(req: &Request) -> String {
             if wq.messages != "[]" {
                 w.str("messages", &wq.messages);
             }
+            write_description(&mut w, req.description());
             let o = &wq.options;
             if o.timeout_ms.is_some()
                 || o.deadline_ms.is_some()
@@ -610,10 +1012,18 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_kvs(&mut w, "headers", &wq.headers);
             write_auth(&mut w, &wq.auth);
-            write_scripts(&mut w, &wq.scripts);
+            write_scripts(&mut w, &wq.common.scripts);
         }
     }
     w.finish()
+}
+
+/// `description` after the top-level keys and before the first table, so
+/// [`sniff_badge`] reads `kind` and `method` first.
+fn write_description(w: &mut Writer, text: &str) {
+    if !text.is_empty() {
+        w.str("description", text);
+    }
 }
 
 /// Cheap sniff of `kind`/`method` from the top of a request file (for tree badges
@@ -621,19 +1031,41 @@ pub fn to_toml(req: &Request) -> String {
 pub fn sniff_badge(text: &str) -> Option<String> {
     let mut kind = None;
     let mut method = None;
+    // The closing quotes of the multi-line string the scan is in: its lines
+    // (a description, for example) are text, not keys.
+    let mut open: Option<&str> = None;
     for line in text.lines() {
+        if let Some(d) = open {
+            if line.contains(d) {
+                open = None;
+            }
+            continue;
+        }
         let l = line.trim();
         if l.starts_with('[') {
             break;
         }
-        let Some((k, v)) = l.split_once('=') else {
+        open = ["'''", "\"\"\""]
+            .into_iter()
+            .find(|d| l.matches(d).count() == 1);
+        if open.is_some() {
+            continue;
+        }
+        if !l.contains("kind") && !l.contains("method") {
+            continue;
+        }
+        // Each line is parsed as TOML, so quoted keys, either quote style and
+        // trailing comments read the same as in the full parser.
+        let Ok(table) = l.parse::<toml::Table>() else {
             continue;
         };
-        let v = v.trim().trim_matches('"').trim_matches('\'');
-        match k.trim() {
-            "kind" => kind = Some(v.to_string()),
-            "method" => method = Some(v.to_string()),
-            _ => {}
+        for (k, v) in table {
+            let Some(v) = v.as_str() else { continue };
+            match k.as_str() {
+                "kind" => kind = Some(v.to_string()),
+                "method" => method = Some(v.to_string()),
+                _ => {}
+            }
         }
     }
     match kind.as_deref() {
@@ -644,6 +1076,8 @@ pub fn sniff_badge(text: &str) -> Option<String> {
         ),
         Some("grpc") => Some("GRPC".into()),
         Some("websocket") => Some("WS".into()),
+        Some("sse") => Some("SSE".into()),
+        Some("mqtt") => Some("MQTT".into()),
         Some("mcp") => Some("MCP".into()),
         _ => None,
     }
@@ -694,39 +1128,43 @@ mod tests {
                 verify_tls: false,
                 cookies: None,
             },
-            scripts: Scripts {
-                pre: vec![SetVar {
-                    var: "ts".into(),
-                    value: "{{$timestamp}}".into(),
-                }],
-                extract: vec![
-                    Extract {
-                        var: "tok".into(),
-                        source: Source::Body,
-                        expr: "$.token".into(),
-                        secret: true,
-                    },
-                    Extract {
-                        var: "code".into(),
-                        source: Source::Status,
-                        expr: String::new(),
-                        secret: false,
-                    },
-                ],
-                asserts: vec![
-                    Assertion {
-                        source: Source::Status,
-                        expr: String::new(),
-                        op: AssertOp::Eq,
-                        value: "200".into(),
-                    },
-                    Assertion {
-                        source: Source::Header,
-                        expr: "content-type".into(),
-                        op: AssertOp::Exists,
-                        value: String::new(),
-                    },
-                ],
+            common: RequestCommon {
+                scripts: Scripts {
+                    pre: vec![SetVar {
+                        var: "ts".into(),
+                        value: "{{$timestamp}}".into(),
+                    }],
+                    extract: vec![
+                        Extract {
+                            var: "tok".into(),
+                            source: Source::Body,
+                            expr: "$.token".into(),
+                            secret: true,
+                        },
+                        Extract {
+                            var: "code".into(),
+                            source: Source::Status,
+                            expr: String::new(),
+                            secret: false,
+                        },
+                    ],
+                    asserts: vec![
+                        Assertion {
+                            source: Source::Status,
+                            expr: String::new(),
+                            op: AssertOp::Eq,
+                            value: "200".into(),
+                        },
+                        Assertion {
+                            source: Source::Header,
+                            expr: "content-type".into(),
+                            op: AssertOp::Exists,
+                            value: String::new(),
+                        },
+                    ],
+                    ..Scripts::default()
+                },
+                ..Default::default()
             },
         })
     }
@@ -753,8 +1191,25 @@ mod tests {
                 path: "x.bin".into(),
                 content_type: String::new(),
             },
+            Body::GraphQL {
+                query: "query {{user}} {\n  me { id }\n}\n".into(),
+                variables: "{\n  \"n\": {{count}}\n}\n".into(),
+                operation_name: "Me".into(),
+            },
+            Body::GraphQL {
+                query: "{ a }".into(),
+                variables: String::new(),
+                operation_name: String::new(),
+            },
+            // A half-typed variables document is kept as written.
+            Body::GraphQL {
+                query: "{ a }".into(),
+                variables: "{\"n\":".into(),
+                operation_name: String::new(),
+            },
         ] {
             for auth in [
+                Auth::Inherit,
                 Auth::None,
                 Auth::Basic {
                     username: "u".into(),
@@ -763,6 +1218,38 @@ mod tests {
                 Auth::Bearer { token: "t".into() },
                 Auth::OAuth {
                     name: "identity".into(),
+                },
+                Auth::Digest {
+                    username: "u".into(),
+                    password: "{{p}}".into(),
+                },
+                Auth::AwsSigV4 {
+                    access_key: "{{ak}}".into(),
+                    secret_key: "{{sk}}".into(),
+                    session_token: String::new(),
+                    region: "eu-west-1".into(),
+                    service: "execute-api".into(),
+                },
+                Auth::AwsSigV4 {
+                    access_key: "a".into(),
+                    secret_key: "s".into(),
+                    session_token: "{{st}}".into(),
+                    region: "us-east-1".into(),
+                    service: "s3".into(),
+                },
+                Auth::Jwt {
+                    algorithm: JwtAlgorithm::Hs512,
+                    secret: "{{jwt_secret}}".into(),
+                    private_key: String::new(),
+                    claims: "{\n  \"sub\": \"{{user}}\"\n}\n".into(),
+                    expires_in_s: Some(300),
+                },
+                Auth::Jwt {
+                    algorithm: JwtAlgorithm::Es256,
+                    secret: String::new(),
+                    private_key: "keys/es.pem".into(),
+                    claims: "{}".into(),
+                    expires_in_s: None,
                 },
             ] {
                 reqs.push(Request::Http(HttpRequest {
@@ -778,6 +1265,21 @@ mod tests {
             assert_eq!(back, r, "{t}");
             assert_eq!(to_toml(&back), t);
         }
+    }
+
+    #[test]
+    fn absent_auth_inherits_and_none_is_written() {
+        let Request::Http(h) = parse("kind = \"http\"\nurl = \"x\"\n").unwrap() else {
+            panic!()
+        };
+        assert_eq!(h.auth, Auth::Inherit);
+        let none = Request::Http(HttpRequest {
+            auth: Auth::None,
+            ..Default::default()
+        });
+        assert!(to_toml(&none).contains("[auth]\ntype = \"none\""));
+        let inherit = parse("kind = \"http\"\n[auth]\ntype = \"inherit\"\n").unwrap();
+        assert!(!to_toml(&inherit).contains("[auth]"));
     }
 
     #[test]
@@ -798,7 +1300,11 @@ mod tests {
                 files: vec!["echo.proto".into()],
                 import_paths: vec!["protos".into()],
             },
-            scripts: Scripts::default(),
+            common: RequestCommon {
+                description: "# Echo\n\nkind = \"mcp\"\n[x](y) say \"hi\" '''\n".into(),
+                ..Default::default()
+            },
+            // Lines that look like keys stay text for the badge sniff.
         });
         let t = to_toml(&g);
         assert_eq!(parse(&t).ok(), Some(g.clone()));
@@ -814,7 +1320,10 @@ mod tests {
             tool: "create_issue".into(),
             arguments: "{\n  \"title\": \"{{version}}\"\n}".into(),
             timeout_ms: Some(150),
-            scripts: Scripts::default(),
+            common: RequestCommon {
+                description: "Creates an *issue*.".into(),
+                ..Default::default()
+            },
         });
         let t = to_toml(&m);
         assert_eq!(parse(&t).ok(), Some(m.clone()));
@@ -844,6 +1353,78 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_every_script_source() {
+        let asserts = Source::ALL
+            .into_iter()
+            .map(|source| Assertion {
+                source,
+                expr: match source {
+                    Source::Status | Source::Time => String::new(),
+                    Source::Hash => "sha256".into(),
+                    _ => "x".into(),
+                },
+                op: AssertOp::Exists,
+                value: String::new(),
+            })
+            .collect();
+        let m = Request::Mcp(McpRequest {
+            common: RequestCommon {
+                scripts: Scripts {
+                    asserts,
+                    ..Scripts::default()
+                },
+                description: "- one\n- two\nmethod = 'post'\n".into(),
+            },
+            ..McpRequest::default()
+        });
+        let t = to_toml(&m);
+        assert_eq!(parse(&t).ok(), Some(m));
+        // An empty time expression means `total` and is not written.
+        assert!(t.contains("from = \"time\"\nop = \"exists\""), "{t}");
+        let bad = "kind = \"mcp\"\n[[scripts.assert]]\nfrom = \"nope\"\nop = \"exists\"\n";
+        let err = parse(bad).unwrap_err();
+        assert!(err.contains("xpath, regex, cookie"), "{err}");
+    }
+
+    #[test]
+    fn roundtrip_lua_scripts() {
+        let pre = "vars.set(\"a\", 1)\nrequest:set_header(\"X\", '''q''')\n";
+        let h = Request::Http(HttpRequest {
+            url: "https://x".into(),
+            common: RequestCommon {
+                scripts: Scripts {
+                    pre: vec![SetVar {
+                        var: "v".into(),
+                        value: "1".into(),
+                    }],
+                    lua_pre: LuaScript::own(pre).into_iter().collect(),
+                    lua_post: LuaScript::own("test(\"ok\", response.status == 200);")
+                        .into_iter()
+                        .collect(),
+                    ..Scripts::default()
+                },
+                ..Default::default()
+            },
+            ..HttpRequest::default()
+        });
+        let t = to_toml(&h);
+        assert_eq!(parse(&t).ok(), Some(h.clone()));
+        assert_eq!(to_toml(&parse(&t).unwrap()), t);
+        assert!(t.contains("[[scripts.pre]]"), "{t}");
+        assert!(t.contains("\n[scripts.lua]\npre = "), "{t}");
+        // A blank script is not written; a post script alone is.
+        let mut only_post = h.clone();
+        only_post.scripts_mut().lua_pre = Vec::new();
+        let t = to_toml(&only_post);
+        assert!(!t.contains("pre = "), "{t}");
+        assert_eq!(parse(&t).ok(), Some(only_post));
+        let blank = "kind = \"mcp\"\n[scripts.lua]\npre = \"  \"\n";
+        assert!(parse(blank).unwrap().scripts().is_empty());
+        let bad = "kind = \"mcp\"\n[scripts.lua]\nbefore = \"x\"\n";
+        assert!(parse(bad).is_err());
+    }
+
+    #[test]
     fn roundtrip_ws() {
         let w = Request::Ws(WebSocketRequest {
             url: "wss://{{host}}/chat".into(),
@@ -863,7 +1444,7 @@ mod tests {
                 tls: true,
                 cookies: Some(false),
             },
-            scripts: Scripts::default(),
+            common: RequestCommon::default(),
         });
         let t = to_toml(&w);
         assert_eq!(parse(&t).ok(), Some(w.clone()));
@@ -879,6 +1460,26 @@ mod tests {
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }
+    }
+
+    #[test]
+    fn graphql_body_text() {
+        let r = Request::Http(HttpRequest {
+            method: "POST".into(),
+            url: "/graphql".into(),
+            body: Body::GraphQL {
+                query: "{ me { id } }".into(),
+                variables: "{\"x\":1}".into(),
+                operation_name: String::new(),
+            },
+            ..Default::default()
+        });
+        let t = to_toml(&r);
+        assert_eq!(
+            t,
+            "kind = \"http\"\nmethod = \"POST\"\nurl = \"/graphql\"\n\n[body]\ntype = \"graphql\"\nquery = \"{ me { id } }\"\nvariables = \"{\\\"x\\\":1}\"\n"
+        );
+        assert_eq!(parse(&t).ok(), Some(r));
     }
 
     #[test]
@@ -975,5 +1576,17 @@ op = "exists"
         assert_eq!(sniff_badge("[package]\nname = \"x\""), None);
         assert_eq!(sniff_badge("kind = 'http'\n"), Some("GET".into()));
         assert_eq!(sniff_badge("x = 1"), None);
+        assert_eq!(
+            sniff_badge(
+                "kind = \"http\"\ndescription = '''\nmethod = \"PUT\"\n[a](b)\n'''\nmethod = \"post\"\n"
+            ),
+            Some("POST".into())
+        );
+        assert_eq!(sniff_badge("kind = \"http\" # main\n"), Some("GET".into()));
+        assert_eq!(
+            sniff_badge("\"kind\" = \"http\"\nmethod = 'post' # create\n"),
+            Some("POST".into())
+        );
+        assert_eq!(sniff_badge("kind = \"grpc\"   \n"), Some("GRPC".into()));
     }
 }

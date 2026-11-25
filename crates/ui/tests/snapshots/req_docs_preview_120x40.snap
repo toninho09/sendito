@@ -1,0 +1,21 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Params  Headers  Body•  Auth  Scripts 1  Options  Docs• ──────────────────────────────╮
+│ View           Preview ▾  Markdown text or the rendered page                           │
+│ Create user                                                                            │
+│                                                                                        │
+│ Adds a user to the users table.                                                        │
+│                                                                                        │
+│ • name is required                                                                     │
+│ • email must be unique                                                                 │
+│                                                                                        │
+│ │ Needs the admin role.                                                                │
+│                                                                                        │
+│   json                                                                                 │
+│   {"name": "ana"}                                                                      │
+│                                                                                        │
+│ See the guide (https://example.com/guide).                                             │
+│                                                                                        │
+╰─ Users › create user ──────────────────────────────────────────────────────────────────╯

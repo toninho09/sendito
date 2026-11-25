@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use sendito_mcp::oauth::{OAuthSettings, RefreshingProvider, TokenStore, login};
-use sendito_mcp::{Options, Transport, call_tool};
+use sendito_mcp::oauth::{
+    Grant, OAuthSettings, RefreshingProvider, TokenStore, fetch_token, login,
+};
+use sendito_mcp::{McpError, Options, Transport, call_tool};
 
 #[derive(Default)]
 struct MemStore(Mutex<BTreeMap<String, String>>);
@@ -120,6 +122,47 @@ async fn login_flow_and_call() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[tokio::test]
+async fn concurrent_refreshes_spend_the_refresh_token_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let captured = Arc::new(Mutex::new(None::<String>));
+    let browser = spawn_browser(captured.clone());
+    let opener = move |url: &str| -> bool {
+        if let Ok(mut g) = captured.lock() {
+            *g = Some(url.to_string());
+        }
+        true
+    };
+    let tokens = login(
+        &srv.mcp_url(),
+        &OAuthSettings::default(),
+        Duration::from_secs(10),
+        &opener,
+        &|_| {},
+    )
+    .await?;
+    let _ = browser.await;
+    // Two providers (two tabs) share one store and one account. The server
+    // rotates refresh tokens, so a second refresh with the old one fails.
+    let store = Arc::new(MemStore::default());
+    store.set("acct-concurrent", &tokens.to_json())?;
+    let provider = || {
+        RefreshingProvider::new(
+            store.clone(),
+            "acct-concurrent".into(),
+            srv.mcp_url(),
+            OAuthSettings::default(),
+        )
+    };
+    let (a, b) = (provider(), provider());
+    use sendito_mcp::TokenProvider;
+    let (ta, tb) = tokio::join!(a.token(true), b.token(true));
+    assert_eq!(ta?, tb?);
+    assert_eq!(srv.refreshes(), 1);
+    Ok(())
+}
+
 struct RetryToken {
     valid: String,
     refreshes: AtomicUsize,
@@ -214,6 +257,79 @@ async fn not_signed_in_is_a_clear_error() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+fn transport(
+    url: String,
+    headers: Vec<(String, String)>,
+    auth: Option<Arc<RefreshingProvider>>,
+) -> Transport {
+    Transport::Http {
+        url,
+        headers,
+        verify_tls: false,
+        proxy: None,
+        tls: Default::default(),
+        auth: auth.map(|p| p as Arc<dyn sendito_mcp::TokenProvider>),
+    }
+}
+
+async fn call_err(t: &Transport) -> Option<McpError> {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    call_tool(t, "add", "{}", &Options::default(), tx)
+        .await
+        .err()
+}
+
+#[tokio::test]
+async fn missing_tokens_need_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let provider = Arc::new(RefreshingProvider::new(
+        Arc::new(MemStore::default()),
+        "acct".into(),
+        srv.mcp_url(),
+        OAuthSettings::default(),
+    ));
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), Some(provider))).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bearer_challenge_without_auth_needs_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), None)).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
+    // A configured Authorization header that is refused is a plain error:
+    // the header is wrong, a sign-in does not fix it.
+    let headers = vec![("Authorization".to_string(), "Bearer wrong".to_string())];
+    let err = call_err(&transport(srv.mcp_url(), headers, None)).await;
+    assert!(matches!(err, Some(McpError::Transport(_))), "got: {err:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn tokens_for_another_server_need_a_login() -> Result<(), Box<dyn std::error::Error>> {
+    let srv = sendito_testkit::mcp_auth::start().await?;
+    let store = Arc::new(MemStore::default());
+    let tokens = sendito_mcp::oauth::Tokens {
+        access: "a".into(),
+        refresh: None,
+        expires_at: None,
+        client_id: "c".into(),
+        client_secret: None,
+        bound_to: Some("https://other.test/mcp".into()),
+    };
+    store.set("acct", &tokens.to_json())?;
+    let provider = Arc::new(RefreshingProvider::new(
+        store,
+        "acct".into(),
+        srv.mcp_url(),
+        OAuthSettings::default(),
+    ));
+    let err = call_err(&transport(srv.mcp_url(), Vec::new(), Some(provider))).await;
+    assert!(matches!(err, Some(McpError::NeedsLogin(_))), "got: {err:?}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn explicit_endpoints_skip_discovery() -> Result<(), Box<dyn std::error::Error>> {
     let srv = sendito_testkit::mcp_auth::start().await?;
@@ -241,5 +357,121 @@ async fn explicit_endpoints_skip_discovery() -> Result<(), Box<dyn std::error::E
     .await?;
     let _ = browser.await;
     assert!(tokens.access.starts_with("tok-"));
+    Ok(())
+}
+
+/// HTTP identity settings for the fake server's `/token-http` endpoint.
+fn http_settings(auth: &sendito_testkit::mcp_auth::McpAuth, grant: Grant) -> OAuthSettings {
+    OAuthSettings {
+        grant,
+        client_id: Some("test-client".into()),
+        client_secret: Some("test-client-secret".into()),
+        token_url: Some(format!("{}/token-http", auth.url())),
+        device_authorization_url: Some(format!("{}/device", auth.url())),
+        username: Some("ana".into()),
+        password: Some("test-password".into()),
+        ..Default::default()
+    }
+}
+
+/// A store whose reads fail, like a CI host without a keychain.
+struct NoKeychain;
+
+impl TokenStore for NoKeychain {
+    fn get(&self, _: &str) -> Result<Option<String>, String> {
+        Err("no keychain service".into())
+    }
+    fn set(&self, _: &str, _: &str) -> Result<(), String> {
+        Err("no keychain service".into())
+    }
+    fn delete(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// client_credentials and password get a token with no sign-in, and a new
+/// one when it expires (they have no refresh token), also without a keychain.
+#[tokio::test]
+async fn automatic_grants_need_no_sign_in() -> Result<(), Box<dyn std::error::Error>> {
+    use sendito_mcp::TokenProvider;
+    let auth = sendito_testkit::mcp_auth::start().await?;
+    for grant in [Grant::ClientCredentials, Grant::Password] {
+        let store = Arc::new(MemStore::default());
+        let p =
+            RefreshingProvider::new_http(store.clone(), "acct".into(), http_settings(&auth, grant));
+        let first = p.token(false).await?;
+        assert!(first.starts_with("tok-"), "{first}");
+        assert!(store.get("acct")?.is_some(), "the token is stored");
+        // The token expires in one second; the next call asks for a new one.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let second = p.token(false).await?;
+        assert_ne!(first, second);
+        // A 401 forces a new token too.
+        assert_ne!(p.token(true).await?, second);
+    }
+    let p = RefreshingProvider::new_http(
+        Arc::new(NoKeychain),
+        "acct".into(),
+        http_settings(&auth, Grant::ClientCredentials),
+    );
+    assert!(p.token(false).await?.starts_with("tok-"));
+    assert_eq!(auth.grants(), 7);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_wrong_password_is_the_token_endpoint_error() -> Result<(), Box<dyn std::error::Error>> {
+    let auth = sendito_testkit::mcp_auth::start().await?;
+    let mut s = http_settings(&auth, Grant::Password);
+    s.password = Some("wrong".into());
+    let e = fetch_token(&s)
+        .await
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(e.contains("invalid_grant"), "{e}");
+    s.username = None;
+    let e = fetch_token(&s)
+        .await
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(e.contains("needs a username"), "{e}");
+    Ok(())
+}
+
+/// The device grant shows the page and the code, then polls until the
+/// server issues tokens (the first poll is pending).
+#[tokio::test]
+async fn device_code_login_polls_until_accepted() -> Result<(), Box<dyn std::error::Error>> {
+    let auth = sendito_testkit::mcp_auth::start().await?;
+    let notes = Arc::new(Mutex::new(Vec::new()));
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let (n, o) = (notes.clone(), opened.clone());
+    let tokens = sendito_mcp::oauth::login_http(
+        &http_settings(&auth, Grant::DeviceCode),
+        Duration::from_secs(10),
+        &move |url: &str| {
+            if let Ok(mut g) = o.lock() {
+                g.push(url.to_string());
+            }
+            true
+        },
+        &move |text: String| {
+            if let Ok(mut g) = n.lock() {
+                g.push(text);
+            }
+        },
+    )
+    .await?;
+    assert!(tokens.access.starts_with("tok-") && tokens.refresh.is_some());
+    assert_eq!(tokens.bound_to, Some(format!("{}/token-http", auth.url())));
+    let notes = notes.lock().map(|g| g.join("\n")).unwrap_or_default();
+    assert!(
+        notes.contains("ABCD-EFGH") && notes.contains("/device-page"),
+        "{notes}"
+    );
+    assert!(opened.lock().is_ok_and(|g| g[0].ends_with("/device-page")));
+    assert_eq!(auth.grants(), 1);
     Ok(())
 }

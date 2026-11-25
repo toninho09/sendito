@@ -1,0 +1,9 @@
+kind = "mqtt"
+url = "{{mqtt_url}}"
+client_id = "corpus-13"
+
+[options]
+deadline_ms = 200
+
+[[subscriptions]]
+topic = "corpus/silent"

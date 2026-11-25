@@ -1,29 +1,93 @@
-//! Snapshot tests of every pane and overlay at 120×40 and 200×60.
+//! Snapshot tests of every pane and overlay.
 //! Responses are fabricated so the output is deterministic.
+//!
+//! A snapshot keeps only the part of the screen that its test is about (see
+//! [`Area`]), so a change to one pane does not change the snapshots of the
+//! others. The layout tests keep the full screen at 120×40 and 200×60; the
+//! other tests use 120×40 only.
 
 mod common;
 
 use std::time::Duration;
 
 use common::{Harness, Must};
+use ratatui::layout::Rect;
 use sendito_core::resolve::{ResolvedBody, ResolvedHttp};
-use sendito_http::{HttpResponse, Timing};
-use sendito_ui::app::{AppMsg, Focus};
+use sendito_pipeline::http::{HttpResponse, Timing};
+use sendito_ui::app::{AppMsg, Focus, Hit, OverlayHit};
 use sendito_ui::runner::{HttpOutcome, ScriptResults};
 use sendito_ui::viewer::Doc;
 
+/// The sizes of the layout tests.
 const SIZES: [(u16, u16); 2] = [(120, 40), (200, 60)];
+/// The size of the tests of one pane or dialog.
+const SMALL: [(u16, u16); 1] = [(120, 40)];
 
-fn snap(name: &str, h: &mut Harness) {
-    let (w, ht) = (
-        h.term.backend().buffer().area.width,
-        h.term.backend().buffer().area.height,
-    );
+/// The part of the screen that a snapshot keeps.
+#[derive(Debug, Clone, Copy)]
+enum Area {
+    Full,
+    Sidebar,
+    /// The request and the response panes.
+    Main,
+    Request,
+    Response,
+    /// The topmost dialog.
+    Dialog,
+    /// The rows under the panes.
+    Footer,
+}
+
+fn area_rect(h: &Harness, area: Area) -> Rect {
+    let full = h.term.backend().buffer().area;
+    let a = &h.app.areas;
+    match area {
+        Area::Full => full,
+        Area::Sidebar => a.sidebar,
+        Area::Main => a.main,
+        Area::Request => a.request,
+        Area::Response => a.response,
+        Area::Dialog => h
+            .app
+            .hits
+            .iter()
+            .rev()
+            .find(|(_, hit)| *hit == Hit::Overlay(OverlayHit::Dialog))
+            .map(|(r, _)| *r)
+            .must(),
+        Area::Footer => {
+            let top = a.main.bottom().max(a.sidebar.bottom());
+            Rect::new(0, top, full.width, full.height.saturating_sub(top))
+        }
+    }
+}
+
+/// Draws the screen and compares `area` of it with the snapshot `name`. The
+/// file name ends with the screen size.
+fn snap_in(area: Area, name: &str, h: &mut Harness) {
+    h.draw();
+    let full = h.term.backend().buffer().area;
+    let r = area_rect(h, area);
+    let buf = h.term.backend().buffer();
+    let mut screen = String::new();
+    for y in r.top()..r.bottom() {
+        let mut line = String::new();
+        for x in r.left()..r.right() {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        screen.push_str(line.trim_end());
+        screen.push('\n');
+    }
     let tmp = h.dir.path().display().to_string();
-    let screen = h.screen().replace(&tmp, "<tmp>");
+    let screen = screen.replace(&tmp, "<tmp>");
     insta::with_settings!({ snapshot_path => "snapshots", prepend_module_to_snapshot => false }, {
-        insta::assert_snapshot!(format!("{name}_{w}x{ht}"), screen);
+        insta::assert_snapshot!(format!("{name}_{}x{}", full.width, full.height), screen);
     });
+}
+
+/// A snapshot of the full screen.
+fn snap(name: &str, h: &mut Harness) {
+    snap_in(Area::Full, name, h);
 }
 
 fn fake_response(h: &mut Harness, body: &str, status: u16) {
@@ -69,6 +133,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         verify_tls: true,
         unresolved: vec![],
         notes: vec![],
+        signed: None,
     };
     let scripts = ScriptResults {
         pre: vec![],
@@ -88,6 +153,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
                 actual: "2".into(),
             },
         ],
+        ..Default::default()
     };
     let outcome = HttpOutcome {
         resolved,
@@ -116,8 +182,18 @@ fn open(h: &mut Harness, name: &str) {
     h.draw();
 }
 
+/// Runs `f` at the sizes of the layout tests.
 fn each(f: impl Fn(&mut Harness)) {
-    for (w, ht) in SIZES {
+    each_at(&SIZES, f);
+}
+
+/// Runs `f` at the size of the tests of one pane or dialog.
+fn each_small(f: impl Fn(&mut Harness)) {
+    each_at(&SMALL, f);
+}
+
+fn each_at(sizes: &[(u16, u16)], f: impl Fn(&mut Harness)) {
+    for &(w, ht) in sizes {
         let mut h = Harness::new(w, ht);
         h.app.set_env(Some("local".into()));
         h.app.status = None;
@@ -130,35 +206,66 @@ fn welcome_and_tree() {
     each(|h| {
         snap("welcome", h);
         h.key("ctrl+w h down enter");
-        snap("tree_expanded", h);
+        snap_in(Area::Sidebar, "tree_expanded", h);
         h.key("/");
         h.type_text("user");
-        snap("tree_filter", h);
+        snap_in(Area::Sidebar, "tree_filter", h);
+    });
+}
+
+/// Favorites in the sidebar and on the start screen, and a pinned tab.
+#[test]
+fn favorites_and_pinned_tab() {
+    each_small(|h| {
+        h.app.tree.toggle_favorite("health.toml");
+        h.app.tree.toggle_favorite("Users/list users.toml");
+        snap("welcome_favorites", h);
+        open(h, "health");
+        open(h, "get order");
+        h.key("ctrl+w P");
+        h.app.status = None;
+        h.key("ctrl+w h");
+        snap("tree_favorites_pinned_tab", h);
     });
 }
 
 #[test]
 fn request_tabs_http() {
-    each(|h| {
+    each_small(|h| {
         open(h, "list users");
-        snap("req_params", h);
+        snap_in(Area::Request, "req_params", h);
         h.key("alt+2");
-        snap("req_headers", h);
+        snap_in(Area::Request, "req_headers", h);
         h.key("alt+4");
-        snap("req_auth_bearer", h);
+        snap_in(Area::Request, "req_auth_bearer", h);
         h.key("alt+6");
-        snap("req_options", h);
+        snap_in(Area::Request, "req_options", h);
         open(h, "create user");
         h.key("alt+3");
-        snap("req_body_json", h);
+        snap_in(Area::Request, "req_body_json", h);
         h.key("alt+5");
-        snap("req_scripts", h);
+        snap_in(Area::Request, "req_scripts", h);
+    });
+}
+
+#[test]
+fn request_docs_preview() {
+    each_small(|h| {
+        open(h, "create user");
+        let t = h.app.tabs.last_mut().must();
+        t.ed.description.set_text(
+            "# Create user\n\nAdds a **user** to the `users` table.\n\n- name is required\n- email must be unique\n\n> Needs the admin role.\n\n```json\n{\"name\": \"ana\"}\n```\n\nSee [the guide](https://example.com/guide).",
+        );
+        t.ed.docs_preview = true;
+        t.req_tab = 6;
+        t.refresh_model();
+        snap_in(Area::Request, "req_docs_preview", h);
     });
 }
 
 #[test]
 fn request_body_kinds_and_auth() {
-    each(|h| {
+    each_small(|h| {
         open(h, "delete user");
         let t = h.app.tabs.last_mut().must();
         t.ed.set_body_kind(sendito_core::BodyKind::Form);
@@ -166,7 +273,7 @@ fn request_body_kinds_and_auth() {
         t.ed.form.push_texts(false, &["debug", "1"]);
         t.req_tab = 2;
         t.refresh_model();
-        snap("req_body_form", h);
+        snap_in(Area::Request, "req_body_form", h);
         let t = h.app.tabs.last_mut().must();
         t.ed.set_body_kind(sendito_core::BodyKind::Multipart);
         t.ed.parts.push(
@@ -182,16 +289,16 @@ fn request_body_kinds_and_auth() {
             ],
         );
         t.refresh_model();
-        snap("req_body_multipart", h);
+        snap_in(Area::Request, "req_body_multipart", h);
         let t = h.app.tabs.last_mut().must();
         t.ed.auth_kind = sendito_core::AuthKind::ApiKey;
         t.req_tab = 3;
         t.refresh_model();
-        snap("req_auth_apikey", h);
+        snap_in(Area::Request, "req_auth_apikey", h);
         let t = h.app.tabs.last_mut().must();
         t.ed.auth_kind = sendito_core::AuthKind::Basic;
         t.refresh_model();
-        snap("req_auth_basic", h);
+        snap_in(Area::Request, "req_auth_basic", h);
     });
 }
 
@@ -202,27 +309,115 @@ fn fake_stream(h: &mut Harness) {
         let json = format!("{{\"text\":\"{text}\",\"n\":{i}}}");
         h.app.on_msg(AppMsg::Grpc {
             tab: id,
-            update: sendito_ui::runner::GrpcUpdate::Event(sendito_grpc::Event::Received {
-                full: json.clone(),
-                compact: json.clone(),
-                size: json.len(),
-                json,
-                at: Duration::from_millis(100 * (i as u64 + 1)),
-                wall: std::time::SystemTime::UNIX_EPOCH,
-            }),
+            update: sendito_ui::runner::GrpcUpdate::Event(
+                sendito_pipeline::grpc::Event::Received {
+                    full: json.clone(),
+                    compact: json.clone(),
+                    size: json.len(),
+                    json,
+                    at: Duration::from_millis(100 * (i as u64 + 1)),
+                    wall: std::time::SystemTime::UNIX_EPOCH,
+                },
+            ),
         });
     }
 }
 
 #[test]
+fn request_body_graphql() {
+    each_small(|h| {
+        open(h, "create user");
+        let t = h.app.tab_mut().must();
+        t.ed.set_body_kind(sendito_core::BodyKind::GraphQL);
+        t.ed.body_text
+            .set_text("query Lookup($id: ID!) {\n  hero(id: $id) {\n    name\n  }\n}");
+        t.ed.graphql_variables.set_text("{\"id\": \"42\"}");
+        t.ed.graphql_operation.set_text("Lookup");
+        t.req_tab = 2;
+        t.field = 2;
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        snap_in(Area::Request, "req_body_graphql", h);
+        let t = h.app.tab_mut().must();
+        t.ed.set_choice(sendito_ui::tab::Field::GraphqlSection, 1);
+        snap_in(Area::Request, "req_body_graphql_variables", h);
+    });
+}
+
+#[test]
+fn graphql_completion() {
+    each_small(|h| {
+        open(h, "create user");
+        let env = h.app.active_env.clone();
+        let t = h.app.tab_mut().must();
+        t.ed.method = "POST".into();
+        t.ed.url.set_text("https://example.test/graphql");
+        t.ed.set_body_kind(sendito_core::BodyKind::GraphQL);
+        t.ed.body_text.set_text("query Lookup {\n  hero(");
+        t.ed.body_text.move_to_end();
+        t.req_tab = 2;
+        t.field = 2;
+        t.graphql_schema = Some(
+            sendito_pipeline::http::graphql::GraphqlSchema::from_json(include_bytes!(
+                "fixtures/graphql-schema.json"
+            ))
+            .must(),
+        );
+        t.graphql_source = format!("{env:?}:graphql:POST https://example.test/graphql");
+        t.refresh_model();
+        h.app.focus = Focus::ReqBody;
+        h.key("ctrl+space");
+        assert_eq!(h.app.complete.as_ref().must().items.len(), 2);
+        snap_in(Area::Main, "graphql_completion", h);
+    });
+}
+
+#[test]
+fn sse_session() {
+    each_small(|h| {
+        common::sse::demo(h);
+        snap_in(Area::Request, "sse_options", h);
+        h.key("ctrl+w j");
+        snap_in(Area::Response, "sse_events", h);
+        h.key("alt+2");
+        snap_in(Area::Response, "sse_headers", h);
+        h.key("alt+3");
+        snap_in(Area::Response, "sse_timing", h);
+        h.key("alt+4");
+        snap_in(Area::Response, "sse_log", h);
+    });
+}
+
+#[test]
+fn mqtt_session() {
+    each_small(|h| {
+        common::mqtt::demo(h);
+        snap_in(Area::Request, "mqtt_topics", h);
+        h.key("ctrl+w j");
+        snap_in(Area::Response, "mqtt_messages", h);
+        h.key("alt+2");
+        snap_in(Area::Response, "mqtt_connection", h);
+        h.key("alt+3");
+        snap_in(Area::Response, "mqtt_timing", h);
+        h.key("alt+4");
+        snap_in(Area::Response, "mqtt_log", h);
+        // The one-line fields of the Will and Options tabs have labels.
+        h.app.tab_mut().must().req_tab = 2;
+        snap_in(Area::Request, "mqtt_will", h);
+        h.app.tab_mut().must().req_tab = 5;
+        snap_in(Area::Request, "mqtt_options", h);
+    });
+}
+
+#[test]
 fn response_stream() {
-    each(|h| {
+    each_small(|h| {
         open(h, "echo unary");
         fake_stream(h);
         h.key("ctrl+w j");
-        snap("resp_stream_list", h);
+        snap_in(Area::Response, "resp_stream_list", h);
         h.key("[");
-        snap("resp_stream_paused", h);
+        snap_in(Area::Response, "resp_stream_paused", h);
     });
     // A pane too narrow for the list shows the position in its border.
     let mut h = Harness::new(96, 30);
@@ -231,23 +426,23 @@ fn response_stream() {
     open(&mut h, "echo unary");
     fake_stream(&mut h);
     h.key("ctrl+w j [");
-    snap("resp_stream_narrow", &mut h);
+    snap_in(Area::Response, "resp_stream_narrow", &mut h);
 }
 
 #[test]
 fn grpc_request() {
-    each(|h| {
+    each_small(|h| {
         open(h, "echo unary");
         h.app.focus = Focus::Bar(1);
-        snap("grpc_message", h);
+        snap_in(Area::Main, "grpc_message", h);
         h.key("alt+5");
-        snap("grpc_options", h);
+        snap_in(Area::Main, "grpc_options", h);
     });
 }
 
 #[test]
 fn mcp_request() {
-    each(|h| {
+    each_small(|h| {
         h.app.run_command("newmcp");
         // A configured server, so the bar shows where the call goes.
         h.app.project.config.mcp.servers.insert(
@@ -264,73 +459,78 @@ fn mcp_request() {
         t.ed.mcp_tool.set_text("search");
         t.ed.message.set_text("{\"query\":\"hello\"}");
         t.refresh_model();
-        snap("mcp_tool", h);
+        snap_in(Area::Main, "mcp_tool", h);
         h.key("alt+2");
-        snap("mcp_args", h);
+        snap_in(Area::Main, "mcp_args", h);
     });
 }
 
 #[test]
 fn response_views() {
-    each(|h| {
+    each_small(|h| {
         open(h, "list users");
         fake_response(h, BODY, 200);
         h.key("ctrl+w j");
-        snap("resp_pretty", h);
+        snap_in(Area::Response, "resp_pretty", h);
         h.key("down enter");
-        snap("resp_folded", h);
+        snap_in(Area::Response, "resp_folded", h);
         h.key("r");
-        snap("resp_raw", h);
+        snap_in(Area::Response, "resp_raw", h);
         h.key("x");
-        snap("resp_hex", h);
+        snap_in(Area::Response, "resp_hex", h);
         h.key("p alt+2");
-        snap("resp_headers", h);
+        snap_in(Area::Response, "resp_headers", h);
         h.key("alt+3");
-        snap("resp_timing", h);
+        snap_in(Area::Response, "resp_timing", h);
         h.key("alt+4");
-        snap("resp_messages", h);
+        snap_in(Area::Response, "resp_messages", h);
         fake_response(h, "{\"error\":\"not found\"}", 404);
         h.key("alt+1");
-        snap("resp_404", h);
+        snap_in(Area::Response, "resp_404", h);
     });
 }
 
 #[test]
 fn response_jq_filter() {
-    each(|h| {
+    each_small(|h| {
         open(h, "list users");
         fake_response(h, BODY, 200);
         h.key("ctrl+w j");
         h.key("j");
-        snap("resp_query_bar", h);
+        snap_in(Area::Response, "resp_query_bar", h);
         h.type_text(".items[] | .name");
         h.key("enter");
-        snap("resp_jq_filter", h);
+        snap_in(Area::Response, "resp_jq_filter", h);
         h.key("j");
         h.type_text(" |");
-        snap("resp_query_error", h);
+        snap_in(Area::Response, "resp_query_error", h);
         h.key("esc");
         h.key("j");
         h.key("ctrl+a backspace enter");
-        snap("resp_jq_cleared", h);
+        snap_in(Area::Response, "resp_jq_cleared", h);
     });
 }
 
 #[test]
 fn overlays() {
     each(|h| {
+        // The palette lists every key and command. The filter keeps this
+        // screen on rows that a new key does not move; KEYMAP.md checks the
+        // full list.
         h.key("ctrl+p");
-        snap("palette", h);
+        h.type_text("get order");
+        snap_in(Area::Dialog, "palette", h);
+        h.key("esc ctrl+p");
         h.type_text(":en");
-        snap("palette_commands", h);
+        snap_in(Area::Dialog, "palette_commands", h);
         h.key("esc f1");
-        snap("help", h);
+        snap_in(Area::Dialog, "help", h);
         h.key("esc ctrl+w ,");
-        snap("settings", h);
+        snap_in(Area::Dialog, "settings", h);
         h.key("esc f4");
-        snap("env_picker", h);
+        snap_in(Area::Dialog, "env_picker", h);
         h.key("esc ctrl+w V");
-        snap("env_editor", h);
+        snap_in(Area::Dialog, "env_editor", h);
         // The MCP servers editor shows the project file's own servers.
         let mut servers = std::collections::BTreeMap::new();
         servers.insert(
@@ -355,26 +555,59 @@ fn overlays() {
             &servers,
         )
         .unwrap();
+        // The editor shows the Settings scope's file; the servers are in the
+        // project one.
+        h.app.config_scope = sendito_ui::overlay::ConfigScope::Project;
         h.key("esc ctrl+w S");
-        snap("mcp_servers", h);
+        snap_in(Area::Dialog, "mcp_servers", h);
+        // The form of the selected server.
+        h.key("enter");
+        snap_in(Area::Dialog, "mcp_server_form", h);
+        // An OAuth identity of the password grant.
+        let ids = std::collections::BTreeMap::from([(
+            "billing".to_string(),
+            sendito_store::config::OAuthIdentity {
+                grant: sendito_store::config::OAuthGrant::Password,
+                token_url: "https://auth.example.test/token".into(),
+                client_id: "sendito".into(),
+                client_secret: Some("{{billing_secret}}".into()),
+                username: Some("{{api_user}}".into()),
+                password: Some("hunter2".into()),
+                scopes: vec!["invoices:read".into()],
+                ..Default::default()
+            },
+        )]);
+        sendito_store::config::set_table(
+            &sendito_store::config::project_path(h.dir.path()),
+            &["oauth"],
+            &ids,
+        )
+        .unwrap();
+        h.key("esc esc");
+        h.app.run_command("oauth");
+        h.key("enter");
+        snap_in(Area::Dialog, "oauth_form", h);
+        h.key("esc esc");
+        h.app.run_command("keymap");
+        snap_in(Area::Dialog, "keymap_editor", h);
         h.key("esc ctrl+w i");
-        snap("import", h);
+        snap_in(Area::Dialog, "import", h);
         h.key("esc");
         open(h, "get order");
         h.key("f5");
-        snap("confirm_unresolved", h);
+        snap_in(Area::Dialog, "confirm_unresolved", h);
         h.key("esc ctrl+w h n");
-        snap("prompt_new_request", h);
+        snap_in(Area::Dialog, "prompt_new_request", h);
         h.key("esc");
         h.app.focus = Focus::Bar(0);
         h.key("enter");
-        snap("picker_method", h);
+        snap_in(Area::Main, "picker_method", h);
     });
 }
 
 #[test]
 fn vim_mode_and_history() {
-    each(|h| {
+    each_small(|h| {
         h.app.vim = true;
         open(h, "list users");
         for t in &mut h.app.tabs {
@@ -416,13 +649,13 @@ fn vim_mode_and_history() {
             },
         ]);
         h.app.focus = Focus::Sidebar;
-        snap("history", h);
+        snap_in(Area::Sidebar, "history", h);
     });
 }
 
 #[test]
 fn nerd_icons() {
-    each(|h| {
+    each_small(|h| {
         h.app.icons = sendito_ui::icons::Icons::nerd();
         open(h, "list users");
         fake_response(h, "{\"ok\": true}", 200);
@@ -435,8 +668,8 @@ fn nerd_icons() {
 #[test]
 fn completion_popup() {
     use sendito_core::complete::FieldNode;
-    use sendito_grpc::{CallKind, MethodInfo, ServiceInfo};
-    each(|h| {
+    use sendito_pipeline::grpc::{CallKind, MethodInfo, ServiceInfo};
+    each_small(|h| {
         open(h, "echo unary");
         let mut inner = FieldNode::new("inner", "sendito.test.v1.Inner", "{}");
         inner.children.push(FieldNode::new("count", "int32", "0"));
@@ -467,9 +700,9 @@ fn completion_popup() {
         h.app.focus = Focus::ReqBody;
         h.app.tabs[h.app.active].field = 0;
         h.type_text("\"");
-        snap("grpc_field_completion", h);
+        snap_in(Area::Main, "grpc_field_completion", h);
         h.type_text("in");
-        snap("grpc_field_completion_filtered", h);
+        snap_in(Area::Main, "grpc_field_completion_filtered", h);
         h.key("esc");
         // The method field completes from the same schema.
         h.app.focus = Focus::Bar(0);
@@ -479,7 +712,7 @@ fn completion_popup() {
             .set_text("sendito.test.v1.Echo/");
         h.app.tabs[h.app.active].ed.grpc_method_text.move_to_end();
         h.key("ctrl+space");
-        snap("grpc_method_completion", h);
+        snap_in(Area::Main, "grpc_method_completion", h);
     });
 }
 
@@ -493,13 +726,13 @@ fn footer_and_ctrl_w_menu() {
         snap("whichkey_ctrl_w", h);
         h.key("esc");
         h.app.set_status("saved users/list.http", StatusKind::Ok);
-        snap("footer_message_ok", h);
+        snap_in(Area::Footer, "footer_message_ok", h);
         h.app.set_status("connection refused", StatusKind::Error);
-        snap("footer_message_error", h);
+        snap_in(Area::Footer, "footer_message_error", h);
         h.app.status = None;
         h.app.project.config.ui.hints = "full".into();
-        snap("footer_hints_full", h);
+        snap_in(Area::Footer, "footer_hints_full", h);
         h.app.project.config.ui.hints = "off".into();
-        snap("footer_hints_off", h);
+        snap_in(Area::Footer, "footer_hints_off", h);
     });
 }
