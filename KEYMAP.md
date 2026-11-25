@@ -169,7 +169,7 @@ These are handled by the widgets themselves and cannot be remapped.
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
 | MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
-| Command palette | :<command> | Type a command (listed under Commands) or pick from the list |
+| Command palette | :\<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |
 | Vim mode | h j k l  w b e  0 ^ $  gg G | Motions (normal and visual) |
@@ -241,7 +241,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:grpcmethod` | Choose the gRPC service and method |
 | `:rescan` | Read the collection from disk again |
 | `:saveexample [name]` | Save the response on screen as an example of the request |
-| `:examples` | List the request's saved examples and show one (:examples delete <name> deletes) |
+| `:examples` | List the request's saved examples and show one (:examples delete \<name> deletes) |
 | `:folder` | Edit the settings of the active request's folder (headers, auth, variables, scripts) |
 | `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |

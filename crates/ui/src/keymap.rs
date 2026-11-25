@@ -897,6 +897,12 @@ pub const SYMBOLS: &[(&str, &str)] = &[
     ("••••••", "a secret value, masked"),
 ];
 
+/// Escapes text for a Markdown table cell: `|` ends the cell and `<` starts
+/// an HTML tag (`:<command>` would show as `:`).
+fn md_text(s: &str) -> String {
+    s.replace('|', "\\|").replace('<', "\\<")
+}
+
 /// Renders KEYMAP.md from the default key map.
 pub fn keymap_markdown() -> String {
     let km = Keymap::defaults();
@@ -928,20 +934,25 @@ pub fn keymap_markdown() -> String {
             action.id(),
             cell(&conv),
             cell(&vim),
-            action.description()
+            md_text(action.description())
         ));
     }
     out.push_str("\n## Fixed keys\n\nThese are handled by the widgets themselves and cannot be remapped.\n\n| Where | Keys | What |\n|---|---|---|\n");
     for (w, k, d) in FIXED_KEYS {
-        out.push_str(&format!("| {w} | {} | {d} |\n", k.replace('|', "\\|")));
+        out.push_str(&format!(
+            "| {} | {} | {} |\n",
+            md_text(w),
+            md_text(k),
+            md_text(d)
+        ));
     }
     out.push_str("\n## Symbols\n\n| Symbol | Meaning |\n|---|---|\n");
     for (s, m) in SYMBOLS {
-        out.push_str(&format!("| {s} | {m} |\n"));
+        out.push_str(&format!("| {} | {} |\n", md_text(s), md_text(m)));
     }
     out.push_str("\n## Commands\n\nTyped in the command palette (`Ctrl+P`, or `:` in vim normal mode).\n\n| Command | What |\n|---|---|\n");
     for (c, d) in crate::overlay::COMMANDS {
-        out.push_str(&format!("| `{c}` | {d} |\n"));
+        out.push_str(&format!("| `{c}` | {} |\n", md_text(d)));
     }
     out.push_str("\n## Customizing\n\nOverride any action in `~/.config/sendito/config.toml` or `<collection>/.sendito/config.toml`.\nSections are `[keymap.all]`, `[keymap.conventional]` and `[keymap.vim]`; values are a key or a list of keys.\n\n```toml\n[keymap.all]\nsend = [\"f9\", \"ctrl+w e\"]\n\n[keymap.vim]\ntree_delete = \"D\"\n```\n");
     out
