@@ -310,8 +310,11 @@ pub enum AppMsg {
         /// The scope, its errors and the names whose value did not load.
         result: Box<(Scope, Vec<String>, Vec<String>)>,
         then: ScopeThen,
-        /// "Send anyway" was chosen in the "Secrets not loaded" dialog.
+        /// "Send anyway" was chosen in the "Secrets not loaded" or
+        /// "Functions not resolved" dialog.
         secrets_ok: bool,
+        /// The unresolved names the user accepted before the values loaded.
+        accepted: Vec<String>,
     },
 }
 
@@ -468,6 +471,8 @@ pub struct App {
     /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
     /// send only.
     secrets_ok: bool,
+    /// The stamp of the Lua catalog files and when `tick` last read it.
+    lua_stamp: (u64, Instant),
     /// Credentials typed as plain text show as typed although Hide plain
     /// secrets is on (`Ctrl+W *`).
     pub reveal_secrets: bool,
@@ -544,6 +549,10 @@ impl App {
             .map(|(k, v)| (k.clone(), VarValue::plain(v.clone())))
             .collect();
         let names = runner::names_scope(&project.envs, active_env.as_deref(), &runtime);
+        let lua_stamp = (
+            sendito_store::lua_lib::stamp(&project.envs.lua_dirs),
+            Instant::now(),
+        );
         let (tx, rx) = mpsc::unbounded_channel();
         let icons = crate::icons::Icons::by_name(&project.config.ui.icons);
         let mut app = App {
@@ -605,6 +614,7 @@ impl App {
             size: (80, 24),
             parked_env: None,
             secrets_ok: false,
+            lua_stamp,
             reveal_secrets: false,
             parked_records: None,
             parked_keymap: None,
@@ -766,6 +776,9 @@ impl App {
                 self.status = None;
             }
         }
+        if self.reload_lua_catalog() {
+            return true;
+        }
         // Skip missed intervals while a request is running. Each watched tab
         // can continue in the background; dialogs pause automatic sends.
         let now = Instant::now();
@@ -821,6 +834,27 @@ impl App {
             changed = true;
         }
         changed
+    }
+
+    /// Reloads the Lua catalog of the names scope when a catalog file was
+    /// added, removed or written. It looks at most every 2 seconds. Returns
+    /// whether it reloaded.
+    fn reload_lua_catalog(&mut self) -> bool {
+        if self.lua_stamp.1.elapsed() < Duration::from_secs(2) {
+            return false;
+        }
+        let stamp = sendito_store::lua_lib::stamp(&self.project.envs.lua_dirs);
+        let old = std::mem::replace(&mut self.lua_stamp, (stamp, Instant::now())).0;
+        if stamp == old {
+            return false;
+        }
+        let (catalog, errors) = runner::catalog(&self.project.envs);
+        self.names.set_catalog(catalog);
+        match errors.first() {
+            Some(e) => self.set_status(format!("Lua catalog: {e}"), StatusKind::Warn),
+            None => self.set_status("Lua catalog reloaded", StatusKind::Info),
+        }
+        true
     }
 
     /// Starts or stops re-sending the active request every `secs` seconds

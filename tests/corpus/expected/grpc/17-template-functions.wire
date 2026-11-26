@@ -4,6 +4,6 @@ metadata received:
   content-type: application/grpc
   user-agent: sendito/0.3.0 tonic/0.14.9
 messages received: 1
-  json: {"data":"G04oui+hEdKIPwAW08ykJw==","i64":"1704153600","text":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}
-  protobuf (base64): CkBiYTc4MTZiZjhmMDFjZmVhNDE0MTQwZGU1ZGFlMjIyM2IwMDM2MWEzOTYxNzdhOWNiNDEwZmY2MWYyMDAxNWFkGICkzawGehAbTii6L6ER0og/ABbTzKQn
+  json: {"data":"G04oui+hEdKIPwAW08ykJw==","i64":"1704153600","name":"order-00042","text":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}
+  protobuf (base64): CkBiYTc4MTZiZjhmMDFjZmVhNDE0MTQwZGU1ZGFlMjIyM2IwMDM2MWEzOTYxNzdhOWNiNDEwZmY2MWYyMDAxNWFkGICkzawGehAbTii6L6ER0og/ABbTzKQnsgELb3JkZXItMDAwNDI=
 client: 1 response message(s), status OK (0)

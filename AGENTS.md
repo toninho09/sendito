@@ -146,6 +146,9 @@ one. Do not run a check after each edit.
 3. When the change is ready, run `make fmt` and `make ci`. On a warm build the
    gate takes about a minute; a cold one takes longer, so allow the timeout.
 4. Regenerate whatever your change made stale (next table) and read its diff.
+5. In the final report, suggest the improvements that you found and that no
+   document lists, above all the ones that make a future implementation or a
+   refactor easier. Do not add them to the change: the owner decides.
 
 ## Generated files
 

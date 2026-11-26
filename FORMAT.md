@@ -12,6 +12,7 @@ my-api/
 │   ├── environments/
 │   │   ├── local.toml            # selectable environments (versioned)
 │   │   └── staging.toml
+│   ├── lua/                      # Lua function catalog, *.lua (versioned)
 │   ├── secrets.toml              # local secret values      (gitignored)
 │   ├── cookies.toml              # per-environment cookie jar (gitignored)
 │   ├── cookies.lock              # cookie jar lock (gitignored)
@@ -149,9 +150,21 @@ A random function gives one value per call text for the whole send: two
 a length is at most 1 MiB.
 
 An unknown function, a wrong number of arguments, an unresolved argument or a
-bad value (`$uuidBytes('abc')`) leaves the placeholder unresolved. The value of
+bad value (`$uuidBytes('abc')`) leaves the placeholder unresolved. The
+confirmation before a send and the refusal of `sendito run` give the reason
+after the placeholder, for example `{{ $uuidBytes('abc') }} ("abc" is not a
+UUID)`; a secret in the reason is masked.
+
+The editor and the first check of a send know the variable names, not the
+secret values. They do not run a call with a secret argument or a Lua call:
+such a call counts as defined. After the values load, the send runs the calls
+and asks before it sends a call that fails ("Functions not resolved"), with
+the reason. The value of
 a call is a secret when an argument is a secret. Masking finds a secret as
 sent, JSON-escaped or percent-encoded, not in a base64 or hex form.
+
+`{{ $lua.name(argument, ...) }}` calls a function of your Lua catalog, with
+the same argument rules; see "Lua function catalog".
 
 ## HTTP request
 
@@ -315,6 +328,56 @@ copy first, so a variable that only a `pre` script sets is not reported. The
 editor highlights it as undefined, because the editor does not run scripts.
 The exports (`sendito curl`, `sendito http`, `:curl`, `:httpfile`) do not run
 scripts either.
+
+### Lua function catalog
+
+The `*.lua` files in `.sendito/lua/` of the collection (versioned) and in
+`lua/` next to the global `config.toml` (`~/.config/sendito/lua/`) are a
+catalog of your Lua functions. A file defines global functions; a `local`
+function stays private to its file.
+
+```lua
+-- .sendito/lua/orders.lua
+function order_id(prefix, n)
+  return string.format("%s-%05d", prefix, tonumber(n))
+end
+```
+
+The global files load first, then the collection's; each directory in name
+order. A file that loads later replaces a function with the same name, so the
+collection's function wins. A file runs when it loads: it must only define
+functions. A file that cannot be read, that has an error, or that changes a
+Sendito name (`vars`, `render`, `print`, `hash`, `base64_encode`,
+`base64_decode`, `json_parse`, `json_stringify`, `request`, `response`,
+`test`) is left out with a warning (the status line, or `warning:` on the
+command line).
+
+**In scripts**, every phase runs the catalog files before its scripts, so the
+functions are globals of the `pre` and `post` scripts and have all their
+members. An error in a catalog file stops a `pre` phase with the file named,
+for example `lua/orders.lua script:3: ...`; in a `post` phase it is a failed
+test. A request without Lua scripts does not run the catalog.
+
+**In templates**, `{{ $lua.order_id('order', 42) }}` calls the function with
+the arguments as strings and gives `order-00042`. The return value becomes text
+as in `vars.set`: a number as Lua writes it, a table as JSON. The function has
+the libraries and the functions of the scripts except these: `vars.get`,
+`vars.has` and `render` read the variables, `print` writes nothing, and
+`vars.set`, `vars.set_secret`, `request`, `response` and `test` do not exist.
+A `render` that leaves a placeholder unresolved is an error.
+
+- `nil`, an error or an unknown function leaves the placeholder unresolved.
+- The value is a secret when an argument is a secret or when the function read
+  a secret with `vars.get` or `render`.
+- A call gives one value per call text for the whole send, as a random
+  function does (`math.random` exists).
+- The calls of one send share one Lua state: the catalog files run once, before
+  `vars` exists, and a global that a function sets is visible to the next call
+  of the same send. Each call starts a new instruction budget.
+- The editor shows a function that the catalog does not define as undefined.
+  It does not run the function (see "Functions"). It reads the catalog again
+  at most 2 seconds after a file in a catalog directory changes, and the status
+  line says "Lua catalog reloaded" or names the file that failed.
 
 ### What goes on the wire
 

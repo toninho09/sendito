@@ -71,10 +71,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
     if !un.is_empty() && !allow_unresolved {
         eprintln!(
             "sendito: unresolved variables: {} (define them in the environment or pass --allow-unresolved)",
-            un.iter()
-                .map(|u| format!("{{{{{u}}}}}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            runner::unresolved_list(&un, &scope)
         );
         return ExitCode::from(3);
     }
@@ -523,11 +520,7 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
         if !un.is_empty() && !allow_unresolved {
             nunresolved += 1;
-            let names = un
-                .iter()
-                .map(|u| format!("{{{{{u}}}}}"))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let names = runner::unresolved_list(&un, &rscope);
             eprintln!("ERROR {rel}  unresolved variables: {names}");
             entries.push(serde_json::json!({
                 "path": rel,

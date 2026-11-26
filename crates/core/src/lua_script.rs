@@ -8,6 +8,7 @@
 //! stops at fixed instruction and memory limits.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use base64::Engine as _;
@@ -18,7 +19,7 @@ use mlua::{
 
 use crate::model::{Body, KeyValue, LuaScript, Request};
 use crate::script::{AssertResult, RUNTIME_LAYER, ResponseView, TIME_PHASES, digest};
-use crate::vars::{Scope, VarValue, scrub};
+use crate::vars::{Rendered, Scope, VarValue, scrub};
 
 /// Lua instructions one script may run before it stops.
 const MAX_INSTRUCTIONS: u64 = 10_000_000;
@@ -71,12 +72,13 @@ pub fn run_lua_pre(
     if scripts.iter().all(|s| s.code.trim().is_empty()) {
         return Ok(LuaOut::default());
     }
+    let catalog = scope.catalog().clone();
     let shared = share(scope, Some(req.clone()));
     let failed = match state(&shared) {
         Ok((lua, budget)) => {
             let request = lua.create_userdata(Req(shared.clone()));
             match request.and_then(|r| lua.globals().set("request", r)) {
-                Ok(()) => run_all(&lua, &budget, scripts).err(),
+                Ok(()) => run_all(&lua, &budget, catalog.files.iter().chain(scripts)).err(),
                 Err(e) => Some(format!("Lua setup: {e}")),
             }
         }
@@ -98,6 +100,7 @@ pub fn run_lua_post(scripts: &[LuaScript], resp: &ResponseView<'_>, scope: &mut 
     if scripts.iter().all(|s| s.code.trim().is_empty()) {
         return LuaOut::default();
     }
+    let catalog = scope.catalog().clone();
     let shared = share(scope, None);
     let setup = state(&shared).and_then(|(lua, budget)| {
         let sh = shared.clone();
@@ -125,7 +128,8 @@ pub fn run_lua_post(scripts: &[LuaScript], resp: &ResponseView<'_>, scope: &mut 
     });
     match setup {
         Ok((lua, budget)) => {
-            for s in scripts.iter().filter(|s| !s.code.trim().is_empty()) {
+            let all = catalog.files.iter().chain(scripts);
+            for s in all.filter(|s| !s.code.trim().is_empty()) {
                 if let Err(e) = run_one(&lua, &budget, s) {
                     shared.borrow_mut().out.tests.push(AssertResult {
                         label: format!("{} script", origin(s)),
@@ -149,8 +153,12 @@ pub fn run_lua_post(scripts: &[LuaScript], resp: &ResponseView<'_>, scope: &mut 
     out
 }
 
-fn run_all(lua: &Lua, budget: &Rc<Cell<u64>>, scripts: &[LuaScript]) -> Result<(), String> {
-    for s in scripts.iter().filter(|s| !s.code.trim().is_empty()) {
+fn run_all<'a>(
+    lua: &Lua,
+    budget: &Rc<Cell<u64>>,
+    scripts: impl Iterator<Item = &'a LuaScript>,
+) -> Result<(), String> {
+    for s in scripts.filter(|s| !s.code.trim().is_empty()) {
         run_one(lua, budget, s)?;
     }
     Ok(())
@@ -165,6 +173,196 @@ fn run_one(lua: &Lua, budget: &Rc<Cell<u64>>, s: &LuaScript) -> Result<(), Strin
         .set_name(format!("={name}"))
         .exec()
         .map_err(|e| error_text(&name, &e))
+}
+
+/// The global names Sendito gives to scripts. A catalog file must not change
+/// them.
+const SENDITO_NAMES: [&str; 11] = [
+    "vars",
+    "render",
+    "print",
+    "hash",
+    "base64_encode",
+    "base64_decode",
+    "json_parse",
+    "json_stringify",
+    "request",
+    "response",
+    "test",
+];
+
+/// The user's Lua functions: the `*.lua` files of the global config folder
+/// and of `.sendito/lua/`. Every script phase runs the files first; a
+/// template calls a function as `{{ $lua.name(args) }}`.
+#[derive(Debug, Clone, Default)]
+pub struct LuaCatalog {
+    files: Vec<LuaScript>,
+    /// The global functions the files define, sorted.
+    names: Vec<String>,
+}
+
+impl LuaCatalog {
+    /// Runs `files` in order and keeps the ones that load. A file that fails
+    /// or changes a Sendito name is left out, with a message that names it.
+    pub fn new(files: Vec<LuaScript>) -> (Self, Vec<String>) {
+        let mut catalog = Self::default();
+        let mut errors = Vec::new();
+        if files.is_empty() {
+            return (catalog, errors);
+        }
+        let shared = share(&mut Scope::new(), None);
+        let (lua, budget) = match state(&shared) {
+            Ok(s) => s,
+            Err(e) => return (catalog, vec![format!("Lua setup: {e}")]),
+        };
+        for f in files {
+            match load_file(&lua, &budget, &f) {
+                Ok(names) => {
+                    catalog.names.extend(names);
+                    catalog.files.push(f);
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+        catalog.names.sort_unstable();
+        catalog.names.dedup();
+        (catalog, errors)
+    }
+
+    /// `true` when a catalog file defines the global function `name`.
+    pub fn has(&self, name: &str) -> bool {
+        self.names
+            .binary_search_by(|n| n.as_str().cmp(name))
+            .is_ok()
+    }
+}
+
+/// Runs one catalog file and returns the global functions it adds.
+fn load_file(lua: &Lua, budget: &Rc<Cell<u64>>, f: &LuaScript) -> Result<Vec<String>, String> {
+    let globals = || -> Result<HashMap<String, Value>, String> {
+        lua.globals()
+            .pairs::<String, Value>()
+            .collect::<LuaResult<_>>()
+            .map_err(|e| e.to_string())
+    };
+    let before = globals()?;
+    run_one(lua, budget, f)?;
+    let after = globals()?;
+    if let Some(n) = SENDITO_NAMES
+        .iter()
+        .find(|n| before.get(**n) != after.get(**n))
+    {
+        return Err(format!(
+            "{} script: it changes the Sendito name `{n}`",
+            origin(f)
+        ));
+    }
+    Ok(after
+        .into_iter()
+        .filter(|(k, v)| matches!(v, Value::Function(_)) && !before.contains_key(k))
+        .map(|(k, _)| k)
+        .collect())
+}
+
+/// A Lua state and the instruction budget of its running script.
+type Budgeted = (Lua, Rc<Cell<u64>>);
+
+thread_local! {
+    /// The Lua state of the template calls of one scope (one send), with the
+    /// catalog files loaded, by scope id.
+    static TEMPLATE_STATE: RefCell<Option<(u64, Budgeted)>> = const { RefCell::new(None) };
+}
+
+/// Calls the catalog function `name` for a template and returns its text and
+/// whether it read a secret. The calls of one scope share one Lua state, so
+/// the catalog files run once per send. The function can read variables
+/// (`vars.get`, `vars.has`, `render`) one level below `depth`; a `render`
+/// that leaves a placeholder unresolved is an error. `print` writes nothing.
+/// An error message has the secrets that the function read masked.
+pub(crate) fn call_catalog(
+    scope: &Scope,
+    name: &str,
+    args: &[String],
+    depth: usize,
+) -> Result<(String, bool), String> {
+    let kept = TEMPLATE_STATE
+        .with_borrow_mut(Option::take)
+        .filter(|(id, ..)| *id == scope.id());
+    let (lua, budget) = match kept {
+        Some((_, state)) => state,
+        None => template_state(scope)?,
+    };
+    let read = RefCell::new(Vec::new());
+    let result = call_in(&lua, &budget, scope, name, args, depth, &read);
+    // A nested call took the state out and put its own back; this one replaces it.
+    TEMPLATE_STATE.with_borrow_mut(|s| *s = Some((scope.id(), (lua, budget))));
+    let read = read.into_inner();
+    match result {
+        Ok(text) => Ok((text, !read.is_empty())),
+        Err(e) => Err(scrub(&error_text(&format!("$lua.{name}"), &e), &read)),
+    }
+}
+
+/// The state of the template calls: the sandbox, a `print` that writes
+/// nothing, and the catalog files, which run before `vars` exists.
+fn template_state(scope: &Scope) -> Result<Budgeted, String> {
+    let setup = || -> LuaResult<_> {
+        let (lua, budget) = sandbox()?;
+        lua.globals().set(
+            "print",
+            lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+        )?;
+        Ok((lua, budget))
+    };
+    let (lua, budget) = setup().map_err(|e| format!("Lua setup: {e}"))?;
+    run_all(&lua, &budget, scope.catalog().files.iter())?;
+    Ok((lua, budget))
+}
+
+/// One template call in `lua`, with `vars` and `render` bound to `scope` for
+/// this call only. `read` gets the text of every secret value the function reads.
+fn call_in(
+    lua: &Lua,
+    budget: &Rc<Cell<u64>>,
+    scope: &Scope,
+    name: &str,
+    args: &[String],
+    depth: usize,
+    read: &RefCell<Vec<String>>,
+) -> LuaResult<String> {
+    let seen = |r: Rendered| {
+        if r.secret {
+            read.borrow_mut().push(r.text.clone());
+        }
+        r.text
+    };
+    lua.scope(|s| {
+        let g = lua.globals();
+        let vars = lua.create_table()?;
+        vars.set(
+            "get",
+            s.create_function(|_, n: String| Ok(scope.lookup_at(n.trim(), depth + 1).map(seen)))?,
+        )?;
+        vars.set(
+            "has",
+            s.create_function(|_, n: String| Ok(scope.is_defined(n.trim())))?,
+        )?;
+        g.set("vars", vars)?;
+        g.set(
+            "render",
+            s.create_function(|_, t: String| {
+                let r = scope.render_at(&t, depth + 1);
+                match r.unresolved.first() {
+                    Some(u) => Err(fail(format!("render: {{{{{u}}}}} is not resolved"))),
+                    None => Ok(seen(r)),
+                }
+            })?,
+        )?;
+        budget.set(0);
+        let f: mlua::Function = g.get(name)?;
+        let v: Value = f.call(mlua::Variadic::from_iter(args.iter().cloned()))?;
+        text(lua, v)
+    })
 }
 
 /// Moves the scope into the shared state for the run.
@@ -256,9 +454,9 @@ fn json_text(lua: &Lua, v: Value) -> LuaResult<String> {
     serde_json::to_string(&json).map_err(|e| fail(e.to_string()))
 }
 
-/// The Lua state with the sandbox, the limits and the common functions. The
-/// returned counter is the instruction budget of the running script.
-fn state(shared: &Shared) -> LuaResult<(Lua, Rc<Cell<u64>>)> {
+/// The Lua state with the sandbox, the limits and the functions that need no
+/// scope. The returned counter is the instruction budget of the running script.
+fn sandbox() -> LuaResult<Budgeted> {
     let lua = Lua::new_with(
         StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::UTF8,
         LuaOptions::new(),
@@ -285,6 +483,47 @@ fn state(shared: &Shared) -> LuaResult<(Lua, Rc<Cell<u64>>)> {
     let string: mlua::Table = g.get("string")?;
     string.set("dump", Value::Nil)?;
 
+    g.set(
+        "hash",
+        lua.create_function(|_, (algo, value): (String, mlua::String)| {
+            digest(algo.trim(), &value.as_bytes()).map_err(fail)
+        })?,
+    )?;
+    g.set(
+        "base64_encode",
+        lua.create_function(|_, value: mlua::String| {
+            Ok(base64::engine::general_purpose::STANDARD.encode(value.as_bytes()))
+        })?,
+    )?;
+    g.set(
+        "base64_decode",
+        lua.create_function(|lua, value: String| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(value.trim())
+                .map_err(|e| fail(format!("base64_decode: {e}")))?;
+            lua.create_string(bytes)
+        })?,
+    )?;
+    g.set(
+        "json_parse",
+        lua.create_function(|lua, value: String| {
+            let json: serde_json::Value =
+                serde_json::from_str(&value).map_err(|e| fail(format!("json_parse: {e}")))?;
+            json_value(lua, &json)
+        })?,
+    )?;
+    g.set(
+        "json_stringify",
+        lua.create_function(|lua, value: Value| json_text(lua, value))?,
+    )?;
+    Ok((lua, budget))
+}
+
+/// The state of the scripts: the sandbox, plus `print`, `vars` and `render`
+/// on the shared scope.
+fn state(shared: &Shared) -> LuaResult<Budgeted> {
+    let (lua, budget) = sandbox()?;
+    let g = lua.globals();
     let sh = shared.clone();
     let print = lua.create_function(move |lua, args: mlua::MultiValue| {
         let mut parts = Vec::new();
@@ -338,39 +577,6 @@ fn state(shared: &Shared) -> LuaResult<(Lua, Rc<Cell<u64>>)> {
         lua.create_function(move |_, template: String| {
             Ok(sh.borrow().scope.render(&template).text)
         })?,
-    )?;
-    g.set(
-        "hash",
-        lua.create_function(|_, (algo, value): (String, mlua::String)| {
-            digest(algo.trim(), &value.as_bytes()).map_err(fail)
-        })?,
-    )?;
-    g.set(
-        "base64_encode",
-        lua.create_function(|_, value: mlua::String| {
-            Ok(base64::engine::general_purpose::STANDARD.encode(value.as_bytes()))
-        })?,
-    )?;
-    g.set(
-        "base64_decode",
-        lua.create_function(|lua, value: String| {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(value.trim())
-                .map_err(|e| fail(format!("base64_decode: {e}")))?;
-            lua.create_string(bytes)
-        })?,
-    )?;
-    g.set(
-        "json_parse",
-        lua.create_function(|lua, value: String| {
-            let json: serde_json::Value =
-                serde_json::from_str(&value).map_err(|e| fail(format!("json_parse: {e}")))?;
-            json_value(lua, &json)
-        })?,
-    )?;
-    g.set(
-        "json_stringify",
-        lua.create_function(|lua, value: Value| json_text(lua, value))?,
     )?;
     Ok((lua, budget))
 }
@@ -974,5 +1180,72 @@ mod tests {
         assert!(!out.tests[0].pass);
         assert!(run_lua_pre(&own("local s = response.status"), &mut http(), &mut s).is_err());
         assert!(run_lua_pre(&own("test('a', true)"), &mut http(), &mut s).is_err());
+    }
+
+    fn catalog(code: &str) -> LuaCatalog {
+        let (c, errors) = LuaCatalog::new(vec![LuaScript {
+            origin: "lua/util.lua".into(),
+            code: code.into(),
+        }]);
+        assert!(errors.is_empty(), "{errors:?}");
+        c
+    }
+
+    #[test]
+    fn catalog_runs_before_the_scripts_of_both_phases() {
+        let mut s = scope();
+        s.set_catalog(std::sync::Arc::new(catalog(
+            "function shout(t) return t:upper() end\nlocal function hidden() end",
+        )));
+        let mut req = http();
+        run_lua_pre(
+            &own(r#"vars.set("a", shout("x")) vars.set("r", render("{{ $lua.shout(host) }}"))"#),
+            &mut req,
+            &mut s,
+        )
+        .unwrap();
+        assert_eq!(s.lookup("a").unwrap().text, "X");
+        assert_eq!(s.lookup("r").unwrap().text, "EXAMPLE.COM");
+        let body = b"{}";
+        let resp = ResponseView {
+            status: 200,
+            headers: &[],
+            body,
+            timing: &[],
+        };
+        let out = run_lua_post(&own(r#"test("t", shout("y") == "Y")"#), &resp, &mut s);
+        assert!(out.tests.iter().all(|t| t.pass), "{:?}", out.tests);
+        assert!(s.catalog().has("shout"));
+        assert!(!s.catalog().has("hidden"));
+        assert!(!s.catalog().has("pairs"));
+        // No script: the catalog does not run.
+        assert_eq!(run_lua_pre(&[], &mut req, &mut s), Ok(LuaOut::default()));
+    }
+
+    #[test]
+    fn catalog_files_that_fail_are_left_out() {
+        let file = |name: &str, code: &str| LuaScript {
+            origin: format!("lua/{name}"),
+            code: code.into(),
+        };
+        let (c, errors) = LuaCatalog::new(vec![
+            file("a.lua", "function a() return 1 end"),
+            file("bad.lua", "function b("),
+            file("hash.lua", "function hash() return 1 end"),
+            file("c.lua", "function c() return a() end"),
+        ]);
+        assert!(c.has("a") && c.has("c") && !c.has("b") && !c.has("hash"));
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].starts_with("lua/bad.lua script:"), "{errors:?}");
+        assert!(errors[1].contains("`hash`"), "{errors:?}");
+        // A pre script names the catalog file that fails at run time.
+        let (c, _) = LuaCatalog::new(vec![file(
+            "env.lua",
+            "if request then error('no request') end",
+        )]);
+        let mut s = scope();
+        s.set_catalog(std::sync::Arc::new(c));
+        let e = run_lua_pre(&own("vars.set('a', 1)"), &mut http(), &mut s).unwrap_err();
+        assert!(e.starts_with("lua/env.lua script:1:"), "{e}");
     }
 }

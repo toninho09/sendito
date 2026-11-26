@@ -143,22 +143,26 @@ impl App {
                 result,
                 then,
                 secrets_ok,
+                accepted,
             } => {
                 let (scope, errors, failed) = *result;
-                // A secret that did not load (no keychain entry, no
-                // secrets.toml value) passed the names check: check the
-                // loaded values before `{{name}}` (or a lower layer's value)
-                // goes out. "Send anyway" for undefined names does not cover it.
-                if !secrets_ok && !failed.is_empty() {
+                // Check the loaded values before `{{name}}` (or a lower
+                // layer's value) goes out: a secret that did not load (no
+                // keychain entry, no secrets.toml value), or a function that
+                // the names check could not run (a secret argument, a Lua
+                // function), passed the names check. "Send anyway" for
+                // undefined names covers only the names it listed.
+                if !secrets_ok {
                     let (tab, req) = then.request();
-                    let un = runner::unresolved_send(
+                    let mut un = runner::unresolved_send(
                         &req,
                         &scope,
                         &failed,
                         &self.project.config.mcp.servers,
                     );
+                    un.retain(|u| !accepted.contains(u));
                     if !un.is_empty() {
-                        self.secrets_missing(tab, &un, &errors);
+                        self.not_resolved(tab, &un, &errors, &scope, !failed.is_empty());
                         return;
                     }
                 }

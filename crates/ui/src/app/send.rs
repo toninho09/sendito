@@ -124,8 +124,10 @@ impl App {
             );
             return;
         }
+        // The names the user accepts with "Send anyway"; the check with the
+        // loaded values does not ask about them again.
+        let un = runner::unresolved(&req, &names);
         if !confirmed {
-            let un = runner::unresolved(&req, &names);
             let empty = !sendito_core::template::empty_placeholders(
                 &sendito_store::request_file::to_toml(&req),
             )
@@ -137,11 +139,7 @@ impl App {
                     .unwrap_or_else(|| "no environment".into());
                 let mut message = String::new();
                 if !un.is_empty() {
-                    let list = un
-                        .iter()
-                        .map(|u| format!("{{{{{u}}}}}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let list = runner::unresolved_list(&un, &names);
                     message.push_str(&format!(
                         "{list} not defined in the collection variables or \"{env}\". "
                     ));
@@ -169,7 +167,7 @@ impl App {
                     sel: buttons.len() - 1,
                     buttons,
                     action: ConfirmAction::SendAnyway {
-                        missing: un.into_iter().collect(),
+                        missing: un.to_vec(),
                     },
                 }));
                 return;
@@ -241,6 +239,7 @@ impl App {
             },
         };
         let secrets_ok = std::mem::take(&mut self.secrets_ok);
+        let accepted = un;
         let task = self.rt.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
                 let mut out = runner::build_scope_checked(&envs, active.as_deref(), &runtime);
@@ -253,6 +252,7 @@ impl App {
                 result: Box::new(result),
                 then,
                 secrets_ok,
+                accepted,
             });
         });
         let tab = &mut self.tabs[self.active];
@@ -269,9 +269,18 @@ impl App {
         }
     }
 
-    /// Stops a send whose secrets did not load, and asks before sending
-    /// the placeholders as typed (a watch stops: it would repeat this).
-    pub(super) fn secrets_missing(&mut self, tab: u64, un: &[String], errors: &[String]) {
+    /// Stops a send that the loaded values leave unresolved, and asks before
+    /// sending the placeholders as typed (a watch stops: it would repeat
+    /// this). `secrets` tells that a secret did not load; otherwise a
+    /// function failed with the loaded values.
+    pub(super) fn not_resolved(
+        &mut self,
+        tab: u64,
+        un: &[String],
+        errors: &[String],
+        scope: &Scope,
+        secrets: bool,
+    ) {
         let active = self.tab().is_some_and(|t| t.id == tab);
         if let Some(t) = self.tab_by_id(tab) {
             t.running = None;
@@ -283,11 +292,7 @@ impl App {
                 t.response = None;
             }
         }
-        let list = un
-            .iter()
-            .map(|u| format!("{{{{{u}}}}}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let list = runner::unresolved_list(un, scope);
         // Another tab, or a dialog the user is working in (which must not
         // be replaced): the status line says it instead.
         if !active || self.overlay.is_some() {
@@ -297,14 +302,28 @@ impl App {
             );
             return;
         }
+        let (title, message) = if secrets {
+            (
+                "Secrets not loaded",
+                format!(
+                    "{list}: a secret did not load, or the environment file cannot be read so \
+                     its values cannot be checked ({}). Send anyway sends the request as it \
+                     resolves now: as typed, braces included, or with a value from another layer.",
+                    errors.join("; ")
+                ),
+            )
+        } else {
+            (
+                "Functions not resolved",
+                format!(
+                    "{list}: a function does not resolve with the loaded values. Send anyway \
+                     sends it as typed, braces included."
+                ),
+            )
+        };
         self.overlay = Some(Overlay::Confirm(Confirm {
-            title: "Secrets not loaded".into(),
-            message: format!(
-                "{list}: a secret did not load, or the environment file cannot be read so \
-                 its values cannot be checked ({}). Send anyway sends the request as it \
-                 resolves now: as typed, braces included, or with a value from another layer.",
-                errors.join("; ")
-            ),
+            title: title.into(),
+            message,
             buttons: vec!["Send anyway".into(), "Cancel".into()],
             sel: 1,
             action: ConfirmAction::SendMissingSecrets,

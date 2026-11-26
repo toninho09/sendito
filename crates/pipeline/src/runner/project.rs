@@ -81,11 +81,9 @@ impl Project {
                 .unwrap_or_else(|| "collection".into())
         });
         self.coll = Collection::new(&root, self.config.collection.ignore.clone());
-        self.envs = Arc::new(Envs::new(
-            &root,
-            self.name.clone(),
-            self.envs.keychain.clone(),
-        ));
+        let mut envs = Envs::new(&root, self.name.clone(), self.envs.keychain.clone());
+        envs.lua_dirs = sendito_store::lua_lib::dirs(self.global_config.as_deref(), &root);
+        self.envs = Arc::new(envs);
         problems
     }
 

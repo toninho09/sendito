@@ -9,8 +9,11 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::funcs::{self, Arg, Call};
+use crate::lua_script::{self, LuaCatalog};
 use crate::template::{self, Segment};
 
 pub const MAX_DEPTH: usize = 8;
@@ -65,23 +68,47 @@ pub struct Rendered {
     pub unresolved: Vec<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Scope {
+    /// A number for each new scope; a clone keeps it. The Lua state of the
+    /// template calls is kept for one id (one send).
+    id: u64,
     layers: Vec<Layer>,
     /// Dynamic values (`$uuid`, ...) generated once per scope so a request and its
     /// history entry agree.
     dynamic: RefCell<HashMap<String, String>>,
-    /// The results of random function calls, by call text, so every render
-    /// of one send gives the same value.
+    /// The results of random and Lua function calls, by call text, so every
+    /// render of one send gives the same value.
     kept: RefCell<HashMap<String, Rendered>>,
+    /// The user's Lua functions.
+    catalog: Arc<LuaCatalog>,
+    /// The secret values are empty stand-ins (see [`Self::set_names_only`]).
+    names_only: bool,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            layers: Vec::new(),
+            dynamic: RefCell::default(),
+            kept: RefCell::default(),
+            catalog: Arc::default(),
+            names_only: false,
+        }
+    }
 }
 
 impl Clone for Scope {
     fn clone(&self) -> Self {
         Self {
+            id: self.id,
             layers: self.layers.clone(),
             dynamic: RefCell::new(self.dynamic.borrow().clone()),
             kept: RefCell::new(self.kept.borrow().clone()),
+            catalog: self.catalog.clone(),
+            names_only: self.names_only,
         }
     }
 }
@@ -115,6 +142,32 @@ impl Scope {
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    pub fn set_catalog(&mut self, catalog: Arc<LuaCatalog>) {
+        self.catalog = catalog;
+    }
+
+    pub fn catalog(&self) -> &Arc<LuaCatalog> {
+        &self.catalog
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Marks a scope whose secret values are empty stand-ins, for the checks
+    /// that know the names only. A call with a secret argument and a Lua call
+    /// then do not run: they count as resolved, with an empty secret value.
+    pub fn set_names_only(&mut self) {
+        self.names_only = true;
+    }
+
+    /// Why the call `name` (a function call placeholder) does not resolve;
+    /// `None` when it resolves or is not a call. Secret values are masked.
+    pub fn call_error(&self, name: &str) -> Option<String> {
+        let c = funcs::parse(name)?;
+        self.call(&c, 0, &mut Memo::new()).err()
     }
 
     /// Inserts `layers` just below the first layer named `above` (on top
@@ -201,7 +254,11 @@ impl Scope {
             Arg::Name(n) => self.is_defined(n),
             Arg::Call(c) => self.call_defined(c),
         };
-        if !funcs::find(c.name).is_some_and(|f| f.arity == c.args.len()) {
+        let known = match c.name.strip_prefix(funcs::LUA) {
+            Some(name) => self.catalog.has(name),
+            None => funcs::find(c.name).is_some_and(|f| f.arity == c.args.len()),
+        };
+        if !known {
             return false;
         }
         match c.args.as_slice() {
@@ -213,6 +270,11 @@ impl Scope {
     /// Fully resolves one variable.
     pub fn lookup(&self, name: &str) -> Option<Rendered> {
         self.lookup_depth(name, 0, &mut Memo::new())
+    }
+
+    /// [`Self::lookup`] at `depth`, for a Lua function that a template calls.
+    pub(crate) fn lookup_at(&self, name: &str, depth: usize) -> Option<Rendered> {
+        self.lookup_depth(name, depth, &mut Memo::new())
     }
 
     fn lookup_depth(&self, name: &str, depth: usize, memo: &mut Memo) -> Option<Rendered> {
@@ -234,7 +296,7 @@ impl Scope {
             });
         }
         if let Some(c) = funcs::parse(name) {
-            return self.call(&c, depth, memo);
+            return self.call(&c, depth, memo).ok();
         }
         if let Some(rest) = name.strip_prefix('$')
             && let Some(v) = self.dynamic_value(rest)
@@ -254,51 +316,96 @@ impl Scope {
         Some(r)
     }
 
-    /// Runs a template function. An unknown function, a wrong number of
-    /// arguments, an unresolved argument or an error gives `None`. The result
-    /// is secret when an argument is. A random function keeps its first value
-    /// for each call text, as `$uuid` does.
-    fn call(&self, c: &Call, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+    /// Runs a template function: a built-in one, or `$lua.name` from the
+    /// catalog. An unknown function, a wrong number of arguments, an
+    /// unresolved argument or an error gives the reason, with the secret
+    /// values masked. The result is secret when an argument is, or when the
+    /// Lua function read a secret. A random or Lua function keeps its first
+    /// result for each call text, as `$uuid` does.
+    fn call(&self, c: &Call, depth: usize, memo: &mut Memo) -> Result<Rendered, String> {
         if let Some(r) = self.kept.borrow().get(c.text) {
-            return Some(r.clone());
+            return Ok(r.clone());
         }
-        let f = funcs::find(c.name).filter(|f| f.arity == c.args.len())?;
+        let lua = c.name.strip_prefix(funcs::LUA);
+        let builtin = match lua {
+            Some(name) if !self.catalog.has(name) => {
+                return Err(format!("the Lua catalog has no function `{name}`"));
+            }
+            Some(_) => None,
+            None => {
+                let f = funcs::find(c.name).ok_or("unknown function")?;
+                if f.arity != c.args.len() {
+                    let plural = if f.arity == 1 { "" } else { "s" };
+                    return Err(format!(
+                        "it takes {} argument{plural}, not {}",
+                        f.arity,
+                        c.args.len()
+                    ));
+                }
+                Some(f)
+            }
+        };
         if let [first, fallback] = c.args.as_slice()
             && c.name == funcs::DEFAULT
         {
             return self
                 .call_arg(first, depth, memo)
-                .or_else(|| self.call_arg(fallback, depth, memo));
+                .or_else(|_| self.call_arg(fallback, depth, memo));
         }
-        let mut secret = false;
         let mut args = Vec::with_capacity(c.args.len());
+        let mut secret_args = Vec::new();
         for a in &c.args {
             let r = self.call_arg(a, depth, memo)?;
-            secret |= r.secret;
+            if r.secret {
+                secret_args.push(r.text.clone());
+            }
             args.push(r.text);
         }
+        let secret = !secret_args.is_empty();
+        if self.names_only && (lua.is_some() || secret) {
+            return Ok(Rendered {
+                secret: true,
+                ..Default::default()
+            });
+        }
+        let result = match builtin {
+            Some(f) => (f.apply)(&args).map(|text| (text, false, f.random)),
+            None if depth >= MAX_DEPTH => Err("the calls nest too deep".into()),
+            None => lua_script::call_catalog(self, &c.name[funcs::LUA.len()..], &args, depth)
+                .map(|(text, read)| (text, read, true)),
+        };
+        // Not `secret_values`: it renders the secrets, which can run this
+        // call again. A Lua error comes masked with the secrets it read.
+        let (text, read_secret, keep) = result.map_err(|e| scrub(&e, &secret_args))?;
         let r = Rendered {
-            text: (f.apply)(&args).ok()?,
-            secret,
+            text,
+            secret: secret || read_secret,
             unresolved: vec![],
         };
-        if f.random {
+        if keep {
             self.kept.borrow_mut().insert(c.text.to_string(), r.clone());
         }
-        Some(r)
+        Ok(r)
     }
 
-    /// One argument of a call; `None` when it does not fully resolve.
-    fn call_arg(&self, a: &Arg, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+    /// One argument of a call, or why it does not fully resolve.
+    fn call_arg(&self, a: &Arg, depth: usize, memo: &mut Memo) -> Result<Rendered, String> {
         let r = match a {
             Arg::Text(t) => Rendered {
                 text: t.to_string(),
                 ..Default::default()
             },
-            Arg::Name(n) => self.lookup_depth(n, depth, memo)?,
-            Arg::Call(c) => self.call(c, depth, memo)?,
+            Arg::Name(n) => self
+                .lookup_depth(n, depth, memo)
+                .ok_or_else(|| format!("`{n}` is not defined"))?,
+            Arg::Call(c) => self
+                .call(c, depth, memo)
+                .map_err(|e| format!("{}: {e}", c.name))?,
         };
-        r.unresolved.is_empty().then_some(r)
+        match r.unresolved.first() {
+            Some(u) => Err(format!("`{u}` is not resolved")),
+            None => Ok(r),
+        }
     }
 
     fn dynamic_value(&self, name: &str) -> Option<String> {
@@ -327,6 +434,11 @@ impl Scope {
     /// Renders a template, replacing every resolvable placeholder.
     pub fn render(&self, s: &str) -> Rendered {
         self.render_depth(s, 0, &mut Memo::new())
+    }
+
+    /// [`Self::render`] at `depth`, for a Lua function that a template calls.
+    pub(crate) fn render_at(&self, s: &str, depth: usize) -> Rendered {
+        self.render_depth(s, depth, &mut Memo::new())
     }
 
     fn render_depth(&self, s: &str, depth: usize, memo: &mut Memo) -> Rendered {
@@ -709,6 +821,133 @@ mod tests {
         );
         assert_eq!(s.clone().render("{{$randomHex(16)}}").text, a);
         assert!(s.secret_values().iter().all(|v| *v != a));
+    }
+
+    #[test]
+    fn functions_from_the_lua_catalog() {
+        let (catalog, errors) = LuaCatalog::new(vec![crate::model::LuaScript {
+            origin: "lua/t.lua".into(),
+            code: r#"
+                function greet(name) return "hi " .. name end
+                function num() return 1.5 end
+                function tbl() return {b = 1, a = "x"} end
+                function none() return nil end
+                function boom() error("bad") end
+                function setter() vars.set("a", "b") return "x" end
+                function tok() return vars.get("token") end
+                function host() return render("{{host}}") .. tostring(vars.has("nope")) end
+                function again() return render("{{ $lua.again() }}") end
+                function rnd() return tostring(math.random(1, 1000000000)) end
+                function noisy() print("x") return "ok" end
+                function count() n = (n or 0) + 1 return n end
+                function leak() error("no " .. vars.get("token")) end
+                local function hidden() return 1 end
+            "#
+            .into(),
+        }]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let mut s = scope();
+        s.set_catalog(Arc::new(catalog));
+        let text = |t: &str| s.render(t).text;
+        assert_eq!(text("{{ $lua.greet(env) }}"), "hi dev");
+        assert_eq!(text("{{ $lua.greet($upper('a')) }}"), "hi A");
+        assert_eq!(text("{{$lua.num()}}"), "1.5");
+        assert_eq!(text("{{$lua.tbl()}}"), r#"{"a":"x","b":1}"#);
+        assert_eq!(text("{{$lua.host()}}"), "example.comfalse");
+        assert_eq!(text("{{$lua.noisy()}}"), "ok");
+        for t in [
+            "{{$lua.none()}}",
+            "{{$lua.boom()}}",
+            "{{$lua.setter()}}",
+            "{{$lua.again()}}",
+            "{{$lua.hidden()}}",
+            "{{$lua.nope()}}",
+            "{{$lua.greet(missing)}}",
+        ] {
+            assert_eq!(s.render(t).unresolved.len(), 1, "{t}");
+        }
+        // A secret argument or a secret that the function reads is secret.
+        for t in ["{{ $lua.greet(token) }}", "{{$lua.tok()}}"] {
+            assert!(s.render(t).secret, "{t}");
+            assert_eq!(s.render_masked(t), t);
+        }
+        assert_eq!(text("{{$lua.tok()}}"), "s3cret");
+        assert!(!s.render("{{$lua.greet('a')}}").secret);
+        // One value per call text, also in a clone.
+        let a = text("{{$lua.rnd()}}");
+        assert_eq!(text("{{$lua.rnd()}}"), a);
+        assert_eq!(s.clone().render("{{$lua.rnd()}}").text, a);
+        assert!(s.is_defined("$lua.greet(env)"));
+        assert!(!s.is_defined("$lua.greet(missing)"));
+        assert!(!s.is_defined("$lua.hidden()"));
+        assert!(!s.is_defined("$lua.nope()"));
+        // The calls of one scope share a Lua state; a new scope starts again.
+        assert_eq!(text("{{$lua.count('a')}}"), "1");
+        assert_eq!(text("{{$lua.count('b')}}"), "2");
+        let mut other = Scope::new();
+        other.set_catalog(s.catalog().clone());
+        assert_eq!(other.render("{{$lua.count('a')}}").text, "1");
+        // The reasons, with the secrets masked.
+        let why = |t: &str| s.call_error(t).unwrap_or_default();
+        assert!(
+            why("$lua.boom()").starts_with("lua/t.lua script:"),
+            "{}",
+            why("$lua.boom()")
+        );
+        assert!(why("$lua.boom()").ends_with("bad"));
+        assert_eq!(why("$lua.nope()"), "the Lua catalog has no function `nope`");
+        assert_eq!(
+            why("$lua.leak()"),
+            format!("lua/t.lua script:14: no {MASK}")
+        );
+        assert_eq!(s.call_error("$lua.greet('a')"), None);
+    }
+
+    #[test]
+    fn call_errors_give_the_reason() {
+        let s = scope();
+        let why = |t: &str| s.call_error(t).unwrap_or_default();
+        assert_eq!(why("$uuidBytes('abc')"), r#""abc" is not a UUID"#);
+        assert_eq!(
+            why("$uuidBytes(token)"),
+            format!(r#""{MASK}" is not a UUID"#)
+        );
+        assert_eq!(why("$nope('a')"), "unknown function");
+        assert_eq!(why("$upper()"), "it takes 1 argument, not 0");
+        assert_eq!(why("$hmacSha256('a')"), "it takes 2 arguments, not 1");
+        assert_eq!(why("$upper(missing)"), "`missing` is not defined");
+        assert_eq!(
+            why("$hexBytes($sha256(missing))"),
+            "$sha256: `missing` is not defined"
+        );
+        assert_eq!(s.call_error("$upper('a')"), None);
+        assert_eq!(s.call_error("token"), None);
+    }
+
+    #[test]
+    fn a_names_only_scope_does_not_run_secret_or_lua_calls() {
+        let (catalog, _) = LuaCatalog::new(vec![crate::model::LuaScript {
+            origin: "lua/t.lua".into(),
+            code: "function boom() error('bad') end".into(),
+        }]);
+        let mut s = Scope::new().with_layer(
+            "env",
+            BTreeMap::from([("token".to_string(), VarValue::secret(""))]),
+        );
+        s.set_catalog(Arc::new(catalog));
+        s.set_names_only();
+        for t in ["{{ $uuidBytes(token) }}", "{{ $lua.boom() }}"] {
+            let r = s.render(t);
+            assert!(r.unresolved.is_empty() && r.secret, "{t}");
+            assert_eq!(s.render_masked(t), t);
+        }
+        for t in [
+            "{{ $uuidBytes('abc') }}",
+            "{{ $lua.nope() }}",
+            "{{ $upper(x) }}",
+        ] {
+            assert_eq!(s.render(t).unresolved.len(), 1, "{t}");
+        }
     }
 
     #[test]

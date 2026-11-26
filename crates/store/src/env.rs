@@ -255,6 +255,9 @@ pub struct Envs {
     pub root: PathBuf,
     pub collection_name: String,
     pub keychain: Arc<dyn Keychain>,
+    /// The directories of the Lua function catalog, in load order (see
+    /// [`crate::lua_lib::dirs`]); the collection's only by default.
+    pub lua_dirs: Vec<(&'static str, PathBuf)>,
 }
 
 /// Outcome of resolving the variables of one environment.
@@ -271,8 +274,10 @@ impl Envs {
         collection_name: impl Into<String>,
         keychain: Arc<dyn Keychain>,
     ) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
+            lua_dirs: crate::lua_lib::dirs(None, &root),
+            root,
             collection_name: collection_name.into(),
             keychain,
         }

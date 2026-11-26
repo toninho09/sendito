@@ -556,7 +556,10 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   not set stays unresolved.
 * **Unresolved placeholders** are red in the editor and named in the status line.
   Sending asks for confirmation; `sendito run` refuses unless
-  `--allow-unresolved` is given. A secret that did not load (no keychain entry,
+  `--allow-unresolved` is given. A function call that fails shows the reason
+  after the placeholder, for example `("abc" is not a UUID)`. A Lua call, or a
+  call with a secret argument, runs only when the values load: if it fails, the
+  send stops and asks ("Functions not resolved"). A secret that did not load (no keychain entry,
   no `secrets.toml` value) counts as unresolved: the send stops and asks, and
   a watch stops. An active-environment secret that did not load never falls
   back to the collection's value for the same name, and while the active
@@ -667,6 +670,19 @@ switches between them; an empty script shows "(empty)".
   reach files, the network or processes, and stop at fixed instruction and
   memory limits. An error in a pre script stops the send; an error in a post
   script is a failed test.
+* **Lua function catalog** — the `*.lua` files in `.sendito/lua/` (versioned
+  with the collection) and in `~/.config/sendito/lua/` (yours only) define
+  global functions once for the whole collection
+  ([FORMAT.md](../FORMAT.md#lua-function-catalog)). Every pre and post script
+  can call them, and a template calls them as `{{ $lua.order_id('order', 42) }}`.
+  In a template the function reads variables (`vars.get`, `vars.has`,
+  `render`) but cannot set them or change the request. The value is a secret
+  when an argument or a value the function read is a secret, and it stays the
+  same for the whole send. The calls of one send share one Lua state, so the
+  catalog loads once per send. The collection's file wins over a global
+  function with the same name; a file with an error is left out with a
+  warning. The editor reads the catalog again within 2 seconds after a file
+  changes.
 * Results appear in the **Results** tab (gRPC: **Log**): assertions and tests,
   the variables set, and the script output. They decide the exit code of
   `sendito run` (`1` when an assertion or a test fails, `2` when a pre script

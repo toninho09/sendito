@@ -145,6 +145,8 @@ milliseconds, {{$isoTimestamp}} RFC 3339 UTC, {{$randomInt}} 0-1000.
 Template functions {{ $name(argument) }} take a 'literal', a variable or a
 call: $uuidBytes gives the 16 bytes of a UUID as base64 (a protobuf bytes
 field in JSON), $sha256 the lowercase hex digest; FORMAT.md lists the others.
+{{ $lua.name(argument) }} calls a Lua function of the collection's
+.sendito/lua/ catalog (FORMAT.md, "Lua function catalog").
 
 {{name}} placeholders take their value from environment/corpus.toml, then
 environment/collection.toml. Variables whose source is "local", "keychain" or "file"

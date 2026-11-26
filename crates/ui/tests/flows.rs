@@ -3842,3 +3842,27 @@ fn flow_import_preview_and_completion() {
         h.screen()
     );
 }
+
+/// A Lua function that fails with the loaded values stops the send with the
+/// reason; the names check counts it as defined.
+#[test]
+fn flow_lua_function_that_fails_asks_before_sending() {
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/lua/util.lua",
+            "function boom() error('no order') end\n",
+        );
+        common::write(
+            d,
+            "boom.toml",
+            "kind = \"http\"\nmethod = \"GET\"\nurl = \"http://127.0.0.1:9/{{ $lua.boom() }}\"\n",
+        );
+    });
+    open(&mut h, "boom");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    h.key("f5");
+    let sc = h.wait_for("Functions not resolved", 10);
+    assert!(sc.contains("no order"), "{sc}");
+}

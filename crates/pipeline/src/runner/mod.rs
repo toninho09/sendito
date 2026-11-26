@@ -243,6 +243,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_send_check_keeps_the_lua_catalog_and_gives_the_reason() {
+        let (catalog, _) = lua_script::LuaCatalog::new(vec![LuaScript {
+            origin: "lua/t.lua".into(),
+            code: "function ok() return 'x' end function boom() error('bad') end".into(),
+        }]);
+        let mut scope = Scope::new().with_layer(COLLECTION_ENV, BTreeMap::new());
+        scope.set_catalog(Arc::new(catalog));
+        let req = Request::Http(HttpRequest {
+            url: "https://h/{{ $lua.ok() }}/{{ $lua.boom() }}".into(),
+            ..Default::default()
+        });
+        // `without` (a failed name) rebuilds the scope: the catalog stays.
+        let un = unresolved_loaded(&req, &scope, &["other".into()]);
+        assert_eq!(un, ["$lua.boom()"]);
+        let list = unresolved_list(&un, &scope);
+        assert_eq!(list, "{{$lua.boom()}} (lua/t.lua script:1: bad)");
+    }
+
+    #[test]
     fn a_failed_secret_is_unresolved_even_with_a_lower_value() {
         let req = Request::Http(HttpRequest {
             url: "https://h/{{api_key}}/{{base}}".into(),

@@ -60,6 +60,9 @@ impl Func {
 /// call.
 pub const DEFAULT: &str = "$default";
 
+/// The prefix of a call to a function of the Lua catalog: `$lua.name(...)`.
+pub const LUA: &str = "$lua.";
+
 /// Every template function. Bytes come out as standard base64: the JSON form
 /// of a protobuf `bytes` field.
 pub const FUNCS: &[Func] = &[

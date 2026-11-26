@@ -9,6 +9,7 @@ pub mod folder;
 mod fsio;
 pub mod history;
 pub mod init;
+pub mod lua_lib;
 pub mod request_file;
 pub mod session;
 pub mod themes;

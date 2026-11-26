@@ -23,6 +23,38 @@
   placeholder unresolved; the value is a secret when an argument is a secret.
 * New wire corpus case `grpc/17-template-functions`.
 
+### Lua function catalog
+
+* The `*.lua` files in `.sendito/lua/` of the collection and in
+  `~/.config/sendito/lua/` define your Lua functions once. The collection's
+  file wins over a global one with the same name.
+* Every `pre` and `post` script can call them, also in folder scripts.
+* A template calls them as `{{ $lua.order_id('order', 42) }}`. The function
+  reads variables (`vars.get`, `vars.has`, `render`) but cannot set them. The
+  value is a secret when an argument or a value it read is a secret, and it
+  stays the same for the whole send.
+* A catalog file with an error, or one that changes a Sendito name such as
+  `hash`, is left out with a warning.
+* The corpus case `grpc/17-template-functions` calls a catalog function.
+* The calls of one send share one Lua state: the catalog loads once per send.
+* The editor reads the catalog again within 2 seconds after a file changes;
+  the status line says so, or names the file that failed.
+
+### Unresolved functions
+
+* The confirmation before a send and the refusal of `sendito run` give the
+  reason of a function call that fails, for example
+  `{{ $uuidBytes('abc') }} ("abc" is not a UUID)`. A secret in the reason is
+  masked.
+* The editor and the first check of a send know the variable names, not the
+  secret values: they count a call with a secret argument, such as
+  `{{ $uuidBytes(user_id) }}`, and a Lua call as defined. After the values
+  load, the UI runs the calls and asks before it sends one that fails
+  ("Functions not resolved"), as `sendito run` refuses.
+* Tests read the Lua catalog from the global config folder only when the
+  project is opened with one, as for `config.toml`: the wire corpus does not
+  see your `~/.config/sendito/lua/`.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

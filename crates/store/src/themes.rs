@@ -103,13 +103,7 @@ pub fn discover(dirs: &[PathBuf]) -> (Vec<ThemeFile>, Vec<String>) {
     let mut by_name: BTreeMap<String, ThemeFile> = BTreeMap::new();
     let mut warnings = Vec::new();
     for dir in dirs {
-        let Ok(rd) = fs::read_dir(dir) else { continue };
-        let mut paths: Vec<PathBuf> = rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "toml") && p.is_file())
-            .collect();
-        paths.sort();
-        for p in paths {
+        for p in crate::fsio::files_with_ext(dir, "toml") {
             match fs::read_to_string(&p) {
                 Ok(text) => match parse(&text, &p) {
                     Ok(t) => {
