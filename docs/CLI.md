@@ -10,8 +10,8 @@ sendito <command> [args]             # headless
 ```
 
 `sendito PATH` opens the TUI for `PATH`. The first word is a subcommand only
-when it is one of `init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme` and
-`import`.
+when it is one of `init`, `run`, `curl`, `http`, `code`, `har`, `auth`,
+`mcp`, `theme`, `import`, `completions` and `man`.
 
 `PATH` defaults to the nearest directory above the current one that contains
 `.sendito/`, else the current directory.
@@ -69,7 +69,11 @@ Sends a request without the UI, or runs every request in a folder.
 | `--no-history` | Do not append the request to history |
 | `--no-cookies` | Do not use the collection's cookie jar for this run |
 | `--fail-fast` | Stop at the first failed or errored request (folder runs only) |
-| `--report <text\|json>` | Folder report format; `text` (default) writes lines to stderr, `json` writes the summary to stdout |
+| `--report <format>` | Folder report on stdout: `text` (default: only the stderr lines), `json`, `junit`, `tap` or `html` |
+| `--report-file <format>=<path>` | Also write a folder report to a file (`json`, `junit`, `tap`, `html`); repeat it for several formats |
+| `--retry <n>` | Send a request again up to `n` times after an error or a failed assertion; replaces each request's `[options] retry` |
+| `--repeat <n>` | Run the folder `n` times in a row with one variable scope (folder runs only; default 1) |
+| `--delay <ms>` | Wait between two requests (folder runs only; default 0) |
 
 One request: the response body goes to **stdout**, and the status, timing,
 assertion and test results go to **stderr**, with the Lua script output as
@@ -97,6 +101,37 @@ summary. **Variables a request extracts are carried forward** to the requests
 after it, so a login followed by its dependent calls runs as one command.
 
 Folder runs honour `[history]` the same way single requests do.
+
+**Retry, repeat and delay.** A request with `[options] retry`
+([FORMAT.md](../FORMAT.md#retry)) or a run with `--retry` sends a request
+again when it does not pass, after `retry_interval_ms`. A folder run prints a
+`RETRY` line for each attempt that did not pass, and the final line says
+`attempt 3/3`; the reports give `attempts`. A single request prints the
+response of the last attempt only, or of the first attempt that passes.
+`--repeat 3` runs the folder three times and names each round in the
+report (`Users/list.toml#2`); `--fail-fast` stops all rounds.
+
+### Report formats
+
+`--report` writes one report to stdout; `--report-file` writes one to a file
+and can repeat, so one run can give a JUnit file to the CI and an HTML page to
+people:
+
+```sh
+sendito run . --env ci --report-file junit=results.xml --report-file html=report.html
+```
+
+| Format | Content |
+|---|---|
+| `json` | The summary below |
+| `junit` | JUnit XML: one `<testsuite>` named after the folder, one `<testcase>` per request (`classname` is the request's folder, `name` its path), `<failure>` for a failed assertion or test, `<error>` for a request that failed or did not run |
+| `tap` | TAP version 13: one test point per request; a request that did not pass gets a YAML block with its outcome, status and problems |
+| `html` | One page with no script and no external file: a summary line and a table, with the problems below each request that did not pass |
+
+Assertion results in every format have their secrets masked. A file that
+cannot be written prints an error and makes the exit code `3`; the other
+reports are still written. A single request ignores `--report-file` and every
+`--report` except `json` for SSE and MQTT sessions, with a warning.
 
 ### SSE sessions
 
@@ -161,6 +196,7 @@ With `--report json` the summary is printed to stdout:
       "duration_ms": 87,
       "asserts": 2,
       "failed_asserts": 0,
+      "attempts": 1,
       "unresolved": false,
       "error": null
     }
@@ -168,7 +204,8 @@ With `--report json` the summary is printed to stdout:
 }
 ```
 
-`passed + failed + errors == total`. A request skipped because of unresolved
+`passed + failed + errors == total`. `attempts` is how many times the request
+was sent (`0` when it never ran). A request skipped because of unresolved
 variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`,
 `websocket`, `sse`, `mqtt` or `mcp`. The exact per-request fields depend on the protocol; a request that
 never ran has `status` and `duration_ms` set to `null` and an `error` message.
@@ -209,6 +246,47 @@ credentials the export uses
 `Authorization: Basic {{sendito_basic_credentials}}`, which must be set to
 base64(username:password). In the UI: `:httpfile` (`:httpfile!` includes
 secrets).
+
+---
+
+## `sendito har <request-or-folder>`
+
+Prints a HAR 1.2 document of one HTTP request, or of every HTTP request below
+a folder (`.` for the current folder), with the folder settings applied.
+
+| Flag | Meaning |
+|---|---|
+| `-e`, `--env <name>` | Environment to resolve variables with |
+| `--include-secrets` | Print secret values instead of `{{placeholders}}` |
+
+Each entry holds the request (method, URL, query, headers, body) and an empty
+response with status `0`; its `comment` is the request name, which `sendito
+import` reads back as the name. Basic auth becomes an `Authorization` header
+(`Basic {{sendito_basic_credentials}}` while a credential is a placeholder);
+Digest and AWS Signature V4 are left out with a note in the request
+`comment`. A request of another kind is left out with a note on stderr.
+
+---
+
+## `sendito code <request> --lang <language>`
+
+Prints code that sends an HTTP request with another tool.
+
+| Flag | Meaning |
+|---|---|
+| `-l`, `--lang <language>` | `python` (requests), `fetch` (Node.js 18 or later), `go` (net/http), `httpie` or `wget` |
+| `-e`, `--env <name>` | Environment to resolve variables with |
+| `--include-secrets` | Print secret values instead of `{{placeholders}}` |
+
+The code sends the method, URL, query, headers, body, timeout, redirect and
+TLS options of the request, with its folders applied. Basic auth uses the
+tool's own option; Digest auth too where the tool has one (`requests`,
+HTTPie, wget). A part of the request that the tool cannot express becomes a
+comment at the top: AWS Signature V4, Digest in `fetch` and Go, a multipart
+body in wget, TLS verification in `fetch`. The tool can add headers of its
+own (a `User-Agent`, for example), so its bytes on the wire can differ from
+Sendito's. SSE requests are refused. In the UI: `:code <language>`
+(`:code! <language>` includes secrets).
 
 ---
 
@@ -270,8 +348,8 @@ same, and a server that asks for a sign-in offers it.
 
 Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, a
 Bruno collection directory, an OpenAPI 3.x or Swagger 2.0 document (JSON, or
-YAML with a `.yaml`/`.yml` extension), or a `.http`/`.rest` file (with the
-environments of the `http-client.env.json` next to it).
+YAML with a `.yaml`/`.yml` extension), a `.http`/`.rest` file (with the
+environments of the `http-client.env.json` next to it), or a HAR file.
 
 | Flag | Meaning |
 |---|---|
@@ -284,6 +362,24 @@ A report of imported, changed and skipped items is printed. The same import is
 available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 [FEATURES.md](FEATURES.md#import-and-export) and the gaps in
 [DEBT.md](DEBT.md).
+
+---
+
+## `sendito completions <shell>`
+
+Prints a completion script for `bash`, `zsh`, `fish`, `elvish` or
+`powershell` to stdout. Load it in the shell, for example:
+
+```sh
+sendito completions zsh > ~/.zfunc/_sendito      # zsh (fpath+=~/.zfunc)
+sendito completions bash > ~/.local/share/bash-completion/completions/sendito
+sendito completions fish > ~/.config/fish/completions/sendito.fish
+```
+
+## `sendito man`
+
+Prints the manual page (roff) to stdout. The command is not listed in
+`--help`. Install the page with `sendito man > ~/.local/share/man/man1/sendito.1`.
 
 ---
 
@@ -313,7 +409,7 @@ documented in [FORMAT.md](../FORMAT.md):
   `client_secret`, `scopes`;
 * `[grpc]` — `deadline_ms`;
 * `[mcp]`, `[mcp.servers.<name>]`, `[mcp.servers.<name>.auth]`;
-* `[history]` — `enabled`, `max_entries`;
+* `[history]` — `enabled`, `max_entries`, `max_body_kb`;
 * `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `sticky_folders`, `mouse`,
   `confirm_quit`, `watch_interval_s`;
 * `[keymap.all]`, `[keymap.conventional]`, `[keymap.vim]`.

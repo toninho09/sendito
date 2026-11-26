@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
 ╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the keys)                                            line 1/253 · ↑↓ PgUp PgDn   ┃
+│ Search ▍  (type to filter the keys)                                            line 1/259 · ↑↓ PgUp PgDn   ┃
 │                                                                                                            ┃
 │ All keys, including any you changed in the config.                                                         ┃
 │ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃

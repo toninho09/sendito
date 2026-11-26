@@ -24,8 +24,8 @@ requests as plain TOML files that you can version in git.
 | Folder settings (inherited headers, auth, variables, scripts) | yes | `run`, exports | [Folder settings](#folder-settings) |
 | Saved example responses | yes | — | [Saved examples](#saved-examples) |
 | Descriptions (Markdown, per request and folder) | yes | — | [Descriptions](#descriptions) |
-| Import (Postman / Insomnia / Bruno / OpenAPI / `.http` / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
-| Export (curl / `.http`) | yes | `sendito curl`, `sendito http` | [Import and export](#import-and-export) |
+| Import (Postman / Insomnia / Bruno / OpenAPI / `.http` / HAR / curl) | yes | `sendito import` | [Import and export](#import-and-export) |
+| Export (curl / `.http` / code / HAR) | yes | `sendito curl`, `sendito http`, `sendito code`, `sendito har` | [Import and export](#import-and-export) |
 | History | yes | `run` records it | [Storage](#storage) |
 | Cookie jar | yes | `--no-cookies` | [HTTP](#http) |
 | OAuth 2 (HTTP) | yes | `sendito auth` | [HTTP](#http) |
@@ -703,8 +703,14 @@ switches between them; an empty script shows "(empty)".
   active tab and environment, layout, expanded folders, non-secret runtime
   variables and the config scope of the settings.
 * **History** (`.sendito/history.jsonl`, gitignored): one JSON object per sent
-  request, the request as written with `{{variables}}` (no bodies), trimmed at
-  `[history] max_entries` (default 10 000) plus 10 % slack.
+  request, the request as written with `{{variables}}`, trimmed at
+  `[history] max_entries` (default 10 000) plus 10 % slack. An HTTP entry
+  also keeps its response in `.sendito/history/` (status, headers and the
+  first `[history] max_body_kb` of the body, default 1024 KB), with the
+  echoed secrets and the credential headers masked. Opening the entry
+  (Enter) shows that response, marked `history: <time>` in the border
+  (`· body cut` when the body was cut); `:saveexample` saves it as an example
+  of the request once the request is saved.
 * **Cookie jar** (`.sendito/cookies.toml`, gitignored) and its lock file.
 * **Secrets file** (`.sendito/secrets.toml`, gitignored): written with
   owner-only permissions (0600 on Unix), like a `file`-source secret that
@@ -750,6 +756,15 @@ collection):
   bodies, `Authorization: Basic|Digest user password` and `Bearer token` as
   auth, and the environments of `http-client.env.json` next to it. Response
   handlers and `http-client.private.env.json` are reported.
+* **HAR** (`.har`, or a JSON file with `log.entries`; "Save all as HAR" in the
+  browser's developer tools) — one folder per host, one request per entry with
+  the URL as recorded (query included), the headers without the HTTP/2
+  pseudo-headers and the framing headers (`Host`, `Content-Length`,
+  `Connection`, `Transfer-Encoding`), and the body (JSON as `json`, the rest
+  as `raw` with its MIME type). A recorded response becomes a saved example.
+  Cookie headers of the browser session are imported and reported; a
+  multipart body is imported as raw text and reported; an entry that is not
+  HTTP (a WebSocket, for example) is skipped.
 * **curl paste** — paste a `curl …` command into the URL field or the import
   dialog. Supported flags include `-X -H -d --data-* -F/--form/--form-string
   -u -A -e -b -G -I -L -k -m --url --json --compressed --http* -x`. curl
@@ -770,6 +785,16 @@ collection):
   `# @no-redirect`, headers, body (`< path` for a file body, an explicit
   multipart boundary). Basic auth with unresolved credentials uses
   `{{sendito_basic_credentials}}` (base64 of `user:password`).
+
+* **HAR** — `sendito har <request|folder>` prints a HAR 1.2 document of the
+  HTTP requests with no responses; the entry `comment` is the request name.
+  Secret variables stay `{{placeholders}}`; `--include-secrets` includes them.
+* **Code** — `:code <language>` or `sendito code <request> --lang <language>`
+  gives code that sends the request with Python `requests`, JavaScript
+  `fetch` (Node.js 18+), Go `net/http`, HTTPie or wget. Secret variables stay
+  `{{placeholders}}`; `:code!` / `--include-secrets` include them. What a tool
+  cannot express (AWS Signature V4, Digest auth in `fetch` and Go, multipart in
+  wget) is a comment at the top.
 
 Import gaps are listed in [DEBT.md](DEBT.md).
 
@@ -918,10 +943,12 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:method`, `:bodytype`, `:authtype`, `:grpcmethod` | Open the method, body type, auth type or gRPC method picker of the active request |
 | `:rescan` | Read the collection from disk again |
 | `:import [path]` | Import a collection or paste curl |
-| `:curl`, `:curl!`, `:httpfile`, `:httpfile!` | Export (without / with secrets) |
+| `:curl`, `:curl!`, `:httpfile`, `:httpfile!`, `:code <language>`, `:code! <language>` | Export (without / with secrets) |
 | `:cookies`, `:cookies clear`, `:cookies delete <n>` | Manage the cookie jar: `:cookies` lists the cookies; Enter deletes one, the last row clears all |
 | `:history`, `:clearhistory` | Show / clear history |
 | `:format` | Pretty-print the JSON body |
+| `:edit` (`Ctrl+W O`) | Edit the focused multi-line text (body, GraphQL query, Lua script, gRPC or MCP message, WebSocket messages) in `$VISUAL`, then `$EDITOR`, then `vi`; the edited text replaces it, and an undo step restores it |
+| `:pager` (`o` in the response) | Show the response tab as on screen (masked, jq filter applied) in `$PAGER`, then `less` |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
 | `:settings`, `:theme [name]`, `:theme reload`, `:help` | Settings / theme (a picker without a name) / help |
@@ -992,6 +1019,7 @@ their own.
 | Confirm quit with unsaved changes | `ui.confirm_quit` | Ask before quitting with unsaved tabs |
 | Record history | `history.enabled` | Keep sent requests in History |
 | History entries kept | `history.max_entries` | The oldest entries go first (1 or more) |
+| History response body | `history.max_body_kb` | KB of each HTTP response body kept with its entry; `0` keeps no response (default 1024) |
 | Watch interval | `ui.watch_interval_s` | Default seconds between watch re-sends (1 or more) |
 | Stream messages kept | `ui.stream_messages_kept` | Messages a gRPC or WebSocket stream keeps in the response; the oldest go first, the counts and sizes still cover all (1 or more, default 10000) |
 | HTTP request timeout | `http.timeout_ms` | When a request sets none (1 or more) |
@@ -1048,14 +1076,21 @@ that file has an error.
 * **A folder** (or `.`): every request below it, in tree order, one
   `PASS`/`FAIL`/`ERROR` line each and a summary. **Variables a request extracts
   are carried forward**, so a login and its dependent calls run as one command.
-  `--fail-fast` stops at the first failure; `--report json` prints a structured
-  summary to stdout; `--no-history` and `--no-cookies` control history and the
+  `--fail-fast` stops at the first failure; `--report json|junit|tap|html`
+  prints a report to stdout and `--report-file junit=results.xml` writes one to
+  a file (repeat it for several formats); `--no-history` and `--no-cookies` control history and the
   cookie jar for the run.
+* **Retry, repeat and delay**: `[options] retry` and `retry_interval_ms` (or
+  `--retry N`) send a request again after an error or a failed assertion;
+  `--repeat N` runs the folder N times and `--delay ms` waits between two
+  requests. The Options tab of every request kind edits the two keys.
 * **Exit codes**: `0` success, `1` a failed assertion or an MCP `isError`, `2`
   the request failed, `3` usage or unresolved variables. A folder run returns
   the worst code.
 * Use `--env <name>` to pick the environment. `--allow-unresolved` sends even
   with unresolved placeholders.
+* **Shell completions**: `sendito completions <shell>` prints a script for
+  bash, zsh, fish, elvish or PowerShell; `sendito man` prints the man page.
 
 ```sh
 sendito run "Users/list users" --env local      # body to stdout, status to stderr

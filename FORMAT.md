@@ -17,7 +17,8 @@ my-api/
 │   ├── cookies.toml              # per-environment cookie jar (gitignored)
 │   ├── cookies.lock              # cookie jar lock (gitignored)
 │   ├── session.toml              # open tabs, drafts, layout (gitignored)
-│   └── history.jsonl             # sent requests, masked    (gitignored)
+│   ├── history.jsonl             # sent requests, masked    (gitignored)
+│   └── history/                  # HTTP responses of history entries, masked (gitignored)
 ├── folder.toml                   # optional: settings every request inherits
 ├── Users/
 │   ├── folder.toml               # optional: settings the requests of Users inherit
@@ -51,6 +52,22 @@ description of the collection. It is never sent on the wire, a request does
 not inherit the description of its folders, and the curl and `.http` exports
 leave it out. Sendito writes it after the request's top-level keys
 (`kind`, `method`, `url`, …) and before its first table.
+
+## Retry
+
+Every request kind can set two keys in its `[options]` table. Only
+`sendito run` reads them; a send in the UI goes once.
+
+```toml
+[options]
+retry = 2                  # send again up to 2 times after an error or a failed assertion
+retry_interval_ms = 500    # the wait before each retry; default 1000
+```
+
+A retry starts from the same variables as the first attempt. The variables
+that a request extracts and the result in the report come from the last
+attempt. `sendito run --retry N` replaces `retry` for every request of the run.
+Sendito writes the two keys last in `[options]`, and only when they are set.
 
 ## Canonical form
 
@@ -181,6 +198,8 @@ timeout_ms = 5000               # default: [http] timeout_ms from config (30000)
 follow_redirects = false        # default true (up to 10 hops)
 verify_tls = false              # default true
 cookies = true                  # optional: defaults to [http] cookie_jar (false)
+retry = 2                       # optional, every kind: see Retry
+retry_interval_ms = 500
 
 [[params]]                      # query parameters, appended to the URL
 name = "q"
@@ -1096,6 +1115,7 @@ token = "{{token}}"
 [history]
 enabled = true
 max_entries = 10000
+max_body_kb = 1024       # HTTP response body kept per entry; 0 keeps no response
 
 [keymap.all]             # see KEYMAP.md
 send = ["f9", "ctrl+w e"]
@@ -1161,7 +1181,7 @@ format and every color token are in [docs/THEMES.md](docs/THEMES.md).
 
 ## Local state files
 
-Both files are written owner-only (`0600` on Unix): a draft or a stored request
+These files are written owner-only (`0600` on Unix): a draft or a stored request
 can hold a token typed into it.
 
 * `session.toml` — open tabs (path, or the unsaved request as a draft in request
@@ -1177,7 +1197,8 @@ can hold a token typed into it.
   {"ts":"2026-11-21T10:15:30Z","name":"list users","path":"Users/list users.toml",
    "env":"local","badge":"GET","target":"http://localhost:8080/users",
    "template":"{{base_url}}/users",
-   "request":"kind = \"http\"\n...","status":200,"duration_ms":14,"size":291}
+   "request":"kind = \"http\"\n...","status":200,"duration_ms":14,"size":291,
+   "response":"1764150000123-4242-1"}
   ```
 
   `target` is the URL (gRPC: target/service/method) as it was sent, with secret
@@ -1185,4 +1206,13 @@ can hold a token typed into it.
   written, in this file format, with its `{{variables}}` unsubstituted:
   opening or resending an entry resolves it again with the active environment,
   and saving it to the tree keeps the variables. Secret values are never
-  written. Response bodies are not stored. The file is trimmed to `max_entries` (newest kept).
+  written. The file is trimmed to `max_entries` (newest kept).
+* `history/<response>.toml` — the response of an HTTP history entry, named by
+  the entry's `response` key, in the format of a [saved example](#saved-examples)
+  (a body that is not UTF-8 goes to `<response>.bin`). The secrets of the
+  request that the server sends back are masked, as are the credential
+  headers (`Set-Cookie`, `Authorization`, …). The body is cut at
+  `[history] max_body_kb` (`0` keeps no response); an entry whose `size` is
+  larger than the body was cut. A trim of `history.jsonl` deletes the
+  response files of the entries it drops, and clearing the history deletes
+  the directory. Other request kinds keep no response.

@@ -8,6 +8,9 @@ use crate::units::format_ms;
 pub fn setting_note(id: SettingId) -> &'static str {
     match id {
         SettingId::HistoryMax => "History keeps this many entries; the oldest go first.",
+        SettingId::HistoryBody => {
+            "History keeps the first this many KB of each HTTP response body. 0 keeps no response."
+        }
         SettingId::WatchInterval => {
             "The :watch command re-sends the active request every this many seconds."
         }
@@ -94,6 +97,8 @@ impl App {
             SettingId::Hints => c.ui.hints.clone(),
             SettingId::WatchInterval => format!("{raw} s"),
             SettingId::MaxBody => format!("{raw} MB"),
+            SettingId::HistoryBody if raw == "0" => "none".into(),
+            SettingId::HistoryBody => format!("{raw} KB"),
             SettingId::GrpcDeadline | SettingId::WsTimeout | SettingId::MqttTimeout
                 if raw == "0 ms" =>
             {
@@ -132,6 +137,7 @@ impl App {
         let opt = |v: &Option<String>| v.clone().unwrap_or_default();
         match id {
             SettingId::HistoryMax => c.history.max_entries.to_string(),
+            SettingId::HistoryBody => c.history.max_body_kb.to_string(),
             SettingId::WatchInterval => c.ui.watch_interval_s.to_string(),
             SettingId::StreamKept => c.ui.stream_messages_kept.to_string(),
             SettingId::HttpTimeout => format_ms(c.http.timeout_ms),
@@ -261,6 +267,7 @@ impl App {
         let c = &mut self.project.config;
         match id {
             SettingId::HistoryMax => c.history.max_entries = num as usize,
+            SettingId::HistoryBody => c.history.max_body_kb = num as usize,
             SettingId::WatchInterval => c.ui.watch_interval_s = num,
             SettingId::StreamKept => c.ui.stream_messages_kept = num as usize,
             SettingId::HttpTimeout => c.http.timeout_ms = num,

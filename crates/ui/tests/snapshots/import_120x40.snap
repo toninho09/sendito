@@ -8,7 +8,7 @@ expression: screen
 │  Paths start where you started Sendito, then the collection. Tab completes; F5 imports.          │
 │                                                                                                  │
 │                                                                                                  │
-│  ▍  curl https://…   or   a collection, OpenAPI, .http file or Bruno directory                   │
+│  ▍  curl https://…   or   a collection, OpenAPI, .http, HAR file or Bruno directory              │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

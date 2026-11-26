@@ -218,7 +218,7 @@ pub async fn exec_sse(
         size,
         error.clone(),
     );
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates
         .send(SseUpdate::Done {
             events,

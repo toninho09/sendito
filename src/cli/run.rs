@@ -1,6 +1,7 @@
 //! `sendito run`: sends one request or a suite and prints the report.
 
 use super::mqtt::run_mqtt;
+use super::report::{Entry, SuiteReport};
 use super::sse::run_sse;
 use crate::*;
 
@@ -40,13 +41,29 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         no_cookies,
         fail_fast,
         report,
+        report_files,
+        retry,
+        repeat,
+        delay_ms,
     } = flags.clone();
+    if repeat > 1 || delay_ms > 0 {
+        eprintln!(
+            "warning: --repeat and --delay apply to folder runs; ignoring them for a single request"
+        );
+    }
     if fail_fast {
         eprintln!("warning: --fail-fast applies to folder runs; ignoring it for a single request");
     }
-    if report == RunReport::Json && !matches!(req, Request::Sse(_) | Request::Mqtt(_)) {
+    let session = matches!(req, Request::Sse(_) | Request::Mqtt(_));
+    if report != RunReport::Text && !(report == RunReport::Json && session) {
         eprintln!(
-            "warning: --report json applies to folder runs; ignoring it for a single request"
+            "warning: --report {} applies to folder runs; ignoring it for a single request",
+            report_name(report)
+        );
+    }
+    if !report_files.is_empty() {
+        eprintln!(
+            "warning: --report-file applies to folder runs; ignoring it for a single request"
         );
     }
     let (mut scope, errors, failed) = scope_of(&project, &env).await;
@@ -83,324 +100,394 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         no_cookies,
         Default::default(),
     );
-    let mut out = std::io::stdout().lock();
-    match req {
-        Request::Sse(mut s) => {
-            if no_cookies {
-                s.options.cookies = Some(false);
-            }
-            let ran = run_sse(
-                &ctx,
-                &s,
-                scope,
-                errors,
-                report != RunReport::Json,
-                include,
-                &mut out,
+    let attempts = retry.unwrap_or(req.common().retry).saturating_add(1);
+    let interval = req.common().retry_interval();
+    let mut attempt = 1;
+    loop {
+        let last = attempt == attempts;
+        // Only the last attempt writes to stdout at once; an earlier one
+        // keeps its output and writes it only when it passes.
+        let mut buf = Vec::new();
+        let once = Once {
+            project: &project,
+            ctx: &ctx,
+            include,
+            report,
+            no_cookies,
+        };
+        let code = if last {
+            once.send(
+                req.clone(),
+                scope.clone(),
+                errors.clone(),
+                &mut std::io::stdout().lock(),
             )
-            .await;
-            if report == RunReport::Json {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    serde_json::json!({"kind":"sse", "outcome":ran.outcome, "events":ran.events, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
-                );
-            }
-            print_scripts(&ran.scripts);
-            ExitCode::from(match ran.outcome {
-                "pass" => 0,
-                "fail" => 1,
-                _ => 2,
-            })
+            .await
+        } else {
+            once.send(req.clone(), scope.clone(), errors.clone(), &mut buf)
+                .await
+        };
+        if code == 0 && !last {
+            let _ = std::io::stdout().write_all(&buf);
         }
-        Request::Mqtt(m) => {
-            let ran = run_mqtt(
-                &ctx,
-                &m,
-                scope,
-                errors,
-                report != RunReport::Json,
-                include,
-                &mut out,
-            )
-            .await;
-            if report == RunReport::Json {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    serde_json::json!({"kind":"mqtt", "outcome":ran.outcome, "messages":ran.messages, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
-                );
-            }
-            print_scripts(&ran.scripts);
-            ExitCode::from(match ran.outcome {
-                "pass" => 0,
-                "fail" => 1,
-                _ => 2,
-            })
+        if code == 0 || code == 3 || last {
+            return ExitCode::from(code);
         }
-        Request::Http(mut h) => {
-            if no_cookies {
-                h.options.cookies = Some(false);
-            }
-            let o = runner::exec_http(&ctx, &h, scope, errors).await;
-            for n in &o.resolved.notes {
-                eprintln!("note: {n}");
-            }
-            let code = match &o.response {
-                Ok(r) => {
-                    let decoded = r
-                        .decoded
-                        .as_ref()
-                        .map(|d| format!(", {} {} decoded", d.encoding, human_size(d.raw_len)))
-                        .unwrap_or_default();
-                    eprintln!(
-                        "{} {} {}  ({} ms, {}{})",
-                        r.version,
-                        r.status,
-                        r.reason,
-                        r.timing.total.as_millis(),
-                        human_size(o.body_size),
-                        decoded
+        eprintln!(
+            "sendito: attempt {attempt}/{attempts} did not pass; retrying in {}",
+            sendito_ui::units::format_ms(interval)
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+        attempt += 1;
+    }
+}
+
+/// What one send of a single request needs besides the request.
+struct Once<'a> {
+    project: &'a Project,
+    ctx: &'a RunCtx,
+    include: bool,
+    report: RunReport,
+    no_cookies: bool,
+}
+
+impl Once<'_> {
+    /// Sends the request once and prints its output; returns the exit code.
+    async fn send(
+        &self,
+        req: Request,
+        scope: Scope,
+        errors: Vec<String>,
+        out: &mut dyn Write,
+    ) -> u8 {
+        let Once {
+            project,
+            ctx,
+            include,
+            report,
+            no_cookies,
+        } = *self;
+        match req {
+            Request::Sse(mut s) => {
+                if no_cookies {
+                    s.options.cookies = Some(false);
+                }
+                let ran = run_sse(
+                    ctx,
+                    &s,
+                    scope,
+                    errors,
+                    report != RunReport::Json,
+                    include,
+                    out,
+                )
+                .await;
+                if report == RunReport::Json {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        serde_json::json!({"kind":"sse", "outcome":ran.outcome, "events":ran.events, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
                     );
-                    if include {
-                        for (k, v) in &r.headers {
-                            eprintln!("{k}: {v}");
-                        }
-                        eprintln!();
-                    }
-                    if r.truncated {
+                }
+                print_scripts(&ran.scripts);
+                match ran.outcome {
+                    "pass" => 0,
+                    "fail" => 1,
+                    _ => 2,
+                }
+            }
+            Request::Mqtt(m) => {
+                let ran = run_mqtt(
+                    ctx,
+                    &m,
+                    scope,
+                    errors,
+                    report != RunReport::Json,
+                    include,
+                    out,
+                )
+                .await;
+                if report == RunReport::Json {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        serde_json::json!({"kind":"mqtt", "outcome":ran.outcome, "messages":ran.messages, "status":ran.label, "failed_asserts":ran.scripts.failed_asserts()})
+                    );
+                }
+                print_scripts(&ran.scripts);
+                match ran.outcome {
+                    "pass" => 0,
+                    "fail" => 1,
+                    _ => 2,
+                }
+            }
+            Request::Http(mut h) => {
+                if no_cookies {
+                    h.options.cookies = Some(false);
+                }
+                let o = runner::exec_http(ctx, &h, scope, errors).await;
+                for n in &o.resolved.notes {
+                    eprintln!("note: {n}");
+                }
+                let code = match &o.response {
+                    Ok(r) => {
+                        let decoded = r
+                            .decoded
+                            .as_ref()
+                            .map(|d| format!(", {} {} decoded", d.encoding, human_size(d.raw_len)))
+                            .unwrap_or_default();
                         eprintln!(
-                            "sendito: warning: the body is cut at the [http] max_body_mb limit"
+                            "{} {} {}  ({} ms, {}{})",
+                            r.version,
+                            r.status,
+                            r.reason,
+                            r.timing.total.as_millis(),
+                            human_size(o.body_size),
+                            decoded
                         );
+                        if include {
+                            for (k, v) in &r.headers {
+                                eprintln!("{k}: {v}");
+                            }
+                            eprintln!();
+                        }
+                        if r.truncated {
+                            eprintln!(
+                                "sendito: warning: the body is cut at the [http] max_body_mb limit"
+                            );
+                        }
+                        let _ = out.write_all(o.doc.bytes());
+                        // Keep redirected output byte-exact; end the line only on a terminal.
+                        if std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            && !o.doc.bytes().ends_with(b"\n")
+                            && !o.doc.is_empty()
+                        {
+                            let _ = out.write_all(b"\n");
+                        }
+                        0
                     }
-                    let _ = out.write_all(o.doc.bytes());
-                    // Keep redirected output byte-exact; end the line only on a terminal.
-                    if std::io::IsTerminal::is_terminal(&std::io::stdout())
-                        && !o.doc.bytes().ends_with(b"\n")
-                        && !o.doc.is_empty()
-                    {
-                        let _ = out.write_all(b"\n");
+                    Err(e) => {
+                        eprintln!("sendito: request failed: {e}");
+                        if matches!(
+                            o.resolved.body,
+                            sendito_core::resolve::ResolvedBody::Invalid(_)
+                        ) {
+                            3
+                        } else {
+                            2
+                        }
                     }
+                };
+                let fails = print_scripts(&o.scripts);
+                if code != 0 {
+                    code
+                } else if fails > 0 {
+                    1
+                } else {
                     0
                 }
-                Err(e) => {
-                    eprintln!("sendito: request failed: {e}");
-                    if matches!(
-                        o.resolved.body,
-                        sendito_core::resolve::ResolvedBody::Invalid(_)
-                    ) {
-                        3
-                    } else {
-                        2
-                    }
-                }
-            };
-            let fails = print_scripts(&o.scripts);
-            if code != 0 {
-                ExitCode::from(code)
-            } else if fails > 0 {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
             }
-        }
-        Request::Grpc(g) => {
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
-            drop(ctl_tx);
-            // A secret in the target must not reach the log, as for WebSocket.
-            let uri_secrets = scope.secret_values();
-            let run = runner::exec_grpc(&ctx, &g, scope, errors, utx, ctl_rx);
-            let mut code = 0u8;
-            let mut fails = 0;
-            let print = async {
-                while let Some(u) = urx.recv().await {
-                    match u {
-                        GrpcUpdate::Started { resolved, kind } => eprintln!(
-                            "{} /{}/{} ({})",
-                            sendito_core::vars::scrub(&resolved.uri, &uri_secrets),
-                            resolved.service,
-                            resolved.method,
-                            kind.label()
-                        ),
-                        GrpcUpdate::Event(sendito_grpc::Event::Received { json, .. }) => {
-                            let _ = writeln!(out, "{json}");
-                        }
-                        GrpcUpdate::Event(sendito_grpc::Event::Finished {
-                            code: c,
-                            message,
-                            at,
-                            ..
-                        }) => {
-                            eprintln!(
-                                "status: {} ({c}){}  ({} ms)",
-                                sendito_grpc::code_name(c),
-                                if message.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(": {message}")
-                                },
-                                at.as_millis()
-                            );
-                            if c != 0 {
-                                code = 2;
+            Request::Grpc(g) => {
+                let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+                let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
+                drop(ctl_tx);
+                // A secret in the target must not reach the log, as for WebSocket.
+                let uri_secrets = scope.secret_values();
+                let run = runner::exec_grpc(ctx, &g, scope, errors, utx, ctl_rx);
+                let mut code = 0u8;
+                let mut fails = 0;
+                let print = async {
+                    while let Some(u) = urx.recv().await {
+                        match u {
+                            GrpcUpdate::Started { resolved, kind } => eprintln!(
+                                "{} /{}/{} ({})",
+                                sendito_core::vars::scrub(&resolved.uri, &uri_secrets),
+                                resolved.service,
+                                resolved.method,
+                                kind.label()
+                            ),
+                            GrpcUpdate::Event(sendito_grpc::Event::Received { json, .. }) => {
+                                let _ = writeln!(out, "{json}");
                             }
-                        }
-                        GrpcUpdate::Event(_) => {}
-                        GrpcUpdate::Error(e) => {
-                            eprintln!("sendito: {e}");
-                            code = 2;
-                        }
-                        GrpcUpdate::Done { scripts, .. } => fails = print_scripts(&scripts),
-                    }
-                }
-            };
-            tokio::join!(run, print);
-            if code != 0 {
-                ExitCode::from(code)
-            } else if fails > 0 {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            }
-        }
-        Request::Ws(mut w) => {
-            if no_cookies {
-                w.options.cookies = Some(false);
-            }
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
-            drop(ctl_tx);
-            // Secrets in the resolved URL (an API key in the query) must not
-            // reach the log; `scope` itself moves into the session.
-            let url_secrets = scope.secret_values();
-            let run = runner::exec_ws(&ctx, &w, scope, errors, utx, ctl_rx);
-            let mut code = 1006i64;
-            let mut fails = 0;
-            let print = async {
-                while let Some(u) = urx.recv().await {
-                    match u {
-                        runner::WsUpdate::Started { resolved } => {
-                            eprintln!(
-                                "connecting to {}",
-                                sendito_core::vars::scrub(&resolved.url, &url_secrets)
-                            );
-                        }
-                        runner::WsUpdate::Event(sendito_ws::Event::Handshake {
-                            status,
-                            ref headers,
-                            ..
-                        }) => {
-                            eprintln!("handshake {status}");
-                            if include {
-                                for (k, v) in headers {
-                                    eprintln!("{k}: {v}");
-                                }
-                                eprintln!();
-                            }
-                        }
-                        runner::WsUpdate::Event(sendito_ws::Event::Received {
-                            kind,
-                            preview,
-                            ..
-                        }) => match kind {
-                            sendito_ws::FrameKind::Text => {
-                                let _ = out.write_all(preview.as_bytes());
-                                if !preview.ends_with('\n') {
-                                    let _ = out.write_all(b"\n");
+                            GrpcUpdate::Event(sendito_grpc::Event::Finished {
+                                code: c,
+                                message,
+                                at,
+                                ..
+                            }) => {
+                                eprintln!(
+                                    "status: {} ({c}){}  ({} ms)",
+                                    sendito_grpc::code_name(c),
+                                    if message.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(": {message}")
+                                    },
+                                    at.as_millis()
+                                );
+                                if c != 0 {
+                                    code = 2;
                                 }
                             }
-                            _ => eprintln!("{} frame: {preview}", kind.as_str()),
-                        },
-                        runner::WsUpdate::Event(sendito_ws::Event::Finished {
-                            code: c,
-                            reason,
-                            ..
-                        }) => {
-                            code = c as i64;
-                            eprintln!(
-                                "close {c}{}",
-                                if reason.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(": {reason}")
-                                }
-                            );
-                        }
-                        runner::WsUpdate::Event(sendito_ws::Event::Sent { kind, size, .. }) => {
-                            eprintln!("sent {} frame ({size} B)", kind.as_str());
-                        }
-                        runner::WsUpdate::Error(e) => {
-                            eprintln!("sendito: session failed: {e}");
-                        }
-                        runner::WsUpdate::Done { scripts, .. } => fails = print_scripts(&scripts),
-                    }
-                }
-            };
-            tokio::join!(run, print);
-            if code != 1000 {
-                return ExitCode::from(2);
-            }
-            if fails > 0 {
-                return ExitCode::from(1);
-            }
-            ExitCode::SUCCESS
-        }
-        Request::Mcp(m) => {
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let info = runner::McpRunInfo::of(&project);
-            let run = runner::exec_mcp(&ctx, &m, scope, errors, &info, utx);
-            let mut code = 0u8;
-            let mut fails = 0;
-            let print = async {
-                let mut out = std::io::stdout().lock();
-                while let Some(u) = urx.recv().await {
-                    match u {
-                        runner::McpUpdate::Event(_) => {}
-                        runner::McpUpdate::Done {
-                            error,
-                            is_error,
-                            result,
-                            scripts,
-                            // Already printed once when the scope was built.
-                            scope_errors: _,
-                            needs_login,
-                        } => {
-                            if let Some(e) = error {
+                            GrpcUpdate::Event(_) => {}
+                            GrpcUpdate::Error(e) => {
                                 eprintln!("sendito: {e}");
-                                if needs_login {
-                                    eprintln!(
-                                        "sendito: sign in with `sendito mcp login {}`",
-                                        m.server
-                                    );
-                                }
                                 code = 2;
-                            } else {
-                                if is_error {
-                                    // The tool answered isError: the call went
-                                    // through, the tool failed (decision: exit 1).
-                                    code = 1;
-                                    eprintln!("sendito: the tool reported an error");
+                            }
+                            GrpcUpdate::Done { scripts, .. } => fails = print_scripts(&scripts),
+                        }
+                    }
+                };
+                tokio::join!(run, print);
+                if code != 0 {
+                    code
+                } else if fails > 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            Request::Ws(mut w) => {
+                if no_cookies {
+                    w.options.cookies = Some(false);
+                }
+                let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+                let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
+                drop(ctl_tx);
+                // Secrets in the resolved URL (an API key in the query) must not
+                // reach the log; `scope` itself moves into the session.
+                let url_secrets = scope.secret_values();
+                let run = runner::exec_ws(ctx, &w, scope, errors, utx, ctl_rx);
+                let mut code = 1006i64;
+                let mut fails = 0;
+                let print = async {
+                    while let Some(u) = urx.recv().await {
+                        match u {
+                            runner::WsUpdate::Started { resolved } => {
+                                eprintln!(
+                                    "connecting to {}",
+                                    sendito_core::vars::scrub(&resolved.url, &url_secrets)
+                                );
+                            }
+                            runner::WsUpdate::Event(sendito_ws::Event::Handshake {
+                                status,
+                                ref headers,
+                                ..
+                            }) => {
+                                eprintln!("handshake {status}");
+                                if include {
+                                    for (k, v) in headers {
+                                        eprintln!("{k}: {v}");
+                                    }
+                                    eprintln!();
                                 }
-                                if let Some(b) = result {
-                                    let _ = out.write_all(&b);
-                                    if !b.ends_with(b"\n") {
+                            }
+                            runner::WsUpdate::Event(sendito_ws::Event::Received {
+                                kind,
+                                preview,
+                                ..
+                            }) => match kind {
+                                sendito_ws::FrameKind::Text => {
+                                    let _ = out.write_all(preview.as_bytes());
+                                    if !preview.ends_with('\n') {
                                         let _ = out.write_all(b"\n");
                                     }
                                 }
-                                fails = print_scripts(&scripts);
+                                _ => eprintln!("{} frame: {preview}", kind.as_str()),
+                            },
+                            runner::WsUpdate::Event(sendito_ws::Event::Finished {
+                                code: c,
+                                reason,
+                                ..
+                            }) => {
+                                code = c as i64;
+                                eprintln!(
+                                    "close {c}{}",
+                                    if reason.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(": {reason}")
+                                    }
+                                );
+                            }
+                            runner::WsUpdate::Event(sendito_ws::Event::Sent {
+                                kind, size, ..
+                            }) => {
+                                eprintln!("sent {} frame ({size} B)", kind.as_str());
+                            }
+                            runner::WsUpdate::Error(e) => {
+                                eprintln!("sendito: session failed: {e}");
+                            }
+                            runner::WsUpdate::Done { scripts, .. } => {
+                                fails = print_scripts(&scripts)
                             }
                         }
                     }
+                };
+                tokio::join!(run, print);
+                if code != 1000 {
+                    return 2;
                 }
-            };
-            tokio::join!(run, print);
-            if code != 0 {
-                ExitCode::from(code)
-            } else if fails > 0 {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
+                if fails > 0 {
+                    return 1;
+                }
+                0
+            }
+            Request::Mcp(m) => {
+                let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
+                let info = runner::McpRunInfo::of(project);
+                let run = runner::exec_mcp(ctx, &m, scope, errors, &info, utx);
+                let mut code = 0u8;
+                let mut fails = 0;
+                let print = async {
+                    while let Some(u) = urx.recv().await {
+                        match u {
+                            runner::McpUpdate::Event(_) => {}
+                            runner::McpUpdate::Done {
+                                error,
+                                is_error,
+                                result,
+                                scripts,
+                                // Already printed once when the scope was built.
+                                scope_errors: _,
+                                needs_login,
+                            } => {
+                                if let Some(e) = error {
+                                    eprintln!("sendito: {e}");
+                                    if needs_login {
+                                        eprintln!(
+                                            "sendito: sign in with `sendito mcp login {}`",
+                                            m.server
+                                        );
+                                    }
+                                    code = 2;
+                                } else {
+                                    if is_error {
+                                        // The tool answered isError: the call went
+                                        // through, the tool failed (decision: exit 1).
+                                        code = 1;
+                                        eprintln!("sendito: the tool reported an error");
+                                    }
+                                    if let Some(b) = result {
+                                        let _ = out.write_all(&b);
+                                        if !b.ends_with(b"\n") {
+                                            let _ = out.write_all(b"\n");
+                                        }
+                                    }
+                                    fails = print_scripts(&scripts);
+                                }
+                            }
+                        }
+                    }
+                };
+                tokio::join!(run, print);
+                if code != 0 {
+                    code
+                } else if fails > 0 {
+                    1
+                } else {
+                    0
+                }
             }
         }
     }
@@ -429,6 +516,10 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         no_cookies,
         fail_fast,
         report,
+        report_files,
+        retry,
+        repeat,
+        delay_ms,
     } = flags.clone();
     if include {
         eprintln!(
@@ -461,18 +552,38 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
     // loaded once, not once per gRPC request.
     let schemas: runner::SchemaCache = Default::default();
     let started = Instant::now();
-    let mut entries: Vec<serde_json::Value> = Vec::new();
-    let (mut npass, mut nfail, mut nerr, mut nunresolved) = (0u32, 0u32, 0u32, 0u32);
-    let folder_label = if folder.is_empty() {
-        ".".to_string()
-    } else {
-        folder.clone()
+    let mut suite = SuiteReport {
+        environment: env.clone(),
+        folder: if folder.is_empty() {
+            ".".to_string()
+        } else {
+            folder.clone()
+        },
+        ..Default::default()
     };
     eprintln!(
-        "sendito: running {} request(s) under \"{folder_label}\"",
-        rels.len()
+        "sendito: running {} request(s) under \"{}\"{}",
+        rels.len(),
+        suite.folder,
+        if repeat > 1 {
+            format!(", {repeat} times")
+        } else {
+            String::new()
+        }
     );
-    for rel in &rels {
+    // Repeats share one scope: a value extracted in one round is seen by the next.
+    let runs = (1..=repeat).flat_map(|round| rels.iter().map(move |rel| (round, rel)));
+    for (i, (round, rel)) in runs.enumerate() {
+        if i > 0 && delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+        // The report names each round: `Users/list.toml#2`.
+        let path = if repeat > 1 {
+            format!("{rel}#{round}")
+        } else {
+            rel.clone()
+        };
+        let path = &path;
         // Each request gets its folders' variables on top of the shared
         // scope; the runtime values it extracts go to the shared scope.
         let mut rscope = scope.clone();
@@ -488,21 +599,16 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
                 runner::with_folders(&r, &chain, &mut rscope)
             }
             Err(e) => {
-                nerr += 1;
                 // Multi-line parse errors: the first line names the file and
-                // position; the full message stays in the JSON report.
+                // position; the full message stays in the report.
                 let first = e.to_string().lines().next().unwrap_or_default().to_string();
-                eprintln!("ERROR {rel}  {first}");
-                entries.push(serde_json::json!({
-                    "path": rel,
-                    "kind": serde_json::Value::Null,
-                    "outcome": "error",
-                    "status": serde_json::Value::Null,
-                    "duration_ms": serde_json::Value::Null,
-                    "asserts": 0,
-                    "failed_asserts": 0,
-                    "error": e.to_string(),
-                }));
+                eprintln!("ERROR {path}  {first}");
+                suite.entries.push(Entry {
+                    path: path.clone(),
+                    outcome: "error",
+                    error: Some(e.to_string()),
+                    ..Default::default()
+                });
                 if fail_fast {
                     break;
                 }
@@ -519,108 +625,130 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         };
         let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
         if !un.is_empty() && !allow_unresolved {
-            nunresolved += 1;
             let names = runner::unresolved_list(&un, &rscope);
-            eprintln!("ERROR {rel}  unresolved variables: {names}");
-            entries.push(serde_json::json!({
-                "path": rel,
-                "kind": kind,
-                "outcome": "error",
-                "status": serde_json::Value::Null,
-                "duration_ms": serde_json::Value::Null,
-                "asserts": 0,
-                "failed_asserts": 0,
-                "unresolved": true,
-                "error": format!("unresolved variables: {names}"),
-            }));
+            eprintln!("ERROR {path}  unresolved variables: {names}");
+            suite.entries.push(Entry {
+                path: path.clone(),
+                kind: Some(kind),
+                outcome: "error",
+                unresolved: Some(true),
+                error: Some(format!("unresolved variables: {names}")),
+                ..Default::default()
+            });
             if fail_fast {
                 break;
             }
             continue;
         }
         let ctx = ctx_for(&project, &env, rel, no_history, no_cookies, schemas.clone());
-        let t0 = Instant::now();
-        let ran = run_one(&ctx, &req, &rscope, &scope_errors, &mcp_info, no_cookies).await;
-        let ms = t0.elapsed().as_millis();
+        let attempts = retry.unwrap_or(req.common().retry).saturating_add(1);
+        let interval = req.common().retry_interval();
+        let mut attempt = 1;
+        let (ran, ms) = loop {
+            let t0 = Instant::now();
+            let ran = run_one(&ctx, &req, &rscope, &scope_errors, &mcp_info, no_cookies).await;
+            let ms = t0.elapsed().as_millis();
+            if ran.outcome == "pass" || attempt == attempts {
+                break (ran, ms);
+            }
+            eprintln!(
+                "RETRY {path}  ({}, attempt {attempt}/{attempts}; next in {})",
+                ran.label,
+                sendito_ui::units::format_ms(interval)
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+            attempt += 1;
+        };
         let mark = match ran.outcome {
             "pass" => "PASS",
             "fail" => "FAIL",
             _ => "ERROR",
         };
-        eprintln!("{mark:<5} {rel}  ({}, {ms} ms)", ran.label);
+        let tries = if attempt > 1 {
+            format!(", attempt {attempt}/{attempts}")
+        } else {
+            String::new()
+        };
+        eprintln!("{mark:<5} {path}  ({}, {ms} ms{tries})", ran.label);
         for a in ran.scripts.asserts.iter().filter(|a| !a.pass) {
             eprintln!("      ✗ {}  (actual: {})", a.label, a.actual);
-        }
-        let fails = ran.scripts.failed_asserts();
-        entries.push(serde_json::json!({
-            "path": rel,
-            "kind": kind,
-            "outcome": ran.outcome,
-            "status": ran.label,
-            "duration_ms": ms,
-            "asserts": ran.scripts.asserts.len(),
-            "failed_asserts": fails,
-            "unresolved": false,
-            "error": serde_json::Value::Null,
-        }));
-        if let Some(events) = ran.events
-            && let Some(entry) = entries.last_mut()
-        {
-            entry["events"] = events.into();
-        }
-        if let Some(messages) = ran.messages
-            && let Some(entry) = entries.last_mut()
-        {
-            entry["messages"] = messages.into();
         }
         for (var, value) in ran.scripts.updates() {
             scope.set(RUNTIME_LAYER, &var, value);
         }
-        match ran.outcome {
-            "pass" => npass += 1,
-            "fail" => nfail += 1,
-            _ => nerr += 1,
-        }
-        if fail_fast && ran.outcome != "pass" {
+        let outcome = ran.outcome;
+        suite.entries.push(Entry {
+            path: path.clone(),
+            kind: Some(kind),
+            outcome,
+            attempts: attempt,
+            status: Some(ran.label),
+            duration_ms: Some(ms),
+            asserts: ran.scripts.asserts,
+            unresolved: Some(false),
+            error: None,
+            events: ran.events,
+            messages: ran.messages,
+        });
+        if fail_fast && outcome != "pass" {
             break;
         }
     }
-    let total_ms = started.elapsed().as_millis();
+    suite.duration_ms = started.elapsed().as_millis();
+    let nunresolved = suite.unresolved();
     eprintln!(
-        "{npass} passed, {nfail} failed, {nerr} error(s){}  ({}, {:.1} s)",
+        "{} passed, {} failed, {} error(s){}  ({}, {:.1} s)",
+        suite.passed(),
+        suite.failed(),
+        suite.errors() - nunresolved,
         if nunresolved > 0 {
             format!(", {nunresolved} unresolved")
         } else {
             String::new()
         },
-        entries.len(),
-        total_ms as f64 / 1000.0
+        suite.entries.len(),
+        suite.duration_ms as f64 / 1000.0
     );
-    if report == RunReport::Json {
-        // `errors` counts every `"outcome": "error"` entry, unresolved
-        // variables included (they are also broken out in `unresolved`), so
-        // `passed + failed + errors == total`.
-        let out = serde_json::json!({
-            "environment": env,
-            "folder": folder_label,
-            "total": entries.len(),
-            "passed": npass,
-            "failed": nfail,
-            "errors": nerr + nunresolved,
-            "unresolved": nunresolved,
-            "duration_ms": total_ms,
-            "requests": entries,
-        });
-        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    if let Some(text) = report_text(&suite, report) {
+        println!("{}", text.trim_end());
     }
-    if nunresolved > 0 {
+    let mut write_failed = false;
+    for f in &report_files {
+        let text = report_text(&suite, f.format).unwrap_or_default();
+        if let Err(e) = std::fs::write(&f.path, text) {
+            eprintln!("sendito: cannot write {}: {e}", f.path.display());
+            write_failed = true;
+        }
+    }
+    if nunresolved > 0 || write_failed {
         ExitCode::from(3)
-    } else if nerr > 0 {
+    } else if suite.errors() > 0 {
         ExitCode::from(2)
-    } else if nfail > 0 {
+    } else if suite.failed() > 0 {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// The report in `format`; `None` for `text`, which is only the stderr lines.
+fn report_text(suite: &SuiteReport, format: RunReport) -> Option<String> {
+    match format {
+        RunReport::Text => None,
+        RunReport::Json => Some(suite.json()),
+        RunReport::Junit => Some(suite.junit()),
+        RunReport::Tap => Some(suite.tap()),
+        RunReport::Html => Some(suite.html()),
+    }
+}
+
+fn report_name(format: RunReport) -> &'static str {
+    match format {
+        RunReport::Text => "text",
+        RunReport::Json => "json",
+        RunReport::Junit => "junit",
+        RunReport::Tap => "tap",
+        RunReport::Html => "html",
     }
 }
 

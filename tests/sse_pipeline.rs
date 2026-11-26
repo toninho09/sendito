@@ -9,7 +9,11 @@ mod tests {
         RunCtx {
             root: root.into(),
             send: Default::default(),
-            history: Some((root.join("history.jsonl"), 100)),
+            history: Some(sendito_pipeline::runner::HistorySink {
+                path: root.join("history.jsonl"),
+                max_entries: 100,
+                max_body: 1024 * 1024,
+            }),
             name: "events".into(),
             path: Some("events.toml".into()),
             env: None,

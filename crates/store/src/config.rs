@@ -357,6 +357,8 @@ pub enum McpServerAuth {
 pub struct HistoryConfig {
     pub enabled: bool,
     pub max_entries: usize,
+    /// The largest HTTP response body kept with an entry, in KB (0 = none).
+    pub max_body_kb: usize,
 }
 
 impl Default for HistoryConfig {
@@ -364,6 +366,7 @@ impl Default for HistoryConfig {
         Self {
             enabled: true,
             max_entries: 10_000,
+            max_body_kb: 1024,
         }
     }
 }

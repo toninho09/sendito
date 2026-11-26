@@ -266,7 +266,7 @@ pub async fn exec_mcp(
                 size,
                 None,
             );
-            write_history(ctx, &entry).await;
+            write_history(ctx, &entry, None).await;
             let body = if ctx.mask_echoed_secrets {
                 sendito_core::vars::scrub_bytes(&body, &secrets).unwrap_or(body)
             } else {

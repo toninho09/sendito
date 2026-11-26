@@ -205,7 +205,7 @@ Every file here is documented in
 | Collection discovery (nearest `.sendito/`), `sendito init`, gitignore entries | `crates/store/src/init.rs` | |
 | Layered config (defaults < global < project) | `crates/store/src/config.rs::Config` | `UiConfig`, `HttpConfig`, `GrpcConfig`, `WsConfig`, `OAuthIdentity`, `HistoryConfig` |
 | Environments, four secret sources, keychain, secret files | `crates/store/src/env.rs` | `EnvFile`, `VarSource`, `Envs`, `OsKeychain`, `MemoryKeychain` |
-| History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear` |
+| History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear`; HTTP responses in `history/`: `append_with_response`, `load_response` (written by `crates/pipeline/src/runner/record.rs::write_history`, shown by `crates/ui/src/app/history.rs`) |
 | Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, pinned tabs, layout, environment, favorites |
 | Cookie jar (RFC 6265, PSL, `0600`, cross-process lock) | `crates/store/src/cookies.rs` | `request`, `store_response`, `describe`, `delete`, `clear` |
 | Durable writes and cross-process locks | `crates/store/src/fsio.rs` | `write_atomic`, `write_private`, `with_lock`, `with_dir_lock` |
@@ -227,6 +227,7 @@ Tests: corpus cookie cases, `tests/integration.rs` (secret hygiene),
 | `.http` export | `crates/import/src/http_file.rs::export` | Boundary escalation, `< path` file bodies |
 | `.http` import | `crates/import/src/http_file.rs::import`, `import_path` | `http-client.env.json` environments |
 | OpenAPI 3.x and Swagger 2.0 import | `crates/import/src/openapi.rs::import` | YAML read by `crates/import/src/lib.rs::import_path`; bodies from `crates/core/src/json_schema.rs::sample` |
+| HAR import | `crates/import/src/har.rs::import` | Read by `crates/import/src/lib.rs::import_json` (`log.entries`) |
 | Import/report dialogs in the UI | `crates/ui/src/overlay/mod.rs::{Import, Report}` | `crates/ui/src/app/import_export.rs` opens them |
 
 Tests: `tests/integration.rs` (32-request Postman fixture, curl → request →
@@ -254,6 +255,7 @@ the module for the surface you are changing.
 | Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
 | Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
 | Import, export, body actions | `crates/ui/src/app/import_export.rs` |
+| External editor and pager (`:edit`, `:pager`) | `crates/ui/src/app/external.rs` asks; `crates/ui/src/lib.rs::run_external` runs `crates/ui/src/external.rs::run` between two frames |
 | Settings and themes | `crates/ui/src/app/settings.rs`; the dialog's state (filter, in-place edit) in `crates/ui/src/overlay/settings.rs::SettingsView` |
 | Name prompt preview (the file a name creates, a name taken) | `crates/ui/src/app/dialogs.rs::prompt_preview` |
 | Import dialog preview and path completion | `crates/ui/src/app/import_export.rs` (`import_preview`, `complete_import_path`) |
@@ -319,12 +321,16 @@ Every clickable region is registered in `app.hits` while drawing.
 | `sendito [PATH]` / `--print-keymap` | `src/main.rs::main` → `crates/ui/src/lib.rs::run` |
 | `sendito init` | `crates/store/src/init.rs` |
 | `sendito run <request>` | `src/cli/run.rs::run_one` → `crates/pipeline/src/runner/` |
-| `sendito run <folder>` (tree order, variables carried forward, JSON report) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) |
+| `sendito run <folder>` (tree order, variables carried forward) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) |
+| Folder run reports (JSON, JUnit, TAP, HTML) | `src/cli/report.rs::SuiteReport` |
 | `sendito curl` / `sendito http` | `crates/import/src/curl.rs::export`, `crates/import/src/http_file.rs::export` |
+| `sendito har` | `src/cli/convert.rs::har` → `crates/import/src/har.rs::export` |
+| `sendito code` / `:code` | `crates/import/src/codegen.rs::export` (shared start: `crates/import/src/lib.rs::prepare`) |
 | `sendito auth login/logout` | `src/cli/auth.rs::http_auth` → `crates/mcp/src/oauth/flow.rs::login_http` |
 | `sendito mcp login/logout` | `src/cli/auth.rs::mcp` → `crates/pipeline/src/runner/oauth.rs::mcp_login` → `crates/mcp/src/oauth/flow.rs::login` |
 | `sendito theme list/print` | `src/cli/theme.rs::theme`, `crates/ui/src/theme.rs`, `crates/store/src/themes.rs` |
 | `sendito import` | `crates/import/src/lib.rs::import_path` |
+| `sendito completions` / `sendito man` | `src/cli/meta.rs::completions`, `src/cli/meta.rs::man` |
 
 Tests: `tests/integration.rs`, `tests/mcp_cli.rs`, `tests/proxy.rs` (runs the
 binary in a child process), `tests/corpus.rs`.

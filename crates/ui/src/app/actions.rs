@@ -73,6 +73,7 @@ impl App {
             Action::Import => self.open_import(""),
             Action::ExportCurl => self.export_curl(false),
             Action::FormatBody => self.format_body(),
+            Action::ExternalEdit => self.edit_externally(),
             Action::MoveToSecret => self.prompt_move_to_secret(),
             Action::RevealSecrets => self.reveal_secrets = !self.reveal_secrets,
             Action::Zoom => self.zoom = !self.zoom,
@@ -133,6 +134,7 @@ impl App {
             Action::ToggleWrap => self.with_viewer(Viewer::toggle_wrap),
             Action::CopyBody => self.copy_body(),
             Action::SaveBody => self.prompt_save_body(),
+            Action::OpenPager => self.open_pager(),
             Action::NextCell => {
                 if let Some(t) = self.focused_table() {
                     t.next_cell();

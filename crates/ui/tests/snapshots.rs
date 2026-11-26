@@ -632,6 +632,7 @@ fn vim_mode_and_history() {
                 duration_ms: 14,
                 size: 291,
                 error: None,
+                response: None,
             },
             sendito_store::history::HistoryEntry {
                 ts: "2026-11-21T10:14:02Z".into(),
@@ -646,6 +647,7 @@ fn vim_mode_and_history() {
                 duration_ms: 3,
                 size: 0,
                 error: Some("UNAVAILABLE".into()),
+                response: None,
             },
         ]);
         h.app.focus = Focus::Sidebar;

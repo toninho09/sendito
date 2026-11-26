@@ -9,10 +9,10 @@ expression: screen
 │ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
 │ Verify TLS     [✓] On  turn off for self-signed certificates                           │
 │ Cookie jar     Config default ▾                                                        │
+│ Retries        none                                                                    │
+│ Retry wait     default · 1 s                                                           │
 │                                                                                        │
 │ The longest wait for the stream to open: 30 s, 500 ms (a bare number is ms).           │
-│                                                                                        │
-│                                                                                        │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

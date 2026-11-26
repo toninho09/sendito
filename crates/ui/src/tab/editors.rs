@@ -57,6 +57,9 @@ pub struct Editors {
     pub grpc_verify: bool,
     pub deadline: TextEditor,
     pub max_events: TextEditor,
+    /// `[options] retry` and `retry_interval_ms`, used by `sendito run`.
+    pub retry: TextEditor,
+    pub retry_interval: TextEditor,
     pub schema_files: bool,
     pub proto_files: TextEditor,
     pub import_paths: TextEditor,
@@ -114,6 +117,7 @@ pub fn folder_request(f: &FolderSettings) -> Request {
         common: RequestCommon {
             scripts: f.scripts.clone(),
             description: f.description.clone(),
+            ..Default::default()
         },
         ..Default::default()
     })
@@ -418,6 +422,11 @@ impl Editors {
             grpc_verify: true,
             deadline: TextEditor::single("").with_placeholder("none"),
             max_events: TextEditor::single("").with_placeholder("none"),
+            retry: TextEditor::single("").with_placeholder("none"),
+            retry_interval: TextEditor::single("").with_placeholder(&format!(
+                "default · {}",
+                crate::units::format_ms(sendito_core::model::DEFAULT_RETRY_INTERVAL_MS)
+            )),
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
@@ -651,6 +660,12 @@ impl Editors {
             }
         }
         e.description.set_text(req.description());
+        let common = req.common();
+        e.retry.set_text(&num_text(
+            (common.retry > 0).then_some(u64::from(common.retry)),
+        ));
+        e.retry_interval
+            .set_text(&crate::units::ms_text(common.retry_interval_ms));
         // A written description opens rendered, as a page to read.
         e.docs_preview = !req.description().is_empty();
         e
@@ -761,6 +776,10 @@ impl Editors {
         RequestCommon {
             scripts: self.scripts(),
             description: self.description.text(),
+            retry: parse_num(&self.retry.text())
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0),
+            retry_interval_ms: crate::units::parse_ms(&self.retry_interval.text()),
         }
     }
 
@@ -1062,6 +1081,8 @@ impl Editors {
                     Field::FollowRedirects,
                     Field::VerifyTls,
                     Field::Cookies,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Sse => match tab {
@@ -1076,6 +1097,8 @@ impl Editors {
                     Field::FollowRedirects,
                     Field::VerifyTls,
                     Field::Cookies,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Grpc => match tab {
@@ -1088,7 +1111,13 @@ impl Editors {
                     if self.schema_files {
                         v.extend([Field::ProtoFiles, Field::ImportPaths]);
                     }
-                    v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
+                    v.extend([
+                        Field::Tls,
+                        Field::GrpcVerify,
+                        Field::Deadline,
+                        Field::Retry,
+                        Field::RetryInterval,
+                    ]);
                 }
             },
             Kind::Ws => match tab {
@@ -1103,6 +1132,8 @@ impl Editors {
                     Field::Tls,
                     Field::GrpcVerify,
                     Field::Cookies,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Mqtt => match tab {
@@ -1128,13 +1159,15 @@ impl Editors {
                     Field::Timeout,
                     Field::Deadline,
                     Field::VerifyTls,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Mcp => match tab {
                 0 => v.extend([Field::McpServer, Field::McpTool]),
                 1 => v.push(Field::Message),
                 2 => v.extend([Field::ScriptSection, self.script_table()]),
-                _ => v.push(Field::Timeout),
+                _ => v.extend([Field::Timeout, Field::Retry, Field::RetryInterval]),
             },
             Kind::Folder => match tab {
                 0 => v.push(Field::Headers),
@@ -1205,6 +1238,8 @@ impl Editors {
             Field::ImportPaths => &mut self.import_paths,
             Field::Deadline => &mut self.deadline,
             Field::MaxEvents => &mut self.max_events,
+            Field::Retry => &mut self.retry,
+            Field::RetryInterval => &mut self.retry_interval,
             Field::McpServer => &mut self.mcp_server,
             Field::McpTool => &mut self.mcp_tool,
             Field::WsSubprotocols => &mut self.ws_subprotocols,
@@ -1568,6 +1603,8 @@ impl Editors {
             &mut self.message,
             &mut self.deadline,
             &mut self.max_events,
+            &mut self.retry,
+            &mut self.retry_interval,
             &mut self.proto_files,
             &mut self.import_paths,
             &mut self.ws_subprotocols,

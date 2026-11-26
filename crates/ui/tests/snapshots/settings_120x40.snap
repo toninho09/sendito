@@ -22,6 +22,7 @@ expression: screen
 │    Confirm quit with unsaved changes                          ‹ On ›   │
 │    Record history                                             ‹ On ›   │
 │    History entries kept                                    ‹ 10000 ›   │
+│    History response body                                 ‹ 1024 KB ›   │
 │    Watch interval                                            ‹ 5 s ›   │
 │    Stream messages kept                                    ‹ 10000 ›   │
 │  Timeouts                                                              │
@@ -31,7 +32,6 @@ expression: screen
 │    SSE opening timeout                                      ‹ 30 s ›   │
 │    MQTT timeout                                             ‹ 30 s ›   │
 │    MCP call timeout                                         ‹ 30 s ›   │
-│  MCP                                                                   │
 │ ────────────────────────────────────────────────────────────────────── │
 │  Colors: auto follows the terminal; ansi uses your terminal palette;   │
 │  contrast is high-contrast. Add your own in themes/ (sendito theme     │

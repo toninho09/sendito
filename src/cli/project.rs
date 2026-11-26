@@ -214,13 +214,10 @@ pub(crate) fn ctx_for(
     RunCtx {
         root: project.root.clone(),
         send: project.send_options(),
-        history: if no_history || !project.config.history.enabled {
+        history: if no_history {
             None
         } else {
-            Some((
-                sendito_store::history::history_path(&project.root),
-                project.config.history.max_entries,
-            ))
+            runner::HistorySink::of(&project.root, &project.config)
         },
         name: sendito_store::collection::name_of(rel).to_string(),
         path: Some(rel.to_string()),

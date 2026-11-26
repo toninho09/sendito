@@ -77,8 +77,8 @@ allows `accept` as a transport header.
 * The Lua scripts use `mlua` with Lua 5.4 built from source (`vendored`): a
   build needs a C compiler for the target.
 * Folder runs (`sendito run <folder>`) are sequential and share one variable
-  scope in tree order; there is no parallelism, no per-request retry and no
-  JUnit/TAP writer (the JSON report is the machine format). A request that
+  scope in tree order; there is no parallelism. Retries run only in
+  `sendito run`, not in the UI. A request that
   fails does not stop the run unless `--fail-fast` is given, and a request with
   unresolved variables is reported as an error and skipped.
 * Postman import covers v2.1 collections; OAuth 2 auth and a JWT private key are
@@ -91,6 +91,10 @@ allows `accept` as a transport header.
   makes a request body from an example or the schema (arrays stay empty). A
   `.http` import reads the `< file` path as relative to the collection, not to
   the `.http` file (reported), and keeps multipart bodies as raw text.
+* HAR import keeps the URL as recorded and makes no query rows, imports a
+  form body as raw text and a multipart body as raw text (a HAR file does not
+  hold the file parts). HAR export has no responses and leaves Digest and AWS
+  Signature V4 out.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
 * MCP supports tools only; resources and prompts are not implemented. Each list

@@ -604,6 +604,7 @@ fn flow_history_wheel_scrolls_freely() {
             duration_ms: 1,
             size: 1,
             error: None,
+            response: None,
         })
         .collect();
     h.key("f7");
@@ -1160,6 +1161,44 @@ fn flow_curl_paste_and_export() {
     let sc = h.screen();
     assert!(sc.contains("Bearer {{token}}"), "{sc}");
     assert!(!sc.contains("s3cr3t-token"));
+}
+
+/// Enter on a history entry opens the request and the response kept with
+/// it, its echoed secret masked.
+#[test]
+fn flow_history_shows_the_kept_response() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "list users");
+    h.key("f5");
+    h.wait_idle(10);
+    s.http.take();
+    h.key("f7");
+    for _ in 0..200 {
+        if h.app.history.as_ref().is_some_and(|v| !v.is_empty()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.pump();
+    }
+    h.key("enter");
+    // Nothing is sent: the response comes from the history file.
+    assert!(s.http.take().is_empty());
+    let t = &h.app.tabs[h.app.active];
+    assert!(
+        matches!(
+            t.response.as_ref().and_then(|r| r.stored.as_ref()),
+            Some(sendito_ui::tab::Stored::History(_))
+        ),
+        "{}",
+        h.screen()
+    );
+    let sc = h.screen();
+    assert!(sc.contains("history: ") && sc.contains("200 OK"), "{sc}");
+    assert!(
+        sc.contains("Bearer ••••••") && !sc.contains("s3cr3t-token"),
+        "{sc}"
+    );
 }
 
 #[test]
@@ -1732,6 +1771,55 @@ fn flow_grpc_message_completion() {
     let caps = s.grpc.take();
     let call = caps.iter().find(|c| c.method == "Unary").must();
     assert_eq!(call.messages, vec!["{\"text\":\"hi\"}".to_string()]);
+}
+
+/// Ctrl+W O asks the event loop for $EDITOR on a multi-line text; the edited
+/// text replaces it. A one-line field and a missing response are refused.
+#[test]
+fn flow_external_editor_and_pager() {
+    use sendito_ui::external::External;
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.app.tabs[h.app.active]
+        .ed
+        .message
+        .set_text("{\"text\": \"a\"}");
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.key("ctrl+w O");
+    assert_eq!(
+        h.app.external.take(),
+        Some(External::Edit {
+            text: "{\"text\": \"a\"}".into(),
+            ext: "json"
+        })
+    );
+    h.app
+        .finish_external(Ok(Some("{\"text\": \"from vi\"}\n".into())));
+    let t = &h.app.tabs[h.app.active];
+    assert_eq!(t.ed.message.text(), "{\"text\": \"from vi\"}\n");
+    assert!(t.dirty());
+    assert!(h.screen().contains("text from the editor"));
+    // An editor that fails leaves the text as it is.
+    h.app
+        .finish_external(Err("vi exited with exit status: 1".into()));
+    assert!(h.screen().contains("vi exited"));
+    assert_eq!(
+        h.app.tabs[h.app.active].ed.message.text(),
+        "{\"text\": \"from vi\"}\n"
+    );
+    // The target is one line.
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("ctrl+w O");
+    assert!(h.app.external.is_none());
+    assert!(h.screen().contains("this field is one line"));
+    // No response yet: nothing for the pager.
+    h.key("ctrl+p");
+    h.type_text(":pager");
+    h.key("enter");
+    assert!(h.app.external.is_none());
+    assert!(h.screen().contains("no response to show"), "{}", h.screen());
 }
 
 /// Completing inside an existing key replaces the whole key and keeps its

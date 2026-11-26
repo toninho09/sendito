@@ -441,6 +441,8 @@ mod tests {
                         .collect(),
                 },
                 description: "# Create\n\nMakes an *x*.".into(),
+                retry: 3,
+                retry_interval_ms: Some(250),
             },
         })
     }
@@ -565,7 +567,10 @@ mod tests {
         assert_eq!(blank.fields(4), vec![Field::DocsView, Field::Description]);
         assert!(blank.cycle(Field::DocsView, 1));
         assert_eq!(blank.fields(4), vec![Field::DocsView, Field::DocsPreview]);
-        assert_eq!(blank.fields(3), vec![Field::Timeout]);
+        assert_eq!(
+            blank.fields(3),
+            vec![Field::Timeout, Field::Retry, Field::RetryInterval]
+        );
         assert_eq!(
             e.fields(1),
             vec![

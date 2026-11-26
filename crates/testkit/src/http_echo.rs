@@ -355,6 +355,23 @@ fn respond(c: &Captured, port: u16) -> Reply {
             let code: u16 = code.parse().unwrap_or(500);
             (code, ct(), json(serde_json::json!({"status": code})), None)
         }
+        // `/flaky/<key>/<n>`: 500 for the first n requests of each key on
+        // this server, then 200 (for retry tests).
+        ["flaky", key, n] => {
+            static HITS: std::sync::Mutex<std::collections::BTreeMap<String, u32>> =
+                std::sync::Mutex::new(std::collections::BTreeMap::new());
+            let n: u32 = n.parse().unwrap_or(1);
+            let mut hits = HITS.lock().unwrap_or_else(|e| e.into_inner());
+            let seen = hits.entry(format!("{port}/{key}")).or_insert(0);
+            *seen += 1;
+            let code = if *seen <= n { 500 } else { 200 };
+            (
+                code,
+                ct(),
+                json(serde_json::json!({"status": code, "hit": *seen})),
+                None,
+            )
+        }
         ["redirect", n] => {
             let n: u32 = n.parse().unwrap_or(1);
             let to = if n <= 1 {

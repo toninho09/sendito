@@ -55,6 +55,69 @@
   project is opened with one, as for `config.toml`: the wire corpus does not
   see your `~/.config/sendito/lua/`.
 
+### Run reports
+
+* `sendito run <folder> --report junit|tap|html` prints a JUnit XML, TAP or
+  HTML report to stdout, next to the existing `json`.
+* `--report-file <format>=<path>` writes a report to a file and can repeat:
+  `--report-file junit=results.xml --report-file html=report.html`.
+* A report file that cannot be written makes the exit code 3.
+
+### External editor and pager
+
+* `Ctrl+W O` or `:edit` opens the focused multi-line text (body, GraphQL
+  query, Lua script, message) in `$VISUAL`, `$EDITOR` or `vi`; the edited
+  text replaces it when the editor exits. The temporary file is owner-only
+  and is deleted after.
+* `o` in the response or `:pager` shows the response tab, as on screen, in
+  `$PAGER` or `less`.
+
+### History keeps the response
+
+* An HTTP history entry keeps its response in `.sendito/history/`: status,
+  headers and the first `[history] max_body_kb` of the body (default 1024 KB;
+  `0` keeps none; also in Settings). Echoed secrets and credential headers
+  are masked, also for `sendito run`.
+* Enter on a history entry shows that response, marked `history: <time>`;
+  after the request is saved, `:saveexample` saves it as an example.
+* A trim deletes the response files of the dropped entries; `:clearhistory`
+  deletes them all. `sendito init` adds `.sendito/history/` to `.gitignore`.
+
+### HAR import and export
+
+* `sendito import file.har` (and `:import`) reads a HAR file, such as "Save
+  all as HAR" from a browser: one folder per host, one request per entry, the
+  URL as recorded, and the recorded response as a saved example.
+* `sendito har <request|folder>` prints a HAR 1.2 document of the HTTP
+  requests, without responses. Secret variables stay `{{placeholders}}`.
+
+### Code export
+
+* `:code <language>` and `sendito code <request> --lang <language>` give code
+  that sends an HTTP request with Python `requests`, JavaScript `fetch`
+  (Node.js 18+), Go `net/http`, HTTPie or wget. Secret variables stay
+  `{{placeholders}}`; `:code!` and `--include-secrets` include them.
+* curl, `.http` and code exports share one start (`prepare` in the import
+  crate).
+
+### Retry, repeat and delay
+
+* `[options] retry` and `retry_interval_ms` (every request kind) make
+  `sendito run` send a request again after an error or a failed assertion.
+  The Options tab edits them.
+* `sendito run --retry N` replaces the file's value for the whole run.
+* `--repeat N` runs a folder N times with one variable scope; the reports
+  name each round (`Users/list.toml#2`).
+* `--delay <ms>` waits between two requests of a folder run.
+* The JSON report gives `attempts` for each request.
+* The echo test server has a `/flaky/<key>/<n>` route.
+
+### Shell completions and man page
+
+* `sendito completions <shell>` prints a completion script for bash, zsh,
+  fish, elvish or PowerShell.
+* `sendito man` prints the manual page (roff).
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

@@ -334,14 +334,7 @@ impl App {
         RunCtx {
             root: self.project.root.clone(),
             send: self.project.send_options(),
-            history: if self.project.config.history.enabled {
-                Some((
-                    sendito_store::history::history_path(&self.project.root),
-                    self.project.config.history.max_entries,
-                ))
-            } else {
-                None
-            },
+            history: runner::HistorySink::of(&self.project.root, &self.project.config),
             name,
             path,
             env: self.active_env.clone(),

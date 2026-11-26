@@ -117,6 +117,19 @@ set -g set-clipboard on
 Some terminals ask for permission to write to the clipboard, or turn OSC 52
 off. Look for "clipboard" in the settings of your terminal.
 
+## `:edit` comes back at once with no change
+
+`:edit` (`Ctrl+W O`) waits until the editor exits. An editor that opens a
+window and returns at once gives back the text unchanged. Tell it to wait:
+
+```sh
+export VISUAL="code -w"      # VS Code
+export VISUAL="subl -w"      # Sublime Text
+```
+
+Sendito uses `$VISUAL`, then `$EDITOR`, then `vi`; the pager is `$PAGER`, then
+`less`.
+
 ## The server gets a header that the request does not have
 
 Sendito adds only the headers that HTTP needs (`Host`, `Content-Length`),

@@ -44,6 +44,10 @@ fn main() -> ExitCode {
             no_cookies,
             fail_fast,
             report,
+            report_files,
+            retry,
+            repeat,
+            delay_ms,
         }) => {
             let flags = RunFlags {
                 env,
@@ -53,6 +57,10 @@ fn main() -> ExitCode {
                 no_cookies,
                 fail_fast,
                 report,
+                report_files,
+                retry,
+                repeat,
+                delay_ms,
             };
             rt.block_on(run_entry(&request, flags))
         }
@@ -66,10 +74,23 @@ fn main() -> ExitCode {
             env,
             include_secrets,
         }) => http_export(&request, env, include_secrets),
+        Some(Cmd::Code {
+            request,
+            lang,
+            env,
+            include_secrets,
+        }) => code(&request, lang, env, include_secrets),
+        Some(Cmd::Har {
+            request,
+            env,
+            include_secrets,
+        }) => har(&request, env, include_secrets),
         Some(Cmd::Import { file, into }) => import(&file, &into),
         Some(Cmd::Mcp { cmd }) => rt.block_on(mcp(cmd)),
         Some(Cmd::Auth { cmd }) => rt.block_on(http_auth(cmd)),
         Some(Cmd::Theme { cmd }) => theme(cmd),
+        Some(Cmd::Completions { shell }) => completions(shell),
+        Some(Cmd::Man) => man(),
         None => {
             let root = find_collection(cli.path.as_deref());
             if !root.is_dir() {

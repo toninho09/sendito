@@ -45,6 +45,9 @@ impl App {
                     // Unchanged from the history entry: not an unsaved edit.
                     t.set_saved(Some(t.model.clone()));
                 }
+                if !resend {
+                    self.show_history_response(&e);
+                }
                 if resend {
                     self.status = None;
                     self.send(false);
@@ -60,6 +63,31 @@ impl App {
             Err(err) => self.set_status(
                 format!("cannot read history entry: {err}"),
                 StatusKind::Error,
+            ),
+        }
+    }
+
+    /// Shows the response kept with a history entry in the active tab.
+    fn show_history_response(&mut self, e: &HistoryEntry) {
+        let Some(id) = &e.response else { return };
+        let path = sendito_store::history::history_path(&self.project.root);
+        match sendito_store::history::load_response(&path, id) {
+            Ok(ex) => {
+                let when = e.ts.get(11..19).unwrap_or(&e.ts);
+                let label = if e.size > ex.body.len() as u64 {
+                    format!("{when} · body cut")
+                } else {
+                    when.to_string()
+                };
+                let resp = Response::from_stored(ex, crate::tab::Stored::History(label));
+                if let Some(t) = self.tab_mut() {
+                    t.response = Some(resp);
+                    t.resp_tab = 0;
+                }
+            }
+            Err(err) => self.set_status(
+                format!("the response of this history entry did not load: {err}"),
+                StatusKind::Warn,
             ),
         }
     }

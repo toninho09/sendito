@@ -202,8 +202,28 @@ pub struct Response {
     /// The status line and headers of an HTTP response, kept to save it as
     /// an example.
     pub http_head: Option<HttpHead>,
-    /// The saved example shown instead of a response, by name.
-    pub example: Option<String>,
+    /// Where a response read from disk comes from; `None` for a response
+    /// that was received.
+    pub stored: Option<Stored>,
+}
+
+/// A response read from disk instead of received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stored {
+    /// A saved example, by name.
+    Example(String),
+    /// The response of a history entry, by the time of the entry.
+    History(String),
+}
+
+impl Stored {
+    /// The label in the border of the response pane.
+    pub fn label(&self) -> String {
+        match self {
+            Stored::Example(name) => format!("example: {name}"),
+            Stored::History(when) => format!("history: {when}"),
+        }
+    }
 }
 
 /// The status and headers of an HTTP response.
@@ -235,8 +255,38 @@ impl Response {
             query: None,
             stream_sel: None,
             http_head: None,
-            example: None,
+            stored: None,
         }
+    }
+
+    /// A response read from disk: the status, headers and body of `ex`.
+    pub fn from_stored(ex: sendito_store::examples::Example, from: Stored) -> Self {
+        let content_type = ex
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.clone());
+        let mut resp = Response::new();
+        resp.summary = Summary {
+            status: format!("{} {}", ex.status, ex.reason).trim().to_string(),
+            code: Some(ex.status),
+            ok: ex.status < 400,
+            size: Some(ex.body.len() as u64),
+            ..Default::default()
+        };
+        let mut head = format!("{} {}\n", ex.status, ex.reason);
+        for (n, v) in &ex.headers {
+            head.push_str(&format!("{n}: {v}\n"));
+        }
+        resp.headers = wrapped(Doc::text(&head));
+        resp.http_head = Some(HttpHead {
+            status: ex.status,
+            reason: ex.reason,
+            headers: ex.headers,
+        });
+        resp.set_body(Doc::from_bytes(ex.body, content_type.as_deref()));
+        resp.stored = Some(from);
+        resp
     }
 
     /// The body bytes as received (before a jq filter).

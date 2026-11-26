@@ -81,6 +81,8 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm",
 crossterm = "0.29"
 unicode-width = "0.2"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 keyring = "4"
 shell-words = "1"
 mime_guess = "2"
@@ -118,6 +120,8 @@ sendito-import.workspace = true
 sendito-ui.workspace = true
 sendito-pipeline.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 serde_json.workspace = true
 

@@ -17,6 +17,7 @@ pub enum SettingId {
     StickyFolders,
     History,
     HistoryMax,
+    HistoryBody,
     WatchInterval,
     StreamKept,
     Hints,
@@ -56,6 +57,7 @@ impl SettingId {
             StickyFolders => ("ui", "sticky_folders"),
             History => ("history", "enabled"),
             HistoryMax => ("history", "max_entries"),
+            HistoryBody => ("history", "max_body_kb"),
             WatchInterval => ("ui", "watch_interval_s"),
             StreamKept => ("ui", "stream_messages_kept"),
             Hints => ("ui", "hints"),
@@ -84,6 +86,7 @@ impl SettingId {
         matches!(
             self,
             HistoryMax
+                | HistoryBody
                 | WatchInterval
                 | StreamKept
                 | HttpTimeout
@@ -123,7 +126,7 @@ impl SettingId {
     pub fn min(self) -> Option<u64> {
         use SettingId::*;
         match self {
-            GrpcDeadline | WsTimeout | MqttTimeout => Some(0),
+            GrpcDeadline | WsTimeout | MqttTimeout | HistoryBody => Some(0),
             HistoryMax | WatchInterval | StreamKept | HttpTimeout | SseTimeout | McpTimeout
             | MaxBody => Some(1),
             _ => None,
@@ -229,6 +232,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),
     (SettingId::History, "Record history"),
     (SettingId::HistoryMax, "History entries kept"),
+    (SettingId::HistoryBody, "History response body"),
     (SettingId::WatchInterval, "Watch interval"),
     (SettingId::StreamKept, "Stream messages kept"),
     (SettingId::HttpTimeout, "HTTP request timeout"),

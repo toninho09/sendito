@@ -25,9 +25,20 @@ fn export_input(
     })?;
     let effective = runner::with_folders(&req, &chain, &mut scope);
     let sse = matches!(effective, Request::Sse(_));
-    let Some(h) = sendito_import::http_export_request(&effective, &scope) else {
+    // Code for other tools does not read an event stream.
+    let http = if sse && what == "code" {
+        None
+    } else {
+        sendito_import::http_export_request(&effective, &scope)
+    };
+    let Some(h) = http else {
+        let kinds = if what == "code" {
+            "HTTP requests"
+        } else {
+            "HTTP and SSE requests"
+        };
         eprintln!(
-            "sendito: {what} export is only available for HTTP and SSE requests, not {}",
+            "sendito: {what} export is only available for {kinds}, not {}",
             effective.badge()
         );
         return Err(ExitCode::from(3));
@@ -57,6 +68,88 @@ pub(crate) fn http_export(request: &Path, env: Option<String>, include_secrets: 
     print!(
         "{}",
         sendito_import::http_file::export(&name, &h, &scope, include_secrets, &project.root)
+    );
+    ExitCode::SUCCESS
+}
+
+pub(crate) fn code(
+    request: &Path,
+    lang: sendito_import::codegen::Lang,
+    env: Option<String>,
+    include_secrets: bool,
+) -> ExitCode {
+    let (project, _, h, scope, _) = match export_input(request, &env, include_secrets, "code") {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    print!(
+        "{}",
+        sendito_import::codegen::export(lang, &h, &scope, include_secrets, &project.root)
+    );
+    ExitCode::SUCCESS
+}
+
+/// `sendito har`: one request, or every HTTP request below a folder.
+pub(crate) fn har(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
+    let fail = |(e, code): (String, u8)| {
+        eprintln!("sendito: {e}");
+        ExitCode::from(code)
+    };
+    // A request file wins over a folder of the same name, as for `run`.
+    let (project, rels) = if let Ok((root, rel)) = locate(request) {
+        match load_at(root, rel, &env) {
+            Ok((project, rel, _)) => (project, vec![rel]),
+            Err(e) => return fail(e),
+        }
+    } else if is_folder_arg(request) {
+        match load_suite(request, &env).and_then(|(project, folder)| {
+            let rels = project
+                .coll
+                .requests_under(&folder)
+                .map_err(|e| (e.to_string(), 3))?;
+            Ok((project, rels))
+        }) {
+            Ok(v) => v,
+            Err(e) => return fail(e),
+        }
+    } else {
+        eprintln!("sendito: request {} not found", request.display());
+        return ExitCode::from(3);
+    };
+    let scope = if include_secrets {
+        runner::build_scope(&project.envs, env.as_deref(), &Default::default()).0
+    } else {
+        runner::names_scope(&project.envs, env.as_deref(), &Default::default())
+    };
+    let mut items: Vec<sendito_import::har::ExportItem> = Vec::new();
+    for rel in &rels {
+        let loaded = project
+            .coll
+            .load(rel)
+            .and_then(|r| project.coll.chain(rel).map(|chain| (r, chain)));
+        let (req, chain) = match loaded {
+            Ok(v) => v,
+            Err(e) => return fail((e.to_string(), 3)),
+        };
+        let mut rscope = scope.clone();
+        match runner::with_folders(&req, &chain, &mut rscope) {
+            Request::Http(h) => {
+                let name = sendito_store::collection::name_of(rel).to_string();
+                items.push((name, h, rscope));
+            }
+            other => eprintln!(
+                "note: {rel}: a {} request is not in a HAR file",
+                other.badge()
+            ),
+        }
+    }
+    if items.is_empty() {
+        eprintln!("sendito: no HTTP requests to export");
+        return ExitCode::from(3);
+    }
+    print!(
+        "{}",
+        sendito_import::har::export(&items, include_secrets, &project.root)
     );
     ExitCode::SUCCESS
 }

@@ -316,7 +316,7 @@ pub async fn exec_mqtt(
         size,
         error.clone(),
     );
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates
         .send(MqttUpdate::Done {
             messages,

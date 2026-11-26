@@ -30,6 +30,8 @@ struct RawOptions {
     tls: Option<bool>,
     deadline_ms: Option<u64>,
     max_events: Option<u64>,
+    retry: Option<u32>,
+    retry_interval_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -501,6 +503,8 @@ fn common(r: &mut RawRequest) -> Result<RequestCommon, String> {
     Ok(RequestCommon {
         scripts: scripts(std::mem::take(&mut r.scripts))?,
         description: r.description.take().unwrap_or_default(),
+        retry: r.options.retry.unwrap_or(0),
+        retry_interval_ms: r.options.retry_interval_ms,
     })
 }
 
@@ -747,6 +751,22 @@ pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
 }
 
 /// Serializes a request in canonical form.
+/// Writes `[options]` when the kind has options of its own (`own`, written
+/// by `kind`) or the request sets a retry; the retry keys come last.
+fn write_options(w: &mut Writer, own: bool, c: &RequestCommon, kind: impl FnOnce(&mut Writer)) {
+    if !own && c.retry == 0 && c.retry_interval_ms.is_none() {
+        return;
+    }
+    w.table("options");
+    kind(w);
+    if c.retry != 0 {
+        w.int("retry", u64::from(c.retry));
+    }
+    if let Some(ms) = c.retry_interval_ms {
+        w.int("retry_interval_ms", ms);
+    }
+}
+
 pub fn to_toml(req: &Request) -> String {
     let mut w = Writer::new();
     match req {
@@ -756,9 +776,11 @@ pub fn to_toml(req: &Request) -> String {
             w.str("url", &h.url);
             write_description(&mut w, req.description());
             let o = &h.options;
-            if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls || o.cookies.is_some()
-            {
-                w.table("options");
+            let own = o.timeout_ms.is_some()
+                || !o.follow_redirects
+                || !o.verify_tls
+                || o.cookies.is_some();
+            write_options(&mut w, own, &h.common, |w| {
                 if let Some(t) = o.timeout_ms {
                     w.int("timeout_ms", t);
                 }
@@ -771,7 +793,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(c) = o.cookies {
                     w.bool("cookies", c);
                 }
-            }
+            });
             write_kvs(&mut w, "params", &h.params);
             write_kvs(&mut w, "headers", &h.headers);
             write_auth(&mut w, &h.auth);
@@ -849,8 +871,8 @@ pub fn to_toml(req: &Request) -> String {
             w.str("method", &g.method);
             w.str("message", &g.message);
             write_description(&mut w, req.description());
-            if g.tls || !g.verify_tls || g.deadline_ms.is_some() {
-                w.table("options");
+            let own = g.tls || !g.verify_tls || g.deadline_ms.is_some();
+            write_options(&mut w, own, &g.common, |w| {
                 if g.tls {
                     w.bool("tls", true);
                 }
@@ -860,7 +882,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(d) = g.deadline_ms {
                     w.int("deadline_ms", d);
                 }
-            }
+            });
             if let SchemaSource::Files {
                 files,
                 import_paths,
@@ -883,10 +905,11 @@ pub fn to_toml(req: &Request) -> String {
                 w.str("arguments", &m.arguments);
             }
             write_description(&mut w, req.description());
-            if let Some(t) = m.timeout_ms {
-                w.table("options");
-                w.int("timeout_ms", t);
-            }
+            write_options(&mut w, m.timeout_ms.is_some(), &m.common, |w| {
+                if let Some(t) = m.timeout_ms {
+                    w.int("timeout_ms", t);
+                }
+            });
             write_scripts(&mut w, &m.common.scripts);
         }
         Request::Sse(s) => {
@@ -894,8 +917,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("url", &s.url);
             write_description(&mut w, req.description());
             let o = &s.options;
-            if o != &SseOptions::default() {
-                w.table("options");
+            write_options(&mut w, o != &SseOptions::default(), &s.common, |w| {
                 if let Some(v) = o.timeout_ms {
                     w.int("timeout_ms", v);
                 }
@@ -914,7 +936,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(v) = o.cookies {
                     w.bool("cookies", v);
                 }
-            }
+            });
             write_kvs(&mut w, "params", &s.params);
             write_kvs(&mut w, "headers", &s.headers);
             write_auth(&mut w, &s.auth);
@@ -943,8 +965,7 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_description(&mut w, req.description());
             let o = &m.options;
-            if o != &MqttOptions::default() {
-                w.table("options");
+            write_options(&mut w, o != &MqttOptions::default(), &m.common, |w| {
                 if let Some(v) = o.timeout_ms {
                     w.int("timeout_ms", v);
                 }
@@ -954,7 +975,7 @@ pub fn to_toml(req: &Request) -> String {
                 if !o.verify_tls {
                     w.bool("verify_tls", false);
                 }
-            }
+            });
             for sub in &m.subscriptions {
                 w.array_table("subscriptions");
                 w.str("topic", &sub.topic);
@@ -987,13 +1008,12 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_description(&mut w, req.description());
             let o = &wq.options;
-            if o.timeout_ms.is_some()
+            let own = o.timeout_ms.is_some()
                 || o.deadline_ms.is_some()
                 || !o.verify_tls
                 || o.tls
-                || o.cookies.is_some()
-            {
-                w.table("options");
+                || o.cookies.is_some();
+            write_options(&mut w, own, &wq.common, |w| {
                 if let Some(t) = o.timeout_ms {
                     w.int("timeout_ms", t);
                 }
@@ -1009,7 +1029,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(c) = o.cookies {
                     w.bool("cookies", c);
                 }
-            }
+            });
             write_kvs(&mut w, "headers", &wq.headers);
             write_auth(&mut w, &wq.auth);
             write_scripts(&mut w, &wq.common.scripts);
@@ -1374,6 +1394,7 @@ mod tests {
                     ..Scripts::default()
                 },
                 description: "- one\n- two\nmethod = 'post'\n".into(),
+                ..Default::default()
             },
             ..McpRequest::default()
         });

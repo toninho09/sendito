@@ -58,17 +58,8 @@ pub fn export(
     include_secrets: bool,
     base_dir: &Path,
 ) -> String {
-    let (template, empty);
-    let (src, sc): (&HttpRequest, &Scope) = if include_secrets {
-        (req, scope)
-    } else {
-        template = match sendito_core::resolve::mask_request(&Request::Http(req.clone()), scope) {
-            Request::Http(h) => h,
-            _ => req.clone(),
-        };
-        empty = Scope::new();
-        (&template, &empty)
-    };
+    let (src, sc) = crate::export_source(req, scope, include_secrets);
+    let (src, sc) = (&src, &sc);
     let mut resolved_request = src.clone();
     if matches!(src.auth, Auth::OAuth { .. }) {
         resolved_request.auth = Auth::None;

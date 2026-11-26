@@ -88,7 +88,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         ":import [path]",
-        "Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl",
+        "Import Postman, Insomnia, OpenAPI/Swagger, a .http or HAR file or a Bruno directory, or paste curl",
     ),
     (
         ":curl",
@@ -97,6 +97,11 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":curl!", "Copy the request as curl including secret values"),
     (":httpfile", "Copy the request as an .http file"),
     (":httpfile!", "Copy the .http file including secret values"),
+    (
+        ":code <language>",
+        "Copy code that sends the request: python, fetch, go, httpie or wget",
+    ),
+    (":code! <language>", "Copy the code including secret values"),
     (
         ":cookies",
         "Manage the active environment's cookies: delete one or clear all (values masked)",
@@ -109,6 +114,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":history", "Show history"),
     (":clearhistory", "Delete all history entries"),
     (":format", "Pretty-print the JSON body"),
+    (":edit", "Edit the focused text in $VISUAL or $EDITOR"),
+    (":pager", "Show the response text in $PAGER"),
     (
         ":jq [expr]",
         "Filter the response body with a jq expression",

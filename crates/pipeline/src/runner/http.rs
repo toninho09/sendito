@@ -466,11 +466,26 @@ pub(super) async fn exec_http_inner(
             let mut assert_secrets = http_secrets(req, &scope);
             assert_secrets.extend(cookie_secrets.iter().cloned());
             scrub_asserts(&mut results.asserts, &assert_secrets);
+            // The history always masks the secrets the server echoes, also
+            // in `sendito run`, which shows the body unchanged.
+            let mut history_secrets = http_secrets(req, &scope);
+            history_secrets.extend(cookie_secrets.iter().cloned());
+            let history_body = ctx
+                .history
+                .as_ref()
+                .map(|h| h.max_body)
+                .filter(|max| *max > 0);
+            let history_headers = history_body.map(|_| {
+                let headers = resp
+                    .headers
+                    .iter()
+                    .map(|(n, v)| (n.clone(), sendito_core::vars::scrub(v, &history_secrets)))
+                    .collect();
+                sendito_store::examples::mask_credential_headers(headers)
+            });
             // Secrets echoed back by the server are masked before display.
             let secrets = if ctx.mask_echoed_secrets {
-                let mut secrets = http_secrets(req, &scope);
-                secrets.extend(cookie_secrets);
-                secrets
+                history_secrets.clone()
             } else {
                 Vec::new()
             };
@@ -484,12 +499,26 @@ pub(super) async fn exec_http_inner(
             let ct = resp.header("content-type").map(str::to_string);
             let size = body.len() as u64;
             body_size = size;
-            let doc = tokio::task::spawn_blocking(move || {
+            let (doc, kept) = tokio::task::spawn_blocking(move || {
+                // Mask before the cut: a secret across the cut is not kept.
+                let kept = history_body.map(|max| {
+                    let masked = sendito_core::vars::scrub_bytes(&body, &history_secrets);
+                    sendito_store::history::cut_body(masked.as_deref().unwrap_or(&body), max)
+                });
                 let body = sendito_core::vars::scrub_bytes(&body, &secrets).unwrap_or(body);
-                Doc::from_bytes(body, ct.as_deref())
+                (Doc::from_bytes(body, ct.as_deref()), kept)
             })
             .await
             .unwrap_or_default();
+            let response =
+                kept.zip(history_headers)
+                    .map(|(body, headers)| sendito_store::examples::Example {
+                        name: String::new(),
+                        status: resp.status,
+                        reason: resp.reason.clone(),
+                        headers,
+                        body,
+                    });
             let entry = history_entry(
                 ctx,
                 &template,
@@ -499,7 +528,7 @@ pub(super) async fn exec_http_inner(
                 size,
                 None,
             );
-            write_history(ctx, &entry).await;
+            write_history(ctx, &entry, response).await;
             (Ok(resp.head), doc)
         }
         Err(e) => {
@@ -515,7 +544,7 @@ pub(super) async fn exec_http_inner(
                 0,
                 Some(msg.clone()),
             );
-            write_history(ctx, &entry).await;
+            write_history(ctx, &entry, None).await;
             (Err(msg), Doc::default())
         }
     };

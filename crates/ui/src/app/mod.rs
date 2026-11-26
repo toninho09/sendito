@@ -38,6 +38,7 @@ mod completion;
 mod dialogs;
 mod env;
 mod examples;
+mod external;
 mod folders;
 mod hints;
 mod history;
@@ -466,6 +467,9 @@ pub struct App {
     cookies_job_seq: u64,
     pub filter: TextEditor,
     pub osc52: Vec<String>,
+    /// A program to run outside the UI (`:edit`, `:pager`); the event loop
+    /// takes it.
+    pub external: Option<crate::external::External>,
     pub size: (u16, u16),
     pub parked_env: Option<EnvEditor>,
     /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
@@ -611,6 +615,7 @@ impl App {
             cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
             osc52: Vec::new(),
+            external: None,
             size: (80, 24),
             parked_env: None,
             secrets_ok: false,

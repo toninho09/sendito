@@ -2,7 +2,7 @@
 //! next to `<name>.toml`. Schema in FORMAT.md.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -23,6 +23,33 @@ pub struct Example {
     pub reason: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+/// A header whose value is a credential (`Set-Cookie`, `Authorization`, a
+/// name with `token`, `secret`, `key` or `session`).
+fn credential_header(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    matches!(
+        n.as_str(),
+        "set-cookie" | "cookie" | "authorization" | "proxy-authorization"
+    ) || ["token", "secret", "key", "session"]
+        .iter()
+        .any(|w| n.contains(w))
+}
+
+/// The headers with every credential value masked, for a saved response.
+pub fn mask_credential_headers(headers: Vec<(String, String)>) -> Vec<(String, String)> {
+    headers
+        .into_iter()
+        .map(|(n, v)| {
+            let v = if credential_header(&n) {
+                sendito_core::vars::MASK.to_string()
+            } else {
+                v
+            };
+            (n, v)
+        })
+        .collect()
 }
 
 impl Example {
@@ -91,8 +118,12 @@ pub fn list(coll: &Collection, request_rel: &str) -> Result<Vec<String>> {
 }
 
 pub fn load(coll: &Collection, request_rel: &str, name: &str) -> Result<Example> {
+    read_in(&dir(coll, request_rel), name)
+}
+
+/// Reads the example `name` from the directory `d`.
+pub fn read_in(d: &Path, name: &str) -> Result<Example> {
     validate_name(name)?;
-    let d = dir(coll, request_rel);
     let path = d.join(format!("{name}.{EXT}"));
     let text = fs::read_to_string(&path).map_err(|e| StoreError::io(&path, e))?;
     let raw: RawExample = toml::from_str(&text).map_err(|e| StoreError::Parse {
@@ -153,20 +184,35 @@ pub fn save(coll: &Collection, request_rel: &str, ex: &Example) -> Result<String
         name = format!("{} ({n})", ex.name);
         n += 1;
     }
+    write_in(&d, &name, ex, false)?;
+    Ok(name)
+}
+
+/// Writes `ex` as `<name>.toml` in the directory `d`, with a body that is not
+/// UTF-8 in `<name>.bin`. `private` makes the files owner-only.
+pub fn write_in(d: &Path, name: &str, ex: &Example, private: bool) -> Result<()> {
+    validate_name(name)?;
     let binary = std::str::from_utf8(&ex.body).is_err();
     let body_file = binary.then(|| format!("{name}.bin"));
-    if let Some(f) = &body_file {
-        write_atomic(&d.join(f), &ex.body)?;
-    }
     let ex = Example {
-        name: name.clone(),
+        name: name.to_string(),
         ..ex.clone()
     };
-    write_atomic(
-        &d.join(format!("{name}.{EXT}")),
-        to_toml(&ex, body_file.as_deref()).as_bytes(),
-    )?;
-    Ok(name)
+    let mut files = vec![(
+        d.join(format!("{name}.{EXT}")),
+        to_toml(&ex, body_file.as_deref()).into_bytes(),
+    )];
+    if let Some(f) = &body_file {
+        files.push((d.join(f), ex.body.clone()));
+    }
+    for (path, bytes) in files {
+        if private {
+            crate::collection::write_private(&path, &bytes)?;
+        } else {
+            write_atomic(&path, &bytes)?;
+        }
+    }
+    Ok(())
 }
 
 /// Deletes an example (and its body file); the directory goes when empty.

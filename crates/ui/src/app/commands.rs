@@ -525,6 +525,8 @@ impl App {
             "curl!" => self.export_curl(true),
             "httpfile" => self.export_http_file(false),
             "httpfile!" => self.export_http_file(true),
+            "code" => self.export_code(arg, false),
+            "code!" => self.export_code(arg, true),
             "history" => self.toggle_history(),
             "cookies" => self.cookies_command(arg),
             "clearhistory" => {
@@ -537,6 +539,8 @@ impl App {
                 }))
             }
             "format" => self.format_body(),
+            "edit" => self.edit_externally(),
+            "pager" => self.open_pager(),
             "jq" => {
                 if arg.is_empty() {
                     self.open_filter();

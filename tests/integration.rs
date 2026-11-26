@@ -458,7 +458,11 @@ fn secrets_stay_out_of_history_exports_and_repo() {
     let ctx = sendito_pipeline::runner::RunCtx {
         root: dir.path().to_path_buf(),
         send: p.send_options(),
-        history: Some((dir.path().join(".sendito/history.jsonl"), 100)),
+        history: Some(sendito_pipeline::runner::HistorySink {
+            path: dir.path().join(".sendito/history.jsonl"),
+            max_entries: 100,
+            max_body: 1024 * 1024,
+        }),
         name: "r".into(),
         path: Some("r.toml".into()),
         env: Some("dev".into()),
@@ -483,7 +487,17 @@ fn secrets_stay_out_of_history_exports_and_repo() {
     assert!(cap.target().contains(&secret_local));
     assert_eq!(cap.header("x-k").as_deref(), Some(secret_kc.as_str()));
     assert_eq!(cap.header("x-f").as_deref(), Some(secret_file.as_str()));
-    let history = read(&dir.path().join(".sendito/history.jsonl"));
+    let mut history = read(&dir.path().join(".sendito/history.jsonl"));
+    // The response file holds the echo (target, headers, body) with the
+    // secrets masked, also without `mask_echoed_secrets`.
+    let responses: Vec<_> = std::fs::read_dir(dir.path().join(".sendito/history"))
+        .unwrap_or_else(|e| panic!("{e}"))
+        .flatten()
+        .collect();
+    assert_eq!(responses.len(), 1);
+    let kept = read(&responses[0].path());
+    assert!(kept.contains("\"target\""), "{kept}");
+    history.push_str(&kept);
     let curl = sendito_import::curl::export(&req, &scope, false, dir.path());
     let secrets = [&secret_local, &secret_kc, &secret_file];
     let mut hits = 0;
@@ -901,6 +915,49 @@ fn cli_runs_a_folder_and_chains_variables() {
             "{report}"
         );
 
+        // --report-file writes several formats in one run; stdout stays empty.
+        let out = run(&[
+            "run",
+            ".",
+            "--env",
+            "local",
+            "--no-history",
+            "--report-file",
+            "junit=out/results.xml",
+            "--report-file",
+            "html=report.html",
+        ]);
+        // A missing directory is a write error: exit 3, the other file is written.
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(stderr.contains("cannot write out/results.xml"), "{stderr}");
+        assert!(out.stdout.is_empty());
+        let html = std::fs::read_to_string(dir.path().join("report.html")).unwrap();
+        assert!(html.contains("2 passed, 1 failed, 0 error(s)"), "{html}");
+        std::fs::create_dir_all(dir.path().join("out")).unwrap();
+        let out = run(&[
+            "run",
+            ".",
+            "--env",
+            "local",
+            "--no-history",
+            "--report-file",
+            "junit=out/results.xml",
+            "--report",
+            "tap",
+        ]);
+        assert_eq!(out.status.code(), Some(1));
+        let junit = std::fs::read_to_string(dir.path().join("out/results.xml")).unwrap();
+        assert!(junit.contains(r#"tests="3" failures="1" errors="0""#), "{junit}");
+        assert!(junit.contains(r#"<testcase classname="Health" name="Health/boom.toml""#));
+        assert!(junit.contains("status == 200  (actual: 500)"), "{junit}");
+        let tap = String::from_utf8_lossy(&out.stdout);
+        assert!(tap.starts_with("TAP version 13\n1..3\nnot ok 1 - Health/boom.toml"), "{tap}");
+        // A bad format is a usage error from the argument parser.
+        let out = run(&["run", ".", "--report-file", "text=x"]);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("unknown report format"));
+
         // --fail-fast stops at the first failure.
         let out = run(&[
             "run",
@@ -959,6 +1016,76 @@ fn cli_runs_a_folder_and_chains_variables() {
             );
             assert!(!stderr.contains("PASS "), "{arg}: {stderr}");
         }
+    });
+}
+
+/// `[options] retry` sends again after a failed assertion; `--retry` replaces
+/// it; `--repeat` runs the folder again with the shared scope; a single
+/// request writes only the output of the attempt that counts.
+#[test]
+fn cli_retries_repeats_and_delays() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("F")).unwrap();
+        let req = |key: &str, extra: &str| {
+            format!(
+                "kind = \"http\"\nurl = \"{}/flaky/{key}/2\"\n{extra}\n[[scripts.assert]]\nfrom = \"status\"\nop = \"eq\"\nvalue = \"200\"\n",
+                echo.url()
+            )
+        };
+        let opts = "\n[options]\nretry = 2\nretry_interval_ms = 10\n";
+        std::fs::write(dir.path().join("F/a.toml"), req("a", opts)).unwrap();
+        // The file keeps the keys in canonical form.
+        let parsed = sendito_store::request_file::parse(&req("a", opts)).unwrap();
+        assert_eq!(parsed.common().retry, 2);
+        assert_eq!(parsed.common().retry_interval_ms, Some(10));
+        assert!(sendito_store::request_file::to_toml(&parsed).contains("[options]\nretry = 2\nretry_interval_ms = 10\n"));
+
+        let run = |args: &[&str]| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .output()
+                .unwrap()
+        };
+
+        // Two 500s, then 200 on the third attempt.
+        let out = run(&["run", "F", "--no-history", "--report", "json"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("RETRY F/a.toml  (500 Internal Server Error, attempt 1/3"), "{stderr}");
+        assert!(stderr.contains("PASS  F/a.toml  (200 OK"), "{stderr}");
+        assert!(stderr.contains("attempt 3/3)"), "{stderr}");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["requests"][0]["attempts"], 3);
+
+        // --retry 0 replaces the file: one attempt, a failure.
+        std::fs::write(dir.path().join("F/a.toml"), req("b", opts)).unwrap();
+        let out = run(&["run", "F", "--no-history", "--retry", "0"]);
+        assert_eq!(out.status.code(), Some(1));
+
+        // --repeat 2 runs the folder twice and names each round.
+        std::fs::write(dir.path().join("F/a.toml"), req("c", "")).unwrap();
+        let out = run(&["run", "F", "--no-history", "--repeat", "3", "--delay", "5", "--report", "tap"]);
+        let tap = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(out.status.code(), Some(1), "{tap}");
+        assert!(tap.contains("1..3\nnot ok 1 - F/a.toml\\#1\n"), "{tap}");
+        assert!(tap.contains("not ok 2 - F/a.toml\\#2\n"), "{tap}");
+        assert!(tap.contains("ok 3 - F/a.toml\\#3\n"), "{tap}");
+
+        // A single request: the body of the passing attempt only.
+        std::fs::write(dir.path().join("F/a.toml"), req("d", opts)).unwrap();
+        let out = run(&["run", "F/a", "--no-history"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("attempt 2/3 did not pass; retrying in 10 ms"), "{stderr}");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(stdout.matches("\"status\"").count(), 1, "{stdout}");
+        assert!(stdout.contains("\"hit\": 3"), "{stdout}");
     });
 }
 
@@ -1124,6 +1251,127 @@ fn cli_import_outside_a_collection_is_refused() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no collection here"), "{stderr}");
     assert!(!dir.path().join(".sendito").exists());
+}
+
+/// `sendito code` and `sendito har` export with the folder settings applied
+/// and secrets masked; a HAR file imports back into a collection.
+#[test]
+fn cli_exports_code_and_har_and_imports_har() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    sendito_store::init::init(root).unwrap();
+    std::fs::write(
+        root.join(".sendito/environments/local.toml"),
+        "[variables]\nbase = \"https://api.test\"\ntoken = { source = \"local\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".sendito/secrets.toml"),
+        "[local]\ntoken = \"s3cr3t\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("Users")).unwrap();
+    std::fs::write(
+        root.join("Users/folder.toml"),
+        "[[headers]]\nname = \"X-Tenant\"\nvalue = \"acme\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Users/create.toml"),
+        "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base}}/users\"\n\n[[headers]]\nname = \"Authorization\"\nvalue = \"Bearer {{token}}\"\n\n[body]\ntype = \"json\"\ntext = '{\"a\":1}'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Users/call.toml"),
+        "kind = \"grpc\"\ntarget = \"localhost:1\"\nservice = \"a.B\"\nmethod = \"C\"\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(root)
+            .args(args)
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap()
+    };
+
+    let out = run(&["code", "Users/create", "--lang", "python", "--env", "local"]);
+    let py = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(py.contains("\"https://api.test/users\""), "{py}");
+    assert!(py.contains("\"X-Tenant\": \"acme\""), "{py}");
+    assert!(
+        py.contains("Bearer {{token}}") && !py.contains("s3cr3t"),
+        "{py}"
+    );
+    let out = run(&[
+        "code",
+        "Users/create",
+        "-l",
+        "go",
+        "-e",
+        "local",
+        "--include-secrets",
+    ]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Bearer s3cr3t"));
+    let out = run(&["code", "Users/call", "--lang", "go"]);
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("only available for HTTP requests, not GRPC")
+    );
+    let out = run(&["code", "Users/create", "--lang", "ruby"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown language"));
+
+    // The folder: the gRPC request is left out with a note.
+    let out = run(&["har", "Users", "--env", "local"]);
+    let har = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a GRPC request is not in a HAR file"));
+    let doc: serde_json::Value = serde_json::from_str(&har).unwrap();
+    assert_eq!(doc["log"]["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["log"]["entries"][0]["comment"], "create");
+    assert!(!har.contains("s3cr3t"), "{har}");
+
+    // The HAR file imports back.
+    std::fs::write(root.join("export.har"), &har).unwrap();
+    let out = run(&["import", "export.har", "--into", "Back"]);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("imported 1 requests") && stdout.contains("; HAR)"),
+        "{stdout}"
+    );
+    let mut files = Vec::new();
+    toml_files(&root.join("Back"), &mut files);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].ends_with("create.toml"), "{files:?}");
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(text.contains("url = \"https://api.test/users\""), "{text}");
+}
+
+#[test]
+fn cli_prints_completions_and_the_man_page() {
+    for args in [&["completions", "zsh"][..], &["man"]] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("run"), "{args:?}: {stdout}");
+    }
 }
 
 #[test]

@@ -121,6 +121,22 @@ pub struct RequestCommon {
     pub scripts: Scripts,
     /// Markdown notes for people; never sent on the wire.
     pub description: String,
+    /// `[options] retry`: how many times `sendito run` sends the request
+    /// again after an error or a failed assertion (0 = never).
+    pub retry: u32,
+    /// `[options] retry_interval_ms`: the wait before each retry; `None`
+    /// is [`DEFAULT_RETRY_INTERVAL_MS`].
+    pub retry_interval_ms: Option<u64>,
+}
+
+/// The wait before a retry when the request sets none.
+pub const DEFAULT_RETRY_INTERVAL_MS: u64 = 1000;
+
+impl RequestCommon {
+    /// The wait before each retry.
+    pub fn retry_interval(&self) -> u64 {
+        self.retry_interval_ms.unwrap_or(DEFAULT_RETRY_INTERVAL_MS)
+    }
 }
 
 /// A name/value row with an enable toggle (query params, headers, form fields, metadata).
@@ -1079,7 +1095,7 @@ impl SseRequest {
             },
             common: RequestCommon {
                 scripts: self.common.scripts.clone(),
-                description: String::new(),
+                ..Default::default()
             },
         }
     }

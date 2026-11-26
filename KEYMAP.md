@@ -59,6 +59,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
+| `external_edit` | `Ctrl+W O` | `Ctrl+W O` | Edit the focused text in $VISUAL or $EDITOR |
 | `move_to_secret` | `Ctrl+W K` | `Ctrl+W K` | Move the plain value of the focused credential field into an environment secret |
 | `reveal_secrets` | `Ctrl+W *` | `Ctrl+W *` | Show or hide credentials typed as plain text (with Hide plain secrets on) |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
@@ -139,6 +140,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `toggle_wrap` | `w` | `w` | Wrap long lines on/off |
 | `copy_body` | `y`, `Ctrl+C` | `y y`, `Ctrl+C` | Copy the response body to the clipboard |
 | `save_body` | `s` | `s` | Save the response body to a file |
+| `open_pager` | `o` | `o` | Show the response text in $PAGER |
 
 ## Fixed keys
 
@@ -243,17 +245,21 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:saveexample [name]` | Save the response on screen as an example of the request |
 | `:examples` | List the request's saved examples and show one (:examples delete \<name> deletes) |
 | `:folder` | Edit the settings of the active request's folder (headers, auth, variables, scripts) |
-| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl |
+| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http or HAR file or a Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
 | `:httpfile` | Copy the request as an .http file |
 | `:httpfile!` | Copy the .http file including secret values |
+| `:code <language>` | Copy code that sends the request: python, fetch, go, httpie or wget |
+| `:code! <language>` | Copy the code including secret values |
 | `:cookies` | Manage the active environment's cookies: delete one or clear all (values masked) |
 | `:cookies clear` | Clear the active environment's cookies |
 | `:cookies delete <number>` | Delete one cookie from the active environment |
 | `:history` | Show history |
 | `:clearhistory` | Delete all history entries |
 | `:format` | Pretty-print the JSON body |
+| `:edit` | Edit the focused text in $VISUAL or $EDITOR |
+| `:pager` | Show the response text in $PAGER |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |

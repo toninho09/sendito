@@ -170,11 +170,34 @@ fn taint_set(scope: &mut Scope, name: &str, value: &mut VarValue, taint: &[Strin
     }
 }
 
+/// Where a send records its history entry, and how much it keeps.
+#[derive(Debug, Clone)]
+pub struct HistorySink {
+    /// `.sendito/history.jsonl`.
+    pub path: PathBuf,
+    /// `[history] max_entries`.
+    pub max_entries: usize,
+    /// `[history] max_body_kb` in bytes: the largest HTTP response body kept
+    /// (0 = no response file).
+    pub max_body: usize,
+}
+
+impl HistorySink {
+    /// The sink of a project, `None` when history is off.
+    pub fn of(root: &Path, config: &Config) -> Option<Self> {
+        config.history.enabled.then(|| Self {
+            path: history::history_path(root),
+            max_entries: config.history.max_entries,
+            max_body: config.history.max_body_kb.saturating_mul(1024),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct RunCtx {
     pub root: PathBuf,
     pub send: SendOptions,
-    pub history: Option<(PathBuf, usize)>,
+    pub history: Option<HistorySink>,
     pub name: String,
     pub path: Option<String>,
     pub env: Option<String>,

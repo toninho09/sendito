@@ -91,6 +91,7 @@ actions! {
     Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
+    ExternalEdit => "external_edit", "Edit the focused text in $VISUAL or $EDITOR";
     MoveToSecret => "move_to_secret", "Move the plain value of the focused credential field into an environment secret";
     RevealSecrets => "reveal_secrets", "Show or hide credentials typed as plain text (with Hide plain secrets on)";
     Zoom => "zoom", "Maximize or restore the focused pane";
@@ -133,6 +134,7 @@ actions! {
     ToggleWrap => "toggle_wrap", "Wrap long lines on/off";
     CopyBody => "copy_body", "Copy the response body to the clipboard";
     SaveBody => "save_body", "Save the response body to a file";
+    OpenPager => "open_pager", "Show the response text in $PAGER";
     ScrollLeft => "scroll_left", "Scroll left";
     ScrollRight => "scroll_right", "Scroll right";
     NextCell => "next_cell", "Edit the next cell (name → value → next row)";
@@ -367,6 +369,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Import, Global, Both, &["ctrl+w i"]),
         (ExportCurl, Global, Both, &["ctrl+w u"]),
         (FormatBody, Global, Both, &["ctrl+w f"]),
+        (ExternalEdit, Global, Both, &["ctrl+w O"]),
         (MoveToSecret, Global, Both, &["ctrl+w K"]),
         (RevealSecrets, Global, Both, &["ctrl+w *"]),
         (Zoom, Global, Both, &["ctrl+w z"]),
@@ -436,6 +439,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (CopyBody, Response, Conventional, &["y", "ctrl+c"]),
         (CopyBody, Response, Vim, &["y y", "ctrl+c"]),
         (SaveBody, Response, Both, &["s"]),
+        (OpenPager, Response, Both, &["o"]),
         (NextCell, Table, Both, &["enter"]),
         (ToggleRow, Table, Both, &["ctrl+t"]),
         (DeleteRow, Table, Both, &["ctrl+d"]),
@@ -691,6 +695,7 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         WatchToggle => (G::Request, "watch"),
         Save => (G::Request, "save"),
         FormatBody => (G::Request, "format body"),
+        ExternalEdit => (G::Request, "edit in $EDITOR"),
         MoveToSecret => (G::Request, "move to secret"),
         RevealSecrets => (G::Request, "show secrets"),
         ExportCurl => (G::Request, "copy as curl"),

@@ -3,6 +3,7 @@
 pub mod app;
 pub mod complete;
 pub mod draw;
+pub mod external;
 pub use sendito_widgets::{editor, form, icons, list};
 pub mod filter;
 pub mod keymap;
@@ -56,22 +57,46 @@ struct TermGuard;
 
 impl TermGuard {
     fn enter(mouse: bool) -> io::Result<Self> {
-        enable_raw_mode()?;
-        let mut out = io::stdout();
-        execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
-        if mouse {
-            execute!(out, EnableMouseCapture)?;
-        }
-        // Keep the window title to restore it on exit (xterm title stack).
-        let _ = out.write_all(b"\x1b[22;0t");
-        let _ = out.flush();
-        // Terminals without the kitty keyboard protocol ignore this.
-        let _ = execute!(
-            out,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
+        enter_terminal(mouse)?;
         Ok(Self)
     }
+}
+
+/// Raw mode, the alternate screen, paste and (with `mouse`) mouse capture:
+/// what the UI needs from the terminal.
+fn enter_terminal(mouse: bool) -> io::Result<()> {
+    enable_raw_mode()?;
+    let mut out = io::stdout();
+    execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
+    if mouse {
+        execute!(out, EnableMouseCapture)?;
+    }
+    // Keep the window title to restore it on exit (xterm title stack).
+    let _ = out.write_all(b"\x1b[22;0t");
+    let _ = out.flush();
+    // Terminals without the kitty keyboard protocol ignore this.
+    let _ = execute!(
+        out,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
+    Ok(())
+}
+
+/// Runs a program outside the UI: leaves the terminal, runs it, enters the
+/// terminal again and hands the result to the app.
+fn run_external(
+    app: &mut App,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    job: external::External,
+    mouse: bool,
+) -> io::Result<()> {
+    leave_terminal(&mut io::stdout());
+    let _ = disable_raw_mode();
+    let result = external::run(&job);
+    enter_terminal(mouse)?;
+    terminal.clear()?;
+    app.finish_external(result);
+    Ok(())
 }
 
 fn leave_terminal(out: &mut impl Write) {
@@ -245,6 +270,14 @@ fn event_loop(
         }
         if app.quit {
             return Ok(());
+        }
+        if let Some(job) = app.external.take() {
+            run_external(app, terminal, job, mouse)?;
+            // The terminal forgot the cursor shape and the title.
+            shape = None;
+            title.clear();
+            dirty = true;
+            continue;
         }
         let busy = app.is_busy();
         let timeout = if busy {

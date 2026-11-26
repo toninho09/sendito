@@ -347,7 +347,7 @@ pub async fn exec_ws(
         ))
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates.send(WsUpdate::Done {
         scripts: results,
         scope_errors,

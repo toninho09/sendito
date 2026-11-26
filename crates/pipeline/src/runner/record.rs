@@ -31,23 +31,31 @@ pub(super) fn history_entry(
         duration_ms,
         size,
         error,
+        response: None,
     }
 }
 
 /// Appends to the history on this thread. Only for the early failure paths
 /// that run in closures; [`write_history`] is the normal path.
 pub(super) fn append_history(ctx: &RunCtx, entry: &HistoryEntry) {
-    if let Some((path, max)) = &ctx.history {
-        let _ = history::append(path, entry, *max);
+    if let Some(h) = &ctx.history {
+        let _ = history::append(&h.path, entry, h.max_entries);
     }
 }
 
 /// Appends to the history off the async workers: the append takes a file lock
-/// and may trim the file.
-pub(super) async fn write_history(ctx: &RunCtx, entry: &HistoryEntry) {
-    if let Some((path, max)) = ctx.history.clone() {
+/// and may trim the file. `response` becomes the entry's response file.
+pub(super) async fn write_history(
+    ctx: &RunCtx,
+    entry: &HistoryEntry,
+    response: Option<sendito_store::examples::Example>,
+) {
+    if let Some(h) = ctx.history.clone() {
         let entry = entry.clone();
-        let _ = tokio::task::spawn_blocking(move || history::append(&path, &entry, max)).await;
+        let _ = tokio::task::spawn_blocking(move || {
+            history::append_with_response(&h.path, &entry, h.max_entries, response.as_ref())
+        })
+        .await;
     }
 }
 

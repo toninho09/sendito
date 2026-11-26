@@ -99,6 +99,8 @@ pub enum Field {
     GrpcVerify,
     Deadline,
     MaxEvents,
+    Retry,
+    RetryInterval,
     McpServer,
     McpTool,
     WsSubprotocols,
@@ -164,6 +166,8 @@ impl Field {
             Field::Tls => "Use TLS",
             Field::Deadline => "Deadline",
             Field::MaxEvents => "Max events",
+            Field::Retry => "Retries",
+            Field::RetryInterval => "Retry wait",
             Field::McpServer => "Server",
             Field::McpTool => "Tool",
             Field::WsSubprotocols => "Subprotocols",
@@ -290,6 +294,12 @@ impl Field {
             }
             Field::Tls => "Use TLS when the target has no scheme.",
             Field::MaxEvents => "Ends the stream after this many events. Empty = no limit.",
+            Field::Retry => {
+                "sendito run sends again after an error or a failed assertion, up to this many times."
+            }
+            Field::RetryInterval => {
+                "The wait before each retry: 500 ms, 2 s (a bare number is ms)."
+            }
             Field::McpServer => "A server name from [mcp.servers] or an http(s):// URL.",
             Field::McpTool => "The tool to call on the server.",
             Field::WsSubprotocols => {
@@ -416,6 +426,8 @@ impl Field {
                 | Field::ProtoFiles
                 | Field::ImportPaths
                 | Field::MaxEvents
+                | Field::Retry
+                | Field::RetryInterval
                 | Field::Deadline
                 | Field::McpServer
                 | Field::McpTool

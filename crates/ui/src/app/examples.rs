@@ -3,17 +3,7 @@
 use sendito_store::examples::{self, Example};
 
 use super::*;
-
-/// A header whose value is a credential: masked in a saved example.
-fn credential_header(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
-    matches!(
-        n.as_str(),
-        "set-cookie" | "cookie" | "authorization" | "proxy-authorization"
-    ) || ["token", "secret", "key", "session"]
-        .iter()
-        .any(|w| n.contains(w))
-}
+use crate::tab::Stored;
 
 impl App {
     /// The saved HTTP request of the active tab, or why there is none.
@@ -27,9 +17,10 @@ impl App {
         })
     }
 
-    /// `:saveexample [name]`: saves the response on screen as an example.
-    /// Credential headers are masked; the body is saved as shown before a
-    /// jq filter (secrets the server echoed are already masked there).
+    /// `:saveexample [name]`: saves the response on screen as an example; a
+    /// history response too, not an example. Credential headers are masked;
+    /// the body is saved as shown before a jq filter (secrets the server
+    /// echoed are already masked there).
     pub(super) fn save_example(&mut self, name: &str) {
         let rel = match self.example_request() {
             Ok(rel) => rel,
@@ -38,7 +29,7 @@ impl App {
         let Some((head, body)) = self
             .tab()
             .and_then(|t| t.response.as_ref())
-            .filter(|r| r.example.is_none())
+            .filter(|r| !matches!(r.stored, Some(Stored::Example(_))))
             .and_then(|r| r.http_head.clone().map(|h| (h, r.body_bytes())))
         else {
             return self.set_status(
@@ -54,18 +45,7 @@ impl App {
             },
             status: head.status,
             reason: head.reason,
-            headers: head
-                .headers
-                .into_iter()
-                .map(|(n, v)| {
-                    let v = if credential_header(&n) {
-                        sendito_core::vars::MASK.to_string()
-                    } else {
-                        v
-                    };
-                    (n, v)
-                })
-                .collect(),
+            headers: examples::mask_credential_headers(head.headers),
             body,
         };
         match examples::save(&self.project.coll, &rel, &ex) {
@@ -131,26 +111,8 @@ impl App {
             Ok(ex) => ex,
             Err(e) => return self.set_status(e.to_string(), StatusKind::Error),
         };
-        let content_type = ex
-            .headers
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
-            .map(|(_, v)| v.clone());
-        let mut resp = Response::new();
-        resp.summary = Summary {
-            status: format!("{} {}", ex.status, ex.reason).trim().to_string(),
-            code: Some(ex.status),
-            ok: ex.status < 400,
-            size: Some(ex.body.len() as u64),
-            ..Default::default()
-        };
-        let mut head = format!("{} {}\n", ex.status, ex.reason);
-        for (n, v) in &ex.headers {
-            head.push_str(&format!("{n}: {v}\n"));
-        }
-        resp.headers = crate::tab::wrapped(Doc::text(&head));
-        resp.set_body(Doc::from_bytes(ex.body, content_type.as_deref()));
-        resp.example = Some(ex.name);
+        let name = ex.name.clone();
+        let resp = Response::from_stored(ex, Stored::Example(name));
         if let Some(t) = self.tab_mut() {
             t.response = Some(resp);
             t.resp_tab = 0;

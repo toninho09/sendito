@@ -170,7 +170,11 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
     RunCtx {
         root: e.dir.path().to_path_buf(),
         send: p.send_options(),
-        history: Some((e.dir.path().join(".sendito/history.jsonl"), 10_000)),
+        history: Some(sendito_pipeline::runner::HistorySink {
+            path: e.dir.path().join(".sendito/history.jsonl"),
+            max_entries: 10_000,
+            max_body: 1024 * 1024,
+        }),
         name: sendito_store::collection::name_of(rel).to_string(),
         path: Some(rel.to_string()),
         env: Some("corpus".into()),

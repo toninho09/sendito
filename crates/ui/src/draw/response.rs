@@ -42,10 +42,11 @@ pub(super) fn draw_response(app: &mut App, buf: &mut Buffer, area: Rect, theme: 
             theme.bold(theme.fg(theme.accent)),
         ));
     }
-    // A saved example, not a response: named before its status.
-    if let Some(name) = tab.response.as_ref().and_then(|r| r.example.as_ref()) {
+    // A saved example or a history response, not a live response: named
+    // before its status.
+    if let Some(stored) = tab.response.as_ref().and_then(|r| r.stored.as_ref()) {
         spans.push((
-            format!(" example: {} ", truncate(name, 30)),
+            format!(" {} ", truncate(&stored.label(), 39)),
             theme.bold(theme.fg(theme.accent)),
         ));
     }
