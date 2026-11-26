@@ -80,6 +80,11 @@ pub(crate) enum Cmd {
         /// Wait this many milliseconds between two requests (folder runs only).
         #[arg(long = "delay", value_name = "MS", default_value_t = 0)]
         delay_ms: u64,
+        /// The value of a `$prompt` or `$select`: `LABEL=VALUE`. Repeat it
+        /// for several labels. Without it, a terminal asks; else the
+        /// placeholder is unresolved.
+        #[arg(long = "prompt", value_name = "LABEL=VALUE", value_parser = parse_prompt)]
+        prompts: Vec<(String, String)>,
     },
     /// Print a request as a curl command (secret variables stay as placeholders).
     Curl {
@@ -182,6 +187,16 @@ fn parse_lang(s: &str) -> Result<sendito_import::codegen::Lang, String> {
     })
 }
 
+fn parse_prompt(s: &str) -> Result<(String, String), String> {
+    let (label, value) = s
+        .split_once('=')
+        .ok_or("expected LABEL=VALUE, for example OTP=123456")?;
+    if label.trim().is_empty() {
+        return Err("the LABEL before = is empty".into());
+    }
+    Ok((label.trim().to_string(), value.to_string()))
+}
+
 fn parse_report_file(s: &str) -> Result<ReportFile, String> {
     let (format, path) = s
         .split_once('=')
@@ -213,6 +228,8 @@ pub(crate) struct RunFlags {
     pub(crate) retry: Option<u32>,
     pub(crate) repeat: u32,
     pub(crate) delay_ms: u64,
+    /// `--prompt LABEL=VALUE` answers.
+    pub(crate) prompts: Vec<(String, String)>,
 }
 
 #[derive(Subcommand)]

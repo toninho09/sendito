@@ -27,6 +27,9 @@ pub struct Session {
     pub runtime_vars: BTreeMap<String, String>,
     /// Where the settings and the config editors write to.
     pub config_scope: ConfigScope,
+    /// The last value typed or chosen for each `$prompt` / `$select` label
+    /// (never a `secret` prompt), suggested at the next send.
+    pub prompt_values: BTreeMap<String, String>,
 }
 
 /// The config file the settings and the config editors write to.

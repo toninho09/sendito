@@ -58,7 +58,7 @@ pub async fn exec_sse(
         req,
         results: mut scripts,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut request = req.http_request();
     request.common.scripts.pre.clear();

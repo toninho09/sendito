@@ -53,7 +53,7 @@ lists everything a change type touches, and its "Test and tooling map" the tests
   (`crates/core/src/model.rs`). The parser reads it once in
   `crates/store/src/request_file.rs::common`. Do not add it to each kind.
 * Logic that every protocol runs goes in `crates/pipeline/src/runner/mod.rs`
-  (`pre_phase`, `response_phase`), not in each runner module.
+  (`prepare`, `response_phase`), not in each runner module.
 * In tests and importers, build a request with `..Default::default()` and set
   only the fields that the code needs. Then a new field does not break them.
 

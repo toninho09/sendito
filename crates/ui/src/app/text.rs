@@ -15,6 +15,7 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
         PromptAction::CustomMethod => "use",
         PromptAction::McpServer { .. } => "add",
         PromptAction::MoveToSecret(_) => "move",
+        PromptAction::SendValue => "send",
     }
 }
 

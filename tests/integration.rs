@@ -466,14 +466,7 @@ fn secrets_stay_out_of_history_exports_and_repo() {
         name: "r".into(),
         path: Some("r.toml".into()),
         env: Some("dev".into()),
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     };
     let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx,
@@ -533,18 +526,8 @@ fn cookie_jar_fails_closed_for_insecure_file() {
     let ctx = sendito_pipeline::runner::RunCtx {
         root: dir.path().to_path_buf(),
         send: p.send_options(),
-        history: None,
         name: "test".into(),
-        path: None,
-        env: None,
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     };
     let mut req = sendito_core::HttpRequest {
         url: http.url(),
@@ -641,18 +624,9 @@ op = "not_exists"
     let ctx = sendito_pipeline::runner::RunCtx {
         root: root.to_path_buf(),
         send: p.send_options(),
-        history: None,
         name: "check".into(),
         path: Some("check.toml".into()),
-        env: None,
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     };
     let o = rt.block_on(sendito_pipeline::runner::exec_http(
         &ctx,
@@ -701,18 +675,10 @@ fn cookie_jar_stores_and_replays() {
     let ctx = |name: &str| sendito_pipeline::runner::RunCtx {
         root: root.to_path_buf(),
         send: p.send_options(),
-        history: None,
         name: name.into(),
         path: Some(format!("{name}.toml")),
         env: Some("dev".into()),
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     };
     let login = p.coll.load("login.toml").unwrap();
     let echo = p.coll.load("echo.toml").unwrap();
@@ -1484,18 +1450,11 @@ fn http_oauth_login_refresh_and_send() {
         let ctx = sendito_pipeline::runner::RunCtx {
             root: dir.path().to_path_buf(),
             send: p.send_options(),
-            history: None,
             name: "oauth".into(),
-            path: None,
             env: Some("dev".into()),
-            schemas: Default::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
-            cookie_jar: false,
             oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
+            ..Default::default()
         };
         let req = HttpRequest {
             url: format!("{}/http-api", srv.url()),
@@ -1580,18 +1539,10 @@ fn http_oauth_client_credentials_needs_no_login() {
         let ctx = sendito_pipeline::runner::RunCtx {
             root: dir.path().to_path_buf(),
             send: p.send_options(),
-            history: None,
             name: "machine".into(),
-            path: None,
-            env: None,
-            schemas: Default::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
-            cookie_jar: false,
             oauth: Some(sendito_pipeline::runner::OAuthRunInfo::of(&p)),
+            ..Default::default()
         };
         let mut req = HttpRequest {
             url: format!("{}/http-api", srv.url()),
@@ -1641,18 +1592,10 @@ fn ws_session_replays_the_cookie_jar() {
     let ctx = sendito_pipeline::runner::RunCtx {
         root: root.to_path_buf(),
         send: p.send_options(),
-        history: None,
         name: "chat".into(),
         path: Some("chat.toml".into()),
         env: Some("dev".into()),
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     };
     let Request::Ws(req) = p.coll.load("chat.toml").unwrap() else {
         panic!("not websocket")
@@ -1715,4 +1658,80 @@ fn openapi_yaml_file_imports_into_the_collection() {
     };
     assert_eq!(req.url, "{{baseUrl}}/orders/{{id}}");
     assert!(envs.list().iter().any(|e| e == "prod"));
+}
+
+/// `$prompt` and `$select` in `sendito run`: `--prompt LABEL=VALUE` answers;
+/// with no flag and no terminal the send stops (exit 3) and names the flag; a
+/// value that is not an option of its `$select` is refused.
+#[test]
+fn cli_prompt_flags_answer_prompt_and_select() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        write(
+            dir.path(),
+            "ask.toml",
+            &format!(
+                "kind = \"http\"\nurl = \"{}/o/{{{{ $prompt('Order ID') }}}}?m={{{{ $select('Mode', 'a', 'b') }}}}\"\n",
+                echo.url()
+            ),
+        );
+        let run = |args: &[&str]| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap()
+        };
+        let out = run(&[
+            "run",
+            "ask",
+            "--no-history",
+            "--prompt",
+            "Order ID=42",
+            "--prompt",
+            "Mode=b",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(echo.last().unwrap().target(), "/o/42?m=b");
+
+        let out = run(&["run", "ask", "--no-history", "--prompt", "Mode=a"]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("--prompt 'Order ID=…'"), "{stderr}");
+
+        let out = run(&[
+            "run",
+            "ask",
+            "--no-history",
+            "--prompt",
+            "Order ID=1",
+            "--prompt",
+            "Mode=c",
+        ]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("\"c\" is not an option of \"Mode\" (a, b)"),
+            "{stderr}"
+        );
+
+        // A folder run reports a missing value as an error of the request.
+        let out = run(&["run", ".", "--no-history", "--prompt", "Mode=a"]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("ERROR ask.toml  no value to send for --prompt 'Order ID=…'"),
+            "{stderr}"
+        );
+    });
 }

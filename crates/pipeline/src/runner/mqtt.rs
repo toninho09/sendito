@@ -157,7 +157,7 @@ pub async fn exec_mqtt(
         req,
         results: mut scripts,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let resolved = resolve_mqtt(req, &scope);
     let secrets = scope.secret_values();

@@ -12,7 +12,6 @@ mod tests {
     fn context(root: &std::path::Path) -> RunCtx {
         RunCtx {
             root: root.into(),
-            send: Default::default(),
             history: Some(sendito_pipeline::runner::HistorySink {
                 path: root.join("history.jsonl"),
                 max_entries: 100,
@@ -20,15 +19,8 @@ mod tests {
             }),
             name: "sensor".into(),
             path: Some("sensor.toml".into()),
-            env: None,
-            schemas: Default::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
-            cookie_jar: false,
-            oauth: None,
+            ..Default::default()
         }
     }
 

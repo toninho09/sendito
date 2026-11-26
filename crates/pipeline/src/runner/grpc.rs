@@ -156,7 +156,7 @@ pub async fn exec_grpc(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_grpc(req, &scope);
     if resolved.deadline_ms.is_none() && ctx.grpc_deadline_ms > 0 {

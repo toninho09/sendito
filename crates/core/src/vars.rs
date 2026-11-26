@@ -84,6 +84,12 @@ pub struct Scope {
     catalog: Arc<LuaCatalog>,
     /// The secret values are empty stand-ins (see [`Self::set_names_only`]).
     names_only: bool,
+    /// A pre-send call with no kept value counts as resolved (see
+    /// [`Self::set_pre_send_deferred`]).
+    deferred: bool,
+    /// The text of each pre-send call that a render met with no kept value,
+    /// in order.
+    pending: RefCell<Vec<String>>,
 }
 
 impl Default for Scope {
@@ -96,6 +102,8 @@ impl Default for Scope {
             kept: RefCell::default(),
             catalog: Arc::default(),
             names_only: false,
+            deferred: false,
+            pending: RefCell::default(),
         }
     }
 }
@@ -109,6 +117,8 @@ impl Clone for Scope {
             kept: RefCell::new(self.kept.borrow().clone()),
             catalog: self.catalog.clone(),
             names_only: self.names_only,
+            deferred: self.deferred,
+            pending: RefCell::new(self.pending.borrow().clone()),
         }
     }
 }
@@ -161,6 +171,26 @@ impl Scope {
     /// then do not run: they count as resolved, with an empty secret value.
     pub fn set_names_only(&mut self) {
         self.names_only = true;
+    }
+
+    /// Marks a scope for the checks before a send: a pre-send call
+    /// (`$prompt`, `$select`, `$response`) with no kept value counts as
+    /// resolved, and [`Self::pre_send_pending`] lists it.
+    pub fn set_pre_send_deferred(&mut self) {
+        self.deferred = true;
+    }
+
+    /// The pre-send calls that a render of this scope met with no kept value,
+    /// as written (`$prompt('OTP')`), in order.
+    pub fn pre_send_pending(&self) -> Vec<String> {
+        self.pending.borrow().clone()
+    }
+
+    /// Gives the value of the call written as `call_text`: the pipeline
+    /// resolves a pre-send call before the render. The value stays for the
+    /// whole send.
+    pub fn keep(&self, call_text: &str, value: Rendered) {
+        self.kept.borrow_mut().insert(call_text.to_string(), value);
     }
 
     /// Why the call `name` (a function call placeholder) does not resolve;
@@ -254,6 +284,10 @@ impl Scope {
             Arg::Name(n) => self.is_defined(n),
             Arg::Call(c) => self.call_defined(c),
         };
+        if let Some(p) = funcs::pre_send(c) {
+            return p.is_ok()
+                && (self.names_only || self.deferred || self.kept.borrow().contains_key(c.text));
+        }
         let known = match c.name.strip_prefix(funcs::LUA) {
             Some(name) => self.catalog.has(name),
             None => funcs::find(c.name).is_some_and(|f| f.arity == c.args.len()),
@@ -325,6 +359,20 @@ impl Scope {
     fn call(&self, c: &Call, depth: usize, memo: &mut Memo) -> Result<Rendered, String> {
         if let Some(r) = self.kept.borrow().get(c.text) {
             return Ok(r.clone());
+        }
+        if let Some(p) = funcs::pre_send(c) {
+            p?;
+            if !(self.names_only || self.deferred) {
+                return Err("it needs a value before the send".into());
+            }
+            let mut pending = self.pending.borrow_mut();
+            if !pending.iter().any(|t| t == c.text) {
+                pending.push(c.text.to_string());
+            }
+            return Ok(Rendered {
+                secret: true,
+                ..Default::default()
+            });
         }
         let lua = c.name.strip_prefix(funcs::LUA);
         let builtin = match lua {
@@ -948,6 +996,99 @@ mod tests {
         ] {
             assert_eq!(s.render(t).unresolved.len(), 1, "{t}");
         }
+    }
+
+    #[test]
+    fn pre_send_calls_need_a_kept_value() {
+        let t = "{{ $prompt('OTP') }}";
+        let s = scope();
+        // A send scope with no value: unresolved, with the reason.
+        assert_eq!(s.render(t).unresolved, ["$prompt('OTP')"]);
+        assert_eq!(
+            s.call_error("$prompt('OTP')").as_deref(),
+            Some("it needs a value before the send")
+        );
+        assert!(!s.is_defined("$prompt('OTP')"));
+        // The value the pipeline keeps is used for every render of the send.
+        s.keep(
+            "$prompt('OTP')",
+            Rendered {
+                text: "123456".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(s.render(&format!("a{t}b")).text, "a123456b");
+        assert!(s.is_defined("$prompt('OTP')"));
+        assert_eq!(s.clone().render(t).text, "123456");
+    }
+
+    #[test]
+    fn deferred_and_names_only_scopes_list_pre_send_calls() {
+        let mut s = scope();
+        s.set_pre_send_deferred();
+        let t = "{{ $prompt('OTP') }}/{{ $select('Mode', 'a', 'b') }}/{{ $prompt('OTP') }}";
+        let r = s.render(t);
+        assert!(r.unresolved.is_empty() && r.secret);
+        assert!(s.is_defined("$response('Auth/login', '$.token')"));
+        assert_eq!(
+            s.pre_send_pending(),
+            ["$prompt('OTP')", "$select('Mode', 'a', 'b')"]
+        );
+        let mut n = scope();
+        n.set_names_only();
+        assert!(n.render(t).unresolved.is_empty());
+        // A call that is not valid stays unresolved in every scope.
+        for bad in [
+            "$prompt()",
+            "$prompt('')",
+            "$prompt('a', 'x')",
+            "$prompt(token)",
+            "$select('a')",
+            "$response('Auth/login')",
+            "$response('a', '$.t', 'soon')",
+        ] {
+            assert!(!s.is_defined(bad), "{bad}");
+            assert!(s.call_error(bad).is_some(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn pre_send_parsing() {
+        use funcs::{Policy, PreSend};
+        let p = |t: &str| funcs::pre_send(&funcs::parse(t).unwrap()).unwrap();
+        assert_eq!(
+            p("$prompt('Pass', 'secret')"),
+            Ok(PreSend::Prompt {
+                label: "Pass".into(),
+                secret: true
+            })
+        );
+        assert_eq!(
+            p("$select('Mode', 'a', 'b')"),
+            Ok(PreSend::Select {
+                label: "Mode".into(),
+                options: vec!["a".into(), "b".into()]
+            })
+        );
+        assert_eq!(
+            p("$response('Auth/login.toml', '$.token')"),
+            Ok(PreSend::Response {
+                path: "Auth/login".into(),
+                expr: "$.token".into(),
+                policy: Policy::IfMissing
+            })
+        );
+        for (t, policy) in [
+            ("never", Policy::Never),
+            ("always", Policy::Always),
+            ("if_older:300", Policy::IfOlder(300)),
+        ] {
+            assert!(matches!(
+                p(&format!("$response('a', '$.t', '{t}')")),
+                Ok(PreSend::Response { policy: q, .. }) if q == policy
+            ));
+        }
+        assert!(funcs::pre_send(&funcs::parse("$upper('a')").unwrap()).is_none());
     }
 
     #[test]

@@ -48,6 +48,7 @@ fn main() -> ExitCode {
             retry,
             repeat,
             delay_ms,
+            prompts,
         }) => {
             let flags = RunFlags {
                 env,
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
                 retry,
                 repeat,
                 delay_ms,
+                prompts,
             };
             rt.block_on(run_entry(&request, flags))
         }

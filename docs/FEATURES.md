@@ -551,6 +551,13 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   `$randomString`). A random call keeps one value for the whole send. A bad
   value or an unknown function leaves the placeholder unresolved. The list is
   in `FORMAT.md`, "Functions".
+* **Values asked at send time**: `{{ $prompt('OTP') }}`,
+  `{{ $prompt('Password', 'secret') }}` and
+  `{{ $select('Mode', 'sandbox', 'live') }}` ask the value when the request is
+  sent. The TUI opens one dialog per label and suggests the last value that is
+  not a secret (kept in `.sendito/session.toml`); a watch asks once.
+  `sendito run` takes `--prompt 'OTP=123456'`, else asks on the terminal, else
+  stops with exit code 3. Details in `FORMAT.md`, "Values asked at send time".
 * **Process environment**: `{{$processEnv.NAME}}` reads `NAME` from the
   environment of the Sendito process. The value is a secret; a variable that is
   not set stays unresolved.

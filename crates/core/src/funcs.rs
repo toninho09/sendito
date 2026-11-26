@@ -63,6 +63,113 @@ pub const DEFAULT: &str = "$default";
 /// The prefix of a call to a function of the Lua catalog: `$lua.name(...)`.
 pub const LUA: &str = "$lua.";
 
+/// `$prompt('Label')` or `$prompt('Label', 'secret')`: a value the user types
+/// at send time.
+pub const PROMPT: &str = "$prompt";
+/// `$select('Label', 'a', 'b', ...)`: a value the user chooses at send time.
+pub const SELECT: &str = "$select";
+/// `$response('Folder/request', '$.json.path', 'policy')`: a value from the
+/// body of another request's response.
+pub const RESPONSE: &str = "$response";
+
+/// When `$response` sends its request again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Policy {
+    /// Never: only a kept response gives the value.
+    Never,
+    /// When no response is kept (the default).
+    IfMissing,
+    /// When no response is kept or the kept one is older than this many
+    /// seconds.
+    IfOlder(u64),
+    /// Before every send.
+    Always,
+}
+
+/// A call whose value the pipeline gets before the send: the scope cannot
+/// compute it while it renders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreSend {
+    Prompt {
+        label: String,
+        secret: bool,
+    },
+    Select {
+        label: String,
+        options: Vec<String>,
+    },
+    Response {
+        path: String,
+        expr: String,
+        policy: Policy,
+    },
+}
+
+/// `true` for the names of the calls the pipeline resolves before the send.
+pub fn is_pre_send(name: &str) -> bool {
+    matches!(name, PROMPT | SELECT | RESPONSE)
+}
+
+/// The pre-send call `c`, or why it is not valid. `None` when `c` is not a
+/// pre-send call. Every argument must be a `'literal'`.
+pub fn pre_send(c: &Call) -> Option<Result<PreSend, String>> {
+    if !is_pre_send(c.name) {
+        return None;
+    }
+    let mut args = Vec::with_capacity(c.args.len());
+    for a in &c.args {
+        match a {
+            Arg::Text(t) => args.push(t.to_string()),
+            _ => return Some(Err("every argument must be a 'literal'".into())),
+        }
+    }
+    let label = args
+        .first()
+        .map(|l| l.trim().to_string())
+        .unwrap_or_default();
+    Some(match (c.name, args.len()) {
+        (PROMPT | SELECT, _) if label.is_empty() => Err("the label is empty".into()),
+        (PROMPT, 1) => Ok(PreSend::Prompt {
+            label,
+            secret: false,
+        }),
+        (PROMPT, 2) if args[1].trim() == "secret" => Ok(PreSend::Prompt {
+            label,
+            secret: true,
+        }),
+        (PROMPT, 2) => Err(format!("{:?} is not 'secret'", args[1])),
+        (PROMPT, n) => Err(format!("it takes 1 or 2 arguments, not {n}")),
+        (SELECT, n) if n >= 2 => Ok(PreSend::Select {
+            label,
+            options: args[1..].to_vec(),
+        }),
+        (SELECT, _) => Err("it takes a label and at least one option".into()),
+        (_, 2 | 3) if label.is_empty() => Err("the request path is empty".into()),
+        (_, 2 | 3) => policy(args.get(2).map_or("if_missing", String::as_str)).map(|policy| {
+            PreSend::Response {
+                path: label.trim_end_matches(".toml").to_string(),
+                expr: args[1].trim().to_string(),
+                policy,
+            }
+        }),
+        (_, n) => Err(format!("it takes 2 or 3 arguments, not {n}")),
+    })
+}
+
+fn policy(s: &str) -> Result<Policy, String> {
+    let s = s.trim();
+    match s {
+        "never" => Ok(Policy::Never),
+        "if_missing" => Ok(Policy::IfMissing),
+        "always" => Ok(Policy::Always),
+        _ => s
+            .strip_prefix("if_older:")
+            .and_then(|n| n.trim().parse().ok())
+            .map(Policy::IfOlder)
+            .ok_or_else(|| format!("{s:?} is not never, if_missing, if_older:<seconds> or always")),
+    }
+}
+
 /// Every template function. Bytes come out as standard base64: the JSON form
 /// of a protobuf `bytes` field.
 pub const FUNCS: &[Func] = &[

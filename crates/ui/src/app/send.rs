@@ -174,6 +174,10 @@ impl App {
             }
         }
         let id = tab.id;
+        let Some(kept) = self.asked_values(id, &req, &names, from_watch) else {
+            return;
+        };
+        let tab = &mut self.tabs[self.active];
         let name = tab.name.clone();
         let edited = tab.path.is_some() && tab.dirty();
         // A watch repeat keeps the last response on screen until the new
@@ -244,6 +248,9 @@ impl App {
             let result = tokio::task::spawn_blocking(move || {
                 let mut out = runner::build_scope_checked(&envs, active.as_deref(), &runtime);
                 runner::add_folder_vars(&mut out.0, &chain);
+                for (text, value) in kept {
+                    out.0.keep(&text, value);
+                }
                 out
             })
             .await
@@ -332,20 +339,10 @@ impl App {
 
     pub(super) fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {
         RunCtx {
-            root: self.project.root.clone(),
-            send: self.project.send_options(),
-            history: runner::HistorySink::of(&self.project.root, &self.project.config),
-            name,
-            path,
             env: self.active_env.clone(),
             schemas: self.schemas.clone(),
-            grpc_deadline_ms: self.project.config.grpc.deadline_ms,
-            ws_timeout_ms: self.project.config.websocket.timeout_ms,
-            sse_timeout_ms: self.project.config.sse.timeout_ms,
-            mqtt_timeout_ms: self.project.config.mqtt.timeout_ms,
             mask_echoed_secrets: true,
-            cookie_jar: self.project.config.http.cookie_jar,
-            oauth: Some(runner::OAuthRunInfo::of(&self.project)),
+            ..RunCtx::of(&self.project, name, path)
         }
     }
 

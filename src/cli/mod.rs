@@ -1,6 +1,7 @@
 //! The `sendito` commands, one module per command group.
 
 mod args;
+mod ask;
 mod auth;
 mod convert;
 mod meta;

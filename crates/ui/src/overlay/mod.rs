@@ -84,6 +84,8 @@ pub enum PromptAction {
     /// The name of the secret that takes the plain value of this field of
     /// the active tab.
     MoveToSecret(crate::tab::Field),
+    /// The value of a `$prompt` for the send that asks it.
+    SendValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +117,8 @@ pub enum PickAction {
         dir: std::path::PathBuf,
         dotenv: bool,
     },
+    /// The value of a `$select` for the send that asks it.
+    SendValue,
 }
 
 pub struct Prompt {

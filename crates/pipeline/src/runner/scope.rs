@@ -129,6 +129,8 @@ pub fn unresolved(req: &Request, names: &Scope) -> Vec<String> {
 /// defines it.
 pub fn unresolved_loaded(req: &Request, scope: &Scope, failed: &[String]) -> Vec<String> {
     let mut scope = without(scope, failed);
+    // The send resolves `$prompt`, `$select` and `$response` before it renders.
+    scope.set_pre_send_deferred();
     let req = dry_pre(req, &mut scope);
     unresolved(&req, &scope)
 }

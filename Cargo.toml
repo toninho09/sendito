@@ -122,6 +122,7 @@ sendito-pipeline.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
+crossterm.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 serde_json.workspace = true
 

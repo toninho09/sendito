@@ -45,6 +45,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         retry,
         repeat,
         delay_ms,
+        prompts,
     } = flags.clone();
     if repeat > 1 || delay_ms > 0 {
         eprintln!(
@@ -82,6 +83,12 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
             return ExitCode::from(3);
         }
     };
+    if let Err(e) = super::ask::answer_prompts(&req, &scope, &prompts, &mut Default::default())
+        && !allow_unresolved
+    {
+        eprintln!("sendito: {e} (or pass --allow-unresolved)");
+        return ExitCode::from(3);
+    }
     // Check against the loaded values, as a folder run does: a secret that
     // failed to load (no keychain entry, no secrets.toml) is unresolved.
     let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
@@ -520,6 +527,7 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         retry,
         repeat,
         delay_ms,
+        prompts,
     } = flags.clone();
     if include {
         eprintln!(
@@ -571,6 +579,8 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             String::new()
         }
     );
+    // A folder run asks each `$prompt` label once.
+    let mut answers = super::ask::Answers::new();
     // Repeats share one scope: a value extracted in one round is seen by the next.
     let runs = (1..=repeat).flat_map(|round| rels.iter().map(move |rel| (round, rel)));
     for (i, (round, rel)) in runs.enumerate() {
@@ -623,6 +633,23 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
             Request::Mqtt(_) => "mqtt",
             Request::Mcp(_) => "mcp",
         };
+        if let Err(e) = super::ask::answer_prompts(&req, &rscope, &prompts, &mut answers)
+            && !allow_unresolved
+        {
+            eprintln!("ERROR {path}  {e}");
+            suite.entries.push(Entry {
+                path: path.clone(),
+                kind: Some(kind),
+                outcome: "error",
+                unresolved: Some(true),
+                error: Some(e),
+                ..Default::default()
+            });
+            if fail_fast {
+                break;
+            }
+            continue;
+        }
         let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
         if !un.is_empty() && !allow_unresolved {
             let names = runner::unresolved_list(&un, &rscope);

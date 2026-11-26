@@ -74,6 +74,7 @@ Sends a request without the UI, or runs every request in a folder.
 | `--retry <n>` | Send a request again up to `n` times after an error or a failed assertion; replaces each request's `[options] retry` |
 | `--repeat <n>` | Run the folder `n` times in a row with one variable scope (folder runs only; default 1) |
 | `--delay <ms>` | Wait between two requests (folder runs only; default 0) |
+| `--prompt <label>=<value>` | The value of a `$prompt` or `$select` with that label; repeat it for several labels. Without it, a terminal asks; with no terminal the request is not sent (exit 3) |
 
 One request: the response body goes to **stdout**, and the status, timing,
 assertion and test results go to **stderr**, with the Lua script output as

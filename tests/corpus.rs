@@ -178,14 +178,7 @@ fn ctx(e: &Env, p: &Project, rel: &str) -> RunCtx {
         name: sendito_store::collection::name_of(rel).to_string(),
         path: Some(rel.to_string()),
         env: Some("corpus".into()),
-        schemas: Default::default(),
-        grpc_deadline_ms: 0,
-        ws_timeout_ms: 0,
-        sse_timeout_ms: 30_000,
-        mqtt_timeout_ms: 30_000,
-        mask_echoed_secrets: false,
-        cookie_jar: false,
-        oauth: None,
+        ..Default::default()
     }
 }
 

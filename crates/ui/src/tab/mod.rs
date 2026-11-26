@@ -51,6 +51,9 @@ pub struct Watch {
     pub next: std::time::Instant,
     /// One `(ok, ms)` per send while watching, oldest first.
     pub samples: Vec<(bool, f64)>,
+    /// The `$prompt` / `$select` answers of the first send, by label: every
+    /// repeat uses them.
+    pub answers: std::collections::BTreeMap<String, sendito_core::vars::VarValue>,
 }
 
 /// How many watch samples are kept for the sparkline.
@@ -62,6 +65,7 @@ impl Watch {
             interval,
             next: std::time::Instant::now() + interval,
             samples: Vec::new(),
+            answers: Default::default(),
         }
     }
 

@@ -33,6 +33,7 @@ use crate::tree::{RowKind, TreeState};
 use crate::viewer::{Doc, ViewMode, Viewer};
 
 mod actions;
+mod ask;
 mod commands;
 mod completion;
 mod dialogs;
@@ -475,6 +476,13 @@ pub struct App {
     /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
     /// send only.
     secrets_ok: bool,
+    /// The `$prompt` / `$select` questions of a send, while they are asked.
+    asks: Option<ask::Asks>,
+    /// The answers of the last questions, for the next send of that tab only.
+    answers: Option<(u64, ask::Answers)>,
+    /// The last value of each `$prompt` / `$select` label (not secrets),
+    /// saved in the session.
+    prompt_values: BTreeMap<String, String>,
     /// The stamp of the Lua catalog files and when `tick` last read it.
     lua_stamp: (u64, Instant),
     /// Credentials typed as plain text show as typed although Hide plain
@@ -619,6 +627,9 @@ impl App {
             size: (80, 24),
             parked_env: None,
             secrets_ok: false,
+            asks: None,
+            answers: None,
+            prompt_values: session.prompt_values.clone(),
             lua_stamp,
             reveal_secrets: false,
             parked_records: None,
@@ -756,6 +767,7 @@ impl App {
                 .map(|(k, v)| (k.clone(), v.value.clone()))
                 .collect(),
             config_scope: self.config_scope,
+            prompt_values: self.prompt_values.clone(),
         }
     }
 

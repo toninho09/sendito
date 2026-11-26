@@ -186,7 +186,7 @@ pub async fn exec_mcp(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let resolved = resolve_mcp(req, &scope);
     let template = Request::Mcp(req.clone());

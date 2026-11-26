@@ -3954,3 +3954,65 @@ fn flow_lua_function_that_fails_asks_before_sending() {
     let sc = h.wait_for("Functions not resolved", 10);
     assert!(sc.contains("no order"), "{sc}");
 }
+
+/// `$prompt` and `$select` ask their values before the send, one dialog per
+/// label; the request goes out with the answers, and the next send suggests
+/// the last value that is not a secret.
+#[test]
+fn flow_prompt_and_select_ask_before_sending() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let url = format!(
+        "{}/p/{{{{ $prompt('Order ID') }}}}/{{{{ $select('Mode', 'sandbox', 'live') }}}}?k={{{{ $prompt('Key', 'secret') }}}}",
+        s.http.url()
+    );
+    common::write(
+        h.dir.path(),
+        "ask.toml",
+        &format!("kind = \"http\"\nmethod = \"GET\"\nurl = \"{url}\"\n"),
+    );
+    h.app.rescan();
+    open(&mut h, "ask");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    h.key("f5");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Value to send (1 of 3)") && sc.contains("Order ID"),
+        "{sc}"
+    );
+    h.type_text("42");
+    h.key("enter");
+    assert!(
+        h.screen().contains("Mode: value to send (2 of 3)"),
+        "{}",
+        h.screen()
+    );
+    h.key("down");
+    h.key("enter");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Value to send (3 of 3)") && sc.contains("Key"),
+        "{sc}"
+    );
+    h.type_text("s3cret");
+    assert!(!h.screen().contains("s3cret"), "{}", h.screen());
+    h.key("enter");
+    h.wait_for("200", 10);
+    let got = s.http.last().must();
+    assert_eq!(got.target(), "/p/42/live?k=s3cret");
+    // The next send suggests the values that are not secrets.
+    h.key("f5");
+    match &h.app.overlay {
+        Some(sendito_ui::overlay::Overlay::Prompt(p)) => assert_eq!(p.input.text(), "42"),
+        _ => panic!("no prompt: {}", h.screen()),
+    }
+    assert_eq!(
+        h.app
+            .session()
+            .prompt_values
+            .get("Mode")
+            .map(String::as_str),
+        Some("live")
+    );
+    assert!(!h.app.session().prompt_values.contains_key("Key"));
+}

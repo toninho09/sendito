@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use percent_encoding::{AsciiSet, utf8_percent_encode};
 
+use crate::funcs;
 use crate::model::*;
 use crate::vars::{Rendered, Scope};
 
@@ -937,6 +938,27 @@ pub fn unresolved_vars(req: &Request, scope: &Scope) -> Vec<String> {
     }
 }
 
+/// The pre-send calls (`$prompt`, `$select`, `$response`) the request uses
+/// and `scope` has no value for, with the call text, in order: in its fields,
+/// in the values they reference and in its pre-request rows. A call that is
+/// not valid is left out: the send check reports it.
+pub fn pre_send_calls(req: &Request, scope: &Scope) -> Vec<(String, funcs::PreSend)> {
+    let mut s = scope.clone();
+    s.set_pre_send_deferred();
+    unresolved_vars(req, &s);
+    for row in &req.scripts().pre {
+        s.render(&row.value);
+    }
+    s.pre_send_pending()
+        .into_iter()
+        .filter_map(|text| {
+            let call = funcs::parse(&text)?;
+            let p = funcs::pre_send(&call)?.ok()?;
+            Some((text, p))
+        })
+        .collect()
+}
+
 fn mask_kv(v: &[KeyValue], s: &Scope) -> Vec<KeyValue> {
     v.iter()
         .map(|kv| KeyValue {
@@ -1592,5 +1614,38 @@ mod tests {
             ..Default::default()
         });
         assert!(!format!("{:?}", mask_request(&b, &s)).contains("abc"));
+    }
+
+    #[test]
+    fn pre_send_calls_are_found_in_fields_values_and_pre_rows() {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert(
+            "otp".to_string(),
+            crate::vars::VarValue::plain("{{ $prompt('OTP') }}"),
+        );
+        let s = Scope::new().with_layer("env", env);
+        let mut req = Request::Http(HttpRequest {
+            url: "https://h/{{ $select('Mode', 'a', 'b') }}?o={{otp}}".into(),
+            ..Default::default()
+        });
+        req.scripts_mut().pre.push(SetVar {
+            var: "id".into(),
+            value: "{{ $response('Auth/login', '$.id') }}".into(),
+        });
+        let calls: Vec<String> = pre_send_calls(&req, &s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                "$select('Mode', 'a', 'b')",
+                "$prompt('OTP')",
+                "$response('Auth/login', '$.id')"
+            ]
+        );
+        // A kept value is not asked again.
+        s.keep("$prompt('OTP')", Rendered::default());
+        assert_eq!(pre_send_calls(&req, &s).len(), 2);
     }
 }

@@ -40,6 +40,18 @@
 * The editor reads the catalog again within 2 seconds after a file changes;
   the status line says so, or names the file that failed.
 
+### Values asked at send time
+
+* `{{ $prompt('Label') }}`, `{{ $prompt('Label', 'secret') }}` and
+  `{{ $select('Label', 'a', 'b') }}` get their value when the request is
+  sent. Every call with the same label gets one value per send.
+* The TUI asks one question per label, one dialog after the other. It
+  suggests the last value of a label that is not a secret, kept in
+  `.sendito/session.toml`. A watch asks once.
+* `sendito run --prompt 'Label=value'` answers. Without the flag a terminal
+  asks; with no terminal the request is not sent (exit code 3) and the
+  message names the flag. A folder run asks each label once.
+
 ### Unresolved functions
 
 * The confirmation before a send and the refusal of `sendito run` give the

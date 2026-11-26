@@ -193,7 +193,7 @@ pub(super) async fn exec_http_inner(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
     if let Some(message) = pre_error {

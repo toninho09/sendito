@@ -123,7 +123,7 @@ pub async fn exec_ws(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = sendito_core::resolve::resolve_ws(req, &scope);
     // `timeout_ms` unset falls back to `[websocket] timeout_ms`; 0 means no

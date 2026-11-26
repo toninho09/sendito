@@ -241,6 +241,7 @@ impl App {
                 self.changed();
             }
             PickAction::RequestKind => {}
+            PickAction::SendValue => self.answer(item.to_string()),
             PickAction::Theme => self.theme_command(item),
             PickAction::Cookie => {
                 let (title, message, action) = if item == CLEAR_COOKIES {
@@ -495,6 +496,7 @@ impl App {
             PromptAction::McpServer { name } => {
                 self.add_mcp_server(&name, choice, &value)?;
             }
+            PromptAction::SendValue => self.answer(value),
             PromptAction::MoveToSecret(field) => {
                 let m = self.move_to_secret(field, value.trim())?;
                 self.set_status(m, StatusKind::Ok);

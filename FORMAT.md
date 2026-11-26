@@ -183,6 +183,39 @@ sent, JSON-escaped or percent-encoded, not in a base64 or hex form.
 `{{ $lua.name(argument, ...) }}` calls a function of your Lua catalog, with
 the same argument rules; see "Lua function catalog".
 
+### Values asked at send time
+
+Two calls get their value from the user when the request is sent. Every
+argument is a `'literal'`.
+
+| Call | Value |
+|---|---|
+| `$prompt('Label')` | the text typed for `Label` |
+| `$prompt('Label', 'secret')` | the same, typed without echo; the value is a secret |
+| `$select('Label', 'a', 'b', ...)` | the option chosen for `Label` |
+
+```toml
+url = "{{base_url}}/orders/{{ $prompt('Order ID') }}?mode={{ $select('Mode', 'sandbox', 'live') }}"
+
+[[headers]]
+name = "X-OTP"
+value = "{{ $prompt('OTP', 'secret') }}"
+```
+
+* The label is the question: every call with the same label gets one value
+  per send. A call can be in any field, in a variable value the request uses
+  and in a pre-request row.
+* **TUI**: the send asks one question per label, one dialog after the other,
+  then sends. Esc cancels the send. The dialog suggests the last value of a
+  label that is not a secret; `.sendito/session.toml` keeps it
+  (`prompt_values`). A watch asks once and uses the answers for every repeat.
+* **`sendito run`**: `--prompt 'Label=value'` answers (repeat it for several
+  labels). A label with no flag asks on the terminal (a `$select` lists its
+  options by number). With no terminal (CI), the request is not sent: exit
+  code 3, and the message names the `--prompt` flag to add. A folder run asks
+  each label once. A value that is not an option of its `$select` is refused.
+* The request file and the history keep the call, not the value.
+
 ## HTTP request
 
 ```toml

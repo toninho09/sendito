@@ -94,7 +94,7 @@ pub(crate) struct PrePhase<T> {
 /// The pre-request phase of a send: the `pre` rows, then the Lua pre
 /// scripts. Both set variables in `scope`; the scripts can also change the
 /// request. On a script error the request is the one given.
-pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
+fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
     let mut wrapped = req.clone().wrap();
     let mut results = ScriptResults {
         pre: script::run_pre(&wrapped.scripts().pre, scope),
@@ -114,6 +114,14 @@ pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
         results,
         error,
     }
+}
+
+/// The start of every send, for every request kind: the one place for the
+/// work that all kinds do before they resolve the request. Today it is the
+/// pre-request phase ([`pre_phase`]); the values that need the send context
+/// (`$response`, `FORMAT.md` "Functions") go here too.
+pub(crate) async fn prepare<T: Kind>(_ctx: &RunCtx, req: &T, scope: &mut Scope) -> PrePhase<T> {
+    pre_phase(req, scope)
 }
 
 /// The response phase of a send: the extracts, the assertions, then the Lua
@@ -215,6 +223,54 @@ pub struct RunCtx {
     /// overrides it.
     pub cookie_jar: bool,
     pub oauth: Option<OAuthRunInfo>,
+}
+
+impl Default for RunCtx {
+    /// A context with the default config: no collection root, no history, no
+    /// environment and no OAuth. Tests set only the fields they need.
+    fn default() -> Self {
+        let c = Config::default();
+        Self {
+            root: PathBuf::new(),
+            send: SendOptions::default(),
+            history: None,
+            name: String::new(),
+            path: None,
+            env: None,
+            schemas: SchemaCache::default(),
+            grpc_deadline_ms: c.grpc.deadline_ms,
+            ws_timeout_ms: c.websocket.timeout_ms,
+            sse_timeout_ms: c.sse.timeout_ms,
+            mqtt_timeout_ms: c.mqtt.timeout_ms,
+            mask_echoed_secrets: false,
+            cookie_jar: c.http.cookie_jar,
+            oauth: None,
+        }
+    }
+}
+
+impl RunCtx {
+    /// The context of a send of the request `name` (saved at `path`) in
+    /// `project`: its config, its history and its OAuth identities. The
+    /// caller sets the environment and what differs (the UI masks echoed
+    /// secrets; `sendito run` can turn history and cookies off).
+    pub fn of(project: &Project, name: String, path: Option<String>) -> Self {
+        let c = &project.config;
+        Self {
+            root: project.root.clone(),
+            send: project.send_options(),
+            history: HistorySink::of(&project.root, c),
+            name,
+            path,
+            grpc_deadline_ms: c.grpc.deadline_ms,
+            ws_timeout_ms: c.websocket.timeout_ms,
+            sse_timeout_ms: c.sse.timeout_ms,
+            mqtt_timeout_ms: c.mqtt.timeout_ms,
+            cookie_jar: c.http.cookie_jar,
+            oauth: Some(OAuthRunInfo::of(project)),
+            ..Self::default()
+        }
+    }
 }
 
 /// Commands to a running request: gRPC calls and WebSocket sessions share
@@ -357,19 +413,10 @@ mod tests {
         };
         let ctx = RunCtx {
             root: std::env::temp_dir(),
-            send: SendOptions::default(),
-            history: None,
-            name: String::new(),
-            path: None,
-            env: None,
-            schemas: SchemaCache::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
             sse_timeout_ms: 0,
             mqtt_timeout_ms: 0,
             mask_echoed_secrets: true,
-            cookie_jar: false,
-            oauth: None,
+            ..Default::default()
         };
         let o = exec_http(&ctx, &req, secret_scope(), vec![]).await;
         assert!(o.response.is_err());
