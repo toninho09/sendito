@@ -91,6 +91,68 @@ Unresolved placeholders are highlighted in red in the editor. Sending a request
 with unresolved placeholders asks for confirmation; if you confirm they are sent
 literally. `sendito run` refuses unless `--allow-unresolved` is given.
 
+### Functions
+
+A placeholder may call a function: `{{ $name(argument, ...) }}`. An argument
+is a `'literal'` (it ends at the next `'`; there is no escape), a number (`8`,
+`-1`), a variable name (`user_id`, `$uuid`, `$processEnv.NAME`) or another
+call. The call stays on one line and calls nest up to 8 levels.
+
+```toml
+message = '''
+{
+  "id": "{{ $uuidBytes(user_id) }}",
+  "request_id": "{{ $uuidBytes($uuid) }}",
+  "fixed": "{{ $uuidBytes('1b4e28ba-2fa1-11d2-883f-0016d3cca427') }}",
+  "digest": "{{ $hexBytes($sha256(payload)) }}"
+}
+'''
+```
+
+Bytes come out as standard base64, the JSON form of a protobuf `bytes` field.
+A function that reads bytes takes standard or URL-safe base64, with or without
+padding. Times come out in RFC 3339, UTC. `{{ $uuidBytes($uuid) }}` uses the
+same UUID as `{{$uuid}}` in the same send.
+
+| Function | Value |
+|---|---|
+| `$uuidBytes(uuid)` | the 16 bytes of a UUID, base64; hyphens are optional, any case |
+| `$uuidFromBytes(base64)` | the UUID text of 16 bytes (lowercase, with hyphens) |
+| `$uuidV5(namespace, name)` | the name-based UUID v5: `namespace` is a UUID, `name` the text |
+| `$uuidV7()` | a time-ordered UUID v7; random |
+| `$ulid()` | a ULID (26 Crockford base32 characters); random |
+| `$hexBytes(hex)` | the bytes of an even number of hex digits, base64 |
+| `$bytesHex(base64)` | the bytes in lowercase hex |
+| `$base64(text)` | standard base64 of the UTF-8 text |
+| `$base64Url(text)` | URL-safe base64 of the UTF-8 text, no padding |
+| `$base64Decode(base64)` | the decoded text; the bytes must be UTF-8 |
+| `$hex(text)` | lowercase hex of the UTF-8 text |
+| `$urlEncode(text)` | the text percent-encoded as a query component |
+| `$md5(text)`, `$sha1(text)`, `$sha256(text)`, `$sha512(text)` | the lowercase hex digest |
+| `$hmacSha256(key, text)`, `$hmacSha256Base64(key, text)` | the HMAC-SHA256 of the text, in lowercase hex or in base64 |
+| `$timeAdd(time, duration)` | an RFC 3339 time plus a duration such as `90s`, `1h30m` or `-2d` (units `ms`, `s`, `m`, `h`, `d`) |
+| `$isoFromUnix(seconds)`, `$unixFromIso(time)` | Unix seconds to an RFC 3339 time, and back |
+| `$upper(text)`, `$lower(text)`, `$trim(text)` | the text in upper case, in lower case, without the spaces at the ends |
+| `$len(text)` | the length of the UTF-8 text in bytes |
+| `$jsonEscape(text)` | the text as it is written inside a JSON string, without the quotes |
+| `$jsonString(text)` | the text as a JSON string, with the quotes |
+| `$replace(text, from, to)` | the text with every `from` replaced by `to` |
+| `$substr(text, start, length)` | `length` characters from character `start` (0 is the first) |
+| `$padLeft(text, length, char)` | the text with `char` added on the left up to `length` characters |
+| `$default(name, fallback)` | the first argument, or the fallback when the first does not resolve |
+| `$randomInt(min, max)` | a random integer from `min` to `max`, both included; random |
+| `$randomHex(length)`, `$randomString(length)` | random lowercase hex digits, or random ASCII letters and digits; random |
+
+A random function gives one value per call text for the whole send: two
+`{{$randomHex(8)}}` in a request are the same value, and the history shows it.
+`{{$randomHex(8)}}` and `{{$randomHex(16)}}` are different calls. A count or
+a length is at most 1 MiB.
+
+An unknown function, a wrong number of arguments, an unresolved argument or a
+bad value (`$uuidBytes('abc')`) leaves the placeholder unresolved. The value of
+a call is a secret when an argument is a secret. Masking finds a secret as
+sent, JSON-escaped or percent-encoded, not in a base64 or hex form.
+
 ## HTTP request
 
 ```toml

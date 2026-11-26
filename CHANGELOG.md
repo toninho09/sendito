@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+### Template functions
+
+* A placeholder can call a function: `{{ $uuidBytes(user_id) }}` sends the 16
+  bytes of a UUID as base64, the JSON form of a protobuf `bytes` field. An
+  argument is a `'literal'`, a variable or another call
+  (`{{ $hexBytes($sha256(body)) }}`).
+* Functions:
+  * IDs and bytes: `$uuidBytes`, `$uuidFromBytes`, `$uuidV5`, `$uuidV7()`,
+    `$ulid()`, `$hexBytes`, `$bytesHex`.
+  * Encoding: `$base64`, `$base64Url`, `$base64Decode`, `$hex`, `$urlEncode`.
+  * Hashes and HMAC: `$md5`, `$sha1`, `$sha256`, `$sha512`, `$hmacSha256`,
+    `$hmacSha256Base64`.
+  * Time: `$timeAdd`, `$isoFromUnix`, `$unixFromIso`.
+  * Text and JSON: `$upper`, `$lower`, `$trim`, `$len`, `$jsonEscape`,
+    `$jsonString`, `$replace`, `$substr`, `$padLeft`, `$default`.
+  * Random: `$randomInt`, `$randomHex`, `$randomString`. A random call keeps
+    one value for the whole send, as `{{$uuid}}` does.
+* A bad value, an unknown function or a wrong number of arguments leaves the
+  placeholder unresolved; the value is a secret when an argument is a secret.
+* New wire corpus case `grpc/17-template-functions`.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

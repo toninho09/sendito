@@ -539,6 +539,18 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
 * **Dynamic values** are generated once per send:
   `{{$uuid}}`, `{{$timestamp}}` (seconds), `{{$timestampMs}}`,
   `{{$isoTimestamp}}` (RFC 3339 UTC), `{{$randomInt}}` (0–1000).
+* **Functions** transform a value at send time: `{{ $uuidBytes(user_id) }}`
+  sends the 16 bytes of a UUID as base64, the JSON form of a protobuf `bytes`
+  field. An argument is a `'literal'`, a number, a variable or another call
+  (`{{ $hexBytes($sha256(body)) }}`). Groups: IDs and bytes (`$uuidFromBytes`,
+  `$uuidV5`, `$uuidV7()`, `$ulid()`, `$hexBytes`, `$bytesHex`), encoding
+  (`$base64`, `$base64Url`, `$base64Decode`, `$hex`, `$urlEncode`), hashes and
+  HMAC (`$sha256`, `$hmacSha256`, …), time (`$timeAdd`, `$isoFromUnix`,
+  `$unixFromIso`), text and JSON (`$jsonString`, `$replace`, `$substr`,
+  `$padLeft`, `$default`, …) and random values (`$randomInt`, `$randomHex`,
+  `$randomString`). A random call keeps one value for the whole send. A bad
+  value or an unknown function leaves the placeholder unresolved. The list is
+  in `FORMAT.md`, "Functions".
 * **Process environment**: `{{$processEnv.NAME}}` reads `NAME` from the
   environment of the Sendito process. The value is a secret; a variable that is
   not set stays unresolved.

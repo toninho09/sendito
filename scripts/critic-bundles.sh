@@ -142,6 +142,9 @@ import, the request URL comes from url.raw and the collection name becomes the
 folder name. Sendito's dynamic variables: {{$uuid}} random v4 UUID,
 {{$timestamp}} Unix time in seconds (as in Postman), {{$timestampMs}}
 milliseconds, {{$isoTimestamp}} RFC 3339 UTC, {{$randomInt}} 0-1000.
+Template functions {{ $name(argument) }} take a 'literal', a variable or a
+call: $uuidBytes gives the 16 bytes of a UUID as base64 (a protobuf bytes
+field in JSON), $sha256 the lowercase hex digest; FORMAT.md lists the others.
 
 {{name}} placeholders take their value from environment/corpus.toml, then
 environment/collection.toml. Variables whose source is "local", "keychain" or "file"

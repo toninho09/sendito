@@ -16,6 +16,7 @@ regex.workspace = true
 time.workspace = true
 sha1.workspace = true
 sha2.workspace = true
+ring.workspace = true
 md-5.workspace = true
 xee-xpath.workspace = true
 mlua.workspace = true

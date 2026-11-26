@@ -2,8 +2,10 @@
 //!
 //! A placeholder is `{{` + optional spaces + a name + optional spaces + `}}`.
 //! Names may contain ASCII letters, digits, `_`, `-`, `.` and a leading `$`
-//! (dynamic variables such as `{{$uuid}}`). Anything else between braces is
-//! literal text.
+//! (dynamic variables such as `{{$uuid}}`). A `$` name may be a function
+//! call, `{{ $uuidBytes(user_id) }}` (see [`crate::funcs`]): the name then
+//! covers the whole call, up to the matching `)` on the same line. Anything
+//! else between braces is literal text.
 
 use std::ops::Range;
 
@@ -13,7 +15,7 @@ pub enum Segment<'a> {
     Var { name: &'a str, span: Range<usize> },
 }
 
-fn is_name_char(c: u8) -> bool {
+pub(crate) fn is_name_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.')
 }
 
@@ -61,10 +63,13 @@ fn scan_placeholder(b: &[u8], start: usize) -> Option<(Range<usize>, usize)> {
     while j < b.len() && is_name_char(b[j]) {
         j += 1;
     }
-    let name_end = j;
-    if name_end == name_start || (name_end == name_start + 1 && b[name_start] == b'$') {
+    if j == name_start || (j == name_start + 1 && b[name_start] == b'$') {
         return None;
     }
+    if b[name_start] == b'$' && b.get(j) == Some(&b'(') {
+        j = scan_call(b, j)?;
+    }
+    let name_end = j;
     while j < b.len() && b[j] == b' ' {
         j += 1;
     }
@@ -73,6 +78,28 @@ fn scan_placeholder(b: &[u8], start: usize) -> Option<(Range<usize>, usize)> {
     } else {
         None
     }
+}
+
+/// The index after the `)` that closes the `(` at `open`. Parentheses inside
+/// `'...'` do not count. `None` when the line ends first.
+fn scan_call(b: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quoted = false;
+    for (k, &c) in b.iter().enumerate().skip(open) {
+        match c {
+            b'\n' => return None,
+            b'\'' => quoted = !quoted,
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(k + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Byte spans of `{{}}` / `{{ }}`: braces with no name, which are sent as
@@ -173,6 +200,18 @@ mod tests {
         assert!(has_vars("a{{b}}"));
         assert!(!has_vars("a{{ }}"));
         assert_eq!(spans("x{{y}}"), vec![(1..6, "y")]);
+    }
+
+    #[test]
+    fn function_calls() {
+        assert_eq!(
+            spans("x{{ $f(a, '}} ) (', $g(b)) }}y"),
+            vec![(1..29, "$f(a, '}} ) (', $g(b))")]
+        );
+        assert_eq!(parse("{{f(a)}}"), vec![Segment::Text("{{f(a)}}")]);
+        assert_eq!(parse("{{$f(a}}"), vec![Segment::Text("{{$f(a}}")]);
+        assert_eq!(parse("{{$f(a\n)}}"), vec![Segment::Text("{{$f(a\n)}}")]);
+        assert_eq!(parse("{{$f(a) b}}"), vec![Segment::Text("{{$f(a) b}}")]);
     }
 
     #[test]

@@ -4358,6 +4358,7 @@ dependencies = [
  "mlua",
  "percent-encoding",
  "regex",
+ "ring",
  "serde_json",
  "serde_json_path",
  "sha1 0.10.7",

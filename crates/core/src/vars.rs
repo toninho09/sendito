@@ -10,6 +10,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
+use crate::funcs::{self, Arg, Call};
 use crate::template::{self, Segment};
 
 pub const MAX_DEPTH: usize = 8;
@@ -70,6 +71,9 @@ pub struct Scope {
     /// Dynamic values (`$uuid`, ...) generated once per scope so a request and its
     /// history entry agree.
     dynamic: RefCell<HashMap<String, String>>,
+    /// The results of random function calls, by call text, so every render
+    /// of one send gives the same value.
+    kept: RefCell<HashMap<String, Rendered>>,
 }
 
 impl Clone for Scope {
@@ -77,6 +81,7 @@ impl Clone for Scope {
         Self {
             layers: self.layers.clone(),
             dynamic: RefCell::new(self.dynamic.borrow().clone()),
+            kept: RefCell::new(self.kept.borrow().clone()),
         }
     }
 }
@@ -181,7 +186,28 @@ impl Scope {
         if let Some(k) = process_env_key(name) {
             return std::env::var_os(k).is_some();
         }
+        if let Some(c) = funcs::parse(name) {
+            return self.call_defined(&c);
+        }
         name.starts_with('$') && dynamic_known(name) || self.raw(name).is_some()
+    }
+
+    /// The function exists, gets the right number of arguments, and every
+    /// argument is defined.
+    /// For `$default`, only the fallback must be defined.
+    fn call_defined(&self, c: &Call) -> bool {
+        let arg_defined = |a: &Arg| match a {
+            Arg::Text(_) => true,
+            Arg::Name(n) => self.is_defined(n),
+            Arg::Call(c) => self.call_defined(c),
+        };
+        if !funcs::find(c.name).is_some_and(|f| f.arity == c.args.len()) {
+            return false;
+        }
+        match c.args.as_slice() {
+            [_, fallback] if c.name == funcs::DEFAULT => arg_defined(fallback),
+            args => args.iter().all(arg_defined),
+        }
     }
 
     /// Fully resolves one variable.
@@ -207,6 +233,9 @@ impl Scope {
                 unresolved: vec![],
             });
         }
+        if let Some(c) = funcs::parse(name) {
+            return self.call(&c, depth, memo);
+        }
         if let Some(rest) = name.strip_prefix('$')
             && let Some(v) = self.dynamic_value(rest)
         {
@@ -223,6 +252,53 @@ impl Scope {
         let mut r = self.render_depth(&v.value, depth + 1, memo);
         r.secret |= v.secret;
         Some(r)
+    }
+
+    /// Runs a template function. An unknown function, a wrong number of
+    /// arguments, an unresolved argument or an error gives `None`. The result
+    /// is secret when an argument is. A random function keeps its first value
+    /// for each call text, as `$uuid` does.
+    fn call(&self, c: &Call, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        if let Some(r) = self.kept.borrow().get(c.text) {
+            return Some(r.clone());
+        }
+        let f = funcs::find(c.name).filter(|f| f.arity == c.args.len())?;
+        if let [first, fallback] = c.args.as_slice()
+            && c.name == funcs::DEFAULT
+        {
+            return self
+                .call_arg(first, depth, memo)
+                .or_else(|| self.call_arg(fallback, depth, memo));
+        }
+        let mut secret = false;
+        let mut args = Vec::with_capacity(c.args.len());
+        for a in &c.args {
+            let r = self.call_arg(a, depth, memo)?;
+            secret |= r.secret;
+            args.push(r.text);
+        }
+        let r = Rendered {
+            text: (f.apply)(&args).ok()?,
+            secret,
+            unresolved: vec![],
+        };
+        if f.random {
+            self.kept.borrow_mut().insert(c.text.to_string(), r.clone());
+        }
+        Some(r)
+    }
+
+    /// One argument of a call; `None` when it does not fully resolve.
+    fn call_arg(&self, a: &Arg, depth: usize, memo: &mut Memo) -> Option<Rendered> {
+        let r = match a {
+            Arg::Text(t) => Rendered {
+                text: t.to_string(),
+                ..Default::default()
+            },
+            Arg::Name(n) => self.lookup_depth(n, depth, memo)?,
+            Arg::Call(c) => self.call(c, depth, memo)?,
+        };
+        r.unresolved.is_empty().then_some(r)
     }
 
     fn dynamic_value(&self, name: &str) -> Option<String> {
@@ -359,18 +435,7 @@ fn generate_dynamic(name: &str) -> Option<String> {
 
 /// A random (version 4) UUID string.
 pub fn uuid_v4() -> String {
-    let mut b: [u8; 16] = fastrand::u128(..).to_le_bytes();
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+    funcs::uuid_text(&funcs::with_version(fastrand::u128(..).to_le_bytes(), 4))
 }
 
 /// The spellings a secret may come back in: as sent, inside a JSON string, and
@@ -381,10 +446,7 @@ fn mask_forms(secrets: &[String]) -> Vec<String> {
         .iter()
         .filter(|s| s.len() >= 3)
         .flat_map(|s| {
-            let mut forms = vec![s.clone()];
-            if let Ok(json) = serde_json::to_string(s.as_str()) {
-                forms.push(json[1..json.len() - 1].to_string());
-            }
+            let mut forms = vec![s.clone(), funcs::json_escape(s)];
             for encoded in [
                 crate::resolve::form_urlencode(s),
                 crate::resolve::query_encode(s),
@@ -569,6 +631,84 @@ mod tests {
         assert!(s.render("{{$timestampMs}}").text.len() >= 13);
         let c = s.clone();
         assert_eq!(c.render("{{$uuid}}").text, a);
+    }
+
+    #[test]
+    fn functions_render() {
+        let mut s = scope();
+        s.set(
+            "dev",
+            "id",
+            VarValue::plain("1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+        );
+        let bytes = "G04oui+hEdKIPwAW08ykJw==";
+        assert_eq!(s.render("{{ $uuidBytes(id) }}").text, bytes);
+        assert_eq!(
+            s.render("{{$uuidBytes('1b4e28ba-2fa1-11d2-883f-0016d3cca427')}}")
+                .text,
+            bytes
+        );
+        assert_eq!(s.render("{{ $upper($trim(' a ')) }}-{{env}}").text, "A-dev");
+        // The same $uuid as a plain placeholder in the same scope.
+        let uuid = s.render("{{$uuid}}").text;
+        let want = s.render(&format!("{{{{$uuidBytes('{uuid}')}}}}")).text;
+        assert_eq!(s.render("{{$uuidBytes($uuid)}}").text, want);
+        assert!(s.is_defined("$uuidBytes(id)"));
+        assert!(s.is_defined("$sha256($base64('x'))"));
+    }
+
+    #[test]
+    fn functions_keep_secrets_and_fail_unresolved() {
+        let s = scope();
+        let r = s.render("{{ $base64(token) }}");
+        assert_eq!(r.text, "czNjcmV0");
+        assert!(r.secret);
+        assert_eq!(
+            s.render_masked("{{ $base64(token) }}"),
+            "{{ $base64(token) }}"
+        );
+        assert_eq!(s.render_masked("{{$base64('x')}}"), "eA==");
+        for bad in [
+            "$nope(env)",
+            "$base64(env, env)",
+            "$base64(missing)",
+            "$uuidBytes(env)",
+            "$base64(loop)",
+        ] {
+            let t = format!("{{{{{bad}}}}}");
+            let r = s.render(&t);
+            assert_eq!(r.text, t);
+            assert_eq!(r.unresolved, vec![bad.to_string()], "{bad}");
+        }
+        assert!(!s.is_defined("$nope(env)"));
+        assert!(!s.is_defined("$base64(env, env)"));
+        assert!(!s.is_defined("$base64(missing)"));
+        assert!(!s.is_defined("$base64($nope('x'))"));
+    }
+
+    #[test]
+    fn functions_default_and_random() {
+        let s = scope();
+        assert_eq!(s.render("{{ $default(missing, 'x') }}").text, "x");
+        assert_eq!(s.render("{{ $default(env, 'x') }}").text, "dev");
+        assert_eq!(s.render("{{ $default($uuidBytes(env), 'x') }}").text, "x");
+        assert_eq!(
+            s.render("{{ $default(missing, other) }}").unresolved.len(),
+            1
+        );
+        assert!(s.is_defined("$default(missing, 'x')"));
+        assert!(!s.is_defined("$default('x', missing)"));
+        assert_eq!(s.render("{{ $substr('abcdef', 1, 2) }}").text, "bc");
+        // A random call keeps its value for the scope, also inside a call.
+        let a = s.render("{{$randomHex(16)}}").text;
+        assert_eq!(a.len(), 16);
+        assert_eq!(s.render("{{$randomHex(16)}}").text, a);
+        assert_eq!(
+            s.render("{{ $upper($randomHex(16)) }}").text,
+            a.to_uppercase()
+        );
+        assert_eq!(s.clone().render("{{$randomHex(16)}}").text, a);
+        assert!(s.secret_values().iter().all(|v| *v != a));
     }
 
     #[test]
