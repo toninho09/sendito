@@ -66,6 +66,7 @@ here.
 | Variable layers and precedence, recursive expansion, masking, secret taint | `crates/core/src/vars.rs` | `Scope`, `Render`, `VarValue`, `scrub_bytes` |
 | Dynamic values (`$uuid`, `$timestamp`, `$randomInt`, …) and `$processEnv.NAME` | `crates/core/src/vars.rs::uuid_v4`, the `$` table and `crates/core/src/vars.rs::is_builtin` | Generated once per send; `$processEnv` values are secrets |
 | Template functions (`{{ $uuidBytes(id) }}`, `$sha256`, …): the call parser and the function table | `crates/core/src/funcs.rs::FUNCS`, evaluated by `crates/core/src/vars.rs` | Add a function: one function and one row in `FUNCS`, one row in the FORMAT.md "Functions" table (a test checks it) |
+| Values the send gets first (`$prompt`, `$select`, `$response`) | `crates/core/src/funcs.rs::pre_send`, `crates/core/src/resolve.rs::pre_send_calls`, `crates/core/src/vars.rs::Scope::keep` | `$prompt`/`$select`: `crates/ui/src/app/ask.rs`, `src/cli/ask.rs`; `$response`: `crates/pipeline/src/runner/deps.rs::deps_phase` (run by `crates/pipeline/src/runner/mod.rs::prepare`), `ResponseCache` |
 | Request → wire conversion for all four kinds | `crates/core/src/resolve.rs` | `resolve_http`, `resolve_grpc`, `resolve_ws`, `resolve_mcp` |
 | Query/form percent-encoding whitelists | `crates/core/src/resolve.rs::query_encode`, `form_urlencode` | The whitelist is a documented decision — see FORMAT.md |
 | URL normalization (no scheme → `http://`), query append before fragment | `crates/core/src/resolve.rs::normalize_url`, `append_query` | |

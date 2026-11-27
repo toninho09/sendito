@@ -718,6 +718,13 @@ mod tests {
                 f.name
             );
         }
+        for name in [PROMPT, SELECT, RESPONSE] {
+            assert!(find(name).is_none(), "{name}");
+            assert!(
+                format.contains(&format!("`{name}('")),
+                "{name} is not in FORMAT.md"
+            );
+        }
     }
 
     #[test]

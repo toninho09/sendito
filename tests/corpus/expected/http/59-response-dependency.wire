@@ -1,0 +1,11 @@
+### request 1 of 2
+GET /echo HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### request 2 of 2
+GET /echo?from=/echo HTTP/1.1
+Accept: */*
+Host: 127.0.0.1:<port>
+
+### client saw: 200 OK

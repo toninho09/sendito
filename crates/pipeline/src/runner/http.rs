@@ -463,6 +463,16 @@ pub(super) async fn exec_http_inner(
                 &mut results,
                 &cookie_secrets,
             );
+            // `$response` reads the last response of a saved request.
+            if let Some(path) = &ctx.path {
+                let kept = Cached {
+                    at: std::time::SystemTime::now(),
+                    status: resp.status,
+                    reason: resp.reason.clone(),
+                    body: body.clone(),
+                };
+                ctx.responses.put(&ctx.env, path, kept);
+            }
             let mut assert_secrets = http_secrets(req, &scope);
             assert_secrets.extend(cookie_secrets.iter().cloned());
             scrub_asserts(&mut results.asserts, &assert_secrets);

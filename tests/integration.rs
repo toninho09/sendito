@@ -1735,3 +1735,115 @@ fn cli_prompt_flags_answer_prompt_and_select() {
         );
     });
 }
+
+/// `$response` in `sendito run`: the dependency is sent first and its value
+/// is used; the next process reads the history (`if_missing`); `always`
+/// sends again; `never` with no response, a cycle, a dependency that is not
+/// HTTP and a JSONPath with no match stop the send with the reason.
+#[test]
+fn cli_response_sends_reads_history_and_reports_errors() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join(".sendito/environments/local.toml"),
+            format!("[variables]\nbase_url = \"{}\"\n", echo.url()),
+        )
+        .unwrap();
+        write(
+            dir.path(),
+            "Auth/login.toml",
+            "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base_url}}/login\"\n",
+        );
+        let use_with = |policy: &str| {
+            format!(
+                "kind = \"http\"\nurl = \"{{{{base_url}}}}/use?t={{{{ $response('Auth/login', '$.target'{policy}) }}}}\"\n"
+            )
+        };
+        write(dir.path(), "use.toml", &use_with(""));
+        write(dir.path(), "always.toml", &use_with(", 'always'"));
+        write(dir.path(), "never.toml", &use_with(", 'never'"));
+        write(
+            dir.path(),
+            "nomatch.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/x?t={{ $response('Auth/login', '$.nope') }}\"\n",
+        );
+        write(
+            dir.path(),
+            "Loop/a.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/a?t={{ $response('Loop/b', '$.target') }}\"\n",
+        );
+        write(
+            dir.path(),
+            "Loop/b.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/b?t={{ $response('Loop/a', '$.target') }}\"\n",
+        );
+        write(
+            dir.path(),
+            "ws.toml",
+            "kind = \"websocket\"\nurl = \"ws://127.0.0.1:9/\"\n",
+        );
+        write(
+            dir.path(),
+            "wsdep.toml",
+            "kind = \"http\"\nurl = \"{{base_url}}/w?t={{ $response('ws', '$.x') }}\"\n",
+        );
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            (out.status.code(), stderr)
+        };
+        let targets = || -> Vec<String> { echo.take().iter().map(|c| c.target()).collect() };
+
+        // `never` before any response: nothing is sent.
+        let (code, stderr) = run(&["run", "never", "--env", "local"]);
+        assert_eq!(code, Some(2), "{stderr}");
+        assert!(stderr.contains("Auth/login has no response yet"), "{stderr}");
+        assert!(targets().is_empty());
+
+        // The dependency goes first; the value is a secret in the history.
+        let (code, stderr) = run(&["run", "use", "--env", "local"]);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert!(stderr.contains("dependency Auth/login: sent (200 OK"), "{stderr}");
+        assert_eq!(targets(), ["/login", "/use?t=/login"]);
+        let history = std::fs::read_to_string(dir.path().join(".sendito/history.jsonl")).unwrap();
+        let used = history.lines().last().unwrap();
+        assert!(!used.contains("t=/login"), "{used}");
+
+        // A new process reads the history; `always` sends again.
+        let (code, stderr) = run(&["run", "use", "--env", "local"]);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert!(stderr.contains("dependency Auth/login: the response of the history entry"), "{stderr}");
+        assert_eq!(targets(), ["/use?t=/login"]);
+        let (code, _) = run(&["run", "always", "--env", "local"]);
+        assert_eq!(code, Some(0));
+        assert_eq!(targets(), ["/login", "/use?t=/login"]);
+
+        // Another environment has no response yet: the dependency is sent.
+        std::fs::write(
+            dir.path().join(".sendito/environments/other.toml"),
+            format!("[variables]\nbase_url = \"{}\"\n", echo.url()),
+        )
+        .unwrap();
+        let (code, _) = run(&["run", "use", "--env", "other", "--no-history"]);
+        assert_eq!(code, Some(0));
+        assert_eq!(targets(), ["/login", "/use?t=/login"]);
+
+        for (req, reason) in [
+            ("nomatch", "$.nope has no match in the response of Auth/login (200 OK)"),
+            ("Loop/a", "$response cycle: Loop/b.toml → Loop/a.toml → Loop/b.toml"),
+            ("wsdep", "ws is not an HTTP request"),
+        ] {
+            let (code, stderr) = run(&["run", req, "--env", "local", "--no-history"]);
+            assert_eq!(code, Some(2), "{req}: {stderr}");
+            assert!(stderr.contains(reason), "{req}: {stderr}");
+        }
+    });
+}

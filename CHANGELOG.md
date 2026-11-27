@@ -52,6 +52,21 @@
   asks; with no terminal the request is not sent (exit code 3) and the
   message names the flag. A folder run asks each label once.
 
+### Values from another response
+
+* `{{ $response('Auth/login', '$.token') }}` gives a JSONPath of the body of
+  the last response of another saved HTTP request, in the same environment:
+  from this session, then from the history.
+* A third argument says when that request is sent first: `if_missing`
+  (default), `if_older:<seconds>`, `always` or `never`. The TUI and
+  `sendito run` send it with its own folders and scripts; the variables its
+  scripts set go to the runtime variables.
+* The value is a secret. A cycle, a request that is not HTTP, a failed
+  dependency or a JSONPath with no match stops the send with the reason.
+* The Results tab and `sendito run` (`log:`) say where each value came from.
+* New wire corpus case `http/59-response-dependency`.
+* `RunCtx` keeps the session's responses (`runner::ResponseCache`).
+
 ### Unresolved functions
 
 * The confirmation before a send and the refusal of `sendito run` give the

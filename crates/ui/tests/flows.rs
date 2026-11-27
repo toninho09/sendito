@@ -4016,3 +4016,49 @@ fn flow_prompt_and_select_ask_before_sending() {
     );
     assert!(!h.app.session().prompt_values.contains_key("Key"));
 }
+
+/// `$response` in the TUI: the first send sends the dependency first; the
+/// next send uses the response of the session; the Results say so.
+#[test]
+fn flow_response_sends_the_dependency_once() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        "Auth/login.toml",
+        "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base_url}}/login\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "needs-login.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/use?t={{ $response('Auth/login', '$.target') }}\"\n",
+    );
+    h.app.rescan();
+    open(&mut h, "needs-login");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    let targets =
+        |s: &Servers| -> Vec<String> { s.http.take().iter().map(|c| c.target()).collect() };
+    h.key("f5");
+    h.wait_for("200", 10);
+    assert_eq!(targets(&s), ["/login", "/use?t=/login"]);
+    let logs = |h: &Harness| {
+        h.app
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .map(|r| String::from_utf8_lossy(r.messages.doc.bytes()).into_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        logs(&h).contains("dependency Auth/login: sent (200 OK"),
+        "{}",
+        logs(&h)
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(targets(&s), ["/use?t=/login"]);
+    assert!(
+        logs(&h).contains("the response of this session"),
+        "{}",
+        logs(&h)
+    );
+}

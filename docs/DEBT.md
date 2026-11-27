@@ -170,6 +170,15 @@ allows `accept` as a transport header.
   timeout before the first frame, and terminals that do not answer (or multiplexers
   that swallow the reply) must not delay start-up. Set `theme` explicitly meanwhile.
 
+## `$response` limits
+
+`$response` reads the body of an HTTP request with a JSONPath: a header, a
+cookie or the response of another request kind is not available. A history
+entry keeps the first `[history] max_body_kb` of the body: a longer JSON body
+read from the history does not parse, so the JSONPath finds nothing (use the
+`if_older` or `always` policy). The responses of the session live in memory
+only, by environment and request path.
+
 ## SSE transport limits
 
 SSE does not reconnect or send Last-Event-ID. Retry values are informational.

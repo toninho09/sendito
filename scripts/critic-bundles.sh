@@ -114,6 +114,10 @@ of the request file: the method, headers, query, body and gRPC metadata it sets
 (and the headers it removes) count as defined by the file. Case 58 changes GET to
 POST, adds X-Request-Id, X-Sum and the query q, removes X-Remove and adds "b" to
 the JSON body (compact, keys sorted); case 16 sets x-request-id and the message.
+Case 59 uses {{ $response('http/01-get-minimal', '$.target', 'always') }}: the
+policy "always" sends the dependency http/01 first (request 1 of 2, exactly as
+case 01 defines it), then the request itself with the value "/echo" read from the
+body of that response (request 2 of 2). Both requests count as defined by the files.
 Cases 55 and 56 send GraphQL bodies as compact JSON: query, optional variables,
 then optional operationName. Variables must be a JSON object; case 57 fails before
 sending anything. Content-Type is application/json unless explicitly overridden.

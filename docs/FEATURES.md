@@ -558,6 +558,14 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   not a secret (kept in `.sendito/session.toml`); a watch asks once.
   `sendito run` takes `--prompt 'OTP=123456'`, else asks on the terminal, else
   stops with exit code 3. Details in `FORMAT.md`, "Values asked at send time".
+* **Values from another response**:
+  `{{ $response('Auth/login', '$.token') }}` reads the JSONPath in the body of
+  the last response of another saved HTTP request (this session, then the
+  history). A policy says when the request is sent first: `if_missing`
+  (default), `if_older:300`, `always` or `never`. The dependency runs with its
+  own folders and scripts, the value is a secret, and the Results tab says
+  where it came from. Also in `sendito run`. Details in `FORMAT.md`, "Values
+  from another response".
 * **Process environment**: `{{$processEnv.NAME}}` reads `NAME` from the
   environment of the Sendito process. The value is a secret; a variable that is
   not set stays unresolved.

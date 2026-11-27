@@ -247,6 +247,13 @@ impl Scope {
                 out.push(r.text);
             }
         }
+        // Values the send kept for a call (a secret `$prompt`, `$response`,
+        // a Lua call that read a secret) are secrets too.
+        for r in self.kept.borrow().values() {
+            if r.secret && r.text.len() >= 3 && !out.contains(&r.text) {
+                out.push(r.text.clone());
+            }
+        }
         // Process environment values that a render read are secrets too.
         for (k, v) in self.dynamic.borrow().iter() {
             if k.starts_with(&PROCESS_ENV[1..]) && v.len() >= 3 && !out.contains(v) {

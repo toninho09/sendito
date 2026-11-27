@@ -117,11 +117,28 @@ fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
 }
 
 /// The start of every send, for every request kind: the one place for the
-/// work that all kinds do before they resolve the request. Today it is the
-/// pre-request phase ([`pre_phase`]); the values that need the send context
-/// (`$response`, `FORMAT.md` "Functions") go here too.
-pub(crate) async fn prepare<T: Kind>(_ctx: &RunCtx, req: &T, scope: &mut Scope) -> PrePhase<T> {
-    pre_phase(req, scope)
+/// work that all kinds do before they resolve the request. First the
+/// `$response` values (a dependency can be sent), then the pre-request phase
+/// ([`pre_phase`]). The results list what the dependencies set first.
+pub(crate) async fn prepare<T: Kind>(ctx: &RunCtx, req: &T, scope: &mut Scope) -> PrePhase<T> {
+    let deps = match deps::deps_phase(ctx, &req.clone().wrap(), scope).await {
+        Ok(r) => r,
+        Err(e) => {
+            return PrePhase {
+                req: req.clone(),
+                results: ScriptResults::default(),
+                error: Some(e),
+            };
+        }
+    };
+    let mut p = pre_phase(req, scope);
+    let mut pre = deps.pre;
+    pre.append(&mut p.results.pre);
+    p.results.pre = pre;
+    let mut logs = deps.logs;
+    logs.append(&mut p.results.logs);
+    p.results.logs = logs;
+    p
 }
 
 /// The response phase of a send: the extracts, the assertions, then the Lua
@@ -223,6 +240,12 @@ pub struct RunCtx {
     /// overrides it.
     pub cookie_jar: bool,
     pub oauth: Option<OAuthRunInfo>,
+    /// The last responses `$response` reads; [`RunCtx::of`] takes the
+    /// project's, so every send of the session shares it.
+    pub responses: ResponseCache,
+    /// The `$response` dependencies being sent, outermost first (paths): a
+    /// request already in the list is a cycle.
+    pub deps: Vec<String>,
 }
 
 impl Default for RunCtx {
@@ -245,6 +268,8 @@ impl Default for RunCtx {
             mask_echoed_secrets: false,
             cookie_jar: c.http.cookie_jar,
             oauth: None,
+            responses: ResponseCache::default(),
+            deps: Vec::new(),
         }
     }
 }
@@ -268,6 +293,7 @@ impl RunCtx {
             mqtt_timeout_ms: c.mqtt.timeout_ms,
             cookie_jar: c.http.cookie_jar,
             oauth: Some(OAuthRunInfo::of(project)),
+            responses: project.responses.clone(),
             ..Self::default()
         }
     }
@@ -294,6 +320,7 @@ pub use sendito_mcp::Event as McpEvent;
 /// are masked like other secrets.
 pub(super) const SIGNED_LAYER: &str = "signed";
 
+mod deps;
 mod graphql;
 mod grpc;
 mod http;
@@ -305,6 +332,7 @@ mod record;
 mod scope;
 mod sse;
 mod ws;
+pub use deps::{Cached, ResponseCache};
 pub use graphql::*;
 pub use grpc::*;
 pub use http::*;

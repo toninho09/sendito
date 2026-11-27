@@ -216,6 +216,48 @@ value = "{{ $prompt('OTP', 'secret') }}"
   each label once. A value that is not an option of its `$select` is refused.
 * The request file and the history keep the call, not the value.
 
+### Values from another response
+
+`$response('Folder/request', '$.json.path')` gives a value from the body of
+the last response of another saved HTTP request: the path is relative to the
+collection root, without `.toml`, and the JSONPath reads the body as an
+extract does (one match as its text, several as a JSON array). Every argument
+is a `'literal'`.
+
+```toml
+[auth]
+type = "bearer"
+token = "{{ $response('Auth/login', '$.token') }}"
+```
+
+A third argument is the policy: when the request is sent first.
+
+| Policy | The dependency is sent |
+|---|---|
+| `if_missing` (default) | when no response is kept |
+| `if_older:<seconds>` | when no response is kept or the kept one is older |
+| `always` | before every send |
+| `never` | never: with no kept response, the send stops |
+
+* The kept response is the last response of the request in the same
+  environment: first one of this session (the TUI, or one `sendito run`),
+  then the newest history entry that kept a response (`[history]
+  max_body_kb`).
+* A dependency is sent with its own folders and the environment, the
+  collection variables and the runtime variables of the send; the folder
+  variables of the request that depends on it do not apply. Its scripts run,
+  and the variables they set go to the runtime variables. The history records
+  it as a send.
+* The value is always a secret: it is masked on screen, in the history and in
+  the exports.
+* The send stops with the reason when the request does not exist or is not
+  HTTP, when the dependencies form a cycle or nest deeper than 8, when the
+  dependency has unresolved variables or uses `$prompt` / `$select`, when it
+  fails, or when the JSONPath has no match.
+* The Results tab (gRPC: Log) and `sendito run` (a `log:` line) say where each
+  value came from: `dependency Auth/login: sent (200 OK, 120 ms)`, the
+  response of this session, or the history entry with its time.
+
 ## HTTP request
 
 ```toml
@@ -435,7 +477,9 @@ A `render` that leaves a placeholder unresolved is an error.
 
 Sendito sends exactly what the request defines, plus what HTTP framing requires.
 The `pre` Lua scripts are part of the request: what they set or remove counts
-as defined by the file. In detail:
+as defined by the file. A `$response` call can send the request it names
+first, exactly as that file defines it ("Values from another response"). In
+detail:
 
 * **Method and URL**: the method is upper-cased. The URL is used as written
   (characters that are not allowed in a URL, such as spaces or non-ASCII, are
