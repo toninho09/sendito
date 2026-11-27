@@ -116,6 +116,13 @@ impl SettingId {
         )
     }
 
+    /// A choice row with a list of its own: Enter, Space and a click on
+    /// the value open the list (`App::open_setting_list`); ← → still step
+    /// through the values.
+    pub fn lists(self) -> bool {
+        matches!(self, SettingId::Theme)
+    }
+
     /// The value is a duration in milliseconds, shown and typed as "30 s".
     pub fn duration(self) -> bool {
         use SettingId::*;

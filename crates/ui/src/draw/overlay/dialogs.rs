@@ -245,11 +245,19 @@ pub(super) fn draw_picker(
     let h = (vis.len() as u16 + 6 + u16::from(has_details))
         .min(frame.area.height.saturating_sub(4))
         .max(4);
+    // Theme rows end with the theme's colors on its own background: the
+    // swatch with a cell of background on each side, a gap and a margin.
+    let themes = p.action.is_theme() && !frame.theme.mono;
+    let sw: u16 = if themes {
+        frame.theme.swatch().len() as u16 + 4
+    } else {
+        0
+    };
     let w = p
         .items
         .iter()
         .zip(p.details.iter().chain(std::iter::repeat(&String::new())))
-        .map(|(a, b)| a.width() + b.width() + 8)
+        .map(|(a, b)| a.width() + b.width() + 8 + sw as usize)
         .max()
         .unwrap_or(30)
         .clamp(38, 130) as u16;
@@ -287,22 +295,23 @@ pub(super) fn draw_picker(
         let y = inner.y + 2 + row as u16;
         let s = row + p.scroll == p.sel;
         let rr = Rect::new(inner.x, y, inner.width, 1);
-        let base = row_style(
-            if s {
-                RowState::Selected
-            } else if hovered(app, rr) {
-                RowState::Hover
-            } else {
-                RowState::Plain
-            },
-            frame.text,
-            frame.theme,
-        );
-        fill(buf, rr, base);
-        if s {
-            selection_bar(buf, rr, base, frame.theme);
-        }
+        let state = if s {
+            RowState::Selected
+        } else if hovered(app, rr) {
+            RowState::Hover
+        } else {
+            RowState::Plain
+        };
+        let base = fill_row(buf, rr, state, frame.text, frame.theme);
         let item = &p.items[*idx];
+        let end = (inner.x + inner.width).saturating_sub(sw);
+        if themes && item != crate::overlay::BASE_THEME {
+            let t = app.themes.theme(item);
+            let pad = Style::default().bg(t.bg);
+            let sx = put(buf, end + 1, y, " ", 1, pad);
+            let sx = swatch(buf, sx, y, &t, t.bg);
+            put(buf, sx, y, " ", 1, pad);
+        }
         let mut x = inner.x + 2;
         // Methods in their colors; environments with their marker.
         let item_st = if methods {
@@ -336,14 +345,7 @@ pub(super) fn draw_picker(
             );
         }
         let ix = x;
-        x = put(
-            buf,
-            x,
-            y,
-            item,
-            (inner.x + inner.width).saturating_sub(x + 1),
-            item_st,
-        );
+        x = put(buf, x, y, item, end.saturating_sub(x + 1), item_st);
         mark_matches(buf, ix, y, item, query.trim(), s, frame.theme);
         if let Some(d) = p.details.get(*idx)
             && !matches!(p.action, PickAction::MoveTo(_))
@@ -352,8 +354,8 @@ pub(super) fn draw_picker(
                 buf,
                 x + 2,
                 y,
-                &truncate(d, (inner.x + inner.width).saturating_sub(x + 3) as usize),
-                (inner.x + inner.width).saturating_sub(x + 2),
+                &truncate(d, end.saturating_sub(x + 3) as usize),
+                end.saturating_sub(x + 2),
                 if s {
                     base
                 } else {

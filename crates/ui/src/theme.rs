@@ -66,6 +66,27 @@ impl Registry {
             .collect()
     }
 
+    /// What kind of theme `name` is, for the lists that show it ("dark",
+    /// "light · solid selection", "yours · dark"...). Typing a kind in the
+    /// filter finds the themes of that kind.
+    pub fn kind(&self, name: &str) -> String {
+        match name {
+            "auto" => return format!("follows the terminal ({})", auto_base()),
+            "ansi" => return "your terminal's 16 colors".into(),
+            _ => {}
+        }
+        let t = self.theme_full(name);
+        let mut s = String::new();
+        if self.path(name).is_some() {
+            s.push_str("yours · ");
+        }
+        s.push_str(if t.light { "light" } else { "dark" });
+        if t.heavy_focus {
+            s.push_str(" · solid selection");
+        }
+        s
+    }
+
     pub fn is_known(&self, name: &str) -> bool {
         BUILTIN.contains(&name) || self.user.iter().any(|(s, _)| s.name == name)
     }
@@ -113,7 +134,6 @@ fn resolve(
     let fallback = || {
         builtin_spec("dusk").unwrap_or_else(|| Spec {
             name: "dusk".into(),
-            light: false,
             heavy_focus: false,
             colors: Vec::new(),
         })

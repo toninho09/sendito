@@ -2,40 +2,40 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-╭─ Help — functions (Tab: keys, Esc closes) ───────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the functions)                                          line 1/95 · ↑↓ PgUp PgDn   ┃
-│                                                                                                              ┃
-│ The functions of a request and of its scripts. FORMAT.md has the full reference.                             ┃
-│                                                                                                              ┃
-│ ── Template functions ──                                                                                     ┃
-│   {{ $name(argument, ...) }} in any field. An argument is a 'literal', a                                     ┃
-│   number, a variable (user_id, $uuid, $processEnv.NAME) or another call; calls                               ┃
-│   nest up to 8 levels. A random call keeps one value for the whole send. An                                  ┃
-│   unknown function, a wrong number of arguments or a bad value leaves the                                    ┃
-│   placeholder unresolved; the send gives the reason.                                                         ┃
-│   $uuidBytes(uuid)              the 16 bytes of a UUID, base64; hyphens are optional, any case               ┃
-│   $uuidFromBytes(base64)        the UUID text of 16 bytes (lowercase, with hyphens)                          │
-│   $uuidV5(namespace, name)      the name-based UUID v5: namespace is a UUID, name the text                   │
-│   $uuidV7()                     a time-ordered UUID v7; random                                               │
-│   $ulid()                       a ULID (26 Crockford base32 characters); random                              │
-│   $hexBytes(hex)                the bytes of an even number of hex digits, base64                            │
-│   $bytesHex(base64)             the bytes in lowercase hex                                                   │
-│   $base64(text)                 standard base64 of the UTF-8 text                                            │
-│   $base64Url(text)              URL-safe base64 of the UTF-8 text, no padding                                │
-│   $base64Decode(base64)         the decoded text; the bytes must be UTF-8                                    │
-│   $hex(text)                    lowercase hex of the UTF-8 text                                              │
-│   $urlEncode(text)              the text percent-encoded as a query component                                │
-│   $md5(text)                    the MD5 of the text, in lowercase hex                                        │
-│   $sha1(text)                   the SHA-1 of the text, in lowercase hex                                      │
-│   $sha256(text)                 the SHA-256 of the text, in lowercase hex                                    │
-│   $sha512(text)                 the SHA-512 of the text, in lowercase hex                                    │
-│   $hmacSha256(key, text)        the HMAC-SHA256 of the text, in lowercase hex                                │
-│   $hmacSha256Base64(key, text)  the HMAC-SHA256 of the text, in base64                                       │
-│   $timeAdd(time, duration)      an RFC 3339 time plus a duration such as 90s, 1h30m or -2d (units ms, s, m,  │
-│                                 h, d)                                                                        │
-│   $isoFromUnix(seconds)         the Unix seconds as an RFC 3339 time                                         │
-│   $unixFromIso(time)            the RFC 3339 time as Unix seconds                                            │
-│   $upper(text)                  the text in upper case                                                       │
-│   $lower(text)                  the text in lower case                                                       │
-│   $trim(text)                   the text without the spaces at the ends                                      │
+╭─ Help (Tab: next section, Esc closes) ───────────────────────────────────────────────────────────────────────╮
+│ Guide                     │ Search ▍  (type to search this section)               line 1/44 · ↑↓ PgUp PgDn   ┃
+│   Start here              │                                                                                  ┃
+│   How it works            │ The functions that a request field or a script can call.                         ┃
+│ Tutorials                 │ FORMAT.md has the full reference.                                                ┃
+│   First request           │                                                                                  ┃
+│   Save and organize       │ ── Template functions ──                                                         ┃
+│   Environments            │ Write {{ $name(argument, ...) }} in any field. An argument is a 'literal',       ┃
+│   Secrets and auth        │ a number, a variable (user_id, $uuid, $processEnv.NAME) or another call.         ┃
+│   Chain requests          │ Calls nest up to 8 levels. A random call keeps one value for the whole send.     ┃
+│   Read a response         │ An unknown function, a wrong number of arguments or a bad value leaves the       ┃
+│   Import and export       │ placeholder unresolved, and the send tells you why.                              ┃
+│   gRPC call               │   $uuidBytes(uuid)              the 16 bytes of a UUID, base64; hyphens are      ┃
+│   Streams (WS, SSE, MQTT) │                                 optional, any case                               ┃
+│   MCP tools               │   $uuidFromBytes(base64)        the UUID text of 16 bytes (lowercase, with       ┃
+│   Run a folder            │                                 hyphens)                                         ┃
+│   Customize               │   $uuidV5(namespace, name)      the name-based UUID v5: namespace is a UUID,     ┃
+│ Keys                      │                                 name the text                                    ┃
+│   All keys                │   $uuidV7()                     a time-ordered UUID v7; random                   ┃
+│   Global                  │   $ulid()                       a ULID (26 Crockford base32 characters); random  ┃
+│   Sidebar tree            │   $hexBytes(hex)                the bytes of an even number of hex digits,       ┃
+│   Text editing            │                                 base64                                           ┃
+│   Tables                  │   $bytesHex(base64)             the bytes in lowercase hex                       │
+│   Response                │   $base64(text)                 standard base64 of the UTF-8 text                │
+│   Query (jq)              │   $base64Url(text)              URL-safe base64 of the UTF-8 text, no padding    │
+│   Dialogs                 │   $base64Decode(base64)         the decoded text; the bytes must be UTF-8        │
+│   Fixed keys              │   $hex(text)                    lowercase hex of the UTF-8 text                  │
+│   Symbols                 │   $urlEncode(text)              the text percent-encoded as a query component    │
+│   Commands                │   $md5(text)                    the MD5 of the text, in lowercase hex            │
+│ Functions                 │   $sha1(text)                   the SHA-1 of the text, in lowercase hex          │
+│▌  Template functions      │   $sha256(text)                 the SHA-256 of the text, in lowercase hex        │
+│   Send-time values        │   $sha512(text)                 the SHA-512 of the text, in lowercase hex        │
+│   Lua scripts             │   $hmacSha256(key, text)        the HMAC-SHA256 of the text, in lowercase hex    │
+│   Lua catalog             │   $hmacSha256Base64(key, text)  the HMAC-SHA256 of the text, in base64           │
+│                           │   $timeAdd(time, duration)      an RFC 3339 time plus a duration such as 90s,    │
+│                           │                                 1h30m or -2d (units ms, s, m, h, d)              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

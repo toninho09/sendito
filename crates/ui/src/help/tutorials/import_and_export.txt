@@ -1,0 +1,20 @@
+Bring requests from other tools, and give a request to other people.
+
+── Import a curl command ──
+  1.  Copy a curl command, for example from the developer tools of a browser.
+  2.  Press {key:import}.
+  3.  Paste the command in the dialog.
+  4.  Press {key:dialog:dialog_confirm}. The request opens in a tab.
+
+── Import a collection ──
+  1.  Press {key:import}.
+  2.  Type the path of the file. Tab completes the path.
+  3.  Press {key:dialog:dialog_confirm}.
+  4.  A report shows what Sendito imported, what it skipped and what needs your action. The command :report shows it again.
+Sendito imports Postman (v2.1), Insomnia, Bruno folders, OpenAPI and
+Swagger, .http files and HAR files.
+
+── Export a request ──
+  •  Press {key:export_curl} to copy the request as a curl command. Secrets stay as {{placeholders}}.
+  •  The command :curl! copies it with the secret values.
+  •  The command :httpfile copies it as a .http request, and :code <language> as code.

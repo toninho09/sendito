@@ -1,0 +1,48 @@
+Welcome to Sendito. This help explains how the app works and shows the
+steps for the most common tasks.
+
+Sendito sends requests and shows their responses: HTTP, gRPC, WebSocket,
+SSE, MQTT and MCP tools. Each request is a text file in a folder (the
+collection). You can edit the files in any editor and keep them in git.
+
+── Use this help ──
+  •  Press Tab or Shift+Tab to open the next or the previous section, or click a name in the list on the left.
+  •  Type a word to search the open section. Press Enter for the next match.
+  •  Press Esc or {key:help} to close the help.
+  •  The command :help <name> opens the section with that name, for example :help grpc.
+  •  The help shows your keys. When you change a key, the help shows the new key.
+
+The list on the left has four groups:
+  Guide          How the screen and the requests work.
+  Tutorials      Steps for the most common tasks. Start with "First request".
+  Keys           All the keys, the marks on the screen and the commands.
+  Functions      The functions that a request field or a script can call.
+
+── The screen ──
+  Top bar        The open request tabs, the active environment and the help key.
+  Sidebar        The request tree of the collection, or the history.
+  URL card       The method (or the protocol), the address and the Send button.
+  Request pane   The parts of the request, in tabs (Params, Headers, Body, Auth, Scripts, Options, Docs).
+  Response pane  The response, in tabs (Body, Headers, Timing, Results).
+  Footer         The state on the left. On the right, the keys for the part that has the focus.
+
+── Move around ──
+  •  Press {key:focus_next} to move the focus to the next field or pane. Press {key:focus_prev} to move it back.
+  •  Press Ctrl+W, then a direction: {key:focus_left}, {key:focus_down}, {key:focus_up} or {key:focus_right} go to the pane in that direction.
+  •  Press Ctrl+W and stop: a menu shows all the keys that can come next.
+  •  Press {key:next_subtab} to open the next tab of the focused pane (for example, Params to Headers).
+  •  Press {key:zoom} to make the focused pane full size. Press it again to restore it.
+  •  Click a pane, a tab, a row or a button to use it. The wheel scrolls the pane under the pointer.
+
+── The keys to know first ──
+  •  {key:new_request}: open a new HTTP request.
+  •  {key:send}: send the request.
+  •  {key:cancel}: stop the request that runs.
+  •  {key:save}: save the request to a file.
+  •  {key:palette}: open the command palette. Type a part of an action name, or ":" and a command.
+  •  {key:select_env}: choose the environment.
+  •  {key:settings}: open the settings.
+  •  {key:quit}: quit Sendito.
+
+The footer always shows the keys for the part that has the focus. When you
+do not know the next step, look at the footer or press Ctrl+W.

@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   +                                                                                                                                                                   ● local ▾   F1  all keys
+ sendito   +                                                                                                                                                                       ● local ▾   F1  help
 ╭ Requests  History ─────────╮╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││                                                                                                                                                                        │
 │▸ Users/                    ││                                                                                                                                                                        │
@@ -38,7 +38,7 @@ expression: screen
 │                            ││                             F4           Choose the environment                                                                                                        │
 │                            ││                             m            Move the selected request (or drag it with the mouse)                                                                         │
 │                            ││                             Ctrl+W ,     Settings: vim mode, theme, icons, sidebar side                                                                                │
-│                            ││                             F1           All keys                                                                                                                      │
+│                            ││                             F1           Help: guide, tutorials and keys                                                                                               │
 │                            ││                             Ctrl+W q     Quit                                                                                                                          │
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
@@ -61,4 +61,4 @@ expression: screen
 │                            ││                                                                                                                                                                        │
 │                            ││                                                                                                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- demo           ⏎ open / fold · n new request · Del/x delete · / filter · r rename · N new folder · R run folder · m / drag move · d duplicate · f favorite · s folder settings · ^W menu · F1 all keys
+ demo               ⏎ open / fold · n new request · Del/x delete · / filter · r rename · N new folder · R run folder · m / drag move · d duplicate · f favorite · s folder settings · ^W menu · F1 help

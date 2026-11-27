@@ -111,11 +111,7 @@ pub(super) fn draw_run(app: &mut App, buf: &mut Buffer, area: Rect, theme: &Them
             (true, false) => RowState::SelectedQuiet,
             _ => RowState::Plain,
         };
-        let base = row_style(state, theme.surface(), theme);
-        fill(buf, r, base);
-        if i == view.sel {
-            selection_bar(buf, r, base, theme);
-        }
+        let base = fill_row(buf, r, state, theme.surface(), theme);
         let (mark, color) = match e.outcome {
             "pass" => ("✓", theme.ok),
             "fail" => ("✗", theme.err),

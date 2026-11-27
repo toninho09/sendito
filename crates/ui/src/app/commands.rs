@@ -123,6 +123,13 @@ impl App {
                 String::new(),
             ));
         }
+        for name in self.themes.names() {
+            items.push((
+                PaletteItem::Theme(name.clone()),
+                format!("Theme: {name}"),
+                self.themes.kind(&name),
+            ));
+        }
         for (id, label) in SETTINGS {
             items.push((
                 PaletteItem::Setting(*id),
@@ -148,19 +155,25 @@ impl App {
     }
 
     pub fn open_help(&mut self) {
-        self.clear_transient_status();
-        self.overlay = Some(Overlay::Help {
-            viewer: self.help_viewer(HelpPage::Keys, ""),
-            filter: TextEditor::single("").with_placeholder(HelpPage::Keys.placeholder()),
-            page: HelpPage::Keys,
-        });
+        self.open_help_at("");
     }
 
-    /// The help on `page`, with the search `q` applied.
-    pub(super) fn help_viewer(&self, page: HelpPage, q: &str) -> Viewer {
-        let mut viewer = crate::tab::wrapped(Doc::text(&help_text(page, &self.keymap, self.vim)));
-        viewer.search(q);
-        viewer
+    /// Opens the help at the section whose name matches `query` (`:help
+    /// grpc`); an empty query opens the first section. With no match, the
+    /// help stays closed and the status says so.
+    pub(super) fn open_help_at(&mut self, query: &str) {
+        self.clear_transient_status();
+        let sections = super::help::help_sections(&self.keymap, self.vim);
+        let Some(i) = super::help::find_section(&sections, query) else {
+            self.set_status(
+                format!("no help section matches \"{query}\""),
+                StatusKind::Error,
+            );
+            return;
+        };
+        let mut help = Help::new(sections);
+        help.select(i);
+        self.overlay = Some(Overlay::Help(help));
     }
 
     // ----- palette commands ---------------------------------------------
@@ -371,17 +384,17 @@ impl App {
         )));
     }
 
-    /// Lists the themes; choosing one applies and saves it.
-    pub(super) fn open_theme_picker(&mut self) {
+    /// Lists the themes with what kind each is; the selection is shown
+    /// at once, and choosing one applies and saves it.
+    pub(super) fn open_theme_picker(&mut self, settings: bool) {
         let items = self.themes.names();
-        let cur = items
-            .iter()
-            .position(|n| *n == self.project.config.ui.theme);
+        let details = items.iter().map(|n| self.themes.kind(n)).collect();
+        let cur = items.iter().position(|n| *n == self.theme_name);
         self.overlay = Some(Overlay::Picker(Picker::new(
             "Theme",
             items,
-            vec![],
-            PickAction::Theme,
+            details,
+            PickAction::Theme { settings },
             cur,
         )));
     }
@@ -469,7 +482,7 @@ impl App {
             }
             "envs" => self.open_env_editor(),
             "newenv" => self.prompt_new_env(),
-            "theme" if arg.is_empty() => self.open_theme_picker(),
+            "theme" if arg.is_empty() => self.open_theme_picker(false),
             "theme" => self.theme_command(arg),
             "w" | "write" | "save" => self.save(),
             "saveas" => {
@@ -587,7 +600,7 @@ impl App {
             "settings" => self.open_settings(SettingId::Theme),
             "oauth" => self.open_oauth_editor(),
             "keymap" => self.open_keymap_editor(),
-            "help" | "h" => self.open_help(),
+            "help" | "h" => self.open_help_at(arg),
             "report" => match self.last_report.clone() {
                 Some((title, text)) => self.show_report(&title, &text),
                 None => self.set_status("no report yet in this session", StatusKind::Info),

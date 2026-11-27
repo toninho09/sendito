@@ -13,11 +13,12 @@ impl App {
             Event::Resize(w, h) => self.size = (w, h),
             _ => {}
         }
+        self.preview_env_theme();
     }
 
     pub fn on_paste(&mut self, s: &str) {
         // A path pasted in the `.env` file line: one line, then the status.
-        if matches!(&self.overlay, Some(Overlay::Env(e)) if e.on_dotenv)
+        if matches!(&self.overlay, Some(Overlay::Env(e)) if e.focus == EnvFocus::Dotenv)
             && let Some(Overlay::Env(mut e)) = self.overlay.take()
         {
             e.dotenv
@@ -31,7 +32,10 @@ impl App {
             match ov {
                 Overlay::Import(i) => i.input.insert_str(s),
                 Overlay::Prompt(p) => p.input.insert_str(s),
-                Overlay::Picker(p) => p.filter.insert_str(s),
+                Overlay::Picker(p) => {
+                    p.filter.insert_str(s);
+                    p.sel = 0;
+                }
                 Overlay::Palette(p) => {
                     p.input.insert_str(s);
                     p.sel = 0;
@@ -46,6 +50,7 @@ impl App {
                 Overlay::Keymap(e) => e.filter.insert_str(s),
                 _ => {}
             }
+            self.preview_picked_theme();
             return;
         }
         // A pasted curl command in the URL bar becomes a request.

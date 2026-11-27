@@ -41,6 +41,7 @@ mod env;
 mod examples;
 mod external;
 mod folders;
+mod help;
 mod hints;
 mod history;
 mod import_export;
@@ -196,6 +197,8 @@ pub enum OverlayHit {
     EnvDelete(usize),
     /// The `.env` file line of the environment editor.
     EnvDotenv,
+    /// The Theme line of the environment editor.
+    EnvTheme,
     /// An entry of a record editor's list; the last is the "new" row.
     RecList(usize),
     /// A form field of a record editor, by its index in `visible()`.
@@ -417,6 +420,16 @@ pub struct Areas {
 pub struct App {
     pub project: Project,
     pub theme: Theme,
+    /// The name of the theme in use: `[ui] theme`, the active environment's
+    /// theme or the last one chosen. A theme picker's preview does not
+    /// change it, so Esc comes back to it.
+    pub theme_name: String,
+    /// The theme of the active environment (the file's `theme` key), when it
+    /// names a known theme. The top bar shows the environment as a solid chip.
+    pub env_theme: Option<String>,
+    /// The theme of the environment editor's Theme line, shown while that
+    /// line has the focus (`App::preview_env_theme`).
+    env_preview: Option<String>,
     /// Built-in and user themes.
     pub themes: crate::theme::Registry,
     pub icons: crate::icons::Icons,
@@ -585,6 +598,9 @@ impl App {
         let (tx, rx) = mpsc::unbounded_channel();
         let icons = crate::icons::Icons::by_name(&project.config.ui.icons);
         let mut app = App {
+            theme_name: project.config.ui.theme.clone(),
+            env_theme: None,
+            env_preview: None,
             project,
             theme,
             themes,
@@ -658,6 +674,7 @@ impl App {
             cursor: None,
             complete: None,
         };
+        warnings.extend(app.apply_env_theme());
         app.load_folders();
         app.restore_tabs(&session);
         if app.tabs.is_empty() {

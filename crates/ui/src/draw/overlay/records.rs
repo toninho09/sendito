@@ -168,11 +168,7 @@ fn draw_list(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, e: &RecordEditor
             _ if hovered(app, rr) => RowState::Hover,
             _ => RowState::Plain,
         };
-        let base = row_style(state, frame.text, theme);
-        fill(buf, rr, base);
-        if sel {
-            selection_bar(buf, rr, base, theme);
-        }
+        let base = fill_row(buf, rr, state, frame.text, theme);
         match e.records.get(i) {
             Some(rec) => {
                 let name = rec.name();

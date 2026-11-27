@@ -1,0 +1,17 @@
+Find the data that you need in a large response.
+
+── Steps ──
+  1.  Press {key:focus_down} or click the response body to give it the focus.
+  2.  Press {key:search} and type a word to search. {key:search_next} and {key:search_prev} go to the next and the previous match.
+  3.  Press {key:filter} to filter the body with jq, for example .items[0].name. The body shows the result while you type.
+  4.  In the jq bar, Tab completes a key and Up shows the last expressions.
+  5.  Put the cursor on a JSON value and press {key:filter_here} to show only that value. {key:copy_path} copies its jq path.
+  6.  Press Enter to keep the filter and Esc to leave the bar. To remove the filter, clear the text, press Enter, then press Esc.
+
+── Other tools ──
+  •  {key:fold_toggle} folds the block at the cursor. {key:fold_all} folds all blocks.
+  •  {key:view_pretty}, {key:view_raw} and {key:view_hex} change the view: pretty, raw text or hex.
+  •  {key:toggle_wrap} wraps the long lines.
+  •  {key:copy_body} copies the body. {key:save_body} saves it to a file.
+  •  {key:open_pager} shows the body in your pager.
+The jq filter changes only the view. Assertions and extracts use the full body.

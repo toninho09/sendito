@@ -27,6 +27,7 @@ impl App {
             Action::NewSseRequest => self.new_tab(Request::new_sse()),
             Action::NewMqttRequest => self.new_tab(Request::new_mqtt()),
             Action::NewWsRequest => self.new_tab(Request::new_ws()),
+            Action::NewMcpRequest => self.new_tab(Request::new_mcp()),
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
             Action::PrevTab => self.switch_tab(-1),

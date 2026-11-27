@@ -94,11 +94,7 @@ pub(super) fn draw_keymap(
                 } else {
                     RowState::Plain
                 };
-                let base = row_style(state, frame.text, theme);
-                fill(buf, rr, base);
-                if selected {
-                    selection_bar(buf, rr, base, theme);
-                }
+                let base = fill_row(buf, rr, state, frame.text, theme);
                 put(
                     buf,
                     inner.x + 2,

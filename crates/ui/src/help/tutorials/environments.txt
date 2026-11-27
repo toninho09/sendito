@@ -1,0 +1,23 @@
+Use one request for many servers, for example local, staging and production.
+
+── Make an environment ──
+  1.  Open the command palette ({key:palette}), type :newenv and press Enter.
+  2.  Type the name of the environment, for example local, and press Enter.
+  3.  Press {key:manage_envs} to open the environment editor.
+  4.  In the empty row, type the variable name (base_url). Press Enter to go to the next cell, and type the value (http://localhost:8080) in the Value cell.
+  5.  Press {key:dialog:dialog_confirm} to save. Esc closes the editor.
+
+── Use the environment ──
+  1.  Press {key:select_env} and choose the environment. The top bar shows its name.
+  2.  In the URL, write {{base_url}}/users.
+  3.  Move the focus away from the URL: the card shows the value that the send will use.
+  4.  Press {key:send}.
+
+Result: the request goes to the server of the active environment. Choose
+another environment to send the same request to another server.
+
+── Good to know ──
+  •  In the editor, {key:dialog:dialog_new} makes a new environment and {key:dialog:dialog_next_env} opens the next one.
+  •  _collection holds the variables that all environments share.
+  •  The command :env <name> changes the environment.
+  •  The top bar shows prod and live in red, staging and test in yellow.

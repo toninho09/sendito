@@ -1,0 +1,23 @@
+Test the requests of a folder: add assertions, then run all the requests.
+
+── Add an assertion ──
+  1.  Open a request and its Scripts tab.
+  2.  Choose the section "After response: assertions".
+  3.  Add a row: From status, Op ==, Expected 200.
+  4.  Add more rows for a JSONPath value or a header.
+  5.  Send the request. The Results tab shows each assertion, passed (✓) or failed (✗).
+
+── Run the folder ──
+  1.  Select the folder in the tree.
+  2.  Press {key:tree_run_folder}. A run tab opens and sends each request of the folder.
+  3.  Each row shows the request, its status, its time and its assertions.
+  4.  Select a row with Up or Down: the response pane shows its response.
+  5.  Press {key:send} to run the folder again, or {key:cancel} to stop.
+
+── Run with a data file ──
+  1.  Make a CSV file (variable names in the first line) or a JSON array of objects.
+  2.  Type :run <folder> --data <file> in the command palette. The path is from the collection folder.
+  3.  The folder runs one time for each row of the file.
+
+From the command line, "sendito run <folder> --env <name>" runs the same
+folder for CI.

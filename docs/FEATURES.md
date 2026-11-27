@@ -147,7 +147,8 @@ The wire rules are exact and spelled out in
   and a scrollbar. In the pretty view the bottom border shows the jq path of
   the line at the cursor (`.items[0].email`): `f` filters the body to that
   value and `Y` copies the path (JSON only).
-* **Copy**: `y` and `Ctrl+W u` copy through the terminal clipboard (OSC 52)
+* **Copy**: `y` (the response body) and `Ctrl+W u` (the request as curl)
+  copy through the terminal clipboard (OSC 52)
   and through the local clipboard program: `pbcopy` on macOS, `wl-copy`
   (Wayland) or `xclip` (X11) on Linux. Terminals that ignore OSC 52 (iTerm2
   by default, Terminal.app) then copy too. Over SSH only OSC 52 reaches your
@@ -583,7 +584,7 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   `$padLeft`, `$default`, …) and random values (`$randomInt`, `$randomHex`,
   `$randomString`). A random call keeps one value for the whole send. A bad
   value or an unknown function leaves the placeholder unresolved. The list is
-  in the help (F1, `Tab` for the functions page) and in `FORMAT.md`,
+  in the help (F1, the function sections of the sidebar) and in `FORMAT.md`,
   "Functions".
 * **Values asked at send time**: `{{ $prompt('OTP') }}`,
   `{{ $prompt('Password', 'secret') }}` and
@@ -669,6 +670,21 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   environment and writes `{{name}}` in the field. A name the environment
   already has is refused. With **Hide plain secrets** on, such a value shows
   as `••••••`; `Ctrl+W *` shows it.
+* **Environment theme**: the top-level `theme = "<name>"` of an environment
+  file shows that theme while the environment is active, so production,
+  sandbox and local look different. The top bar then shows the environment
+  as a solid chip in its color. Without a `theme`, the app shows `[ui] theme`;
+  a name that no theme has falls back to it with a warning. `:theme` and
+  Settings show the chosen theme until the environment changes. The
+  **Theme** line of the environment editor (above the `.env file` line; Up
+  from it) is a choice row, as in Settings: it shows
+  `‹ crimson › (12 of 34)` and the theme's colors, ← → change the theme
+  ("(base theme)" comes first), and Space, Enter or a click on the value
+  lists the themes. The screen shows the theme of the line while the line
+  has the focus, and each theme as you move to it in the list; the theme in
+  use comes back when the line loses the focus. In the list, Enter takes the
+  selection and Esc keeps the line. `Ctrl+S` saves it. The collection
+  variables have no Theme line.
 * Environment names cannot start with `_`, and `runtime` is reserved.
   `_collection` holds the collection-level variables' secrets.
 * The editor never loses edits: switching (`Ctrl+PageUp`/`Ctrl+PageDown`) and
@@ -703,7 +719,9 @@ switches between them; an empty script shows "(empty)".
   ([FORMAT.md](../FORMAT.md#script-sources)).
 * **Assertions** (`[[scripts.assert]]`) — `from`, `expr`, `op`, `value`, with
   operators `eq`, `ne`, `contains`, `not_contains`, `exists`, `not_exists`,
-  `lt`, `le`, `gt`, `ge`, `matches` (regular expression). Numeric comparison is
+  `lt`, `le`, `gt`, `ge`, `matches` (regular expression). The Scripts tab shows
+  them as `==`, `!=`, `contains`, `!contains`, `exists`, `!exists`, `<`, `<=`,
+  `>`, `>=`, `matches`. Numeric comparison is
   numeric; otherwise string comparison.
 * **Lua scripts** (`[scripts.lua]`, `pre` and `post`) — code in
   [Lua 5.4](https://www.lua.org), for logic that the rows cannot express
@@ -856,7 +874,7 @@ Import gaps are listed in [DEBT.md](DEBT.md).
 ## TUI
 
 * **Top bar**: the brand, the open requests as tabs (`●` unsaved, a spinner
-  while running, `+` new), the environment chip and `F1 all keys`. The
+  while running, `+` new), the environment chip and `F1 help`. The
   environment chip is coloured by name: `prod`/`live` red,
   `staging`/`qa`/`test`/`uat` yellow, `local`/`dev` green.
 * **URL card**: above both panes, a bordered card in the colour of the request
@@ -947,7 +965,7 @@ Import gaps are listed in [DEBT.md](DEBT.md).
 * **Footer**: one row. On the left, status segments (vim mode, collection,
   unsaved count, undefined variables, watch state, running/stream state). On
   the right, the key hints for what is focused, with short key names (`^S`,
-  `⏎`), always ending with `^W menu · F1 all keys`. A note or confirmation
+  `⏎`), always ending with `^W menu · F1 help`. A note or confirmation
   takes the place of the hints for 10 s (or until the next key); a warning or
   an error stays until a new message replaces it, with the hints that fit
   beside it (the message gets at most half of the free room). The hints are
@@ -971,15 +989,28 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   an MCP server command, URL or credential problem. A `407`, and a `401` or
   `403` after an OAuth token of `[oauth]`, get their fix as a note in Messages.
   Other failures show their text only.
+* **Help** (F1): one column with a sidebar of sections in four groups.
+  **Guide**: "Start here" (F1 opens it: the screen, how to move, the first
+  keys) and "How it works" (collection, request files, folder settings,
+  variables, secrets, the steps of a send, the response, history).
+  **Tutorials**: steps for the first request, save and organize,
+  environments, secrets and auth, chain requests, read a response, import
+  and export, a gRPC call, streams (WebSocket, SSE, MQTT), MCP tools, run a
+  folder and customize. **Keys**: all keys, each keymap context (with a line
+  that tells where its keys work), the fixed keys, the symbols and the
+  commands. **Functions**: the template functions, `$prompt` / `$select` /
+  `$response`, the names a Lua script has with its phase, and `$lua.name`.
+  The guide and the tutorials show the keys of the keymap, so a changed key
+  or vim mode shows in the text. `Tab` / `Shift+Tab` or a click opens a
+  section (a group name is not a section); the search applies to the open
+  section. `:help <section>` opens the help at a section (`:help jq`). The
+  prose is in `crates/ui/src/help/`.
 * **Ctrl+W menu**: after `Ctrl+W`, a box at the bottom right lists every key
   that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
   comes from the keymap, so your overrides show. Press a key or click an
   entry to run it; `Esc` or a click elsewhere closes it.
-* **Overlays** over a dimmed backdrop: command palette, help (searchable; two
-  pages: the keys, in two columns at ≥ 180 columns, and the functions — `Tab`
-  switches; the functions are the template functions, `$prompt` / `$select` /
-  `$response`, the names a Lua script has with its phase, and `$lua.name`, in
-  one column), settings, confirm questions, prompts, fuzzy
+* **Overlays** over a dimmed backdrop: command palette, help, settings,
+  confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
   folder, theme, OAuth sign-in, OAuth identity, cookie jar), the environment
   editor, the MCP servers, OAuth and keymap editors, the import dialog and the
@@ -1019,7 +1050,7 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:envs`, `:newenv` | Edit environments / create one |
 | `:auth login [name]` / `:auth logout [name]` | OAuth sign in / out: an `[oauth]` identity, else an MCP server; without a name, a picker lists them |
 | `:w`, `:saveas <name>`, `:wq`, `:q`, `:q!` | Save / save as / save and quit / quit / quit without saving |
-| `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request |
+| `:new`, `:newgrpc`, `:newmcp` | New HTTP / gRPC / MCP request (MCP: also `Ctrl+W a`) |
 | `:mcpservers`, `:mcptools` | Choose an MCP server / discover and choose a tool |
 | `:mcpservers edit`, `:mcpadd <name>` | Edit the MCP servers in the config file chosen in Settings / add one |
 | `:mcpedit [name]` | Edit an MCP server (the servers list without a name) |
@@ -1034,7 +1065,7 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:pager` (`o` in the response) | Show the response tab as on screen (masked, jq filter applied) in `$PAGER`, then `less` |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
-| `:settings`, `:theme [name]`, `:theme reload`, `:help` | Settings / theme (a picker without a name) / help |
+| `:settings`, `:theme [name]`, `:theme reload`, `:help [section]` | Settings / theme (a picker without a name) / help (at the first section whose name starts with, then has, the text: `:help grpc`) |
 | `:oauth`, `:keymap` | Edit the HTTP OAuth identities / your key bindings |
 | `:report`, `:savebody [path]` | Reopen the last report / save the response body |
 
@@ -1257,8 +1288,13 @@ the tools and their arguments are in [CLI.md](CLI.md#sendito-serve-path).
 
 ## Themes and icons
 
-Seven built-in themes: `auto`, `dusk`, `daylight`, `ember`, `linen`, `contrast`
-and `ansi` (the terminal's own 16 colors). `NO_COLOR=1` turns colors off.
+33 built-in themes: `auto`, `dusk`, `daylight`, `ember`, `linen`, `contrast`
+and `ansi` (the terminal's own 16 colors); 18 themes after popular editor
+themes (`dracula`, `monokai`, `nord`, `gruvbox`, `catppuccin`, `tokyo-night`,
+`solarized-light`, `github-light` and more); and 8 solid-color themes with a
+solid selection bar and heavy focus borders (`turbo`, `phosphor`, `amber`,
+`bauhaus`, `crimson`, `abyss`, `grove`, `grape`). Every theme with RGB colors
+keeps text at least 4.5:1 (WCAG AA). `NO_COLOR=1` turns colors off.
 Terminals without 24-bit color get the nearest of 256.
 
 * Your own themes are TOML files in `~/.config/sendito/themes/` or
@@ -1267,7 +1303,16 @@ Terminals without 24-bit color get the nearest of 256.
   `bg` alone gives a consistent theme.
 * `sendito theme list` shows every theme, its file and any problems;
   `sendito theme print <name>` prints a complete file to start from;
-  `:theme <name>` applies one, `:theme` lists them, `:theme reload` re-reads the files.
+  `:theme <name>` applies one (the palette lists the matching names as you
+  type), `:theme reload` re-reads the files.
+* `:theme`, or Space on the Theme row of Settings, opens the list of themes
+  with a live preview: the screen takes each theme as you move to it, Enter
+  keeps it and Esc goes back to the theme in use. Each name shows its kind
+  (dark, light, solid selection, yours), and typing a kind filters by it.
+  Each row ends with a swatch of that theme's colors on its own background.
+* An environment can have its own theme (`theme = "<name>"` in its file, or
+  the Theme line of the environment editor): see
+  [Variables and secrets](#variables-and-secrets).
 * Problems (unknown token, bad color, an `extends` loop, low contrast) are
   reported and skipped; they never stop startup.
 * **Icons** `unicode` (works with any font) or `nerd` (folders, sidebar modes,

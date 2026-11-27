@@ -1,0 +1,19 @@
+Save requests as files and keep them in folders.
+
+── Save a request ──
+  1.  Press {key:save} in a tab that has no file.
+  2.  Type the name and choose the folder. Press Enter.
+  3.  The request is now a file and shows in the tree. The next {key:save} writes the same file.
+To save a copy with a new name, use the command :saveas <name>.
+
+── Make requests and folders in the tree ──
+  1.  Move the focus to the sidebar ({key:focus_left}) and select a folder.
+  2.  Press {key:tree_new_request} for a new request in that folder. Type the name, choose the type (HTTP, gRPC, WebSocket, MCP, SSE, MQTT) and press Enter.
+  3.  Press {key:tree_new_folder} for a new folder.
+  4.  Press {key:tree_rename} to rename, {key:tree_duplicate} to duplicate, {key:tree_move} to move and {key:tree_delete} to delete the selected item. You can also drag an item onto a folder.
+
+── Find a request quickly ──
+  •  Press {key:tree_filter} in the tree and type a part of the name.
+  •  Press {key:tree:toggle_favorite} on a request to add it to ★ Favorites at the top of the tree.
+  •  Press {key:toggle_pin} to pin the current tab. Pinned tabs stay first.
+  •  Press {key:history} to see the requests that you sent. Enter opens a copy, "s" saves it to the tree.

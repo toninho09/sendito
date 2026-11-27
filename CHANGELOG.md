@@ -306,18 +306,90 @@
 
 ### Functions in the help
 
-* The help (F1) has two pages. `Tab` and `Shift+Tab` switch between them; the
-  search stays and applies to the new page, and the title names the page.
-  The keys page is the help of before (two columns at ≥ 180 columns).
-* The functions page lists, in one column at any width, the template functions
+* The help (F1) has a sidebar of sections: "All keys" (the help of before),
+  one section per keymap context, the fixed keys, the symbols, the commands
+  and four sections of functions. `Tab` and `Shift+Tab` open the next and the
+  previous section; a click on a row opens it. The search stays and applies
+  to the open section. The help is in one column at any width: the two
+  columns at ≥ 180 columns are gone.
+* The function sections list the template functions
   (`$base64(text)`, `$hmacSha256(key, text)`, ... with the names of the
   arguments), the calls of the send (`$prompt`, `$select`, `$response` and
   its policies), the names a Lua script has (`vars.set`, `render`,
   `request:header`, ... with the phase they run in) and the Lua function
   catalog (`{{ $lua.name(args) }}`), each with a line of introduction.
   `FORMAT.md` stays the full reference.
-* The page reads the tables the send runs (`FUNCS`, `PRE_SEND`, `API`), so a
+* The sections read the tables the send runs (`FUNCS`, `PRE_SEND`, `API`), so a
   new function and its help line change one file.
+
+### Guide and tutorials in the help
+
+* F1 opens on "Start here": what Sendito does, the parts of the screen, how to
+  move the focus and the keys to know first. "How it works" explains the
+  collection, the request files, folder settings, variables and environments,
+  secrets, the steps of a send, the response tabs and the history.
+* Twelve tutorials give the steps for the common tasks: the first request,
+  save and organize, environments, secrets and auth, chain requests, read a
+  response, import and export, a gRPC call, WebSocket / SSE / MQTT streams,
+  MCP tools, run a folder and customize.
+* The sidebar has four groups: Guide, Tutorials, Keys and Functions. A click
+  on a group name does nothing; `Tab` skips the group names.
+* The guide and the tutorials show the keys of the current mode and the keys
+  that you changed in `[keymap]`. A test fails when a text names an action or
+  a `:command` that does not exist.
+* Each key section starts with a line that tells where its keys work. The
+  fixed keys, the symbols and the commands have a line of introduction.
+* The footer, the top bar, the `Ctrl+W` menu and the start screen say
+  "F1 help" in place of "F1 all keys".
+* `:help <section>` opens the help at the first section whose name starts
+  with the text, else has it (`:help grpc`, `:help jq`). No match: an error
+  in the status line.
+* `Ctrl+W a` (`new_mcp_request`) opens a new MCP request tab, as `:newmcp`
+  does.
+* The fixed keys of the environment editor name the Type cell (they said
+  "Source"). `FORMAT.md` and the features list name the operator symbols
+  that the Scripts tab shows (`==` for `eq`, ...).
+
+### More themes
+
+* 26 new built-in themes, 33 in all. 18 follow the palette of a popular
+  editor theme: `dracula`, `monokai`, `nord`, `gruvbox`, `one-dark`,
+  `catppuccin`, `tokyo-night`, `rose-pine`, `night-owl`, `kanagawa`,
+  `everforest`, `github-dark`, `solarized-dark`, `solarized-light`,
+  `gruvbox-light`, `catppuccin-latte`, `github-light` and `one-light`.
+* 8 solid-color themes have a strong background, a solid selection bar and
+  heavy focus borders: `turbo`, `phosphor`, `amber`, `bauhaus`, `crimson`,
+  `abyss`, `grove` and `grape`.
+* Every built-in theme with RGB colors keeps text at least 4.5:1 (WCAG AA);
+  where the original palette does not, the color is a little lighter or
+  darker. A test checks every built-in theme.
+* The theme list (`:theme`) has a live preview: the screen takes each theme as
+  you move to it, Enter keeps it and Esc (or a click outside) goes back to the
+  saved theme. Each name shows its kind (dark, light, solid selection, yours);
+  typing a kind filters by it. Each row ends with a swatch of that theme's
+  colors on its own background.
+* Settings: Space or Enter (or a click on the value) on the Theme row opens
+  the list, which returns to Settings when it closes; ← → still change the
+  theme. The explanation line says so instead of listing every name.
+* `:theme <text>` lists the themes whose name holds the text, and the palette
+  finds a theme by name without the `:` too ("Theme: dracula"). An unknown
+  name says "`:theme` lists them" instead of listing all 33.
+
+### A theme for each environment
+
+* An environment file takes a top-level `theme = "<name>"`: the app shows
+  that theme while the environment is active, so production, sandbox and
+  local look different. The top bar shows that environment as a solid chip
+  in its color.
+* An environment without `theme` shows `[ui] theme`. A name that no theme has
+  falls back to it with a warning. `collection.toml` cannot have a `theme`.
+* `:theme` and Settings save `[ui] theme` and show it until the environment
+  changes. Esc in the theme list goes back to the theme in use.
+* The environment editor has a Theme line above the `.env file` line. It is
+  a choice row, as the Theme row of Settings: `‹ crimson › (12 of 34)` and
+  the theme's colors, ← → change the theme, and Space, Enter or a click on
+  the value lists the themes. The screen shows the theme of the line while
+  the line has the focus. `Ctrl+S` saves it.
 
 ## 0.3.0 — 2026-11-25
 

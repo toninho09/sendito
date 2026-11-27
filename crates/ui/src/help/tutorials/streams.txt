@@ -1,0 +1,26 @@
+Open a WebSocket, SSE or MQTT session and send and receive messages.
+
+── WebSocket ──
+  1.  Press {key:new_ws_request} and type the URL (ws:// or wss://).
+  2.  To send messages when the connection opens, write them in the Messages tab.
+  3.  Press {key:send} to connect.
+  4.  Write a message and press {key:send} again to send it.
+  5.  Press {key:cancel} to close the connection.
+
+── SSE (server-sent events) ──
+  1.  Press {key:new_sse_request} and type the URL.
+  2.  Press {key:send}. The events show while they arrive.
+  3.  Press {key:cancel} to stop.
+
+── MQTT ──
+  1.  Press {key:new_mqtt_request} and type the broker address.
+  2.  In the Topics tab, add the topics to subscribe to (+ and # are wildcards).
+  3.  In the Publish tab, set the topic and the payload to publish.
+  4.  Press {key:send}. The session connects, subscribes and publishes.
+  5.  Press {key:cancel} to stop.
+
+── Read the messages ──
+When two or more messages arrive, the Body tab shows a list on the left and
+the selected message on the right. {key:prev_message} and {key:next_message} change the
+message. When the last message is selected, the body shows each new
+message. The Log tab shows all the messages with their time.

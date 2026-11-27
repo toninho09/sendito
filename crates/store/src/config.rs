@@ -52,8 +52,8 @@ impl KeySpec {
 pub struct UiConfig {
     /// Vim-style modal editing and navigation.
     pub vim_mode: bool,
-    /// A built-in theme (`auto`, `dusk`, `daylight`, `ember`, `linen`,
-    /// `contrast`, `ansi`) or a user theme from a `themes/` directory.
+    /// A built-in theme (`auto`, `dusk`, `daylight`... see `docs/THEMES.md`)
+    /// or a user theme from a `themes/` directory.
     pub theme: String,
     /// `unicode` (works with any font) or `nerd` (Nerd Font icons).
     pub icons: String,

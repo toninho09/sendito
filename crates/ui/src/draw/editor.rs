@@ -1,8 +1,9 @@
-//! The environment editor's dialog: title, env tabs, an optional one-line
-//! input, legend, table, explanation, status and a row of buttons.
+//! The environment editor's dialog: title, env tabs, one-line inputs and
+//! choice rows, legend, table, explanation, status and a row of buttons.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Hit, OverlayHit};
@@ -12,7 +13,7 @@ use crate::theme::Theme;
 
 use super::dialog;
 use super::dialog::inset;
-use super::kit::{TabLook, input_box, put, put_wrapped, tab_strip, truncate};
+use super::kit::{TabLook, input_box, put, put_wrapped, swatch, tab_strip, truncate};
 use super::table::draw_table;
 
 /// Everything one of these dialogs shows around its table.
@@ -34,21 +35,32 @@ pub(super) struct EditorDialog<'a> {
     pub buttons: &'a [&'a str],
     /// Whether a `{{name}}` is defined (the table's cells show the answer).
     pub is_def: &'a dyn Fn(&str) -> bool,
-    /// A one-line input above the legend; when it has the focus, the table
-    /// does not.
-    pub head: Option<Head<'a>>,
+    /// One-line inputs above the legend, top to bottom; when one has the
+    /// focus, the table does not.
+    pub heads: Vec<Head<'a>>,
 }
 
-/// A labelled one-line input with a status after it.
+/// A labelled one-line input or choice row with a status after it.
 pub(super) struct Head<'a> {
     pub label: &'a str,
-    pub input: &'a mut TextEditor,
+    pub input: HeadInput<'a>,
     pub focused: bool,
     pub status: &'a str,
     /// The status tells of a problem (`Some(true)`), of a good state
     /// (`Some(false)`) or is neutral (`None`).
     pub problem: Option<bool>,
     pub hit: OverlayHit,
+}
+
+/// What a [`Head`] holds.
+pub(super) enum HeadInput<'a> {
+    Text(&'a mut TextEditor),
+    /// A value as a Settings choice row shows it ("‹ dusk › (2 of 34)"),
+    /// then the colors of `theme` on its own background.
+    Choice {
+        value: String,
+        theme: Theme,
+    },
 }
 
 /// The width of the label of [`Head`].
@@ -98,28 +110,56 @@ pub(super) fn render(
         top += 1;
     }
     let mut head_cursor = None;
-    let table_focused = !d.head.as_ref().is_some_and(|h| h.focused);
-    if let Some(h) = d.head {
+    let table_focused = !d.heads.iter().any(|h| h.focused);
+    if !d.heads.is_empty() {
         top += 1;
+    }
+    // One status width for every line, so the inputs line up.
+    let sw = d
+        .heads
+        .iter()
+        .map(|h| h.status.width() as u16 + 1)
+        .max()
+        .unwrap_or(0)
+        .min(inner.width / 2);
+    for h in d.heads {
         let label_st = if h.focused {
             theme.bold(theme.on_overlay(theme.accent))
         } else {
             theme.dialog_dim()
         };
         put(buf, inner.x, top, h.label, HEAD_LABEL_W, label_st);
-        let sw = (h.status.width() as u16 + 1).min(inner.width / 2);
         let w = inner.width.saturating_sub(HEAD_LABEL_W + sw);
-        let r = input_box(
-            buf,
-            Rect::new(inner.x + HEAD_LABEL_W, top, w, 1),
-            h.focused,
-            theme,
-        );
-        let c = h.input.render(r, buf, theme, h.focused, d.is_def);
-        if h.focused {
-            head_cursor = c;
+        let row = Rect::new(inner.x + HEAD_LABEL_W, top, w, 1);
+        match h.input {
+            HeadInput::Text(input) => {
+                let r = input_box(buf, row, h.focused, theme);
+                let c = input.render(r, buf, theme, h.focused, d.is_def);
+                if h.focused {
+                    head_cursor = c;
+                }
+                app.hits.push((r, Hit::Overlay(h.hit)));
+            }
+            HeadInput::Choice { value, theme: t } => {
+                let st = if h.focused {
+                    theme.bold(theme.selected())
+                } else {
+                    theme.on_overlay(theme.accent)
+                };
+                // In line with the text of an input box.
+                let vx = row.x + 1;
+                let vw = (value.width() as u16).min(w.saturating_sub(1));
+                let end = put(buf, vx, top, &value, vw, st);
+                app.hits
+                    .push((Rect::new(vx, top, vw, 1), Hit::Overlay(h.hit)));
+                if !theme.mono && end + 11 < row.x + w {
+                    let pad = Style::default().bg(t.bg);
+                    let x = put(buf, end + 2, top, " ", 1, pad);
+                    let x = swatch(buf, x, top, &t, t.bg);
+                    put(buf, x, top, " ", 1, pad);
+                }
+            }
         }
-        app.hits.push((r, Hit::Overlay(h.hit)));
         let st = match h.problem {
             Some(true) => theme.on_overlay(theme.warn),
             Some(false) => theme.on_overlay(theme.ok),

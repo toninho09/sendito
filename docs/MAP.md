@@ -265,7 +265,8 @@ the module for the surface you are changing.
 | Name prompt preview (the file a name creates, a name taken) | `crates/ui/src/app/dialogs.rs::prompt_preview` |
 | Import dialog preview and path completion | `crates/ui/src/app/import_export.rs` (`import_preview`, `complete_import_path`) |
 | Hint row | `crates/ui/src/app/hints.rs` |
-| Report, timing, header and help text | `crates/ui/src/app/text.rs` |
+| Report, timing and header text | `crates/ui/src/app/text.rs` |
+| Help (F1): the groups and sections, the key and function tables, `{key:action}` in the prose | `crates/ui/src/app/help.rs::help_sections`; the guide and tutorial texts in `crates/ui/src/help/` (a new tutorial is a `.txt` file and a row of `TUTORIAL_TEXTS`); the sidebar in `crates/ui/src/draw/overlay/palette.rs::draw_help` |
 | Overlay keys, dialog accept actions | `crates/ui/src/app/overlay_keys.rs`, `crates/ui/src/app/dialogs.rs` |
 | Mouse hits, wheel, drag, clicks | `crates/ui/src/app/mouse.rs` |
 | Session bootstrap, `RunOptions`, scripted input for benches | `crates/ui/src/lib.rs` |
@@ -275,7 +276,7 @@ the module for the surface you are changing.
 | Response viewer: pretty JSON, XML, HTML, YAML and CSV with folding, raw, hex, search, wrapping | `crates/ui/src/viewer.rs` (widget, colors per format in `pretty_spans`), `crates/pipeline/src/doc.rs` (document model) |
 | Completion popup logic (schema keys, methods, servers, tools) | `crates/ui/src/complete.rs` |
 | Actions, bindings, contexts; the single source for help and KEYMAP.md | `crates/ui/src/keymap.rs` |
-| Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs` |
+| Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs`; the color tables of the built-in themes in `crates/widgets/src/theme/palettes.rs` |
 | Markdown preview of a description (Docs tab) | `crates/widgets/src/markdown.rs` |
 | Theme registry: user theme files, `extends`, notes | `crates/ui/src/theme.rs::Registry` |
 | Icon sets (`unicode`, `nerd`) | `crates/widgets/src/icons.rs` |

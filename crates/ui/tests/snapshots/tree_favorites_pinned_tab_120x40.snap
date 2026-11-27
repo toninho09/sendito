@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   ◆ GET get order ×    GET health ×    +                                              ● local ▾   F1  all keys
+ sendito   ◆ GET get order ×    GET health ×    +                                                  ● local ▾   F1  help
 ╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │ ★ Favorites                ││  GET    ▾   {{base_url}}/orders/{{order_id}}  → undefined: order_id        ▶ Send  ^⏎  │
 │  GET   health              │╰────────────────────────────────────────────────────────────────────────────────────────╯
@@ -41,4 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo   {{order_id}} undefined          ⏎ open / fold · n new request · Del/x delete · / filter · ^W menu · F1 all keys
+ demo   {{order_id}} undefined              ⏎ open / fold · n new request · Del/x delete · / filter · ^W menu · F1 help

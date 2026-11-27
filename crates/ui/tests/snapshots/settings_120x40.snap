@@ -7,7 +7,7 @@ expression: screen
 │  ▍  type to filter settings                                            │
 │                                                                        │
 │  Appearance                                                            │
-│    Theme                                  ███████  ‹ auto › (1 of 7)   │
+│    Theme                                 ███████  ‹ auto › (1 of 33)   │
 │    Icons                                                 ‹ unicode ›   │
 │    Key hints                                                ‹ full ›   │
 │    Hide plain secrets                                        ‹ Off ›   │
@@ -35,7 +35,7 @@ expression: screen
 │ ────────────────────────────────────────────────────────────────────── │
 │  Colors: auto follows the terminal; ansi uses your terminal palette;   │
 │  contrast is high-contrast. Add your own in themes/ (sendito theme     │
-│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi  (←…  │
+│  Theme: ← → change, Space lists all 33 with a live preview             │
 │  Changes apply at once and are saved to                                │
 │  ~/.config/sendito/config.toml                                         │
 ╰────────────────────────────────────────────────────────────────────────╯

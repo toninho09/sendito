@@ -1464,7 +1464,7 @@ fn flow_untouched_palette_highlights_a_harmless_first_row() {
     h.key("enter");
     assert!(matches!(
         h.app.overlay,
-        Some(sendito_ui::overlay::Overlay::Help { .. })
+        Some(sendito_ui::overlay::Overlay::Help(_))
     ));
     h.key("esc");
     assert!(h.app.overlay.is_none());
@@ -1506,7 +1506,10 @@ fn flow_env_editor_edits_the_dotenv_path() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
     let dotenv = |h: &Harness| match &h.app.overlay {
-        Some(Overlay::Env(e)) => (e.dotenv.text(), e.on_dotenv),
+        Some(Overlay::Env(e)) => (
+            e.dotenv.text(),
+            e.focus == sendito_ui::overlay::EnvFocus::Dotenv,
+        ),
         _ => panic!("the env editor is not open"),
     };
     // The editor opens on the active environment.
@@ -1765,64 +1768,58 @@ fn flow_themes_and_style() {
 }
 
 #[test]
-fn flow_help_two_columns() {
+fn flow_help_sections() {
     use sendito_ui::overlay::Overlay;
-    let cursor = |h: &Harness| match &h.app.overlay {
-        Some(Overlay::Help { viewer, .. }) => viewer.cursor_line(),
-        _ => usize::MAX,
+    let open = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Help(help)) => help.sections[help.sel].name,
+        _ => "",
     };
-    // One column: the line is below the first page.
-    let mut h = Harness::new(120, 40);
-    h.key("f1");
-    assert!(h.find("Move down").is_none());
-    // Wide: the right column continues the left one, and a click there
-    // selects the line it shows.
+    // F1 opens "Start here"; Tab opens the next section, Shift+Tab the
+    // previous one, and both wrap at the ends.
     let mut h = Harness::new(200, 60);
     h.key("f1");
-    let (x, y) = h.find("Move down").must();
-    assert!(x > 100, "{x}");
+    assert_eq!(open(&h), "Start here");
+    assert!(h.find("(type to search this section)").is_some());
+    h.key("tab");
+    assert_eq!(open(&h), "How it works");
+    h.key("shift+tab shift+tab");
+    assert_eq!(open(&h), "Lua catalog");
+    h.key("tab");
+    assert_eq!(open(&h), "Start here");
+    // A group heading is not a section: a click on it changes nothing.
+    let (x, y) = h.find("Tutorials").must();
     h.click(x, y);
-    let wide = cursor(&h);
-    assert_ne!(wide, usize::MAX);
-    assert!(wide > 40, "{wide}");
-    let line = h.screen().lines().nth(y as usize).unwrap_or("").to_string();
-    assert!(line.contains("Move down"));
-    // PgDn moves by both columns at once.
-    h.key("pagedown");
-    assert!(cursor(&h) > wide);
-}
-
-#[test]
-fn flow_help_pages() {
-    // Tab switches between the keys and the functions; the search follows.
-    let mut h = Harness::new(200, 60);
-    h.key("f1");
+    assert_eq!(open(&h), "Start here");
+    // A tutorial shows the keys of the keymap, not the placeholders.
+    let (x, y) = h.find("First request").must();
+    h.click(x, y);
+    assert_eq!(open(&h), "First request");
+    assert!(h.find("{key:").is_none());
+    // The search applies to the open section and follows it.
     assert!(h.find("$base64(text)").is_none());
     h.type_text("$base64");
     assert!(h.find("no match for \"$base64\"").is_some());
-    h.key("tab");
-    assert!(h.find("Help — functions").is_some());
+    // A click on a sidebar row opens its section.
+    let (x, y) = h.find("Template functions").must();
+    h.click(x, y);
+    assert_eq!(open(&h), "Template functions");
     assert!(h.find("$base64(text)").is_some(), "the search follows");
-    // One column: the dialog is 134 wide, so its title rule is short.
+    // One column at any width: the dialog stops at the longest row.
     let screen = h.screen();
-    let title = screen
-        .lines()
-        .find(|l| l.contains("Help — functions"))
-        .must();
+    let title = screen.lines().find(|l| l.contains("Help (Tab")).must();
     let rule = title.split("Esc closes)").nth(1).must();
     let dashes = rule.chars().take_while(|c| *c == '─').count();
-    assert!(dashes < 100, "{dashes}");
-    h.key("shift+tab");
-    assert!(h.find("Help — keys and actions").is_some());
-    assert!(h.find("no match for \"$base64\"").is_some());
+    assert!(dashes < 120, "{dashes}");
     h.key("esc");
     assert!(h.app.overlay.is_none());
-    // An empty search shows the placeholder of the page.
-    let mut h = Harness::new(120, 40);
-    h.key("f1 tab");
-    assert!(h.find("(type to filter the functions)").is_some());
-    h.key("shift+tab");
-    assert!(h.find("(type to filter the keys)").is_some());
+    // `:help <section>` opens the help at the section that matches.
+    h.app.run_command(":help grpc");
+    assert_eq!(open(&h), "gRPC call");
+    h.key("esc");
+    h.app.run_command(":help no such section");
+    assert!(h.app.overlay.is_none());
+    let status = h.app.status.as_ref().map(|s| s.0.as_str());
+    assert_eq!(status, Some("no help section matches \"no such section\""));
 }
 
 #[test]
@@ -2773,8 +2770,8 @@ fn flow_prompt_dropdown_option_takes_the_mouse() {
     }
 }
 
-/// A settings row click selects it; the value chip changes it, so a click on
-/// the row no longer rewrites the config.
+/// A settings row click selects it; the value chip changes it (the Theme
+/// chip opens the list), so a click on the row does not rewrite the config.
 #[test]
 fn flow_settings_click_selects_and_the_value_changes() {
     use sendito_ui::app::{Hit, OverlayHit};
@@ -2801,7 +2798,14 @@ fn flow_settings_click_selects_and_the_value_changes() {
         .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Value(0))))
         .map(|(r, _)| *r)
         .must();
+    // The Theme value opens the list of themes, as Space does.
     h.click(value.x + 1, value.y);
+    assert!(matches!(
+        &h.app.overlay,
+        Some(sendito_ui::overlay::Overlay::Picker(p)) if p.title == "Theme"
+    ));
+    h.key("down");
+    h.key("enter");
     assert_ne!(theme(&h), before, "the value chip changes the setting");
 }
 
@@ -3678,6 +3682,245 @@ fn flow_theme_picker_applies_the_theme() {
     h.type_text("daylight");
     h.key("enter");
     assert_eq!(h.app.project.config.ui.theme, "daylight");
+    // The selection shows at once and is not saved; Esc brings back the
+    // saved theme.
+    h.app.run_command("theme");
+    h.key("down");
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert_eq!(h.app.project.config.ui.theme, "daylight");
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    assert_eq!(&*h.app.theme.name, "daylight");
+    // A click outside closes it as Esc does.
+    h.app.run_command("theme");
+    h.key("down");
+    h.click(0, 0);
+    assert!(h.app.overlay.is_none());
+    assert_eq!(&*h.app.theme.name, "daylight");
+    // The kind of a theme is a detail; typing it filters the list.
+    assert_eq!(h.app.themes.kind("bauhaus"), "light · solid selection");
+    assert_eq!(h.app.themes.kind("dracula"), "dark");
+    h.app.run_command("theme");
+    h.type_text("solid");
+    match &h.app.overlay {
+        Some(Overlay::Picker(p)) => {
+            let names: Vec<&str> = p.visible().iter().map(|i| p.items[*i].as_str()).collect();
+            assert!(names.contains(&"turbo") && names.contains(&"contrast"));
+            assert!(!names.contains(&"dracula"));
+        }
+        _ => panic!("the theme picker closed"),
+    }
+    h.key("esc");
+    // Settings: Space opens the list and Esc returns to Settings; Enter in
+    // the list saves the theme and returns too.
+    h.app.open_settings(sendito_ui::overlay::SettingId::Theme);
+    h.key("space");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme"));
+    h.key("esc");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Settings(_))));
+    h.key("enter");
+    h.type_text("nord");
+    h.key("enter");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Settings(_))));
+    assert_eq!(h.app.project.config.ui.theme, "nord");
+    // ← → still step through the themes.
+    h.key("right");
+    assert_eq!(h.app.project.config.ui.theme, "gruvbox");
+}
+
+/// The `theme` of an environment shows while it is active, and the top bar
+/// shows that environment as a solid chip. `:theme` lasts until the next
+/// switch; a theme that does not exist falls back to `[ui] theme`.
+#[test]
+fn flow_environment_theme() {
+    use sendito_ui::app::StatusKind;
+    let mut h = harness(&servers(), 120, 40);
+    let staging = h.dir.path().join(".sendito/environments/staging.toml");
+    let vars = std::fs::read_to_string(&staging).must();
+    std::fs::write(&staging, format!("theme = \"Ember\"\n{vars}")).must();
+    assert!(h.app.env_theme.is_none());
+    h.draw();
+    let (x, y) = h.find("local ▾").must();
+    let plain = h.term.backend().buffer()[(x, y)].clone();
+    assert_ne!(plain.bg, h.app.theme.env_color("local"));
+    // The environment's theme and the solid chip.
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert_eq!(h.app.env_theme.as_deref(), Some("ember"));
+    h.draw();
+    let (x, y) = h.find("staging ▾").must();
+    let chip = h.term.backend().buffer()[(x, y)].clone();
+    assert_eq!(chip.bg, h.app.theme.env_color("staging"));
+    // :theme shows its theme until the environment changes.
+    h.app.run_command("theme daylight");
+    assert_eq!(&*h.app.theme.name, "daylight");
+    h.app.set_env(Some("local".into()));
+    assert_eq!(&*h.app.theme.name, "daylight");
+    assert!(h.app.env_theme.is_none());
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A restart on that environment starts with its theme.
+    h.reopen();
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A theme that does not exist: the [ui] theme and a warning.
+    std::fs::write(&staging, format!("theme = \"nope\"\n{vars}")).must();
+    h.app.set_env(Some("local".into()));
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "daylight");
+    assert!(h.app.env_theme.is_none());
+    let (msg, kind, _) = h.app.status.as_ref().must();
+    assert_eq!(*kind, StatusKind::Warn);
+    assert!(msg.contains("no theme named \"nope\""), "{msg}");
+}
+
+/// The Theme line of the environment editor is a choice row, as in
+/// Settings: ← → change the theme and show it while the line has the
+/// focus, Space lists the themes and shows the selection, Esc keeps the
+/// line, Enter takes the selection, and a save writes the key and applies
+/// the theme of the active environment.
+#[test]
+fn flow_env_editor_sets_the_theme() {
+    use sendito_ui::overlay::{EnvFocus, Overlay};
+    let mut h = harness(&servers(), 120, 40);
+    let shown = h.app.theme.name.clone();
+    let line = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Env(e)) => (e.theme.clone(), e.focus, e.dirty),
+        _ => panic!("the env editor is not open"),
+    };
+    let names = h.app.themes.names();
+    let total = names.len() + 1;
+    h.key("ctrl+w V");
+    let screen = h.screen();
+    assert!(
+        screen.contains(&format!("‹ (base theme) › (1 of {total})")),
+        "{screen}"
+    );
+    // Up from the table: the .env file line, then the Theme line.
+    h.key("up up");
+    assert_eq!(line(&h), (None, EnvFocus::Theme, false));
+    // ← → step through the themes, after "(base theme)", and the screen
+    // shows each one.
+    h.key("right");
+    assert_eq!(h.app.theme.name, h.app.themes.theme(&names[0]).name);
+    assert_eq!(line(&h), (Some(names[0].clone()), EnvFocus::Theme, true));
+    assert!(
+        h.screen()
+            .contains(&format!("‹ {} › (2 of {total})", names[0]))
+    );
+    h.key("left");
+    assert_eq!(line(&h).0, None);
+    assert_eq!(h.app.theme.name, shown);
+    h.key("left");
+    assert_eq!(line(&h).0, names.last().cloned());
+    assert_eq!(
+        h.app.theme.name,
+        h.app.themes.theme(&names[names.len() - 1]).name
+    );
+    // The theme in use comes back when the line loses the focus.
+    h.key("down");
+    assert_eq!(h.app.theme.name, shown);
+    h.key("up right");
+    // Space lists the themes; the selection shows at once and Esc keeps
+    // the line.
+    h.key("space");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme of the environment")
+    );
+    h.type_text("ember");
+    assert_eq!(&*h.app.theme.name, "ember");
+    h.key("esc");
+    assert_eq!(h.app.theme.name, shown);
+    assert_eq!(line(&h).0, None);
+    // Enter takes the selection; the theme shows after the save.
+    h.key("enter");
+    h.type_text("ember");
+    h.key("enter");
+    assert_eq!(line(&h), (Some("ember".to_string()), EnvFocus::Theme, true));
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert!(h.screen().contains("✓ dark"));
+    h.key("ctrl+s");
+    let p = h.dir.path().join(".sendito/environments/local.toml");
+    let after = std::fs::read_to_string(&p).must();
+    assert!(after.starts_with("theme = \"ember\"\n"), "{after}");
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A click on the value lists the themes too.
+    let (x, y) = h.find("‹ ember ›").must();
+    h.click(x, y);
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(_))));
+    h.key("esc");
+    // A name in the file that no theme has says so.
+    let text = std::fs::read_to_string(&p).must();
+    std::fs::write(&p, text.replace("ember", "nope")).must();
+    h.app.overlay = None;
+    h.key("ctrl+w V");
+    assert!(h.screen().contains("no theme has this name"));
+    // The collection variables have no Theme line.
+    h.key("ctrl+pageup");
+    h.key("up up");
+    assert_eq!(line(&h).1, EnvFocus::Dotenv);
+}
+
+/// Each row of the theme list ends with that theme's colors on its own
+/// background.
+#[test]
+fn flow_theme_picker_rows_show_the_colors() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("theme");
+    h.type_text("bauhaus");
+    h.draw();
+    let row = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Item(0))))
+        .map(|(r, _)| *r)
+        .must();
+    let t = h.app.themes.theme("bauhaus");
+    let sw = t.swatch();
+    // The swatch, a cell of background on each side, then a margin.
+    let first = row.x + row.width - sw.len() as u16 - 2;
+    let buf = h.term.backend().buffer().clone();
+    assert_eq!(buf[(first - 1, row.y)].bg, t.bg);
+    for (i, c) in sw.iter().enumerate() {
+        let cell = &buf[(first + i as u16, row.y)];
+        assert_eq!(cell.symbol(), "█");
+        assert_eq!((cell.fg, cell.bg), (*c, t.bg));
+    }
+    assert_eq!(buf[(first + sw.len() as u16, row.y)].bg, t.bg);
+}
+
+/// `:theme <text>` lists the matching themes in the palette.
+#[test]
+fn flow_palette_lists_themes() {
+    use sendito_ui::overlay::{Overlay, PaletteItem};
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+p");
+    h.type_text(":theme latte");
+    match &h.app.overlay {
+        Some(Overlay::Palette(p)) => {
+            let v = p.visible();
+            assert_eq!(v.len(), 1);
+            assert_eq!(
+                p.items[v[0]].0,
+                PaletteItem::Theme("catppuccin-latte".into())
+            );
+        }
+        _ => panic!("the palette closed"),
+    }
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "catppuccin-latte");
+    // Without a ':' the themes are found by name too.
+    h.key("ctrl+p");
+    h.type_text("theme: monokai");
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "monokai");
+    // `:theme reload` matches no theme name and still runs.
+    h.key("ctrl+p");
+    h.type_text(":theme reload");
+    h.key("enter");
+    assert!(h.screen().contains("themes reloaded"));
 }
 
 #[test]
@@ -4408,8 +4651,15 @@ fn flow_http_failure_hint() {
     }
     h.key("f5");
     h.wait_idle(10);
-    let sc = h.wait_for("connection refused · details in the response pane", 5);
-    assert!(sc.contains('✗'), "{sc}");
+    // The footer cuts the message to half of its free room: read the full
+    // text from the app.
+    let sc = h.wait_for("✗ connection refused", 5);
+    let status = h.app.status.as_ref().map(|s| s.0.as_str());
+    assert_eq!(
+        status,
+        Some("connection refused · details in the response pane"),
+        "{sc}"
+    );
     let body = h
         .app
         .tab()

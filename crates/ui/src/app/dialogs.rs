@@ -263,7 +263,12 @@ impl App {
             }
             PickAction::RequestKind => {}
             PickAction::SendValue => self.answer(item.to_string()),
-            PickAction::Theme => self.theme_command(item),
+            PickAction::Theme { settings } => {
+                self.theme_command(item);
+                if settings {
+                    self.open_settings(SettingId::Theme);
+                }
+            }
             PickAction::Cookie => {
                 let (title, message, action) = if item == CLEAR_COOKIES {
                     (
@@ -292,6 +297,7 @@ impl App {
             }
             PickAction::Example => self.show_example(item),
             PickAction::EnvFile { dir, dotenv } => self.pick_env_file(&dir, dotenv, item),
+            PickAction::EnvTheme => self.close_env_theme_picker(Some(item)),
             PickAction::OAuthIdentity => {
                 if index >= self.project.config.oauth.len() {
                     self.open_oauth_editor();

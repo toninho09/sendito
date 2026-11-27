@@ -243,7 +243,8 @@ would make it clear.
   Enter/Tab inserts, Esc closes, the hint row describes the open list.
 - Optional vim mode, mouse support (click, hover, drag in the tree, drag pane
   borders), sidebar on either side, pane zoom.
-- Seven themes (auto, dusk, daylight, ember, linen, contrast, ansi) plus user themes
+- 33 themes (auto, dusk, daylight, ember, linen, contrast, ansi, 18 after IDE themes
+  such as dracula and github-light, 8 solid-color themes such as turbo) plus user themes
   read from TOML files (:theme NAME, :theme reload, `sendito theme list|print`).
 - Optional Nerd Font icons (Settings > Icons); the default icon set works with any
   font.

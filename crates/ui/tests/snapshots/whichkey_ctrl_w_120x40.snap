@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
+ sendito   GET list users ×    +                                                                   ● local ▾   F1  help
 ╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
@@ -29,14 +29,14 @@ expression: screen
 │      │                                                                                                              │
 │      │  Request              Tabs                   Focus & layout              Open                   App          │
 │      │  e  send              t  new HTTP            h j k l  focus              v  environment         q  quit      │
-│      │  x  cancel            g  new gRPC            w W  next / previous pane   V  edit environments   ?  all keys  │
+│      │  x  cancel            g  new gRPC            w W  next / previous pane   V  edit environments   ?  help      │
 │      │  d  end stream        y  new WebSocket       ] [  pane tab               S  MCP servers         ,  settings  │
 │      │  m  watch             E  new SSE             b  sidebar                  r  history                          │
 │      │  s  save              M  new MQTT            z  zoom                     i  import                           │
-│      │  F  favorite          c  close               > <  sidebar width                                              │
-│      │  u  copy as curl      n p  next / previous   + -  split height                                               │
-│      │  f  format body       P  pin                                                                                 │
-│      │  O  edit in $EDITOR                                                                                          │
+│      │  F  favorite          a  new MCP             > <  sidebar width                                              │
+│      │  u  copy as curl      c  close               + -  split height                                               │
+│      │  f  format body       n p  next / previous                                                                   │
+│      │  O  edit in $EDITOR   P  pin                                                                                 │
 │      │  K  move to secret                                                                                           │
 │      │  *  show secrets                                                                                             │
 │      │                                                                                                              │

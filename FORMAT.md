@@ -323,6 +323,7 @@ secret = true                   # mask the value in the UI and history
 [[scripts.assert]]              # after the response: check a value
 from = "status"                 # a source of "Script sources" below
 op = "eq"                       # eq ne contains not_contains exists not_exists lt le gt ge matches
+                                # (the Scripts tab shows == != contains !contains exists !exists < <= > >= matches)
 value = "200"                   # omitted for exists / not_exists; may use {{variables}}
 
 [scripts.lua]                   # Lua code; see "Lua scripts" below
@@ -1116,6 +1117,7 @@ whose name has `token`, `secret`, `key` or `session` are saved as `••••�
 
 ```toml
 dotenv = ".env.dev"                                   # optional: the .env file of dotenv variables
+theme = "crimson"                                     # optional: the color theme while this environment is active
 
 [variables]
 base_url = "http://localhost:8080"                    # plain: stored in this file
@@ -1141,7 +1143,13 @@ The top-level `dotenv` key sets the path of the `.env` file for the `dotenv`
 variables of that file (the ".env file" line of the environment editor).
 Without it, the path is `.env` at the collection root.
 A relative path starts at the collection root, and `~/` is expanded.
-`collection.toml` takes the same key for the collection variables. The file
+`collection.toml` takes the same key for the collection variables.
+
+The top-level `theme` key names the color theme (a built-in theme or one of
+yours) that the app shows while the environment is active; without it, the
+app shows `[ui] theme`. A name that no theme has falls back to `[ui] theme`
+with a warning. `collection.toml` cannot have a `theme`. The key changes only
+the screen, never the request. The file
 uses the usual `.env` syntax: `KEY=value` lines, `#` comments, an optional
 `export`, single or double quotes, and `${VAR}` substitution (from the earlier
 lines, then from the process environment). Sendito does not load the file into
@@ -1191,8 +1199,8 @@ ignore = ["target", "node_modules", "vendor", "dist", "build"]
 
 [ui]
 vim_mode = false
-theme = "auto"           # auto | dusk | daylight | ember | linen | contrast | ansi,
-                         # or a theme file of yours (docs/THEMES.md)
+theme = "auto"           # a built-in theme (auto, dusk, daylight, dracula, nord...;
+                         # `sendito theme list`) or a theme file of yours (docs/THEMES.md)
 icons = "unicode"        # unicode | nerd (Nerd Font icons)
 sidebar = "left"         # left | right
 sticky_folders = true    # pin the folders of the top tree row while scrolling

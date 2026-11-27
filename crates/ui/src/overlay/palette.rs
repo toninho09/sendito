@@ -7,6 +7,8 @@ pub enum PaletteItem {
     Action(crate::keymap::Action),
     Open(String),
     Env(Option<String>),
+    /// Applies and saves this theme.
+    Theme(String),
     Command(&'static str, &'static str),
     /// Opens the settings dialog on this row.
     Setting(SettingId),
@@ -54,7 +56,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (":newsse", "New SSE request (Ctrl+W E)"),
     (":newmqtt", "New MQTT request (Ctrl+W M)"),
     (":newws", "New WebSocket request (Ctrl+W y)"),
-    (":newmcp", "New MCP request"),
+    (":newmcp", "New MCP request (Ctrl+W a)"),
     (":mcpservers", "Choose an MCP server"),
     (
         ":mcpservers edit",
@@ -151,9 +153,12 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         ":theme [name]",
-        "Switch theme (lists them without a name); :theme reload reads your theme files again",
+        "Switch theme (names listed as you type; without a name, a list with a live preview); :theme reload reads your theme files again",
     ),
-    (":help", "Show keys"),
+    (
+        ":help [section]",
+        "Open the help, or the section whose name has the text",
+    ),
     (
         ":report",
         "Show the last report (import, curl export) again",
@@ -195,6 +200,20 @@ impl Palette {
                     );
                 }
                 return v;
+            }
+            // ":theme <text>" lists the themes whose name holds the text.
+            if let Some(arg) = cmd.strip_prefix("theme ").map(str::trim)
+                && !arg.is_empty()
+            {
+                return self
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (it, _, _))| {
+                        matches!(it, PaletteItem::Theme(name) if name.to_lowercase().contains(arg))
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
             }
             let word = cmd.split_whitespace().next().unwrap_or("");
             return self

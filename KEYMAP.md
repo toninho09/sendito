@@ -29,6 +29,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
 | `new_sse_request` | `Ctrl+W E` | `Ctrl+W E` | Open a new unsaved SSE request tab |
 | `new_mqtt_request` | `Ctrl+W M` | `Ctrl+W M` | Open a new unsaved MQTT request tab |
+| `new_mcp_request` | `Ctrl+W a` | `Ctrl+W a` | Open a new unsaved MCP request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
@@ -49,7 +50,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `subtab_5` | `Alt+5` | `Alt+5` | Jump to tab 5 of the focused pane |
 | `subtab_6` | `Alt+6` | `Alt+6` | Jump to tab 6 of the focused pane |
 | `palette` | `Ctrl+P` | `Ctrl+P` | Open the command palette |
-| `help` | `F1`, `Ctrl+W ?` | `F1`, `Ctrl+W ?` | Show all keys and actions |
+| `help` | `F1`, `Ctrl+W ?` | `F1`, `Ctrl+W ?` | Open the help: guide, tutorials, keys and functions |
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
@@ -162,7 +163,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `dialog_delete` | `Ctrl+D` | `Ctrl+D` | Delete the table row or the list entry of an editor |
 | `dialog_prev_env` | `Ctrl+PageUp` | `Ctrl+PageUp` | Previous environment in the environment editor |
 | `dialog_next_env` | `Ctrl+PageDown` | `Ctrl+PageDown` | Next environment in the environment editor |
-| `dialog_browse` | `F2` | `F2` | Choose a file in the environment editor (.env file or a file value) |
+| `dialog_browse` | `F2` | `F2` | Choose a theme or a file in the environment editor (Theme, .env file or a file value) |
 | `dialog_test` | `Ctrl+T` | `Ctrl+T` | Test the MCP server in the MCP server editor |
 | `dialog_sign_in` | `Ctrl+L` | `Ctrl+L` | Sign in with the identity in the OAuth identity editor |
 
@@ -187,8 +188,8 @@ These are handled by the widgets themselves and cannot be remapped.
 | History (sidebar) | Ctrl+Enter / F5 | Resend the entry (opens a copy and sends it) |
 | History (sidebar) | s | Save the entry to the tree |
 | History (sidebar) | F7 | Back to the tree |
-| Tables | Space (on a ‹choice› cell: multipart Kind, env Source) | Change the value |
-| Environment editor | Space (Source cell) | Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file |
+| Tables | Space (on a ‹choice› cell: multipart Kind, env Type) | Change the value |
+| Environment editor | Space (Type cell) | Change where the value lives: text, secret (.sendito/secrets.toml), keychain, file |
 | Environment editor | Enter / Esc | Next cell / close |
 | Import dialog | Tab / Esc | Complete the file path / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
@@ -253,7 +254,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:newsse` | New SSE request (Ctrl+W E) |
 | `:newmqtt` | New MQTT request (Ctrl+W M) |
 | `:newws` | New WebSocket request (Ctrl+W y) |
-| `:newmcp` | New MCP request |
+| `:newmcp` | New MCP request (Ctrl+W a) |
 | `:mcpservers` | Choose an MCP server |
 | `:mcpservers edit` | Edit the MCP servers in the config file chosen in Settings (Ctrl+W S) |
 | `:mcpadd <name>` | Add an MCP server to the config file chosen in Settings (asks for the URL or command) |
@@ -291,8 +292,8 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:settings` | Open settings |
 | `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
 | `:keymap` | Edit your key bindings (the file Settings saves to) |
-| `:theme [name]` | Switch theme (lists them without a name); :theme reload reads your theme files again |
-| `:help` | Show keys |
+| `:theme [name]` | Switch theme (names listed as you type; without a name, a list with a live preview); :theme reload reads your theme files again |
+| `:help [section]` | Open the help, or the section whose name has the text |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |
 

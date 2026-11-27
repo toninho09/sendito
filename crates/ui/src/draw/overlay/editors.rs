@@ -46,7 +46,9 @@ pub(super) fn draw_env(
     use crate::overlay::env_editor as t;
     let browse = app.dialog_key(Action::DialogBrowse);
     let save = app.dialog_key(Action::DialogConfirm);
-    let explain: String = match e.selected_type().filter(|_| !e.on_dotenv) {
+    use crate::overlay::EnvFocus;
+    let on_table = e.focus == EnvFocus::Table;
+    let explain: String = match e.selected_type().filter(|_| on_table) {
         Some(t::TEXT) => "text: the value is written in this file and shared through git.".into(),
         Some(t::SECRET) => {
             "secret: type the value; it goes to .sendito/secrets.toml on this machine, never committed.".into()
@@ -66,7 +68,10 @@ pub(super) fn draw_env(
         Some(t::DOTENV) => {
             "dotenv: read from the .env file above. Value: its key, or empty to use the variable name.".into()
         }
-        _ if e.on_dotenv => {
+        _ if e.focus == EnvFocus::Theme => {
+            "theme: the app shows it while this environment is active. ← → change it; Space or Enter lists the themes.".into()
+        }
+        _ if e.focus == EnvFocus::Dotenv => {
             format!(
                 ".env file: the file the .env variables read, relative to the collection; empty = .env. {browse} browses."
             )
@@ -85,6 +90,39 @@ pub(super) fn draw_env(
         "Close (Esc)".to_string(),
     ];
     let buttons: Vec<&str> = labels_btn.iter().map(String::as_str).collect();
+    let has_theme = e.has_theme();
+    let mut heads = Vec::new();
+    if has_theme {
+        let names = app.themes.names();
+        let base = app.project.config.ui.theme.clone();
+        let shown = e.theme.clone().unwrap_or_else(|| BASE_THEME.to_string());
+        let value = match e
+            .theme
+            .as_ref()
+            .and_then(|t| names.iter().position(|n| n.eq_ignore_ascii_case(t)))
+        {
+            Some(i) => format!("‹ {shown} › ({} of {})", i + 2, names.len() + 1),
+            None if e.theme.is_none() => format!("‹ {shown} › (1 of {})", names.len() + 1),
+            None => format!("‹ {shown} ›"),
+        };
+        let t = app.themes.theme(e.theme.as_deref().unwrap_or(&base));
+        heads.push(Head {
+            label: "Theme",
+            input: HeadInput::Choice { value, theme: t },
+            focused: e.focus == EnvFocus::Theme,
+            status: &e.theme_status.0,
+            problem: e.theme_status.1,
+            hit: OverlayHit::EnvTheme,
+        });
+    }
+    heads.push(Head {
+        label: ".env file",
+        input: HeadInput::Text(&mut e.dotenv),
+        focused: e.focus == EnvFocus::Dotenv,
+        status: &e.dotenv_status.0,
+        problem: e.dotenv_status.1,
+        hit: OverlayHit::EnvDotenv,
+    });
     *cursor = editor::render(
         app,
         buf,
@@ -103,14 +141,7 @@ pub(super) fn draw_env(
             dirty: e.dirty,
             buttons: &buttons,
             is_def,
-            head: Some(Head {
-                label: ".env file",
-                input: &mut e.dotenv,
-                focused: e.on_dotenv,
-                status: &e.dotenv_status.0,
-                problem: e.dotenv_status.1,
-                hit: OverlayHit::EnvDotenv,
-            }),
+            heads,
         },
         &mut e.table,
         &EnvHits,

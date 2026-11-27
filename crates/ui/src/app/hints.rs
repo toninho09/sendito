@@ -33,7 +33,7 @@ impl App {
                 ("Esc".into(), "close".into()),
             ]);
             v.push((k(self, Action::Palette), "commands".into()));
-            v.push((k(self, Action::Help), "all keys".into()));
+            v.push((k(self, Action::Help), crate::keymap::HELP_LABEL.into()));
             return v;
         }
         if let Some(ov) = &self.overlay {
@@ -43,6 +43,20 @@ impl App {
                     ("Enter".into(), "run".into()),
                     (":".into(), "commands".into()),
                     ("Esc".into(), "close".into()),
+                ]),
+                Overlay::Picker(p) if p.action.is_theme() => v.extend([
+                    ("type".into(), "filter".into()),
+                    ("↑↓".into(), "preview".into()),
+                    ("Enter".into(), "choose".into()),
+                    (
+                        "Esc".into(),
+                        if p.action == PickAction::EnvTheme {
+                            "keep the line"
+                        } else {
+                            "keep the saved theme"
+                        }
+                        .into(),
+                    ),
                 ]),
                 Overlay::Picker(_) => v.extend([
                     ("type".into(), "filter".into()),
@@ -91,7 +105,13 @@ impl App {
                 // Save, New env and Close are on the dialog's buttons.
                 Overlay::Env(e) => {
                     use crate::overlay::env_editor as t;
-                    if e.on_dotenv {
+                    if e.focus == EnvFocus::Theme {
+                        v.extend([
+                            ("←→".into(), "change".into()),
+                            ("Space".into(), "list".into()),
+                            ("↓".into(), ".env file".into()),
+                        ]);
+                    } else if e.focus == EnvFocus::Dotenv {
                         v.extend([
                             (dk(self, Action::DialogBrowse), "browse".into()),
                             ("Tab".into(), "complete path".into()),
@@ -225,17 +245,10 @@ impl App {
                     ("Esc".into(), "close".into()),
                     (":report".into(), "shows this report again".into()),
                 ]),
-                Overlay::Help { page, .. } => v.extend([
+                Overlay::Help(_) => v.extend([
                     ("type".into(), "search".into()),
                     ("↑↓ PgUp PgDn".into(), "scroll".into()),
-                    (
-                        "Tab".into(),
-                        match page {
-                            HelpPage::Keys => "functions",
-                            HelpPage::Functions => "keys",
-                        }
-                        .into(),
-                    ),
+                    ("Tab".into(), "next section".into()),
                     ("Esc".into(), "close".into()),
                 ]),
                 Overlay::Settings(s) if s.edit.is_some() => v.extend([
@@ -244,7 +257,9 @@ impl App {
                 ]),
                 Overlay::Settings(s) => v.extend([
                     ("↑↓".into(), "move".into()),
-                    if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.typed()) {
+                    if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.lists()) {
+                        ("←→ Space".into(), "change / list".into())
+                    } else if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.typed()) {
                         ("Enter".into(), "edit".into())
                     } else if SETTINGS.get(s.sel).is_some_and(|(id, _)| id.opens()) {
                         ("Enter".into(), "open the editor".into())
@@ -598,7 +613,7 @@ impl App {
         v.push((k(self, Action::Palette), "commands".into()));
         // The footer always keeps the last two: the Ctrl+W menu and F1.
         v.push((crate::keymap::MENU_PREFIX.into(), "menu".into()));
-        v.push((k(self, Action::Help), "all keys".into()));
+        v.push((k(self, Action::Help), crate::keymap::HELP_LABEL.into()));
         v
     }
 }

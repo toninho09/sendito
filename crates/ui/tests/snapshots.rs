@@ -526,8 +526,8 @@ fn overlays() {
         snap_in(Area::Dialog, "palette_commands", h);
         h.key("esc f1");
         snap_in(Area::Dialog, "help", h);
-        // Tab: the functions page, one column at any width.
-        h.key("tab");
+        // Shift+Tab from the first section: the last ones are the functions.
+        h.key("shift+tab shift+tab shift+tab shift+tab");
         snap_in(Area::Dialog, "help_functions", h);
         h.key("esc ctrl+w ,");
         snap_in(Area::Dialog, "settings", h);

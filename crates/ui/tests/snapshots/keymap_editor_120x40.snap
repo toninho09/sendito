@@ -17,6 +17,7 @@ expression: screen
 │   Open a new unsaved SSE request tab                           Ctrl+W E                                    │
 │   Open a new unsaved MQTT request tab                          Ctrl+W M                                    │
 │   Open a new unsaved WebSocket request tab                     Ctrl+W y                                    │
+│   Open a new unsaved MCP request tab                           Ctrl+W a                                    │
 │   Close the current tab                                        Ctrl+W c                                    │
 │   Next open request tab                                        Ctrl+W n, Ctrl+PageDown                     │
 │   Previous open request tab                                    Ctrl+W p, Ctrl+PageUp                       │
@@ -32,7 +33,6 @@ expression: screen
 │   Jump to tab 1 of the focused pane                            Alt+1                                       │
 │   Jump to tab 2 of the focused pane                            Alt+2                                       │
 │   Jump to tab 3 of the focused pane                            Alt+3                                       │
-│   Jump to tab 4 of the focused pane                            Alt+4                                       │
 │                                                                                                            │
 │ Enter records new keys, Ctrl+A adds one, Del restores the default. Tab: all: both editing modes.           │
 │                                                                                                            │

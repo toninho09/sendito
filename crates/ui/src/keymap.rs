@@ -31,6 +31,19 @@ impl Ctx {
             Ctx::Dialog => "Dialogs (environments, MCP servers, identities, import, input)",
         }
     }
+
+    /// The short name of the context in the help sidebar.
+    pub fn name(self) -> &'static str {
+        match self {
+            Ctx::Global => "Global",
+            Ctx::Tree => "Sidebar tree",
+            Ctx::Editor => "Text editing",
+            Ctx::Table => "Tables",
+            Ctx::Response => "Response",
+            Ctx::Query => "Query (jq)",
+            Ctx::Dialog => "Dialogs",
+        }
+    }
 }
 
 /// Which editing mode a binding belongs to.
@@ -66,6 +79,7 @@ actions! {
     NewSseRequest => "new_sse_request", "Open a new unsaved SSE request tab";
     NewMqttRequest => "new_mqtt_request", "Open a new unsaved MQTT request tab";
     NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
+    NewMcpRequest => "new_mcp_request", "Open a new unsaved MCP request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
@@ -85,7 +99,7 @@ actions! {
     SubTab5 => "subtab_5", "Jump to tab 5 of the focused pane";
     SubTab6 => "subtab_6", "Jump to tab 6 of the focused pane";
     Palette => "palette", "Open the command palette";
-    Help => "help", "Show all keys and actions";
+    Help => "help", "Open the help: guide, tutorials, keys and functions";
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
@@ -162,7 +176,7 @@ actions! {
     DialogDelete => "dialog_delete", "Delete the table row or the list entry of an editor";
     DialogPrevEnv => "dialog_prev_env", "Previous environment in the environment editor";
     DialogNextEnv => "dialog_next_env", "Next environment in the environment editor";
-    DialogBrowse => "dialog_browse", "Choose a file in the environment editor (.env file or a file value)";
+    DialogBrowse => "dialog_browse", "Choose a theme or a file in the environment editor (Theme, .env file or a file value)";
     DialogTest => "dialog_test", "Test the MCP server in the MCP server editor";
     DialogSignIn => "dialog_sign_in", "Sign in with the identity in the OAuth identity editor";
 }
@@ -357,6 +371,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (NewWsRequest, Global, Both, &["ctrl+w y"]),
         (NewSseRequest, Global, Both, &["ctrl+w E"]),
         (NewMqttRequest, Global, Both, &["ctrl+w M"]),
+        (NewMcpRequest, Global, Both, &["ctrl+w a"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
@@ -773,6 +788,7 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         NewWsRequest => (G::Tabs, "new WebSocket"),
         NewSseRequest => (G::Tabs, "new SSE"),
         NewMqttRequest => (G::Tabs, "new MQTT"),
+        NewMcpRequest => (G::Tabs, "new MCP"),
         NextTab | PrevTab => (G::Tabs, "next / previous"),
         CloseTab => (G::Tabs, "close"),
         TogglePin => (G::Tabs, "pin"),
@@ -790,11 +806,14 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         History => (G::Open, "history"),
         Import => (G::Open, "import"),
         Settings => (G::App, "settings"),
-        Help => (G::App, "all keys"),
+        Help => (G::App, HELP_LABEL),
         Quit => (G::App, "quit"),
         other => (G::App, other.description()),
     }
 }
+
+/// The label of the help key in the footer, the top bar and the Ctrl+W menu.
+pub const HELP_LABEL: &str = "help";
 
 /// Keys handled directly by widgets (not remappable), documented in help and KEYMAP.md.
 pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
@@ -859,13 +878,13 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     ("History (sidebar)", "F7", "Back to the tree"),
     (
         "Tables",
-        "Space (on a ‹choice› cell: multipart Kind, env Source)",
+        "Space (on a ‹choice› cell: multipart Kind, env Type)",
         "Change the value",
     ),
     (
         "Environment editor",
-        "Space (Source cell)",
-        "Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file",
+        "Space (Type cell)",
+        "Change where the value lives: text, secret (.sendito/secrets.toml), keychain, file",
     ),
     ("Environment editor", "Enter / Esc", "Next cell / close"),
     (

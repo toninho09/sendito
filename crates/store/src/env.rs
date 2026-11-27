@@ -65,6 +65,9 @@ pub struct EnvFile {
     /// Path of the `.env` file that `dotenv` variables read; `None` means
     /// `.env` at the collection root.
     pub dotenv: Option<String>,
+    /// The color theme the app shows while this environment is active;
+    /// `None` keeps the `[ui] theme` of the config.
+    pub theme: Option<String>,
     pub vars: Vec<EnvVar>,
 }
 
@@ -73,6 +76,7 @@ impl EnvFile {
         Self {
             name: name.into(),
             dotenv: None,
+            theme: None,
             vars: Vec::new(),
         }
     }
@@ -98,11 +102,22 @@ pub fn parse_env(name: &str, text: &str) -> std::result::Result<EnvFile, String>
     let t: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
     let mut env = EnvFile::new(name);
     for k in t.keys() {
-        if !matches!(k.as_str(), "variables" | "dotenv") {
+        if !matches!(k.as_str(), "variables" | "dotenv" | "theme") {
             return Err(format!(
-                "unknown key {k:?} (expected `dotenv` or [variables])"
+                "unknown key {k:?} (expected `dotenv`, `theme` or [variables])"
             ));
         }
+    }
+    if let Some(v) = t.get("theme") {
+        if name == COLLECTION_ENV {
+            return Err(
+                "`theme` belongs in an environment file, not in collection.toml".to_string(),
+            );
+        }
+        let v = v
+            .as_str()
+            .ok_or_else(|| "`theme` must be a string (a theme name)".to_string())?;
+        env.theme = Some(v.trim().to_string()).filter(|s| !s.is_empty());
     }
     if let Some(p) = t.get("dotenv") {
         let p = p
@@ -160,6 +175,9 @@ pub fn env_to_toml(env: &EnvFile) -> String {
     let mut w = Writer::new();
     if let Some(p) = &env.dotenv {
         w.str("dotenv", p);
+    }
+    if let Some(t) = &env.theme {
+        w.str("theme", t);
     }
     w.table("variables");
     for v in &env.vars {
@@ -653,6 +671,7 @@ mod tests {
             EnvFile {
                 name: "dev".into(),
                 dotenv: None,
+                theme: None,
                 vars: env.vars.clone(),
             }
         );
@@ -760,6 +779,17 @@ mod tests {
         assert!(VarSource::Dotenv { key: None }.is_secret());
         assert_eq!(VarSource::Dotenv { key: None }.label(), "dotenv");
         assert!(parse_env("x", "dotenv = 1").is_err());
+        let themed = parse_env("prod", "dotenv = \".env\"\ntheme = \" red \"\n").unwrap();
+        assert_eq!(themed.theme.as_deref(), Some("red"));
+        let out = env_to_toml(&themed);
+        assert!(
+            out.starts_with("dotenv = \".env\"\ntheme = \"red\"\n"),
+            "{out}"
+        );
+        assert_eq!(parse_env("prod", &out).unwrap(), themed);
+        assert_eq!(parse_env("prod", "theme = \"\"").unwrap().theme, None);
+        assert!(parse_env("prod", "theme = 1").is_err());
+        assert!(parse_env(COLLECTION_ENV, "theme = \"red\"").is_err());
         assert!(
             parse_env(
                 "x",
