@@ -783,6 +783,11 @@ switches between them; an empty script shows "(empty)".
   owner-only permissions (0600 on Unix), like a `file`-source secret that
   Sendito writes; a secrets file other users can read is tightened when read.
 * `sendito init` writes the `.gitignore` entries for all the local files.
+* **Debug log** (`--debug[=FILE]` or `:debug [file]`): outside the
+  collection, in `~/.local/state/sendito/sendito-<UTC time>.log` by
+  default, owner-only. Errors, warnings, panics with their backtrace and one
+  line per send; no bodies and no secret values
+  ([CLI.md](CLI.md#debug-log)).
 
 Full schema and the directory diagram: [FORMAT.md](../FORMAT.md).
 
@@ -1060,6 +1065,7 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:cancel` | Cancel the running request |
 | `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
+| `:debug [file]` | Turn the debug log on (in `file`, else the default file) or off; see [CLI.md](CLI.md#debug-log) |
 | `:env <name>` | Switch environment |
 | `:envs`, `:newenv` | Edit environments / create one |
 | `:auth login [name]` / `:auth logout [name]` | OAuth sign in / out: an `[oauth]` identity, else an MCP server; without a name, a picker lists them |
@@ -1233,6 +1239,9 @@ that file has an error.
   reports list it under the problems and the JSON report has a `hint` string.
 * Use `--env <name>` to pick the environment. `--allow-unresolved` sends even
   with unresolved placeholders.
+* **Debug log**: `--debug[=FILE]` writes the errors, the warnings, each panic
+  and one line per send to a file, to attach to a bug report
+  ([CLI.md](CLI.md#debug-log)).
 * **Shell completions**: `sendito completions <shell>` prints a script for
   bash, zsh, fish, elvish or PowerShell; `sendito man` prints the man page.
 

@@ -28,6 +28,32 @@ when it is one of `init`, `run`, `curl`, `http`, `code`, `har`, `auth`,
 
 Colors and themes are described in [THEMES.md](THEMES.md).
 
+## Debug log
+
+`--debug[=FILE]` works with every command and with the UI. It writes a log
+to `FILE`, else to `$XDG_STATE_HOME/sendito/sendito-<UTC time>.log`
+(default base `~/.local/state`). Write the file with `=`: `--debug=run.log`.
+Put the flag after the command name (`sendito run F --debug`): before a
+command, the arguments are those of the UI only.
+At the end the command prints `sendito: debug log: <file>` on stderr.
+
+| Line | Holds |
+|---|---|
+| `START` | Version, system and command line |
+| `SEND` / `ERROR` | One line per send: kind or method, target, status or error, time, size, file, environment. A send that stops before it goes out (a `pre` script error, a body file that cannot be read) also gets an `ERROR` line |
+| `ERROR` / `WARN` | Each `sendito:` error and `warning:` line on stderr (in the UI, each error and warning of the status bar, and each dialog that stops a send, such as "Undefined variables") |
+| `PANIC` | The panic message and its backtrace |
+| `EXIT` | The exit code |
+
+The log holds no bodies and no secret values. The file is readable by its
+owner only. In the UI, `:debug [file]` turns the log on and `:debug` turns
+it off.
+
+```sh
+sendito run Users --env local --debug=users.log
+sendito --debug              # the UI, log in the default file
+```
+
 ---
 
 ## `sendito [PATH]`

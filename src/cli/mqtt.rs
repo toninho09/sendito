@@ -34,7 +34,7 @@ pub(super) async fn run_mqtt(
             }
             let written = write_block(out, include, topic, qos, retain, duplicate, payload);
             if let Err(e) = &written {
-                eprintln!("sendito: stdout: {e}");
+                fail!("stdout: {e}");
             }
             written.is_ok()
         }

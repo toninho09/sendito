@@ -42,7 +42,7 @@ pub(super) async fn run_sse(
 fn write_data(out: &mut dyn Write, data: &str) -> bool {
     for line in data.split('\n') {
         if let Err(e) = writeln!(out, "{line}") {
-            eprintln!("sendito: stdout: {e}");
+            fail!("stdout: {e}");
             return false;
         }
     }

@@ -153,8 +153,8 @@ fn register(calls: &Calls, key: &str) -> Option<Cancel> {
 pub(crate) async fn serve(path: Option<PathBuf>, flags: ServeFlags) -> ExitCode {
     let start = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
     let Some(root) = sendito_store::init::find_root(&start) else {
-        eprintln!(
-            "sendito: no collection at {} (no .sendito directory found upwards); run sendito init first",
+        fail!(
+            "no collection at {} (no .sendito directory found upwards); run sendito init first",
             start.display()
         );
         return ExitCode::from(3);
@@ -166,7 +166,7 @@ pub(crate) async fn serve(path: Option<PathBuf>, flags: ServeFlags) -> ExitCode 
         flags,
     );
     if let Err(e) = server.flags.check_envs(&server.project().envs.list()) {
-        eprintln!("sendito: {e}");
+        fail!("{e}");
         return ExitCode::from(3);
     }
     eprintln!("sendito: serving {} on stdin/stdout", root.display());
@@ -189,7 +189,7 @@ pub(crate) async fn serve(path: Option<PathBuf>, flags: ServeFlags) -> ExitCode 
             Ok(Some(line)) => line,
             Ok(None) => break,
             Err(e) => {
-                eprintln!("sendito: cannot read stdin: {e}");
+                fail!("cannot read stdin: {e}");
                 break;
             }
         };
@@ -258,7 +258,7 @@ fn open_project(
 ) -> Arc<Project> {
     let mut p = Project::open_with(root, keychain.clone(), global.clone());
     for w in &p.warnings {
-        eprintln!("warning: {w}");
+        warn!("{w}");
     }
     if let Some(old) = old {
         p.responses = old.responses.clone();

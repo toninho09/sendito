@@ -35,9 +35,47 @@ pub(super) fn history_entry(
     }
 }
 
+/// Writes to the debug log a send that stops before it goes out and writes
+/// no history (an HTTP pre-request script error or a body that cannot be
+/// read).
+pub(super) fn log_stopped(ctx: &RunCtx, template: &Request, target: &str, error: &str) {
+    let entry = history_entry(ctx, template, target.into(), None, 0, 0, Some(error.into()));
+    log_send(&entry);
+}
+
+/// Writes the send to the debug log (when it is on), whether or not history
+/// is on. The entry holds no secret values, so the log holds none.
+fn log_send(entry: &HistoryEntry) {
+    let result = match (&entry.error, entry.status) {
+        (Some(e), _) => format!("error: {e}"),
+        (None, Some(s)) => s.to_string(),
+        (None, None) => "done".into(),
+    };
+    let mut msg = format!(
+        "{} {} -> {result} ({} ms, {})",
+        entry.badge,
+        entry.target,
+        entry.duration_ms,
+        crate::human_size(entry.size)
+    );
+    if let Some(p) = &entry.path {
+        msg.push_str(&format!(" path={p}"));
+    }
+    if let Some(e) = &entry.env {
+        msg.push_str(&format!(" env={e}"));
+    }
+    let level = if entry.error.is_some() {
+        "ERROR"
+    } else {
+        "SEND"
+    };
+    sendito_store::debug_log::log(level, &msg);
+}
+
 /// Appends to the history on this thread. Only for the early failure paths
 /// that run in closures; [`write_history`] is the normal path.
 pub(super) fn append_history(ctx: &RunCtx, entry: &HistoryEntry) {
+    log_send(entry);
     if let Some(h) = &ctx.history {
         let _ = history::append(&h.path, entry, h.max_entries);
     }
@@ -50,6 +88,7 @@ pub(super) async fn write_history(
     entry: &HistoryEntry,
     response: Option<sendito_store::examples::Example>,
 ) {
+    log_send(entry);
     if let Some(h) = ctx.history.clone() {
         let entry = entry.clone();
         let _ = tokio::task::spawn_blocking(move || {

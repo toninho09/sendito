@@ -119,13 +119,13 @@ pub(crate) fn with_dir_lock<T>(dir: &Path, f: impl FnOnce() -> Result<T>) -> Res
 }
 
 #[cfg(unix)]
-fn owner_only(options: &mut OpenOptions) {
+pub(crate) fn owner_only(options: &mut OpenOptions) {
     use std::os::unix::fs::OpenOptionsExt;
     options.mode(0o600);
 }
 
 #[cfg(not(unix))]
-fn owner_only(_: &mut OpenOptions) {}
+pub(crate) fn owner_only(_: &mut OpenOptions) {}
 
 /// Removes group and other access from an existing file.
 pub(crate) fn make_private(_path: &Path) {

@@ -754,7 +754,13 @@ impl App {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, kind: StatusKind) {
-        self.status = Some((msg.into(), kind, Instant::now()));
+        let msg = msg.into();
+        match kind {
+            StatusKind::Warn => sendito_store::debug_log::log("WARN", &msg),
+            StatusKind::Error => sendito_store::debug_log::log("ERROR", &msg),
+            StatusKind::Info | StatusKind::Ok => {}
+        }
+        self.status = Some((msg, kind, Instant::now()));
     }
 
     pub fn tab(&self) -> Option<&Tab> {

@@ -24,15 +24,15 @@ pub(crate) fn theme(cmd: ThemeCmd) -> ExitCode {
                 }
             }
             for w in &reg.warnings {
-                eprintln!("sendito: {w}");
+                fail!("{w}");
             }
             ExitCode::SUCCESS
         }
         ThemeCmd::Print { name, collection } => {
             let reg = theme_registry(collection.as_deref());
             if !reg.is_known(&name) {
-                eprintln!(
-                    "sendito: no theme named \"{name}\" (available: {})",
+                fail!(
+                    "no theme named \"{name}\" (available: {})",
                     reg.names().join(", ")
                 );
                 return ExitCode::from(3);

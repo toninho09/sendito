@@ -199,6 +199,11 @@ pub(super) async fn exec_http_inner(
     } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
+    let template = Request::Http(req.clone());
+    let target = match mask_request(&template, &scope) {
+        Request::Http(h) => sendito_core::resolve::normalize_url(&h.url),
+        _ => String::new(),
+    };
     // What a diagnosis needs about the request: the OAuth identity is one
     // only when its token went out (an explicit Authorization header wins).
     let oauth_name = match &req.auth {
@@ -214,6 +219,7 @@ pub(super) async fn exec_http_inner(
         resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message);
     }
     if let Some(message) = pre_error {
+        log_stopped(ctx, &template, &target, &message);
         let hint = http_hint(&message, &resolved, &cx);
         mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
@@ -232,6 +238,7 @@ pub(super) async fn exec_http_inner(
     }
     if let sendito_core::resolve::ResolvedBody::Invalid(message) = &resolved.body {
         let message = sendito_core::vars::scrub(message, &scope.secret_values());
+        log_stopped(ctx, &template, &target, &message);
         let hint = http_hint(&message, &resolved, &cx);
         mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
@@ -271,11 +278,6 @@ pub(super) async fn exec_http_inner(
         }
     } else {
         Ok(())
-    };
-    let template = Request::Http(req.clone());
-    let target = match mask_request(&template, &scope) {
-        Request::Http(h) => sendito_core::resolve::normalize_url(&h.url),
-        _ => String::new(),
     };
     let start = std::time::Instant::now();
     let mut provider = None;

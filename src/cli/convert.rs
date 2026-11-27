@@ -11,7 +11,7 @@ fn export_input(
     what: &str,
 ) -> Result<(Project, String, HttpRequest, Scope, bool), ExitCode> {
     let (project, rel, req) = load(request, env).map_err(|(e, code)| {
-        eprintln!("sendito: {e}");
+        fail!("{e}");
         ExitCode::from(code)
     })?;
     let mut scope = if include_secrets {
@@ -20,7 +20,7 @@ fn export_input(
         runner::names_scope(&project.envs, env.as_deref(), &Default::default())
     };
     let chain = project.coll.chain(&rel).map_err(|e| {
-        eprintln!("sendito: {e}");
+        fail!("{e}");
         ExitCode::from(3)
     })?;
     let effective = runner::with_folders(&req, &chain, &mut scope);
@@ -37,8 +37,8 @@ fn export_input(
         } else {
             "HTTP and SSE requests"
         };
-        eprintln!(
-            "sendito: {what} export is only available for {kinds}, not {}",
+        fail!(
+            "{what} export is only available for {kinds}, not {}",
             effective.badge()
         );
         return Err(ExitCode::from(3));
@@ -92,7 +92,7 @@ pub(crate) fn code(
 /// `sendito har`: one request, or every HTTP request below a folder.
 pub(crate) fn har(request: &Path, env: Option<String>, include_secrets: bool) -> ExitCode {
     let fail = |(e, code): (String, u8)| {
-        eprintln!("sendito: {e}");
+        fail!("{e}");
         ExitCode::from(code)
     };
     // A request file wins over a folder of the same name, as for `run`.
@@ -113,7 +113,7 @@ pub(crate) fn har(request: &Path, env: Option<String>, include_secrets: bool) ->
             Err(e) => return fail(e),
         }
     } else {
-        eprintln!("sendito: request {} not found", request.display());
+        fail!("request {} not found", request.display());
         return ExitCode::from(3);
     };
     let scope = if include_secrets {
@@ -144,7 +144,7 @@ pub(crate) fn har(request: &Path, env: Option<String>, include_secrets: bool) ->
         }
     }
     if items.is_empty() {
-        eprintln!("sendito: no HTTP requests to export");
+        fail!("no HTTP requests to export");
         return ExitCode::from(3);
     }
     print!(
@@ -163,7 +163,7 @@ pub(crate) fn import(file: &Path, into: &str) -> ExitCode {
     let (format, result) = match sendito_import::import_path(file) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             return ExitCode::from(3);
         }
     };
@@ -193,7 +193,7 @@ pub(crate) fn import(file: &Path, into: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             ExitCode::from(3)
         }
     }

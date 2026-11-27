@@ -13,7 +13,7 @@ pub(crate) fn find_collection(path: Option<&Path>) -> PathBuf {
 pub(crate) fn init(path: Option<PathBuf>) -> ExitCode {
     let dir = path.unwrap_or_else(|| PathBuf::from("."));
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("sendito: {}: {e}", dir.display());
+        fail!("{}: {e}", dir.display());
         return ExitCode::from(3);
     }
     match sendito_store::init::init(&dir) {
@@ -32,7 +32,7 @@ pub(crate) fn init(path: Option<PathBuf>) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             ExitCode::from(3)
         }
     }
@@ -123,7 +123,7 @@ pub(crate) fn load_at(
 ) -> Result<(Project, String, Request), (String, u8)> {
     let project = Project::open(&root, runner::default_keychain());
     for w in &project.warnings {
-        eprintln!("warning: {w}");
+        warn!("{w}");
     }
     check_env(&project, env)?;
     let req = project.coll.load(&rel).map_err(|e| (e.to_string(), 3))?;
@@ -197,7 +197,7 @@ pub(crate) fn load_suite(
     };
     let project = Project::open(&root, runner::default_keychain());
     for w in &project.warnings {
-        eprintln!("warning: {w}");
+        warn!("{w}");
     }
     check_env(&project, env)?;
     Ok((project, rel))
@@ -258,9 +258,7 @@ pub(crate) fn is_folder_arg(request: &Path) -> bool {
 pub(crate) fn collection_root() -> Result<PathBuf, ExitCode> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     sendito_store::init::find_root(&cwd).ok_or_else(|| {
-        eprintln!(
-            "sendito: no collection here (no .sendito directory found upwards); run sendito init first"
-        );
+        fail!("no collection here (no .sendito directory found upwards); run sendito init first");
         ExitCode::from(3)
     })
 }

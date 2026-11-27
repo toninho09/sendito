@@ -799,6 +799,37 @@ fn flow_status_note_expires_warning_stays() {
     assert!(h.app.status.is_none());
 }
 
+/// `:debug FILE` turns the debug log on: an error status and a dialog that
+/// stops a send go to the file. `:debug` turns it off. The log is global to
+/// the process, so the test checks only its own lines.
+#[test]
+fn flow_debug_command_logs_errors() {
+    use sendito_ui::app::StatusKind;
+    let dir = tempfile::tempdir().must();
+    let log = dir.path().join("debug.log");
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.app.run_command(&format!("debug {}", log.display()));
+    let (msg, kind, _) = h.app.status.clone().must();
+    assert_eq!(msg, format!("debug log on: {}", log.display()));
+    assert_eq!(kind, StatusKind::Info);
+    h.app.run_command("watch abc");
+    h.app.run_command("env staging");
+    open(&mut h, "get order");
+    h.key("f5");
+    assert!(h.screen().contains("Undefined variables"));
+    h.key("esc");
+    h.app.run_command("debug");
+    let (msg, _, _) = h.app.status.clone().must();
+    assert_eq!(msg, format!("debug log off: {}", log.display()));
+    let text = std::fs::read_to_string(&log).must();
+    assert!(text.contains(" ERROR usage: :watch [seconds]"), "{text}");
+    assert!(
+        text.contains(" WARN not sent: Undefined variables: {{order_id}} not defined"),
+        "{text}"
+    );
+}
+
 #[test]
 fn flow_response_jq_filter() {
     let s = servers();

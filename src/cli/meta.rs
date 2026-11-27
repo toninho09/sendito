@@ -17,7 +17,7 @@ pub(crate) fn man() -> ExitCode {
     match page.render(&mut std::io::stdout()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             ExitCode::from(2)
         }
     }

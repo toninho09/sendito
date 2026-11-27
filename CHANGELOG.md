@@ -410,6 +410,22 @@
   the value lists the themes. The screen shows the theme of the line while
   the line has the focus. `Ctrl+S` saves it.
 
+### Debug log
+
+* `--debug[=FILE]` writes a debug log for the app and for every command
+  (`sendito --debug`, `sendito run F --debug=run.log`). The log holds the
+  start line (version, system, command line), the errors and warnings, each
+  panic with its backtrace, one line per send (kind, target, status or
+  error, time, size, file, environment) and the exit code.
+* `:debug [file]` turns the log on in the app; `:debug` again turns it off.
+  The status bar names the file.
+* The default file is `~/.local/state/sendito/sendito-<UTC time>.log`
+  (`$XDG_STATE_HOME/sendito/` when set). The file is readable by its owner
+  only. It holds no bodies and no secret values: a send line has the target
+  as history keeps it, with the secrets masked.
+* When the log is on, the command prints `sendito: debug log: <file>` on
+  stderr at the end.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

@@ -11,6 +11,7 @@ use sendito_core::{HttpRequest, Request};
 use sendito_pipeline::human_size;
 use sendito_pipeline::runner::{self, GrpcUpdate, Project, RunCtx};
 
+#[macro_use]
 mod cli;
 use cli::*;
 
@@ -21,6 +22,13 @@ fn main() -> ExitCode {
         print!("{}", sendito_ui::keymap::keymap_markdown());
         return ExitCode::SUCCESS;
     }
+    sendito_store::debug_log::install_panic_hook();
+    if let Some(file) = cli.debug.clone()
+        && let Err(e) = sendito_store::debug_log::start(file)
+    {
+        fail!("cannot open debug log: {e}");
+        return ExitCode::from(3);
+    }
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -28,11 +36,11 @@ fn main() -> ExitCode {
     {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("sendito: cannot start runtime: {e}");
+            fail!("cannot start runtime: {e}");
             return ExitCode::from(3);
         }
     };
-    match cli.cmd {
+    let code = match cli.cmd {
         Some(Cmd::Init { path }) => init(path),
         Some(Cmd::Run {
             request,
@@ -116,7 +124,7 @@ fn main() -> ExitCode {
         None => {
             let root = find_collection(cli.path.as_deref());
             if !root.is_dir() {
-                eprintln!("sendito: {} is not a directory", root.display());
+                fail!("{} is not a directory", root.display());
                 return ExitCode::from(3);
             }
             let project = Project::open(&root, runner::default_keychain());
@@ -130,10 +138,25 @@ fn main() -> ExitCode {
             match sendito_ui::run(project, opts, &rt) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    eprintln!("sendito: {e}");
+                    fail!("{e}");
                     ExitCode::from(3)
                 }
             }
         }
+    };
+    end_debug_log(code);
+    code
+}
+
+/// Writes the exit code to the debug log, stops it and names its file.
+fn end_debug_log(code: ExitCode) {
+    use sendito_store::debug_log;
+    if debug_log::path().is_none() {
+        return;
+    }
+    let n = (0..=u8::MAX).find(|n| ExitCode::from(*n) == code);
+    debug_log::log("EXIT", &format!("exit code {}", n.unwrap_or(1)));
+    if let Some(path) = debug_log::stop() {
+        eprintln!("sendito: debug log: {}", path.display());
     }
 }

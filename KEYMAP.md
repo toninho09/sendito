@@ -239,6 +239,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:cancel` | Cancel the running request |
 | `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
+| `:debug [file]` | Turn the debug log on or off (errors, warnings, one line per send) |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
 | `:newenv` | Create an environment (asks for the name) |

@@ -212,6 +212,7 @@ Every file here is documented in
 | History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear`; HTTP responses in `history/`: `append_with_response`, `load_response` (written by `crates/pipeline/src/runner/record.rs::write_history`, shown by `crates/ui/src/app/history.rs`) |
 | Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, pinned tabs, layout, environment, favorites |
 | Cookie jar (RFC 6265, PSL, `0600`, cross-process lock) | `crates/store/src/cookies.rs` | `request`, `store_response`, `describe`, `delete`, `clear` |
+| Debug log (`--debug`, `:debug`): start, stop, one line per entry, panic hook | `crates/store/src/debug_log.rs` | `start`, `stop`, `log`, `install_panic_hook`; send lines from `crates/pipeline/src/runner/record.rs::log_send`, status lines from `crates/ui/src/app/mod.rs::set_status`, CLI lines from `src/cli/mod.rs::say` |
 | Durable writes and cross-process locks | `crates/store/src/fsio.rs` | `write_atomic`, `write_private`, `with_lock`, `with_dir_lock` |
 | User themes on disk (`themes/*.toml`, `extends`) | `crates/store/src/themes.rs` | Contrast and `extends` problems are reported, not fatal |
 

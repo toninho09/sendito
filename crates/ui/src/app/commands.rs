@@ -446,6 +446,29 @@ impl App {
         )));
     }
 
+    /// `:debug [file]`: turns the debug log on (in `file`, else the default
+    /// file) or, with no file while it is on, off.
+    fn debug_command(&mut self, arg: &str) {
+        use sendito_store::debug_log;
+        if arg.is_empty()
+            && let Some(path) = debug_log::stop()
+        {
+            self.set_status(
+                format!("debug log off: {}", path.display()),
+                StatusKind::Info,
+            );
+            return;
+        }
+        let file = (!arg.is_empty()).then(|| std::path::PathBuf::from(arg));
+        match debug_log::start(file) {
+            Ok(path) => self.set_status(
+                format!("debug log on: {}", path.display()),
+                StatusKind::Info,
+            ),
+            Err(e) => self.set_status(format!("cannot open debug log: {e}"), StatusKind::Error),
+        }
+    }
+
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
         let (word, arg) = cmd
@@ -471,6 +494,7 @@ impl App {
                 }
             }
             "end" => self.end_stream(),
+            "debug" => self.debug_command(arg),
             "env" => {
                 let list = self.project.envs.list();
                 let prefixed: Vec<&String> = list.iter().filter(|e| e.starts_with(arg)).collect();

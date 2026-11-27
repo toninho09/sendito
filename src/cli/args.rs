@@ -14,6 +14,17 @@ pub(crate) struct Cli {
     pub(crate) path: Option<PathBuf>,
     #[command(subcommand)]
     pub(crate) cmd: Option<Cmd>,
+    /// Write a debug log: errors, warnings, panics and one line per send
+    /// (no bodies, no secret values). Default FILE:
+    /// `~/.local/state/sendito/sendito-<time>.log`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub(crate) debug: Option<Option<PathBuf>>,
     /// Exit after drawing the first frame (startup benchmark).
     #[arg(long, hide = true)]
     pub(crate) exit_after_first_frame: bool,

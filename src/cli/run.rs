@@ -15,7 +15,7 @@ pub(crate) async fn run_entry(request: &Path, flags: RunFlags) -> ExitCode {
         return match load_at(root, rel, &flags.env) {
             Ok((project, rel, req)) => run(project, rel, req, &flags).await,
             Err((e, code)) => {
-                eprintln!("sendito: {e}");
+                fail!("{e}");
                 ExitCode::from(code)
             }
         };
@@ -24,19 +24,19 @@ pub(crate) async fn run_entry(request: &Path, flags: RunFlags) -> ExitCode {
         return match load_suite(request, &flags.env) {
             Ok((project, folder)) => run_suite(project, folder, &flags).await,
             Err((e, code)) => {
-                eprintln!("sendito: {e}");
+                fail!("{e}");
                 ExitCode::from(code)
             }
         };
     }
-    eprintln!("sendito: request {} not found", request.display());
+    fail!("request {} not found", request.display());
     ExitCode::from(3)
 }
 
 pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> ExitCode {
     if flags.data.is_some() {
         if flags.include {
-            eprintln!("sendito: -i does not apply to a run with --data");
+            fail!("-i does not apply to a run with --data");
             return ExitCode::from(3);
         }
         return run_rels(project, rel.clone(), vec![rel], flags).await;
@@ -57,28 +57,24 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         data: _,
     } = flags.clone();
     if repeat > 1 || delay_ms > 0 {
-        eprintln!(
-            "warning: --repeat and --delay apply to folder runs; ignoring them for a single request"
-        );
+        warn!("--repeat and --delay apply to folder runs; ignoring them for a single request");
     }
     if fail_fast {
-        eprintln!("warning: --fail-fast applies to folder runs; ignoring it for a single request");
+        warn!("--fail-fast applies to folder runs; ignoring it for a single request");
     }
     let session = matches!(req, Request::Sse(_) | Request::Mqtt(_));
     if report != RunReport::Text && !(report == RunReport::Json && session) {
-        eprintln!(
-            "warning: --report {} applies to folder runs; ignoring it for a single request",
+        warn!(
+            "--report {} applies to folder runs; ignoring it for a single request",
             report_name(report)
         );
     }
     if !report_files.is_empty() {
-        eprintln!(
-            "warning: --report-file applies to folder runs; ignoring it for a single request"
-        );
+        warn!("--report-file applies to folder runs; ignoring it for a single request");
     }
     let (mut scope, errors, failed) = scope_of(&project, &env).await;
     for e in &errors {
-        eprintln!("warning: {e}");
+        warn!("{e}");
     }
     let req = match suite::in_folders(&project, &rel, &req, &mut scope) {
         Ok((req, note)) => {
@@ -88,7 +84,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
             req
         }
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             return ExitCode::from(3);
         }
     };
@@ -101,9 +97,9 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         && !allow_unresolved
     {
         match e {
-            suite::NotReady::Ask(e) => eprintln!("sendito: {e} (or pass --allow-unresolved)"),
-            suite::NotReady::Unresolved(names) => eprintln!(
-                "sendito: unresolved variables: {names} (define them in the environment or pass --allow-unresolved)"
+            suite::NotReady::Ask(e) => fail!("{e} (or pass --allow-unresolved)"),
+            suite::NotReady::Unresolved(names) => fail!(
+                "unresolved variables: {names} (define them in the environment or pass --allow-unresolved)"
             ),
         }
         return ExitCode::from(3);
@@ -280,14 +276,14 @@ impl Once<'_> {
                             let _ = out.write_all(b"\n");
                         }
                         if let Some(h) = &o.hint {
-                            eprintln!("sendito: hint: {}", h.fix);
+                            fail!("hint: {}", h.fix);
                         }
                         0
                     }
                     Err(e) => {
-                        eprintln!("sendito: request failed: {e}");
+                        fail!("request failed: {e}");
                         if let Some(h) = &o.hint {
-                            eprintln!("sendito: hint: {}", h.fix);
+                            fail!("hint: {}", h.fix);
                         }
                         if matches!(
                             o.resolved.body,
@@ -352,7 +348,7 @@ impl Once<'_> {
                             }
                             GrpcUpdate::Event(_) => {}
                             GrpcUpdate::Error(e) => {
-                                eprintln!("sendito: {e}");
+                                fail!("{e}");
                                 code = 2;
                             }
                             GrpcUpdate::Done { scripts, hint, .. } => {
@@ -360,7 +356,7 @@ impl Once<'_> {
                                 if code != 0
                                     && let Some(h) = &hint
                                 {
-                                    eprintln!("sendito: hint: {}", h.fix);
+                                    fail!("hint: {}", h.fix);
                                 }
                                 fails = print_scripts(&scripts)
                             }
@@ -447,11 +443,11 @@ impl Once<'_> {
                             }
                             runner::WsUpdate::Error(e) => {
                                 failed = true;
-                                eprintln!("sendito: session failed: {e}");
+                                fail!("session failed: {e}");
                             }
                             runner::WsUpdate::Done { scripts, hint, .. } => {
                                 if failed && let Some(h) = &hint {
-                                    eprintln!("sendito: hint: {}", h.fix);
+                                    fail!("hint: {}", h.fix);
                                 }
                                 fails = print_scripts(&scripts)
                             }
@@ -488,15 +484,12 @@ impl Once<'_> {
                                 hint,
                             } => {
                                 if let Some(e) = error {
-                                    eprintln!("sendito: {e}");
+                                    fail!("{e}");
                                     if let Some(h) = &hint {
-                                        eprintln!("sendito: hint: {}", h.fix);
+                                        fail!("hint: {}", h.fix);
                                     }
                                     if needs_login {
-                                        eprintln!(
-                                            "sendito: sign in with `sendito mcp login {}`",
-                                            m.server
-                                        );
+                                        fail!("sign in with `sendito mcp login {}`", m.server);
                                     }
                                     code = 2;
                                 } else {
@@ -504,7 +497,7 @@ impl Once<'_> {
                                         // The tool answered isError: the call went
                                         // through, the tool failed (decision: exit 1).
                                         code = 1;
-                                        eprintln!("sendito: the tool reported an error");
+                                        fail!("the tool reported an error");
                                     }
                                     if let Some(b) = result {
                                         let _ = out.write_all(&b);
@@ -559,15 +552,13 @@ impl Drop for CtrlC {
 /// Runs every request under `folder` in tree order (see [`run_rels`]).
 pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCode {
     if flags.include {
-        eprintln!(
-            "sendito: -i prints response headers of a single request; it does not apply to a folder run"
-        );
+        fail!("-i prints response headers of a single request; it does not apply to a folder run");
         return ExitCode::from(3);
     }
     let rels = match project.coll.requests_under(&folder) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             return ExitCode::from(3);
         }
     };
@@ -577,7 +568,7 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         } else {
             format!("\"{folder}\"")
         };
-        eprintln!("sendito: no requests under {what}");
+        fail!("no requests under {what}");
         return ExitCode::from(3);
     }
     let label = if folder.is_empty() {
@@ -614,13 +605,13 @@ async fn run_rels(
     } = flags.clone();
     let data = match &data {
         Some(_) if repeat > 1 => {
-            eprintln!("sendito: --data and --repeat cannot be used together");
+            fail!("--data and --repeat cannot be used together");
             return ExitCode::from(3);
         }
         Some(path) => match suite::load_data(path) {
             Ok(rows) => rows,
             Err(e) => {
-                eprintln!("sendito: {e}");
+                fail!("{e}");
                 return ExitCode::from(3);
             }
         },
@@ -628,7 +619,7 @@ async fn run_rels(
     };
     let (scope, scope_errors, failed) = scope_of(&project, &env).await;
     for e in &scope_errors {
-        eprintln!("warning: {e}");
+        warn!("{e}");
     }
     let started = Instant::now();
     let mut suite = SuiteReport {
@@ -720,7 +711,7 @@ async fn run_rels(
     for f in &report_files {
         let text = report_text(&suite, f.format).unwrap_or_default();
         if let Err(e) = std::fs::write(&f.path, text) {
-            eprintln!("sendito: cannot write {}: {e}", f.path.display());
+            fail!("cannot write {}: {e}", f.path.display());
             write_failed = true;
         }
     }

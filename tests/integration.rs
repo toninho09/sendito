@@ -1089,6 +1089,83 @@ fn cli_hint_for_a_timeout() {
     });
 }
 
+/// `--debug=FILE` writes the start line, one line per send (also with
+/// `--no-history`), the error and the exit code; stderr names the file.
+#[test]
+fn cli_debug_writes_a_log_file() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let down = format!("http://{}/down", closed.local_addr().unwrap());
+        drop(closed);
+        sendito_store::init::init(dir.path()).unwrap();
+        write(
+            dir.path(),
+            "F/a_ok.toml",
+            &format!("kind = \"http\"\nurl = \"{}/get\"\n", echo.url()),
+        );
+        write(
+            dir.path(),
+            "F/b_down.toml",
+            &format!("kind = \"http\"\nurl = \"{down}\"\n"),
+        );
+        // Two sends that stop before they go out and write no history.
+        write(
+            dir.path(),
+            "F/c_script.toml",
+            &format!(
+                "kind = \"http\"\nurl = \"{}/c\"\n[scripts.lua]\npre = 'error(\"boom\")'\n",
+                echo.url()
+            ),
+        );
+        write(
+            dir.path(),
+            "F/d_file.toml",
+            &format!(
+                "kind = \"http\"\nmethod = \"POST\"\nurl = \"{}/d\"\n[body]\ntype = \"file\"\npath = \"missing.bin\"\n",
+                echo.url()
+            ),
+        );
+        let log = dir.path().join("logs/debug.log");
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(dir.path())
+            .args(["run", "F", "--no-history"])
+            .arg(format!("--debug={}", log.display()))
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        assert!(
+            stderr.contains(&format!("sendito: debug log: {}", log.display())),
+            "{stderr}"
+        );
+        let text = read(&log);
+        assert!(text.contains(" START sendito "), "{text}");
+        assert!(
+            text.contains(&format!(" SEND GET {}/get -> 200 (", echo.url())),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(" ERROR GET {down} -> error: ")),
+            "{text}"
+        );
+        assert!(text.contains(" path=F/b_down.toml"), "{text}");
+        assert!(
+            text.contains(&format!(" ERROR GET {}/c -> error: request script:1: boom", echo.url())),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(" ERROR POST {}/d -> error: ", echo.url())),
+            "{text}"
+        );
+        assert!(text.contains("missing.bin"), "{text}");
+        assert!(text.contains(" EXIT exit code 2"), "{text}");
+    });
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_grpc_not_found_hint() {
     let grpc = sendito_testkit::grpc_echo::start().await.unwrap();

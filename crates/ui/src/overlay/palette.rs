@@ -33,6 +33,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (":end", "Finish sending on a client/bidi stream"),
     (
+        ":debug [file]",
+        "Turn the debug log on or off (errors, warnings, one line per send)",
+    ),
+    (
         ":env <name>",
         "Switch environment (names listed as you type)",
     ),

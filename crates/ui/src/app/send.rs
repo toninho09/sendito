@@ -161,7 +161,7 @@ impl App {
                     buttons.push("Define".into());
                 }
                 buttons.push("Cancel".into());
-                self.overlay = Some(Overlay::Confirm(Confirm {
+                self.confirm_send(Confirm {
                     title: "Undefined variables".into(),
                     message,
                     sel: buttons.len() - 1,
@@ -169,7 +169,7 @@ impl App {
                     action: ConfirmAction::SendAnyway {
                         missing: un.to_vec(),
                     },
-                }));
+                });
                 return;
             }
         }
@@ -328,13 +328,23 @@ impl App {
                 ),
             )
         };
-        self.overlay = Some(Overlay::Confirm(Confirm {
+        self.confirm_send(Confirm {
             title: title.into(),
             message,
             buttons: vec!["Send anyway".into(), "Cancel".into()],
             sel: 1,
             action: ConfirmAction::SendMissingSecrets,
-        }));
+        });
+    }
+
+    /// Opens a dialog that stops a send until the user answers, and writes
+    /// its title and message to the debug log.
+    fn confirm_send(&mut self, confirm: Confirm) {
+        sendito_store::debug_log::log(
+            "WARN",
+            &format!("not sent: {}: {}", confirm.title, confirm.message),
+        );
+        self.overlay = Some(Overlay::Confirm(confirm));
     }
 
     pub(super) fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {

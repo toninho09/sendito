@@ -3,6 +3,7 @@
 pub mod collection;
 pub mod config;
 pub mod cookies;
+pub mod debug_log;
 pub mod env;
 pub mod examples;
 pub mod folder;
