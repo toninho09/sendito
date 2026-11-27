@@ -147,6 +147,8 @@ pub enum McpUpdate {
         scope_errors: Vec<String>,
         /// The server needs an OAuth sign-in (`McpError::NeedsLogin`).
         needs_login: bool,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -193,6 +195,12 @@ pub async fn exec_mcp(
     } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let resolved = resolve_mcp(req, &scope);
+    let cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        default_timeout_ms: info.timeout_ms,
+        timeout_key: "[mcp] timeout_ms",
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Mcp(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Mcp(m) => format!("{}/{}", m.server, m.target()),
@@ -202,6 +210,12 @@ pub async fn exec_mcp(
     let started = std::time::Instant::now();
     let fail = |msg: String, results: ScriptResults, needs_login: bool| {
         let msg = sendito_core::vars::scrub(&msg, &secrets);
+        // A URL server has no config entry to check; a login offer follows.
+        let hint = if needs_login {
+            None
+        } else {
+            diagnose::mcp(&msg, &cx, &resolved.server)
+        };
         let entry = history_entry(
             ctx,
             &template,
@@ -219,6 +233,7 @@ pub async fn exec_mcp(
             scripts: results,
             scope_errors: scope_errors.clone(),
             needs_login,
+            hint,
         });
     };
     if let Some(e) = pre_error {
@@ -297,6 +312,7 @@ pub async fn exec_mcp(
                 scripts: results,
                 scope_errors,
                 needs_login: false,
+                hint: None,
             });
         }
         Err(e) => {

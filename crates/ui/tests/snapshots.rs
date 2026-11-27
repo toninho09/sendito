@@ -162,6 +162,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         body_size: body.len() as u64,
         scripts,
         scope_errors: vec![],
+        hint: None,
     };
     h.app.tabs[h.app.active].running = None;
     h.app.on_msg(AppMsg::Http {
@@ -790,11 +791,11 @@ fn run_tab() {
             };
             h.app.on_msg(AppMsg::Run {
                 tab: id,
-                event: Box::new(Event::Finished(Sent {
+                event: Box::new(Event::Finished(Box::new(Sent {
                     entry,
                     response: None,
                     output: Vec::new(),
-                })),
+                }))),
             });
         }
         h.key("up");

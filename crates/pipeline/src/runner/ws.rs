@@ -28,6 +28,8 @@ pub enum WsUpdate {
     Done {
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -161,6 +163,12 @@ pub async fn exec_ws(
     if resolved.timeout_ms == Some(0) {
         resolved.timeout_ms = None;
     }
+    let cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        verify_tls: Some(resolved.verify_tls),
+        timeout_key: "[websocket] timeout_ms",
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Ws(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Ws(w) => sendito_core::resolve::resolve_ws(&w, &Scope::new()).url,
@@ -180,10 +188,11 @@ pub async fn exec_ws(
             Some(msg.clone()),
         );
         append_history(ctx, &entry);
-        let _ = updates.send(WsUpdate::Error(msg));
+        let _ = updates.send(WsUpdate::Error(msg.clone()));
         let _ = updates.send(WsUpdate::Done {
             scripts: results,
             scope_errors: scope_errors.clone(),
+            hint: diagnose::transport(&msg, &cx),
         });
     };
     if let Some(e) = pre_error {
@@ -446,6 +455,7 @@ pub async fn exec_ws(
     let _ = updates.send(WsUpdate::Done {
         scripts: results,
         scope_errors,
+        hint: None,
     });
 }
 

@@ -84,6 +84,7 @@ fn defs() -> Vec<Def> {
             "http": { "type": "object" },
             "body": { "type": "string" },
             "truncated": { "type": "boolean" },
+            "hint": { "type": "string", "description": "The setting to change, when a configuration problem caused the failure." },
         }),
         &["path", "outcome"],
     );
@@ -716,7 +717,7 @@ async fn run_request(cx: &Ctx<'_>, args: &Value, cancel: &Cancel) -> Outcome {
     let s = start(cx, args).await?;
     let (mut sent, mut notes) = (None, Vec::new());
     let on = |ev: Event| match ev {
-        Event::Finished(done) => sent = Some(done),
+        Event::Finished(done) => sent = Some(*done),
         Event::Note(n) => notes.push(n),
         Event::Log(_) | Event::Retry { .. } => {}
     };

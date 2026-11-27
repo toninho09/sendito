@@ -15,7 +15,8 @@ impl EntryText for Entry {
         self.asserts.iter().filter(|a| !a.pass)
     }
 
-    /// The lines that explain a `fail` or an `error`.
+    /// The lines that explain a `fail` or an `error`: the failed
+    /// assertions, the error, then the configuration problem behind it.
     fn problems(&self) -> Vec<String> {
         let mut out: Vec<String> = self
             .failed_asserts()
@@ -25,6 +26,9 @@ impl EntryText for Entry {
             out.push(e.clone());
         } else if out.is_empty() && self.outcome != "pass" {
             out.push(self.status.clone().unwrap_or_default());
+        }
+        if let Some(h) = &self.hint {
+            out.push(format!("hint: {}", h.fix));
         }
         out
     }

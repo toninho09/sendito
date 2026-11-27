@@ -953,6 +953,21 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   how many hints show: `full` (all that fit, the default), `short` (the three
   most used) or `off`. Dialogs always show all their keys. A run tab shows its
   own keys (run again, choose row, show response).
+* **Why a request fails**: when a setting causes the failure, Sendito names
+  the cause and the fix. The status line says a few words (`timeout too
+  short`, `certificate not trusted`, `broker refuses the credentials`); the
+  response pane (or the Log tab of gRPC, WebSocket, SSE and MQTT) has a
+  `Fix:` line with the setting to change and its value, such as the timeout
+  in ms or the environment to check. The causes: a timeout, a TLS failure (an
+  untrusted certificate, a handshake, the `[http.tls]` files), a refused
+  connection, a host name that does not resolve, a proxy, a closed connection,
+  a missing file, an invalid URL or an unresolved variable, the OAuth setup, a
+  gRPC status (`DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `UNAVAILABLE`,
+  `UNAUTHENTICATED`, or `NOT_FOUND` with a message that identifies an unknown
+  service or method), a WebSocket handshake refusal, an MQTT CONNACK code and
+  an MCP server command, URL or credential problem. A `407`, and a `401` or
+  `403` after an OAuth token of `[oauth]`, get their fix as a note in Messages.
+  Other failures show their text only.
 * **Ctrl+W menu**: after `Ctrl+W`, a box at the bottom right lists every key
   that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
   comes from the keymap, so your overrides show. Press a key or click an
@@ -1161,6 +1176,10 @@ that file has an error.
 * **Exit codes**: `0` success, `1` a failed assertion or an MCP `isError`, `2`
   the request failed, `3` usage or unresolved variables. A folder run returns
   the worst code.
+* **Hints**: when a setting causes a failure (a timeout, a certificate, a
+  refused connection, a wrong MQTT version, …), `sendito run` prints a
+  `hint:` line on stderr after the error, with the setting to change; the
+  reports list it under the problems and the JSON report has a `hint` string.
 * Use `--env <name>` to pick the environment. `--allow-unresolved` sends even
   with unresolved placeholders.
 * **Shell completions**: `sendito completions <shell>` prints a script for

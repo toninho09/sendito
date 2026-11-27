@@ -16,6 +16,7 @@ use sendito_core::vars::{Layer, Scope, VarValue};
 use sendito_http::HttpResponse;
 use tokio::sync::Notify;
 
+use crate::diagnose::Hint;
 use crate::runner::{
     self, Control, GrpcUpdate, HttpOutcome, McpRunInfo, MqttControl, MqttUpdate, Project,
     ResponseCache, RunCtx, SchemaCache, ScriptResults, SseControl, SseUpdate,
@@ -50,6 +51,8 @@ pub struct Entry {
     pub messages: Option<u64>,
     /// How many times the request was sent (0 when it never ran).
     pub attempts: u32,
+    /// The configuration problem behind an `error`, when one is known.
+    pub hint: Option<Hint>,
 }
 
 impl Entry {
@@ -71,6 +74,9 @@ impl Entry {
             v["unresolved"] = u.into();
         }
         v["error"] = self.error.clone().into();
+        if let Some(h) = &self.hint {
+            v["hint"] = h.fix.clone().into();
+        }
         if let Some(n) = self.events {
             v["events"] = n.into();
         }
@@ -96,6 +102,8 @@ pub struct Ran {
     /// What the server sent, one item per message (gRPC, WebSocket, MCP,
     /// SSE, MQTT); only with [`Options::keep_output`].
     pub output: Vec<String>,
+    /// The configuration problem behind an `error`, when one is known.
+    pub hint: Option<Hint>,
 }
 
 impl Ran {
@@ -212,8 +220,9 @@ pub enum Event {
         attempts: u32,
         interval_ms: u64,
     },
-    /// One request is done.
-    Finished(Sent),
+    /// One request is done. Boxed: the entry is large, the other variants
+    /// are not.
+    Finished(Box<Sent>),
 }
 
 /// One finished request.
@@ -324,7 +333,7 @@ pub async fn run<A, F>(
                     )
                     .await;
                 let stop = opts.fail_fast && sent.entry.outcome != "pass";
-                on(Event::Finished(sent));
+                on(Event::Finished(Box::new(sent)));
                 if stop {
                     break 'run;
                 }
@@ -540,6 +549,7 @@ impl One<'_> {
                 outcome: "error",
                 unresolved: Some(true),
                 error: Some(error),
+                hint: Some(crate::diagnose::unresolved()),
                 ..Default::default()
             },
             response: None,
@@ -590,6 +600,7 @@ impl One<'_> {
             error: None,
             events: ran.events,
             messages: ran.messages,
+            hint: ran.hint,
         };
         Sent {
             entry,
@@ -706,6 +717,7 @@ async fn send_one(
                 ),
                 Err(e) => Ran {
                     scripts: o.scripts.clone(),
+                    hint: o.hint.clone(),
                     ..Ran::error(e.clone())
                 },
             };
@@ -719,6 +731,7 @@ async fn send_one(
             let mut error = None;
             let mut label = String::from("OK");
             let mut scripts = ScriptResults::default();
+            let mut hint = None;
             // Drive the call and collect its updates together: the channel is
             // only fed while `run` is polled.
             let collect = async {
@@ -744,14 +757,25 @@ async fn send_one(
                             }
                         }
                         GrpcUpdate::Error(e) => error = Some(e),
-                        GrpcUpdate::Done { scripts: s, .. } => scripts = s,
+                        GrpcUpdate::Done {
+                            scripts: s,
+                            hint: h,
+                            ..
+                        } => (scripts, hint) = (s, h),
                         _ => {}
                     }
                 }
             };
             tokio::join!(run, collect);
             let ran = Ran::judged(error, label, scripts);
-            (Ran { output, ..ran }, None)
+            (
+                Ran {
+                    output,
+                    hint,
+                    ..ran
+                },
+                None,
+            )
         }
         Request::Ws(w) => {
             let mut w = w.clone();
@@ -766,6 +790,7 @@ async fn send_one(
             let mut label = String::from("close 1006");
             let mut error: Option<String> = None;
             let mut scripts = ScriptResults::default();
+            let mut hint = None;
             let collect = async {
                 while let Some(u) = urx.recv().await {
                     match u {
@@ -787,7 +812,11 @@ async fn send_one(
                             };
                         }
                         runner::WsUpdate::Error(e) => error = Some(e),
-                        runner::WsUpdate::Done { scripts: s, .. } => scripts = s,
+                        runner::WsUpdate::Done {
+                            scripts: s,
+                            hint: h,
+                            ..
+                        } => (scripts, hint) = (s, h),
                         _ => {}
                     }
                 }
@@ -797,7 +826,14 @@ async fn send_one(
                 error = Some(label.clone());
             }
             let ran = Ran::judged(error, label, scripts);
-            (Ran { output, ..ran }, None)
+            (
+                Ran {
+                    output,
+                    hint,
+                    ..ran
+                },
+                None,
+            )
         }
         Request::Mcp(m) => {
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
@@ -805,6 +841,7 @@ async fn send_one(
             let mut error = None;
             let mut is_error = false;
             let mut scripts = ScriptResults::default();
+            let mut hint = None;
             // Same as gRPC: the future must be polled while the updates are
             // read, or the channel never produces anything.
             let collect = async {
@@ -814,10 +851,11 @@ async fn send_one(
                         is_error: i,
                         result,
                         scripts: s,
+                        hint: h,
                         ..
                     } = u
                     {
-                        (error, is_error, scripts) = (e, i, s);
+                        (error, is_error, scripts, hint) = (e, i, s, h);
                         if keep && let Some(r) = result {
                             output.push(String::from_utf8_lossy(&r).into_owned());
                         }
@@ -840,7 +878,14 @@ async fn send_one(
                 );
             }
             let ran = Ran::judged(error, "ok".into(), scripts);
-            (Ran { output, ..ran }, None)
+            (
+                Ran {
+                    output,
+                    hint,
+                    ..ran
+                },
+                None,
+            )
         }
         Request::Sse(_) | Request::Mqtt(_) => (Ran::error("not a one-shot request"), None),
     }
@@ -907,14 +952,18 @@ where
                             stop(&mut stopped);
                         }
                     }
-                    Some(SseUpdate::Done { events, reason, error, scripts, .. }) => {
+                    Some(SseUpdate::Done { events, reason, error, scripts, hint, .. }) => {
                         on(Live::Line(format!("SSE {reason}: {events} events")));
                         if let Some(e) = &error {
                             on(Live::Line(format!("sendito: {e}")));
                         }
+                        if let Some(h) = &hint && error.is_some() {
+                            on(Live::Line(format!("sendito: hint: {}", h.fix)));
+                        }
                         let error = error.or_else(|| stopped.then(|| reason.clone()));
                         result = Ran {
                             events: Some(events),
+                            hint,
                             ..Ran::judged(error, reason, scripts)
                         };
                     }
@@ -990,14 +1039,18 @@ where
                             stop(&mut stopped);
                         }
                     }
-                    Some(MqttUpdate::Done { messages, reason, error, scripts, .. }) => {
+                    Some(MqttUpdate::Done { messages, reason, error, scripts, hint, .. }) => {
                         on(Live::Line(format!("MQTT {reason}: {messages} messages")));
                         if let Some(e) = &error {
                             on(Live::Line(format!("sendito: {e}")));
                         }
+                        if let Some(h) = &hint && error.is_some() {
+                            on(Live::Line(format!("sendito: hint: {}", h.fix)));
+                        }
                         let error = error.or_else(|| stopped.then(|| reason.clone()));
                         result = Ran {
                             messages: Some(messages),
+                            hint,
                             ..Ran::judged(error, reason, scripts)
                         };
                     }

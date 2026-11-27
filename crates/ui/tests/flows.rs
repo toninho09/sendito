@@ -4319,3 +4319,33 @@ fn flow_ws_graphql_mode_subscribes() {
         h.screen()
     );
 }
+
+/// A refused connection: the status line names the cause in a few words and
+/// the response pane has the fix.
+#[test]
+fn flow_http_failure_hint() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "list users");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.url.set_text("http://127.0.0.1:9/users");
+        t.refresh_model();
+    }
+    h.key("f5");
+    h.wait_idle(10);
+    let sc = h.wait_for("connection refused · details in the response pane", 5);
+    assert!(sc.contains('✗'), "{sc}");
+    let body = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+        .unwrap_or_default();
+    assert!(
+        body.contains(
+            "Fix: Nothing listens at 127.0.0.1:9. Check the port and the URL variables of the local environment."
+        ),
+        "{body}"
+    );
+}

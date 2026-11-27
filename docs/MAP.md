@@ -80,6 +80,7 @@ here.
 | Completion shape of a message or tool input | `crates/core/src/complete.rs` | Shared by gRPC and MCP editors |
 | A sample value from a JSON Schema (MCP argument template, OpenAPI bodies) | `crates/core/src/json_schema.rs` | `sample`, `object_template` |
 | Sent pipeline (scope → pre → resolve → send → extract/assert → history) | `crates/pipeline/src/runner/` | Used identically by the TUI and `sendito run` |
+| Why a send failed and what to change (`Hint`, `Context`; the one place that reads an error text) | `crates/pipeline/src/diagnose.rs` | Each runner calls a classifier where it turns an error into text (`runner/http.rs::http_hint`, the `fail` closures, the `Done` updates); `Suite` entries and the JSON report carry `hint`; the TUI shows `short` in the status line and `fix` in the pane (`crates/ui/src/app/ingest.rs`, `text.rs::short_error` / `explain_error`) |
 
 ## HTTP
 

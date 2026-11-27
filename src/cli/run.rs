@@ -279,10 +279,16 @@ impl Once<'_> {
                         {
                             let _ = out.write_all(b"\n");
                         }
+                        if let Some(h) = &o.hint {
+                            eprintln!("sendito: hint: {}", h.fix);
+                        }
                         0
                     }
                     Err(e) => {
                         eprintln!("sendito: request failed: {e}");
+                        if let Some(h) = &o.hint {
+                            eprintln!("sendito: hint: {}", h.fix);
+                        }
                         if matches!(
                             o.resolved.body,
                             sendito_core::resolve::ResolvedBody::Invalid(_)
@@ -349,7 +355,15 @@ impl Once<'_> {
                                 eprintln!("sendito: {e}");
                                 code = 2;
                             }
-                            GrpcUpdate::Done { scripts, .. } => fails = print_scripts(&scripts),
+                            GrpcUpdate::Done { scripts, hint, .. } => {
+                                // The cause of a failed call, with the setting to change.
+                                if code != 0
+                                    && let Some(h) = &hint
+                                {
+                                    eprintln!("sendito: hint: {}", h.fix);
+                                }
+                                fails = print_scripts(&scripts)
+                            }
                         }
                     }
                 };
@@ -435,7 +449,10 @@ impl Once<'_> {
                                 failed = true;
                                 eprintln!("sendito: session failed: {e}");
                             }
-                            runner::WsUpdate::Done { scripts, .. } => {
+                            runner::WsUpdate::Done { scripts, hint, .. } => {
+                                if failed && let Some(h) = &hint {
+                                    eprintln!("sendito: hint: {}", h.fix);
+                                }
                                 fails = print_scripts(&scripts)
                             }
                         }
@@ -468,9 +485,13 @@ impl Once<'_> {
                                 // Already printed once when the scope was built.
                                 scope_errors: _,
                                 needs_login,
+                                hint,
                             } => {
                                 if let Some(e) = error {
                                     eprintln!("sendito: {e}");
+                                    if let Some(h) = &hint {
+                                        eprintln!("sendito: hint: {}", h.fix);
+                                    }
                                     if needs_login {
                                         eprintln!(
                                             "sendito: sign in with `sendito mcp login {}`",
@@ -669,9 +690,9 @@ async fn run_rels(
                 sendito_ui::units::format_ms(interval_ms)
             )
         }
-        suite::Event::Finished(suite::Sent { entry, .. }) => {
-            print_entry(&entry, attempts_of);
-            suite.entries.push(entry);
+        suite::Event::Finished(sent) => {
+            print_entry(&sent.entry, attempts_of);
+            suite.entries.push(sent.entry);
         }
     };
     let ctrl_c = CtrlC::new();
@@ -741,6 +762,11 @@ fn print_entry(e: &suite::Entry, attempts: u32) {
         e.status.as_deref().unwrap_or_default(),
         e.duration_ms.unwrap_or_default()
     );
+    if e.outcome != "pass"
+        && let Some(h) = &e.hint
+    {
+        eprintln!("      hint: {}", h.fix);
+    }
     for a in e.asserts.iter().filter(|a| !a.pass) {
         eprintln!("      ✗ {}  (actual: {})", a.label, a.actual);
     }

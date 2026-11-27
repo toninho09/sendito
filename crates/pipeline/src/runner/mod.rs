@@ -23,6 +23,7 @@ use sendito_store::env::{COLLECTION_ENV, Envs, Keychain, MemoryKeychain, OsKeych
 use sendito_store::history::{self, HistoryEntry};
 use tokio::sync::mpsc;
 
+use crate::diagnose;
 use crate::doc::Doc;
 
 #[derive(Debug, Clone, Default)]

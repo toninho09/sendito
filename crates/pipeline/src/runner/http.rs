@@ -13,6 +13,9 @@ pub struct HttpOutcome {
     pub body_size: u64,
     pub scripts: ScriptResults,
     pub scope_errors: Vec<String>,
+    /// The configuration problem behind a failure, or behind a `401`, a
+    /// `403` or a `407` that one causes.
+    pub hint: Option<diagnose::Hint>,
 }
 
 pub(super) fn http_oauth_provider(
@@ -196,10 +199,22 @@ pub(super) async fn exec_http_inner(
     } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
+    // What a diagnosis needs about the request: the OAuth identity is one
+    // only when its token went out (an explicit Authorization header wins).
+    let oauth_name = match &req.auth {
+        Auth::OAuth { name } => Some(name.clone()),
+        _ => None,
+    };
+    let mut cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        verify_tls: Some(resolved.verify_tls),
+        ..diagnose::Context::of(ctx)
+    };
     if let Err(message) = ctx.check_files(body_files(&resolved.body)) {
         resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message);
     }
     if let Some(message) = pre_error {
+        let hint = http_hint(&message, &resolved, &cx);
         mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
             stream: None,
@@ -211,23 +226,25 @@ pub(super) async fn exec_http_inner(
                 body_size: 0,
                 scripts: results,
                 scope_errors,
+                hint,
             },
         };
     }
     if let sendito_core::resolve::ResolvedBody::Invalid(message) = &resolved.body {
         let message = sendito_core::vars::scrub(message, &scope.secret_values());
-        resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message.clone());
+        let hint = http_hint(&message, &resolved, &cx);
         mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
             stream: None,
             secrets: Vec::new(),
             outcome: HttpOutcome {
                 resolved,
-                response: Err(message),
+                response: Err(message.clone()),
                 doc: Doc::default(),
                 body_size: 0,
                 scripts: results,
                 scope_errors,
+                hint,
             },
         };
     }
@@ -343,6 +360,9 @@ pub(super) async fn exec_http_inner(
                     .is_some_and(|(original, final_url)| original.origin() == final_url.origin())
         })
     };
+    // The OAuth token went out only when the setup added it: a 401 or a 403
+    // is about that token then, and about the other credentials otherwise.
+    let oauth_sent = provider.is_some();
     if unauthorized(&sent, &resolved.url)
         && let Some(provider) = provider
         && let Ok(first) = &sent
@@ -417,6 +437,7 @@ pub(super) async fn exec_http_inner(
             }
         }
     }
+    cx.oauth = oauth_sent.then_some(oauth_name.as_deref()).flatten();
     if let Ok(mut hop_secrets) = jar_hops.secrets.lock() {
         cookie_secrets.append(&mut hop_secrets);
     }
@@ -445,11 +466,12 @@ pub(super) async fn exec_http_inner(
                 body_size: 0,
                 scripts: results,
                 scope_errors,
+                hint: None,
             },
         };
     }
     let mut body_size = 0;
-    let (response, doc) = match sent {
+    let (response, doc, hint) = match sent {
         Ok(mut resp) => {
             let body = std::mem::take(&mut resp.body);
             let timing = http_timing(&resp.timing);
@@ -544,12 +566,14 @@ pub(super) async fn exec_http_inner(
                 None,
             );
             write_history(ctx, &entry, response).await;
-            (Ok(resp.head), doc)
+            let hint = diagnose::status(resp.status, &cx);
+            (Ok(resp.head), doc, hint)
         }
         Err(e) => {
             let mut secrets = http_secrets(req, &scope);
             secrets.extend(cookie_secrets);
             let msg = sendito_core::vars::scrub(&e.to_string(), &secrets);
+            let hint = http_hint(&msg, &resolved, &cx);
             let entry = history_entry(
                 ctx,
                 &template,
@@ -560,7 +584,7 @@ pub(super) async fn exec_http_inner(
                 Some(msg.clone()),
             );
             write_history(ctx, &entry, None).await;
-            (Err(msg), Doc::default())
+            (Err(msg), Doc::default(), hint)
         }
     };
     // `resolved` is only shown from here on (the Headers tab lists the
@@ -576,6 +600,7 @@ pub(super) async fn exec_http_inner(
             body_size,
             scripts: results,
             scope_errors,
+            hint,
         },
     }
 }
@@ -590,6 +615,18 @@ fn mask_shown(resolved: &mut ResolvedHttp, secrets: &[String]) {
     for n in &mut resolved.notes {
         *n = sendito_core::vars::scrub(n, secrets);
     }
+}
+
+/// The configuration problem behind a failed send: a variable the URL
+/// keeps, the OAuth setup, then the transport.
+pub(super) fn http_hint(
+    message: &str,
+    resolved: &ResolvedHttp,
+    cx: &diagnose::Context<'_>,
+) -> Option<diagnose::Hint> {
+    diagnose::unresolved_url(&resolved.url)
+        .or_else(|| diagnose::oauth(message))
+        .or_else(|| diagnose::transport(message, cx))
 }
 
 /// The cookie jar of a send, for a retry after a `401`.

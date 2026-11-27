@@ -193,9 +193,10 @@ impl App {
                 "attempt {attempt}/{attempts} did not pass ({label}); next in {}",
                 crate::units::format_ms(interval_ms)
             )),
-            suite::Event::Finished(suite::Sent {
-                entry, response, ..
-            }) => {
+            suite::Event::Finished(sent) => {
+                let suite::Sent {
+                    entry, response, ..
+                } = *sent;
                 let log = std::mem::take(&mut view.pending_log);
                 let resp = row_response(&entry, response, &log);
                 // The selection follows the new rows while it is on the last one.

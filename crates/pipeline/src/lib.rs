@@ -2,6 +2,7 @@
 //! script → resolve → send → extract/assert → history) and the response
 //! document model it produces.
 
+pub mod diagnose;
 pub mod doc;
 pub mod pretty;
 pub mod runner;

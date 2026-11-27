@@ -297,7 +297,15 @@ mod tests {
         let out = run_file(&Request::Mqtt(req), &["run", "--no-history"]).await;
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(2), "{stderr}");
-        assert!(stderr.contains("Connection refused"), "{stderr}");
+        // The CONNACK code names the cause; the hint names the fix.
+        assert!(
+            stderr.contains("CONNACK refused: NotAuthorized"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("hint: The broker refuses the credentials."),
+            "{stderr}"
+        );
         assert!(out.stdout.is_empty());
     }
 

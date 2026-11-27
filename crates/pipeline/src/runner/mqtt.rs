@@ -62,6 +62,8 @@ pub enum MqttUpdate {
         error: Option<String>,
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -161,6 +163,19 @@ pub async fn exec_mqtt(
     let req = &req;
     let resolved = resolve_mqtt(req, &scope);
     let secrets = scope.secret_values();
+    // The broker's address: rumqttc errors do not name it.
+    let host = resolved
+        .target
+        .as_ref()
+        .map(|t| format!("{}:{}", t.host, t.port));
+    let cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        default_timeout_ms: ctx.mqtt_timeout_ms,
+        timeout_key: "[mqtt] timeout_ms",
+        verify_tls: Some(resolved.verify_tls),
+        host: host.as_deref(),
+        ..diagnose::Context::of(ctx)
+    };
     let timeout = match resolved.timeout_ms.unwrap_or(ctx.mqtt_timeout_ms) {
         0 => None,
         ms => Some(Duration::from_millis(ms)),
@@ -302,6 +317,14 @@ pub async fn exec_mqtt(
         scrub_asserts(&mut scripts.asserts, &secrets);
     }
     error = error.map(|e| scrub(&e, &secrets));
+    let hint = error.as_deref().and_then(|e| {
+        diagnose::mqtt(
+            e,
+            &cx,
+            resolved.protocol.as_str(),
+            &scrub(&resolved.client_id, &secrets),
+        )
+    });
     let template = mask_request(&Request::Mqtt(req.clone()), &scope);
     let target = match &template {
         Request::Mqtt(m) => m.url.clone(),
@@ -325,6 +348,7 @@ pub async fn exec_mqtt(
             error,
             scripts,
             scope_errors,
+            hint,
         })
         .await;
 }

@@ -222,6 +222,8 @@ was sent (`0` when it never ran). A request skipped because of unresolved
 variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`,
 `websocket`, `sse`, `mqtt` or `mcp`. The exact per-request fields depend on the protocol; a request that
 never ran has `status` and `duration_ms` set to `null` and an `error` message.
+`hint` is present when a setting causes the failure (or a `401` after an OAuth
+token): the sentence with the setting to change.
 
 ---
 

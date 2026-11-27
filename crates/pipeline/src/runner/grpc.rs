@@ -100,6 +100,8 @@ pub enum GrpcUpdate {
     Done {
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error or the status.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -163,6 +165,11 @@ pub async fn exec_grpc(
     if resolved.deadline_ms.is_none() && ctx.grpc_deadline_ms > 0 {
         resolved.deadline_ms = Some(ctx.grpc_deadline_ms);
     }
+    let cx = diagnose::Context {
+        grpc_deadline_ms: resolved.deadline_ms,
+        verify_tls: Some(resolved.verify_tls),
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Grpc(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Grpc(g) => format!(
@@ -187,10 +194,11 @@ pub async fn exec_grpc(
             Some(msg.clone()),
         );
         append_history(ctx, &entry);
-        let _ = updates.send(GrpcUpdate::Error(msg));
+        let _ = updates.send(GrpcUpdate::Error(msg.clone()));
         let _ = updates.send(GrpcUpdate::Done {
             scripts: results,
             scope_errors: scope_errors.clone(),
+            hint: diagnose::grpc_message(&msg, &cx),
         });
     };
     if let Some(e) = pre_error {
@@ -294,12 +302,18 @@ pub async fn exec_grpc(
     let secrets = scope.secret_values();
     let mut call = sendito_grpc::start_call(channel, &method, metadata, deadline, msgs);
     let mut summary = GrpcSummary::new();
+    let mut hint = None;
     let mut control_open = true;
     loop {
         tokio::select! {
             ev = call.events.recv() => {
                 let Some(ev) = ev else { break };
-                let done = matches!(ev, Event::Finished { .. });
+                let done = if let Event::Finished { code, message, .. } = &ev {
+                    hint = diagnose::grpc(*code, message, &cx);
+                    true
+                } else {
+                    false
+                };
                 summary.add(&ev);
                 let ev = if ctx.mask_echoed_secrets { scrub_event(ev, &secrets) } else { ev };
                 let _ = updates.send(GrpcUpdate::Event(ev));
@@ -357,5 +371,6 @@ pub async fn exec_grpc(
     let _ = updates.send(GrpcUpdate::Done {
         scripts: results,
         scope_errors,
+        hint,
     });
 }

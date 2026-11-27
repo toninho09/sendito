@@ -1055,6 +1055,76 @@ fn cli_retries_repeats_and_delays() {
     });
 }
 
+/// A timeout that a setting causes: stderr and the JSON report name the
+/// setting to change (`hint`).
+#[test]
+fn cli_hint_for_a_timeout() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("F")).unwrap();
+        std::fs::write(
+            dir.path().join("F/slow.toml"),
+            format!(
+                "kind = \"http\"\nurl = \"{}/delay/800\"\n[options]\ntimeout_ms = 50\n",
+                echo.url()
+            ),
+        )
+        .unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(dir.path())
+            .args(["run", "F", "--no-history", "--report", "json"])
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        let fix = "The timeout of 50 ms is too short. Set a larger `[options] timeout_ms` in the request, or remove it to use `[http] timeout_ms` in the config.";
+        assert!(stderr.contains(&format!("hint: {fix}")), "{stderr}");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["requests"][0]["outcome"], "error");
+        assert_eq!(report["requests"][0]["hint"], fix);
+    });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cli_grpc_not_found_hint() {
+    let grpc = sendito_testkit::grpc_echo::start().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    sendito_store::init::init(dir.path()).unwrap();
+    for (name, message, has_hint) in [
+        ("route", "unknown method: Unary", true),
+        ("entity", "user 42 not found", false),
+    ] {
+        write(
+            dir.path(),
+            &format!("{name}/call.toml"),
+            &format!(
+                "kind = \"grpc\"\ntarget = \"{}\"\nservice = \"sendito.test.v1.Echo\"\nmethod = \"Unary\"\nmessage = '''{{\"fail_code\":5,\"fail_message\":\"{message}\"}}'''\n",
+                grpc.target()
+            ),
+        );
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+            .current_dir(dir.path())
+            .args(["run", name, "--no-history", "--report", "json"])
+            .env("SENDITO_KEYCHAIN", "memory")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{stderr}");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let entry = &report["requests"][0];
+        assert_eq!(entry["status"], format!("NOT_FOUND: {message}"));
+        assert_eq!(entry.get("hint").is_some(), has_hint, "{report}");
+        assert_eq!(
+            stderr.contains("hint: Check `service` and `method`"),
+            has_hint
+        );
+    }
+}
+
 /// Lua scripts in `sendito run`: the folder script runs first, a variable
 /// only a pre script sets is not unresolved, post-script variables chain into
 /// the next request, a failed `test` exits 1 and a pre-script error exits 2.

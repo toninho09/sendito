@@ -275,6 +275,29 @@
 * F2 on the MCP server field, the MCP target and the OAuth identity field is
   the `pick_value` keymap action, so it can be changed.
 
+### Failure hints
+
+* When a setting causes a failure, Sendito names the cause and the fix. The
+  status line says a few words (`timeout too short`, `certificate not
+  trusted`, `broker refuses the credentials`); the response pane, or the Log
+  tab of gRPC, WebSocket, SSE and MQTT, has a `Fix:` line with the setting to
+  change and its value (the timeout in ms, the environment to check).
+* The causes: a timeout, a TLS failure (an untrusted certificate, a handshake,
+  the `[http.tls]` files), a refused connection, a host name that does not
+  resolve, a proxy, a closed connection, a missing file, an invalid URL or a
+  variable the URL keeps, the OAuth setup, a gRPC status (`DEADLINE_EXCEEDED`,
+  `UNIMPLEMENTED`, `UNAVAILABLE`, `UNAUTHENTICATED`), a WebSocket handshake
+  refusal, an MQTT CONNACK code, and an MCP server command, URL or credential
+  problem. A `407`, and a `401` or `403` after an OAuth token of `[oauth]`,
+  get their fix as a note in Messages.
+* `sendito run` prints a `hint:` line on stderr after the error; the reports
+  list it under the problems; the JSON report has a `hint` string.
+* A gRPC `NOT_FOUND` response suggests checking `service` and `method` when
+  the message identifies an unknown service or method.
+* The MQTT broker's CONNACK refusal keeps its code in the error text
+  (`CONNACK refused: BadUserNamePassword`) instead of the generic "connection
+  refused".
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

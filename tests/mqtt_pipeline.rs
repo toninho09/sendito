@@ -240,7 +240,7 @@ mod tests {
         }];
         let (_, reason, error, scripts) = done(&run(&ctx, &req, Scope::new(), |_, _| {}).await);
         assert_eq!(reason, "error");
-        assert!(error.unwrap().contains("Connection refused"));
+        assert!(error.unwrap().contains("CONNACK refused: NotAuthorized"));
         assert!(
             scripts.asserts.is_empty(),
             "no CONNACK accepted: no scripts"

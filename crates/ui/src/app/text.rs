@@ -22,57 +22,12 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
 /// A short, plain reason for a transport error (the full text follows it).
 /// A few words for the status line.
 pub(super) fn short_error(e: &str) -> &'static str {
-    let l = e.to_lowercase();
-    if l.contains("connection refused") || l.contains("os error 111") || l.contains("os error 61") {
-        "connection refused"
-    } else if l.contains("dns error")
-        || l.contains("failed to lookup")
-        || l.contains("name or service not known")
-    {
-        "host name not found (DNS)"
-    } else if l.contains("timed out") || l.contains("timeout") {
-        "timed out"
-    } else if l.contains("certificate") || l.contains("tls") || l.contains("handshake") {
-        "TLS failure"
-    } else if l.contains("connection reset") || l.contains("broken pipe") {
-        "connection closed by the server"
-    } else if l.contains("no such file") || l.contains("os error 2") {
-        "file not found"
-    } else {
-        "request failed"
-    }
+    sendito_pipeline::diagnose::label(e)
 }
 
+/// The first line of a failure: what happened, in one sentence.
 pub(super) fn explain_error(e: &str) -> String {
-    let l = e.to_lowercase();
-    let host = l
-        .split("for url (")
-        .nth(1)
-        .and_then(|r| r.split(')').next())
-        .unwrap_or("");
-    let target = if host.is_empty() {
-        "the server".to_string()
-    } else {
-        host.to_string()
-    };
-    if l.contains("connection refused") || l.contains("os error 111") || l.contains("os error 61") {
-        format!("nothing is listening at {target} (connection refused).")
-    } else if l.contains("dns error")
-        || l.contains("failed to lookup")
-        || l.contains("name or service not known")
-    {
-        "the host name could not be resolved (DNS).".into()
-    } else if l.contains("timed out") || l.contains("timeout") {
-        "the server did not answer in time (timeout).".into()
-    } else if l.contains("certificate") || l.contains("tls") || l.contains("handshake") {
-        "the TLS connection failed (certificate or handshake); Options can turn off TLS verification.".into()
-    } else if l.contains("connection reset") || l.contains("broken pipe") {
-        "the server closed the connection.".into()
-    } else if l.contains("no such file") || l.contains("os error 2") {
-        "a file the request sends was not found.".into()
-    } else {
-        "see the details below.".into()
-    }
+    sendito_pipeline::diagnose::explain(e)
 }
 
 /// "1 assertion", "3 assertions".
