@@ -9,14 +9,14 @@ collection). You can edit the files in any editor and keep them in git.
   •  Press Tab or Shift+Tab to open the next or the previous section, or click a name in the list on the left.
   •  Type a word to search the open section. Press Enter for the next match.
   •  Press Esc or {key:help} to close the help.
-  •  The command :help <name> opens the section with that name, for example :help grpc.
+  •  The command :help <word> opens the section whose name has the word, else the section whose text has the word the most times, for example :help grpc or :help xpath. When the open text has the word, the search box holds it.
   •  The help shows your keys. When you change a key, the help shows the new key.
 
 The list on the left has four groups:
   Guide          How the screen and the requests work.
   Tutorials      Steps for the most common tasks. Start with "First request".
   Keys           All the keys, the marks on the screen and the commands.
-  Functions      The functions that a request field or a script can call.
+  Functions      The functions, the dynamic values and the script rows that a request can use.
 
 ── The screen ──
   Top bar        The open request tabs, the active environment and the help key.
@@ -25,6 +25,11 @@ The list on the left has four groups:
   Request pane   The parts of the request, in tabs (Params, Headers, Body, Auth, Scripts, Options, Docs).
   Response pane  The response, in tabs (Body, Headers, Timing, Results).
   Footer         The state on the left. On the right, the keys for the part that has the focus.
+
+── The start screen ──
+When no tab is open, the start screen shows the collection, the keys to
+begin, the favorites and the most recent requests. Click a request in it,
+or press {key:new_request}, to begin.
 
 ── Move around ──
   •  Press {key:focus_next} to move the focus to the next field or pane. Press {key:focus_prev} to move it back.
@@ -46,3 +51,9 @@ The list on the left has four groups:
 
 The footer always shows the keys for the part that has the focus. When you
 do not know the next step, look at the footer or press Ctrl+W.
+
+── Where to learn more ──
+  •  FORMAT.md describes the request files: each field and what goes on the wire.
+  •  docs/FEATURES.md describes each feature. docs/CLI.md describes the commands of sendito.
+  •  KEYMAP.md lists every key. The section "All keys" shows the same list with your keys.
+  •  Read these files on github.com/toninho09/sendito.

@@ -266,7 +266,7 @@ the module for the surface you are changing.
 | Import dialog preview and path completion | `crates/ui/src/app/import_export.rs` (`import_preview`, `complete_import_path`) |
 | Hint row | `crates/ui/src/app/hints.rs` |
 | Report, timing and header text | `crates/ui/src/app/text.rs` |
-| Help (F1): the groups and sections, the key and function tables, `{key:action}` in the prose | `crates/ui/src/app/help.rs::help_sections`; the guide and tutorial texts in `crates/ui/src/help/` (a new tutorial is a `.txt` file and a row of `TUTORIAL_TEXTS`); the sidebar in `crates/ui/src/draw/overlay/palette.rs::draw_help` |
+| Help (F1): the groups and sections, the key and function tables, `{key:action}` in the prose, the `{options}` line that becomes the Options table | `crates/ui/src/app/help.rs::help_sections` (the `{options}` marker: `options_table`; `:help <word>` finds a section by name, then by text: `find_section`); the guide and tutorial texts in `crates/ui/src/help/` (a new tutorial is a `.txt` file and a row of `TUTORIAL_TEXTS`); the sidebar in `crates/ui/src/draw/overlay/palette.rs::draw_help` |
 | Overlay keys, dialog accept actions | `crates/ui/src/app/overlay_keys.rs`, `crates/ui/src/app/dialogs.rs` |
 | Mouse hits, wheel, drag, clicks | `crates/ui/src/app/mouse.rs` |
 | Session bootstrap, `RunOptions`, scripted input for benches | `crates/ui/src/lib.rs` |
@@ -282,7 +282,7 @@ the module for the surface you are changing.
 | Icon sets (`unicode`, `nerd`) | `crates/widgets/src/icons.rs` |
 | Sidebar tree state: flatten, expand, filter, select | `crates/ui/src/tree.rs` |
 | Durations as the interface shows and reads them (`30 s`, `500 ms`) | `crates/ui/src/units.rs` |
-| Field labels, help lines, credential fields | `crates/ui/src/tab/fields.rs` (`Field::label`, `Field::help`, `Field::is_secret`) |
+| Field labels, help lines, credential fields | `crates/ui/src/tab/fields.rs` (`Field::label`, `Field::help`, `Field::is_secret`); the help (F1) prints the help lines of the Options fields |
 | Overlays: palette, help, settings, confirm, prompt, picker, env editor, import, report | `crates/ui/src/overlay/` (`palette.rs`, `settings.rs`, `env_editor.rs`; `mcp_editor.rs` holds the MCP kinds and the stdio command-line parsing) |
 | Record editors (list and form): MCP servers (`Ctrl+W S`), OAuth identities (`:oauth`) | `crates/ui/src/records.rs` |
 | Key bindings editor (`:keymap`): grouped actions, key recording, clash warnings | `crates/ui/src/keymap_editor.rs` (drawing in `crates/ui/src/draw/overlay/keymap.rs`) |
@@ -315,6 +315,8 @@ Every clickable region is registered in `app.hits` while drawing.
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
 | A new `:command` | `crates/ui/src/overlay/palette.rs::COMMANDS` → dispatch in `crates/ui/src/app/commands.rs::run_command` → `KEYMAP.md` via `make keymap` |
 | A template function, a call of the send or a name for scripts | `crates/core/src/funcs.rs` (`FUNCS`: `params`, `doc`; `PRE_SEND`) or `crates/core/src/lua_script.rs::API` → the matching table of `FORMAT.md` (a test checks it) → the in-app help (F1) reads the same tables |
+| A script source or an assertion operator | `crates/core/src/model.rs` (`Source`, `AssertOp`: `as_str`, `symbol`, `doc`) → `crates/ui/src/tab/fields.rs` (`SOURCES`, `OPS`, a test checks them against the model) → the table of `FORMAT.md` → the in-app help (F1) reads the model |
+| A field of the Options tab | `crates/ui/src/tab/fields.rs` (`Field`, its `label` and `help`) → `crates/ui/src/tab/editors.rs::fields` (the Options tab of its kind) → the in-app help (F1) builds its table from both |
 | A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay/settings.rs::SettingId` (`key`, `typed`, `opens`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
 | A new dialog | `crates/ui/src/overlay/mod.rs::Overlay` → `crates/ui/src/draw/overlay/` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app/mouse.rs` → snapshots |
 

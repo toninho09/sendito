@@ -1,0 +1,19 @@
+Keep notes and sample responses with a request.
+
+── Write a description ──
+  1.  Open the Docs tab of a request. A folder has the same tab.
+  2.  The View choice has two values: Edit and Preview. Press Left or Right on it to change the value.
+  3.  In Edit, write Markdown: headings, lists, code blocks, tables and links.
+  4.  In Preview, read the text as Sendito shows it. A request that has a description opens in Preview.
+  5.  In Preview, Up and Down scroll. Enter goes to Edit. Up on the first line goes back to the View choice.
+  6.  The tab shows Docs• when the request has a description. The request file keeps the text in description = '''...'''. Sendito never sends it.
+
+── Save an example response ──
+  1.  Send an HTTP request that you saved in the collection ({key:save}).
+  2.  Type :saveexample in the command palette ({key:palette}). Press Enter for the default name (the status, for example 200-ok), or type a name.
+  3.  Sendito saves the status, the headers and the body of the response next to the request file. It masks the credential headers.
+
+── Show an example ──
+  1.  Type :examples. The list shows each example with its status.
+  2.  Choose one and press Enter. The response pane shows it, with "example: <name>" in the border.
+  3.  The command :examples delete <name> deletes one example.

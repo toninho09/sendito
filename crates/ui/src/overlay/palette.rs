@@ -157,7 +157,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         ":help [section]",
-        "Open the help, or the section whose name has the text",
+        "Open the help, or the section whose name or text has the text",
     ),
     (
         ":report",

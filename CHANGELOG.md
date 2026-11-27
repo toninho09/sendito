@@ -308,7 +308,7 @@
 
 * The help (F1) has a sidebar of sections: "All keys" (the help of before),
   one section per keymap context, the fixed keys, the symbols, the commands
-  and four sections of functions. `Tab` and `Shift+Tab` open the next and the
+  and six sections of functions. `Tab` and `Shift+Tab` open the next and the
   previous section; a click on a row opens it. The search stays and applies
   to the open section. The help is in one column at any width: the two
   columns at ≥ 180 columns are gone.
@@ -321,17 +321,33 @@
   `FORMAT.md` stays the full reference.
 * The sections read the tables the send runs (`FUNCS`, `PRE_SEND`, `API`), so a
   new function and its help line change one file.
+* Two more sections read the same tables: "Dynamic values" (`{{$uuid}}`,
+  `{{$timestamp}}`, `{{$timestampMs}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`
+  and `{{$processEnv.NAME}}`) and "Scripts tab" (the five sections of the tab,
+  the nine sources with what their `expr` selects, the eleven operators with
+  their symbol, their word in the request file and what they test).
 
 ### Guide and tutorials in the help
 
-* F1 opens on "Start here": what Sendito does, the parts of the screen, how to
-  move the focus and the keys to know first. "How it works" explains the
+* F1 opens on "Start here": what Sendito does, the parts of the screen, the
+  start screen, how to move the focus, the keys to know first and where to
+  learn more (`FORMAT.md`, `docs/FEATURES.md`, `docs/CLI.md`, `KEYMAP.md`).
+  "How it works" explains the
   collection, the request files, folder settings, variables and environments,
   secrets, the steps of a send, the response tabs and the history.
-* Twelve tutorials give the steps for the common tasks: the first request,
-  save and organize, environments, secrets and auth, chain requests, read a
-  response, import and export, a gRPC call, WebSocket / SSE / MQTT streams,
-  MCP tools, run a folder and customize.
+* Eighteen tutorials give the steps for the common tasks: the first request,
+  the body types (form, multipart, file, raw), a GraphQL request (query,
+  mutation and a subscription over WebSocket), save and organize, docs and
+  examples (the Docs tab and the saved examples), environments (with the
+  `.env` and `file` sources), secrets and auth, chain requests, read a
+  response, watch a request, history and cookies, import and export, a gRPC
+  call, WebSocket / SSE / MQTT streams, MCP tools, the request options
+  (timeout, redirects, TLS, proxy), run a folder and customize (with the
+  external editor and the pager).
+* The tutorial "Request options" holds a `{options}` line that becomes the
+  table of the Options tab: each field, the request kinds that have it and
+  the help line the UI shows under the field (`Field::help`). The table
+  comes from the editors, so a new field or help line changes the help.
 * The sidebar has four groups: Guide, Tutorials, Keys and Functions. A click
   on a group name does nothing; `Tab` skips the group names.
 * The guide and the tutorials show the keys of the current mode and the keys
@@ -342,8 +358,11 @@
 * The footer, the top bar, the `Ctrl+W` menu and the start screen say
   "F1 help" in place of "F1 all keys".
 * `:help <section>` opens the help at the first section whose name starts
-  with the text, else has it (`:help grpc`, `:help jq`). No match: an error
-  in the status line.
+  with the text, else has it (`:help grpc`, `:help jq`), else at the section
+  whose text has the text as a whole word the most times (`:help xpath`
+  opens "Scripts tab", `:help proxy` opens "Request options"). When the
+  text of the open section has the text, the search box holds it. No match:
+  an error in the status line.
 * `Ctrl+W a` (`new_mcp_request`) opens a new MCP request tab, as `:newmcp`
   does.
 * The fixed keys of the environment editor name the Type cell (they said

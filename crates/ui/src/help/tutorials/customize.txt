@@ -1,4 +1,4 @@
-Change how Sendito looks and which keys it uses.
+Change how Sendito looks, which keys it uses and which programs it opens.
 
 ── Settings ──
   1.  Press {key:settings}.
@@ -21,3 +21,7 @@ This help then shows the vim keys.
   2.  Select an action and press Enter. Press the new keys.
   3.  Press Ctrl+S to save.
 The footer, the Ctrl+W menu and this help show your new keys.
+
+── Use your own programs ──
+  •  Press {key:external_edit} to edit the focused text in your editor: a body, a script, a message. Sendito opens $VISUAL, then $EDITOR, then vi. When the editor closes, the new text replaces the old one. A field of one line stays in Sendito.
+  •  In the response pane, press {key:open_pager} to read the text in your pager: $PAGER, then less. The secrets stay masked and the jq filter stays on.

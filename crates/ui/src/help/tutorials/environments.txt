@@ -16,6 +16,11 @@ Use one request for many servers, for example local, staging and production.
 Result: the request goes to the server of the active environment. Choose
 another environment to send the same request to another server.
 
+── More sources ──
+  •  A row of the type file reads its value from a file. Type the path in the Value cell, or press {key:pick_value} on it to choose the file. The value is a secret.
+  •  The .env file line above the table sets the file that the rows of type .env read. Empty is the file .env in the collection folder. The line shows "✓ found · N keys" or "✗ not found".
+  •  In the Type cell, press Space to change the type. The types are text, secret, secret key, keychain, keychain key, file and .env. Each type but text makes the variable a secret. The tutorial "Secrets and auth" shows secret and keychain.
+
 ── Good to know ──
   •  In the editor, {key:dialog:dialog_new} makes a new environment and {key:dialog:dialog_next_env} opens the next one.
   •  _collection holds the variables that all environments share.

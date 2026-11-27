@@ -1812,9 +1812,19 @@ fn flow_help_sections() {
     assert!(dashes < 120, "{dashes}");
     h.key("esc");
     assert!(h.app.overlay.is_none());
-    // `:help <section>` opens the help at the section that matches.
+    // `:help <section>` opens the help at the section that matches: its
+    // name first, else its text; then the search box holds the word.
     h.app.run_command(":help grpc");
     assert_eq!(open(&h), "gRPC call");
+    h.key("esc");
+    h.app.run_command(":help xpath");
+    assert_eq!(open(&h), "Scripts tab");
+    let filter = match &h.app.overlay {
+        Some(Overlay::Help(help)) => help.filter.text(),
+        _ => String::new(),
+    };
+    assert_eq!(filter, "xpath");
+    assert!(h.find("xpath").is_some());
     h.key("esc");
     h.app.run_command(":help no such section");
     assert!(h.app.overlay.is_none());

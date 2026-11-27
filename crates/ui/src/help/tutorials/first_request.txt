@@ -15,4 +15,5 @@ Result: the response pane shows the status, the time, the size and the body.
 ── Good to know ──
   •  {key:table:toggle_row} turns a table row off without deleting it. {key:table:delete_row} deletes it.
   •  {key:cancel} stops a request that takes too long.
+  •  For form fields, files and text in another format, see the tutorial "Body types".
   •  The tab is not saved yet. See "Save and organize".

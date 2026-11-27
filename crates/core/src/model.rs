@@ -855,6 +855,27 @@ impl Source {
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
+
+    /// What a rule reads and what its `expr` selects, for the help (F1).
+    pub fn doc(self) -> &'static str {
+        match self {
+            Source::Body => "the JSON body; expr is a JSONPath (several matches become an array)",
+            Source::Header => "a response header; expr is its name",
+            Source::Status => "the status code; expr is empty",
+            Source::Time => {
+                "a time in ms; expr is total (empty) and, for HTTP, ttfb, dns, connect, tls or download"
+            }
+            Source::Size => "a size in bytes; expr is total (empty), body or headers",
+            Source::Hash => "the hex digest of the body; expr is md5, sha1, sha256 or sha512",
+            Source::XPath => "the XML body; expr is an XPath 3.1 expression",
+            Source::Regex => {
+                "the raw body; expr is a regular expression and the value is its first group"
+            }
+            Source::Cookie => {
+                "a Set-Cookie cookie of the response; expr is its name; the value is a secret"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -930,6 +951,23 @@ impl AssertOp {
 
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+
+    /// What the operator tests, for the help (F1).
+    pub fn doc(self) -> &'static str {
+        match self {
+            AssertOp::Eq => "is equal to the expected value",
+            AssertOp::Ne => "is different from the expected value",
+            AssertOp::Contains => "has the expected text",
+            AssertOp::NotContains => "does not have the expected text",
+            AssertOp::Exists => "exists (the expected value is empty)",
+            AssertOp::NotExists => "does not exist",
+            AssertOp::Lt => "is less than the expected value",
+            AssertOp::Le => "is less than or equal to the expected value",
+            AssertOp::Gt => "is greater than the expected value",
+            AssertOp::Ge => "is greater than or equal to the expected value",
+            AssertOp::Matches => "agrees with the expected regular expression",
+        }
     }
 
     /// Whether the operator compares against `value`.

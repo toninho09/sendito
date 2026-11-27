@@ -293,7 +293,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
 | `:keymap` | Edit your key bindings (the file Settings saves to) |
 | `:theme [name]` | Switch theme (names listed as you type; without a name, a list with a live preview); :theme reload reads your theme files again |
-| `:help [section]` | Open the help, or the section whose name has the text |
+| `:help [section]` | Open the help, or the section whose name or text has the text |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |
 

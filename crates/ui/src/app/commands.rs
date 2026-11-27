@@ -158,9 +158,11 @@ impl App {
         self.open_help_at("");
     }
 
-    /// Opens the help at the section whose name matches `query` (`:help
-    /// grpc`); an empty query opens the first section. With no match, the
-    /// help stays closed and the status says so.
+    /// Opens the help at the section that matches `query` (`:help grpc`):
+    /// its name first, else its text. An empty query opens the first
+    /// section. When the text of the section has the query, the search of
+    /// the section starts with it. With no match, the help stays closed and
+    /// the status says so.
     pub(super) fn open_help_at(&mut self, query: &str) {
         self.clear_transient_status();
         let sections = super::help::help_sections(&self.keymap, self.vim);
@@ -171,7 +173,15 @@ impl App {
             );
             return;
         };
+        let word = query.trim();
+        let in_text = sections[i]
+            .text
+            .to_lowercase()
+            .contains(&word.to_lowercase());
         let mut help = Help::new(sections);
+        if in_text {
+            help.filter.set_text(word);
+        }
         help.select(i);
         self.overlay = Some(Overlay::Help(help));
     }

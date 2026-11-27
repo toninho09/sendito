@@ -527,7 +527,8 @@ fn overlays() {
         h.key("esc f1");
         snap_in(Area::Dialog, "help", h);
         // Shift+Tab from the first section: the last ones are the functions.
-        h.key("shift+tab shift+tab shift+tab shift+tab");
+        // Six steps land on the first of them, "Template functions".
+        h.key("shift+tab shift+tab shift+tab shift+tab shift+tab shift+tab");
         snap_in(Area::Dialog, "help_functions", h);
         h.key("esc ctrl+w ,");
         snap_in(Area::Dialog, "settings", h);

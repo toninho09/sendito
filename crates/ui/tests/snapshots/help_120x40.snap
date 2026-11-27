@@ -3,39 +3,39 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
 ╭─ Help (Tab: next section, Esc closes) ───────────────────────────────────────────────────────────────────────╮
-│ Guide                     │ Search ▍  (type to search this section)               line 1/49 · ↑↓ PgUp PgDn   ┃
+│ Guide                     │ Search ▍  (type to search this section)               line 1/60 · ↑↓ PgUp PgDn   ┃
 │▌  Start here              │                                                                                  ┃
 │   How it works            │ Welcome to Sendito. This help explains how the app works and shows the           ┃
 │ Tutorials                 │ steps for the most common tasks.                                                 ┃
 │   First request           │                                                                                  ┃
-│   Save and organize       │ Sendito sends requests and shows their responses: HTTP, gRPC, WebSocket,         ┃
-│   Environments            │ SSE, MQTT and MCP tools. Each request is a text file in a folder (the            ┃
-│   Secrets and auth        │ collection). You can edit the files in any editor and keep them in git.          ┃
-│   Chain requests          │                                                                                  ┃
-│   Read a response         │ ── Use this help ──                                                              ┃
-│   Import and export       │   •  Press Tab or Shift+Tab to open the next or the previous section, or click   ┃
-│   gRPC call               │      a name in the list on the left.                                             ┃
-│   Streams (WS, SSE, MQTT) │   •  Type a word to search the open section. Press Enter for the next match.     ┃
-│   MCP tools               │   •  Press Esc or F1 to close the help.                                          ┃
-│   Run a folder            │   •  The command :help <name> opens the section with that name, for example      ┃
-│   Customize               │      :help grpc.                                                                 ┃
-│ Keys                      │   •  The help shows your keys. When you change a key, the help shows the new     ┃
-│   All keys                │      key.                                                                        ┃
-│   Global                  │                                                                                  ┃
-│   Sidebar tree            │ The list on the left has four groups:                                            │
-│   Text editing            │   Guide          How the screen and the requests work.                           │
-│   Tables                  │   Tutorials      Steps for the most common tasks. Start with "First request".    │
-│   Response                │   Keys           All the keys, the marks on the screen and the commands.         │
-│   Query (jq)              │   Functions      The functions that a request field or a script can call.        │
-│   Dialogs                 │                                                                                  │
-│   Fixed keys              │ ── The screen ──                                                                 │
-│   Symbols                 │   Top bar        The open request tabs, the active environment and the help key. │
-│   Commands                │   Sidebar        The request tree of the collection, or the history.             │
-│ Functions                 │   URL card       The method (or the protocol), the address and the Send button.  │
-│   Template functions      │   Request pane   The parts of the request, in tabs (Params, Headers, Body,       │
-│   Send-time values        │                  Auth, Scripts, Options, Docs).                                  │
-│   Lua scripts             │   Response pane  The response, in tabs (Body, Headers, Timing, Results).         │
-│   Lua catalog             │   Footer         The state on the left. On the right, the keys for the part      │
-│                           │                  that has the focus.                                             │
-│                           │                                                                                  │
+│   Body types              │ Sendito sends requests and shows their responses: HTTP, gRPC, WebSocket,         ┃
+│   GraphQL request         │ SSE, MQTT and MCP tools. Each request is a text file in a folder (the            ┃
+│   Save and organize       │ collection). You can edit the files in any editor and keep them in git.          ┃
+│   Docs and examples       │                                                                                  ┃
+│   Environments            │ ── Use this help ──                                                              ┃
+│   Secrets and auth        │   •  Press Tab or Shift+Tab to open the next or the previous section, or click   ┃
+│   Chain requests          │      a name in the list on the left.                                             ┃
+│   Read a response         │   •  Type a word to search the open section. Press Enter for the next match.     ┃
+│   Watch a request         │   •  Press Esc or F1 to close the help.                                          ┃
+│   History and cookies     │   •  The command :help <word> opens the section whose name has the word, else    ┃
+│   Import and export       │      the section whose text has the word the most times, for example :help grpc  │
+│   gRPC call               │      or :help xpath. When the open text has the word, the search box holds it.   │
+│   Streams (WS, SSE, MQTT) │   •  The help shows your keys. When you change a key, the help shows the new     │
+│   MCP tools               │      key.                                                                        │
+│   Request options         │                                                                                  │
+│   Run a folder            │ The list on the left has four groups:                                            │
+│   Customize               │   Guide          How the screen and the requests work.                           │
+│ Keys                      │   Tutorials      Steps for the most common tasks. Start with "First request".    │
+│   All keys                │   Keys           All the keys, the marks on the screen and the commands.         │
+│   Global                  │   Functions      The functions, the dynamic values and the script rows that a    │
+│   Sidebar tree            │                  request can use.                                                │
+│   Text editing            │                                                                                  │
+│   Tables                  │ ── The screen ──                                                                 │
+│   Response                │   Top bar        The open request tabs, the active environment and the help key. │
+│   Query (jq)              │   Sidebar        The request tree of the collection, or the history.             │
+│   Dialogs                 │   URL card       The method (or the protocol), the address and the Send button.  │
+│   Fixed keys              │   Request pane   The parts of the request, in tabs (Params, Headers, Body,       │
+│   Symbols                 │                  Auth, Scripts, Options, Docs).                                  │
+│   Commands                │   Response pane  The response, in tabs (Body, Headers, Timing, Results).         │
+│ Functions                 │   Footer         The state on the left. On the right, the keys for the part      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

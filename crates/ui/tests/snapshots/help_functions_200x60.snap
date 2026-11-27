@@ -8,42 +8,42 @@ expression: screen
 │   How it works            │ The functions that a request field or a script can call.                                                                         │
 │ Tutorials                 │ FORMAT.md has the full reference.                                                                                                │
 │   First request           │                                                                                                                                  │
-│   Save and organize       │ ── Template functions ──                                                                                                         │
-│   Environments            │ Write {{ $name(argument, ...) }} in any field. An argument is a 'literal',                                                       │
-│   Secrets and auth        │ a number, a variable (user_id, $uuid, $processEnv.NAME) or another call.                                                         │
-│   Chain requests          │ Calls nest up to 8 levels. A random call keeps one value for the whole send.                                                     │
-│   Read a response         │ An unknown function, a wrong number of arguments or a bad value leaves the                                                       │
-│   Import and export       │ placeholder unresolved, and the send tells you why.                                                                              │
-│   gRPC call               │   $uuidBytes(uuid)              the 16 bytes of a UUID, base64; hyphens are optional, any case                                   │
-│   Streams (WS, SSE, MQTT) │   $uuidFromBytes(base64)        the UUID text of 16 bytes (lowercase, with hyphens)                                              │
-│   MCP tools               │   $uuidV5(namespace, name)      the name-based UUID v5: namespace is a UUID, name the text                                       │
-│   Run a folder            │   $uuidV7()                     a time-ordered UUID v7; random                                                                   │
-│   Customize               │   $ulid()                       a ULID (26 Crockford base32 characters); random                                                  │
-│ Keys                      │   $hexBytes(hex)                the bytes of an even number of hex digits, base64                                                │
-│   All keys                │   $bytesHex(base64)             the bytes in lowercase hex                                                                       │
-│   Global                  │   $base64(text)                 standard base64 of the UTF-8 text                                                                │
-│   Sidebar tree            │   $base64Url(text)              URL-safe base64 of the UTF-8 text, no padding                                                    │
-│   Text editing            │   $base64Decode(base64)         the decoded text; the bytes must be UTF-8                                                        │
-│   Tables                  │   $hex(text)                    lowercase hex of the UTF-8 text                                                                  │
-│   Response                │   $urlEncode(text)              the text percent-encoded as a query component                                                    │
-│   Query (jq)              │   $md5(text)                    the MD5 of the text, in lowercase hex                                                            │
-│   Dialogs                 │   $sha1(text)                   the SHA-1 of the text, in lowercase hex                                                          │
-│   Fixed keys              │   $sha256(text)                 the SHA-256 of the text, in lowercase hex                                                        │
-│   Symbols                 │   $sha512(text)                 the SHA-512 of the text, in lowercase hex                                                        │
-│   Commands                │   $hmacSha256(key, text)        the HMAC-SHA256 of the text, in lowercase hex                                                    │
-│ Functions                 │   $hmacSha256Base64(key, text)  the HMAC-SHA256 of the text, in base64                                                           │
-│▌  Template functions      │   $timeAdd(time, duration)      an RFC 3339 time plus a duration such as 90s, 1h30m or -2d (units ms, s, m, h, d)                │
-│   Send-time values        │   $isoFromUnix(seconds)         the Unix seconds as an RFC 3339 time                                                             │
-│   Lua scripts             │   $unixFromIso(time)            the RFC 3339 time as Unix seconds                                                                │
-│   Lua catalog             │   $upper(text)                  the text in upper case                                                                           │
-│                           │   $lower(text)                  the text in lower case                                                                           │
-│                           │   $trim(text)                   the text without the spaces at the ends                                                          │
-│                           │   $len(text)                    the length of the UTF-8 text in bytes                                                            │
-│                           │   $jsonEscape(text)             the text as it is written inside a JSON string, without the quotes                               │
-│                           │   $jsonString(text)             the text as a JSON string, with the quotes                                                       │
-│                           │   $replace(text, from, to)      the text with every from replaced by to                                                          │
-│                           │   $substr(text, start, length)  length characters from character start (0 is the first)                                          │
-│                           │   $padLeft(text, length, char)  the text with char added on the left up to length characters                                     │
+│   Body types              │ ── Template functions ──                                                                                                         │
+│   GraphQL request         │ Write {{ $name(argument, ...) }} in any field. An argument is a 'literal',                                                       │
+│   Save and organize       │ a number, a variable (user_id, $uuid, $processEnv.NAME) or another call.                                                         │
+│   Docs and examples       │ Calls nest up to 8 levels. A random call keeps one value for the whole send.                                                     │
+│   Environments            │ An unknown function, a wrong number of arguments or a bad value leaves the                                                       │
+│   Secrets and auth        │ placeholder unresolved, and the send tells you why.                                                                              │
+│   Chain requests          │   $uuidBytes(uuid)              the 16 bytes of a UUID, base64; hyphens are optional, any case                                   │
+│   Read a response         │   $uuidFromBytes(base64)        the UUID text of 16 bytes (lowercase, with hyphens)                                              │
+│   Watch a request         │   $uuidV5(namespace, name)      the name-based UUID v5: namespace is a UUID, name the text                                       │
+│   History and cookies     │   $uuidV7()                     a time-ordered UUID v7; random                                                                   │
+│   Import and export       │   $ulid()                       a ULID (26 Crockford base32 characters); random                                                  │
+│   gRPC call               │   $hexBytes(hex)                the bytes of an even number of hex digits, base64                                                │
+│   Streams (WS, SSE, MQTT) │   $bytesHex(base64)             the bytes in lowercase hex                                                                       │
+│   MCP tools               │   $base64(text)                 standard base64 of the UTF-8 text                                                                │
+│   Request options         │   $base64Url(text)              URL-safe base64 of the UTF-8 text, no padding                                                    │
+│   Run a folder            │   $base64Decode(base64)         the decoded text; the bytes must be UTF-8                                                        │
+│   Customize               │   $hex(text)                    lowercase hex of the UTF-8 text                                                                  │
+│ Keys                      │   $urlEncode(text)              the text percent-encoded as a query component                                                    │
+│   All keys                │   $md5(text)                    the MD5 of the text, in lowercase hex                                                            │
+│   Global                  │   $sha1(text)                   the SHA-1 of the text, in lowercase hex                                                          │
+│   Sidebar tree            │   $sha256(text)                 the SHA-256 of the text, in lowercase hex                                                        │
+│   Text editing            │   $sha512(text)                 the SHA-512 of the text, in lowercase hex                                                        │
+│   Tables                  │   $hmacSha256(key, text)        the HMAC-SHA256 of the text, in lowercase hex                                                    │
+│   Response                │   $hmacSha256Base64(key, text)  the HMAC-SHA256 of the text, in base64                                                           │
+│   Query (jq)              │   $timeAdd(time, duration)      an RFC 3339 time plus a duration such as 90s, 1h30m or -2d (units ms, s, m, h, d)                │
+│   Dialogs                 │   $isoFromUnix(seconds)         the Unix seconds as an RFC 3339 time                                                             │
+│   Fixed keys              │   $unixFromIso(time)            the RFC 3339 time as Unix seconds                                                                │
+│   Symbols                 │   $upper(text)                  the text in upper case                                                                           │
+│   Commands                │   $lower(text)                  the text in lower case                                                                           │
+│ Functions                 │   $trim(text)                   the text without the spaces at the ends                                                          │
+│▌  Template functions      │   $len(text)                    the length of the UTF-8 text in bytes                                                            │
+│   Dynamic values          │   $jsonEscape(text)             the text as it is written inside a JSON string, without the quotes                               │
+│   Send-time values        │   $jsonString(text)             the text as a JSON string, with the quotes                                                       │
+│   Scripts tab             │   $replace(text, from, to)      the text with every from replaced by to                                                          │
+│   Lua scripts             │   $substr(text, start, length)  length characters from character start (0 is the first)                                          │
+│   Lua catalog             │   $padLeft(text, length, char)  the text with char added on the left up to length characters                                     │
 │                           │   $default(name, fallback)      the first argument, or the fallback when the first does not resolve                              │
 │                           │   $randomInt(min, max)          a random integer from min to max, both included; random                                          │
 │                           │   $randomHex(length)            random lowercase hex digits; random                                                              │

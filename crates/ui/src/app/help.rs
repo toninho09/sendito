@@ -1,7 +1,8 @@
 //! The help (F1): the guide, the tutorials, the key tables and the function
 //! tables. The prose is in `crates/ui/src/help/`. In it, `{key:action}` and
 //! `{key:context:action}` show the key of a keymap action, so the text shows
-//! the keys of the current mode and the keys the user changed.
+//! the keys of the current mode and the keys the user changed, and a
+//! `{options}` line becomes the table of the Options tab.
 
 use super::*;
 
@@ -9,6 +10,9 @@ const GUIDE: &str = "Guide";
 const TUTORIALS: &str = "Tutorials";
 const KEYS: &str = "Keys";
 const FUNCTIONS: &str = "Functions";
+
+/// The line of a guide or tutorial text that becomes the Options table.
+const OPTIONS_MARKER: &str = "{options}";
 
 /// The guide: the sidebar name and the text of each section.
 const GUIDE_TEXTS: &[(&str, &str)] = &[
@@ -23,8 +27,20 @@ const TUTORIAL_TEXTS: &[(&str, &str)] = &[
         include_str!("../help/tutorials/first_request.txt"),
     ),
     (
+        "Body types",
+        include_str!("../help/tutorials/body_types.txt"),
+    ),
+    (
+        "GraphQL request",
+        include_str!("../help/tutorials/graphql_request.txt"),
+    ),
+    (
         "Save and organize",
         include_str!("../help/tutorials/save_and_organize.txt"),
+    ),
+    (
+        "Docs and examples",
+        include_str!("../help/tutorials/docs_and_examples.txt"),
     ),
     (
         "Environments",
@@ -43,6 +59,14 @@ const TUTORIAL_TEXTS: &[(&str, &str)] = &[
         include_str!("../help/tutorials/read_a_response.txt"),
     ),
     (
+        "Watch a request",
+        include_str!("../help/tutorials/watch_request.txt"),
+    ),
+    (
+        "History and cookies",
+        include_str!("../help/tutorials/history_and_cookies.txt"),
+    ),
+    (
         "Import and export",
         include_str!("../help/tutorials/import_and_export.txt"),
     ),
@@ -52,6 +76,10 @@ const TUTORIAL_TEXTS: &[(&str, &str)] = &[
         include_str!("../help/tutorials/streams.txt"),
     ),
     ("MCP tools", include_str!("../help/tutorials/mcp_tools.txt")),
+    (
+        "Request options",
+        include_str!("../help/tutorials/request_options.txt"),
+    ),
     (
         "Run a folder",
         include_str!("../help/tutorials/run_a_folder.txt"),
@@ -67,7 +95,12 @@ pub(super) fn help_sections(km: &Keymap, vim: bool) -> Vec<HelpSection> {
     let mut add = |group, name, text| out.push(HelpSection { group, name, text });
     for (group, texts) in [(GUIDE, GUIDE_TEXTS), (TUTORIALS, TUTORIAL_TEXTS)] {
         for (name, text) in texts {
-            add(group, name, with_keys(text, km, vim));
+            let text = if text.contains(OPTIONS_MARKER) {
+                text.replace(OPTIONS_MARKER, &options_table())
+            } else {
+                text.to_string()
+            };
+            add(group, name, with_keys(&text, km, vim));
         }
     }
     let rows = km.rows();
@@ -110,9 +143,10 @@ pub(super) fn help_sections(km: &Keymap, vim: bool) -> Vec<HelpSection> {
     out
 }
 
-/// The section for `:help <query>`: the first name that starts with the
-/// query, else the first that contains it, ignoring case. An empty query
-/// gives the first section.
+/// The section for `:help <query>`, ignoring case: the first name that
+/// starts with the query, else the first name that contains it, else the
+/// text that has the query as a word the most times. An empty query gives
+/// the first section.
 pub(super) fn find_section(sections: &[HelpSection], query: &str) -> Option<usize> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
@@ -123,6 +157,33 @@ pub(super) fn find_section(sections: &[HelpSection], query: &str) -> Option<usiz
         .iter()
         .position(|n| n.starts_with(&q))
         .or_else(|| names.iter().position(|n| n.contains(&q)))
+        .or_else(|| most_mentions(sections, &q))
+}
+
+/// The section whose text has `q` as a word the most times; the first one
+/// when two sections have the same count. None when no text has it.
+fn most_mentions(sections: &[HelpSection], q: &str) -> Option<usize> {
+    // From the end, because `max_by_key` keeps the last of the equals.
+    (0..sections.len())
+        .rev()
+        .map(|i| (i, mentions(&sections[i].text, q)))
+        .filter(|(_, n)| *n > 0)
+        .max_by_key(|(_, n)| *n)
+        .map(|(i, _)| i)
+}
+
+/// The number of times `q` is a word of `text`: the characters before and
+/// after it are not letters or digits. Ignores case.
+fn mentions(text: &str, q: &str) -> usize {
+    let t = text.to_lowercase();
+    let boundary = |c: char| !c.is_alphanumeric();
+    t.match_indices(q)
+        .filter(|&(i, m)| {
+            let before = t[..i].chars().next_back().is_none_or(boundary);
+            let after = t[i + m.len()..].chars().next().is_none_or(boundary);
+            before && after
+        })
+        .count()
 }
 
 /// `text` with each `{key:action}` or `{key:context:action}` replaced by the
@@ -275,6 +336,7 @@ fn help_functions() -> Vec<(&'static str, String)> {
         .collect();
     vec![
         ("Template functions", template),
+        ("Dynamic values", dynamic_values()),
         (
             "Send-time values",
             one(
@@ -283,6 +345,7 @@ fn help_functions() -> Vec<(&'static str, String)> {
                 &pre,
             ),
         ),
+        ("Scripts tab", script_tables()),
         (
             "Lua scripts",
             one("Lua scripts ([scripts.lua])", LUA_INTRO, &api),
@@ -291,13 +354,188 @@ fn help_functions() -> Vec<(&'static str, String)> {
     ]
 }
 
-/// A section of the help: a title, the lines of `intro` indented, then the
-/// rows. Every column but the last is padded to the width of its column.
+/// The dynamic values: the same table the send reads, so the help cannot
+/// drift.
+fn dynamic_values() -> String {
+    let rows: Vec<Vec<String>> = sendito_core::vars::DYNAMIC_VARS
+        .iter()
+        .map(|(name, doc)| vec![format!("{{{{{}}}}}", name), (*doc).to_string()])
+        .collect();
+    let mut s = String::from(
+        "A dynamic value is a variable that Sendito makes again for each send. \
+         Write one in any field, in place of a value.\n",
+    );
+    section(&mut s, "Dynamic values", "", &rows);
+    s.push_str(
+        "\n{{$processEnv.NAME}} reads NAME from the environment of the Sendito process, \
+         for example the variables of your shell. The value is a secret. A name that is \
+         not set stays unresolved.\n",
+    );
+    s
+}
+
+/// The Scripts tab: its sections, then the sources and the operators of its
+/// rows (the tables the send runs).
+fn script_tables() -> String {
+    let mut s = String::from(
+        "The Scripts tab of a request has five sections. A folder has the same sections; \
+         its scripts run first.\n",
+    );
+    let parts: Vec<Vec<String>> = [
+        (
+            "Pre-request: set variables",
+            "Rows with a variable and its value. They run in order, and each row sees the rows before it.",
+        ),
+        (
+            "After response: extract",
+            "Rows that keep a part of the response in a variable.",
+        ),
+        (
+            "After response: assertions",
+            "Rows that test the response. The Results tab shows each test.",
+        ),
+        (
+            "Pre-request: Lua script",
+            "Lua code before the send. See the section Lua scripts.",
+        ),
+        (
+            "After response: Lua script",
+            "Lua code after the send. See the section Lua scripts.",
+        ),
+    ]
+    .into_iter()
+    .map(|(a, b)| vec![a.to_string(), b.to_string()])
+    .collect();
+    section(&mut s, "Sections", "", &parts);
+    let sources: Vec<Vec<String>> = sendito_core::model::Source::ALL
+        .iter()
+        .map(|s| vec![s.as_str().to_string(), s.doc().to_string()])
+        .collect();
+    section(
+        &mut s,
+        "Sources (the From cell)",
+        "What a row reads, and what its Expr cell selects.",
+        &sources,
+    );
+    let ops: Vec<Vec<String>> = sendito_core::model::AssertOp::ALL
+        .iter()
+        .map(|o| {
+            vec![
+                o.symbol().to_string(),
+                o.as_str().to_string(),
+                o.doc().to_string(),
+            ]
+        })
+        .collect();
+    section(
+        &mut s,
+        "Operators (the Op cell)",
+        "The Scripts tab shows the symbol. The request file writes the word.",
+        &ops,
+    );
+    s.push_str("The operators <, <=, > and >= compare numbers as numbers and the rest as text.\n");
+    s
+}
+
+/// The table of the Options tab: each field with the request kinds that have
+/// it and its help line, from the editors, so the help cannot drift. A field
+/// whose help line depends on the kind has one row for each line. The rows
+/// keep the order of the first kind that has the field. The gRPC request has
+/// proto files and the WebSocket request a GraphQL subscription, so the
+/// table lists the fields that these two modes add.
+fn options_table() -> String {
+    let grpc = Request::Grpc(GrpcRequest {
+        schema: SchemaSource::Files {
+            files: Vec::new(),
+            import_paths: Vec::new(),
+        },
+        ..Default::default()
+    });
+    let ws = Request::Ws(WebSocketRequest {
+        graphql: Some(WsGraphql::default()),
+        ..Default::default()
+    });
+    let requests = [
+        Request::new_http(),
+        grpc,
+        ws,
+        Request::new_sse(),
+        Request::new_mqtt(),
+        Request::new_mcp(),
+    ];
+    struct Row {
+        label: &'static str,
+        kinds: Vec<&'static str>,
+        help: &'static str,
+        /// The first row of this label, to keep the rows of a field together.
+        first: usize,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    for req in &requests {
+        let ed = crate::tab::Editors::from_request(req);
+        let kind = ed.kind;
+        // Docs is the last tab of every kind; Options comes before it.
+        let options = ed.tab_names().len() - 2;
+        for field in ed.fields(options) {
+            let (label, help) = (field.label(), field.help(kind));
+            let first = rows
+                .iter()
+                .position(|r| r.label == label)
+                .unwrap_or(rows.len());
+            match rows.iter_mut().find(|r| r.label == label && r.help == help) {
+                Some(r) => r.kinds.push(kind_name(kind)),
+                None => rows.push(Row {
+                    label,
+                    kinds: vec![kind_name(kind)],
+                    help,
+                    first,
+                }),
+            }
+        }
+    }
+    rows.sort_by_key(|r| r.first);
+    let every = requests.len();
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            let kinds = if r.kinds.len() == every {
+                "Every kind".to_string()
+            } else {
+                r.kinds.join(", ")
+            };
+            vec![r.label.to_string(), format!("{kinds}: {}", r.help)]
+        })
+        .collect();
+    let mut s = String::new();
+    table(&mut s, &rows);
+    s
+}
+
+/// The name of a request kind in the help.
+fn kind_name(kind: crate::tab::Kind) -> &'static str {
+    match kind {
+        crate::tab::Kind::Http => "HTTP",
+        crate::tab::Kind::Grpc => "gRPC",
+        crate::tab::Kind::Ws => "WebSocket",
+        crate::tab::Kind::Sse => "SSE",
+        crate::tab::Kind::Mqtt => "MQTT",
+        crate::tab::Kind::Mcp => "MCP",
+        crate::tab::Kind::Folder => "folder",
+    }
+}
+
+/// A section of the help: a title, the lines of `intro`, then the rows.
 fn section(out: &mut String, title: &str, intro: &str, rows: &[Vec<String>]) {
     out.push_str(&format!("\n── {title} ──\n"));
     for line in intro.lines() {
         out.push_str(&format!("{line}\n"));
     }
+    table(out, rows);
+}
+
+/// The rows of a table, two spaces between the columns. Every column but the
+/// last is padded to the width of its column.
+fn table(out: &mut String, rows: &[Vec<String>]) {
     let cols = rows.first().map_or(0, Vec::len);
     let width: Vec<usize> = (0..cols.saturating_sub(1))
         .map(|c| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
@@ -417,14 +655,27 @@ mod tests {
     }
 
     #[test]
-    fn help_find_section_prefers_a_prefix_then_a_part() {
+    fn help_find_section_prefers_a_prefix_then_a_part_then_the_text() {
         let sections = help_sections(&Keymap::defaults(), false);
         let name = |q: &str| find_section(&sections, q).map(|i| sections[i].name);
         assert_eq!(name(""), Some("Start here"));
         assert_eq!(name("grpc"), Some("gRPC call"));
         assert_eq!(name("JQ"), Some("Query (jq)"));
         assert_eq!(name("lua"), Some("Lua scripts"));
+        // A word of no name: the text that has it as a word the most times.
+        // "jsonpath" does not count for "xpath".
+        assert_eq!(name("xpath"), Some("Scripts tab"));
+        assert_eq!(name("proxy"), Some("Request options"));
+        assert_eq!(name("init payload"), Some("GraphQL request"));
         assert_eq!(name("no such section"), None);
+    }
+
+    #[test]
+    fn help_mentions_counts_whole_words_only() {
+        assert_eq!(mentions("jsonpath, XPath 3.1 and xpath.", "xpath"), 2);
+        assert_eq!(mentions("variables and variable", "variable"), 1);
+        assert_eq!(mentions("Init payload", "init payload"), 1);
+        assert_eq!(mentions("cookie jar", "cookies"), 0);
     }
 
     #[test]
@@ -486,5 +737,93 @@ mod tests {
             "{}",
             s
         );
+    }
+
+    /// The dynamic values and the script tables come from the tables the
+    /// send runs: every row of each table has its line in the help.
+    #[test]
+    fn help_lists_the_dynamic_values_and_the_script_tables() {
+        let sections = help_sections(&Keymap::defaults(), false);
+        let text = |name: &str| {
+            sections
+                .iter()
+                .find(|s| s.name == name)
+                .map(|s| s.text.as_str())
+                .unwrap_or_default()
+        };
+        let dynamic = text("Dynamic values");
+        assert!(dynamic.contains("\n── Dynamic values ──\n"), "{dynamic}");
+        for (name, doc) in sendito_core::vars::DYNAMIC_VARS {
+            assert!(dynamic.contains(&format!("  {{{{{}}}}}", name)), "{name}");
+            assert!(dynamic.contains(doc), "{name}");
+        }
+        assert!(dynamic.contains("{{$processEnv.NAME}}"), "{dynamic}");
+
+        let scripts = text("Scripts tab");
+        for title in [
+            "\n── Sections ──\n",
+            "\n── Sources (the From cell) ──\n",
+            "\n── Operators (the Op cell) ──\n",
+        ] {
+            assert!(scripts.contains(title), "{title}");
+        }
+        for source in sendito_core::model::Source::ALL {
+            let row = format!("\n  {}  ", source.as_str());
+            assert!(scripts.contains(&row), "{row}");
+            assert!(scripts.contains(source.doc()), "{}", source.as_str());
+        }
+        for op in sendito_core::model::AssertOp::ALL {
+            assert!(
+                scripts.contains(&format!("\n  {}  ", op.symbol())),
+                "{}",
+                op.symbol()
+            );
+            assert!(scripts.contains(op.as_str()), "{}", op.as_str());
+            assert!(scripts.contains(op.doc()), "{}", op.as_str());
+        }
+    }
+
+    /// The tutorial "Request options" prints the fields of the Options tab
+    /// from the editors: the `{options}` line is gone, and the fields that one
+    /// kind or one mode adds are there, with their kinds.
+    #[test]
+    fn help_options_table_lists_the_fields_of_every_kind() {
+        let sections = help_sections(&Keymap::defaults(), false);
+        let text = sections
+            .iter()
+            .find(|s| s.name == "Request options")
+            .map(|s| s.text.as_str())
+            .unwrap_or_default();
+        assert!(!text.contains(OPTIONS_MARKER), "{text}");
+        // The line of a row: the label, then " <kinds>: " before the help.
+        let has_row = |label: &str, kinds: &str| {
+            text.lines()
+                .any(|l| l.starts_with(&format!("  {label}")) && l.contains(&format!(" {kinds}: ")))
+        };
+        for (label, kinds) in [
+            ("Redirects", "HTTP, SSE"),
+            ("Schema", "gRPC"),
+            ("Proto files", "gRPC"),
+            ("Init payload", "WebSocket"),
+            ("Clean session", "MQTT"),
+            ("Retries", "Every kind"),
+            // A help line that depends on the kind: one row for each line.
+            ("Timeout", "HTTP"),
+            ("Timeout", "MCP"),
+            ("Deadline", "gRPC"),
+            ("Deadline", "WebSocket, MQTT"),
+        ] {
+            assert!(has_row(label, kinds), "{label} {kinds}\n{text}");
+        }
+        // The rows of a field stay together.
+        let row_index = |label: &str, kinds: &str| {
+            text.lines()
+                .position(|l| {
+                    l.starts_with(&format!("  {label}")) && l.contains(&format!(" {kinds}: "))
+                })
+                .unwrap()
+        };
+        assert!(row_index("Timeout", "HTTP") < row_index("Timeout", "MCP"));
+        assert!(row_index("Timeout", "MCP") < row_index("Redirects", "HTTP, SSE"));
     }
 }

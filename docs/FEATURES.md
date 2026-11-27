@@ -990,20 +990,34 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   `403` after an OAuth token of `[oauth]`, get their fix as a note in Messages.
   Other failures show their text only.
 * **Help** (F1): one column with a sidebar of sections in four groups.
-  **Guide**: "Start here" (F1 opens it: the screen, how to move, the first
-  keys) and "How it works" (collection, request files, folder settings,
-  variables, secrets, the steps of a send, the response, history).
-  **Tutorials**: steps for the first request, save and organize,
-  environments, secrets and auth, chain requests, read a response, import
-  and export, a gRPC call, streams (WebSocket, SSE, MQTT), MCP tools, run a
-  folder and customize. **Keys**: all keys, each keymap context (with a line
+  **Guide**: "Start here" (F1 opens it: the screen, the start screen, how to
+  move, the first keys, where to learn more) and "How it works" (collection,
+  request files, folder settings, variables, secrets, the steps of a send, the
+  response, history).
+  **Tutorials**: steps for the first request, the body types (form, multipart,
+  file, raw), a GraphQL request (query, mutation, subscription over
+  WebSocket), save and organize, docs and examples (the Docs tab, saved
+  examples), environments (the `.env` and `file` sources too), secrets and
+  auth, chain requests, read a response, watch a request, history and cookies,
+  import and export, a gRPC call, streams (WebSocket, SSE, MQTT), MCP tools,
+  the request options (a table of the fields of the Options tab, built from
+  the help line of each field, then the defaults, the proxy and TLS), run a
+  folder and customize (settings, vim mode, themes, keys, the external
+  editor and the pager).
+  **Keys**: all keys, each keymap context (with a line
   that tells where its keys work), the fixed keys, the symbols and the
-  commands. **Functions**: the template functions, `$prompt` / `$select` /
-  `$response`, the names a Lua script has with its phase, and `$lua.name`.
+  commands. **Functions**: the template functions, the dynamic values
+  (`{{$uuid}}`, `{{$timestamp}}`, ..., `{{$processEnv.NAME}}`), `$prompt` /
+  `$select` / `$response`, the Scripts tab (its five sections, the sources
+  and the operators of its rows), the names a Lua script has with its phase,
+  and `$lua.name`.
   The guide and the tutorials show the keys of the keymap, so a changed key
   or vim mode shows in the text. `Tab` / `Shift+Tab` or a click opens a
   section (a group name is not a section); the search applies to the open
-  section. `:help <section>` opens the help at a section (`:help jq`). The
+  section. `:help <word>` opens the help at the first section whose name
+  starts with the word, else has it, else at the section whose text has the
+  word as a whole word the most times (`:help jq`, `:help xpath`); when the
+  text of the open section has the word, the search box holds it. The
   prose is in `crates/ui/src/help/`.
 * **Ctrl+W menu**: after `Ctrl+W`, a box at the bottom right lists every key
   that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
@@ -1065,7 +1079,7 @@ input and waits for it. Rows that hold the typed text as written come first.
 | `:pager` (`o` in the response) | Show the response tab as on screen (masked, jq filter applied) in `$PAGER`, then `less` |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template`, `:reload` | Fill a gRPC message from the schema / reload the schema |
-| `:settings`, `:theme [name]`, `:theme reload`, `:help [section]` | Settings / theme (a picker without a name) / help (at the first section whose name starts with, then has, the text: `:help grpc`) |
+| `:settings`, `:theme [name]`, `:theme reload`, `:help [word]` | Settings / theme (a picker without a name) / help (at the first section whose name starts with, then has, the word, else the section whose text has the word the most times: `:help grpc`, `:help xpath`; the search box gets the word when the text has it) |
 | `:oauth`, `:keymap` | Edit the HTTP OAuth identities / your key bindings |
 | `:report`, `:savebody [path]` | Reopen the last report / save the response body |
 
