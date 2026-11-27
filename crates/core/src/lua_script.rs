@@ -191,6 +191,135 @@ const SENDITO_NAMES: [&str; 11] = [
     "test",
 ];
 
+/// The names Sendito gives to the scripts, as the help (F1) shows them: the
+/// call, the phases it runs in, and what it does. The first word of a call
+/// (before `.` or `:`) is a name of [`SENDITO_NAMES`].
+pub const API: &[(&str, &str, &str)] = &[
+    (
+        "vars.get(name)",
+        "pre, post",
+        "the resolved value as a string, or nil when the variable is not defined",
+    ),
+    (
+        "vars.has(name)",
+        "pre, post",
+        "true when the variable is defined",
+    ),
+    (
+        "vars.set(name, value)",
+        "pre, post",
+        "sets a runtime variable; a number is written as Lua writes it, a table as JSON",
+    ),
+    (
+        "vars.set_secret(name, value)",
+        "pre, post",
+        "the same, as a secret",
+    ),
+    (
+        "render(text)",
+        "pre, post",
+        "text with its {{variables}} resolved, dynamic ones included",
+    ),
+    (
+        "hash(algo, text)",
+        "pre, post",
+        "the lowercase hex digest: md5, sha1, sha256 or sha512",
+    ),
+    (
+        "base64_encode(text)",
+        "pre, post",
+        "standard base64 of the text",
+    ),
+    (
+        "base64_decode(text)",
+        "pre, post",
+        "the text of standard base64",
+    ),
+    (
+        "json_parse(text)",
+        "pre, post",
+        "the JSON text as a Lua value; null is nil",
+    ),
+    (
+        "json_stringify(value)",
+        "pre, post",
+        "the Lua value as JSON; object keys are sorted",
+    ),
+    (
+        "print(...)",
+        "pre, post",
+        "a line of script output (the values joined with a tab); secrets masked",
+    ),
+    (
+        "request.url",
+        "pre",
+        "the URL (gRPC: the target); read and write",
+    ),
+    (
+        "request.method",
+        "pre",
+        "HTTP only; read and write (written in upper case)",
+    ),
+    (
+        "request:header(n)",
+        "pre",
+        "a header by name (gRPC: metadata); names in any case",
+    ),
+    (
+        "request:set_header(n, v)",
+        "pre",
+        "sets the first row with that name and enables it; removes the other rows with that name; adds a row when there is none",
+    ),
+    (
+        "request:remove_header(n)",
+        "pre",
+        "removes every header with that name",
+    ),
+    (
+        "request:param(n)",
+        "pre",
+        "a query parameter by name (HTTP and SSE)",
+    ),
+    (
+        "request:set_param(n, v)",
+        "pre",
+        "sets a query parameter (HTTP and SSE)",
+    ),
+    (
+        "request:remove_param(n)",
+        "pre",
+        "removes every query parameter with that name (HTTP and SSE)",
+    ),
+    (
+        "request.body",
+        "pre",
+        "the body text: HTTP JSON and raw text, the GraphQL query, the gRPC message, the WebSocket messages, the MCP arguments",
+    ),
+    (
+        "response.status",
+        "post",
+        "the status the kind gives to scripts",
+    ),
+    ("response.body", "post", "the body bytes"),
+    ("response:header(n)", "post", "one header by name"),
+    (
+        "response.headers",
+        "post",
+        "a list of {name = ..., value = ...}",
+    ),
+    ("response:json()", "post", "the body parsed as JSON"),
+    (
+        "response:time(phase)",
+        "post",
+        "a phase of the time source in milliseconds, or nil when it was not measured",
+    ),
+    (
+        "test(name, pass)",
+        "post",
+        "a result next to the assertions, labelled test: name",
+    ),
+];
+
 /// The user's Lua functions: the `*.lua` files of the global config folder
 /// and of `.sendito/lua/`. Every script phase runs the files first; a
 /// template calls a function as `{{ $lua.name(args) }}`.
@@ -1220,6 +1349,23 @@ mod tests {
         assert!(!s.catalog().has("pairs"));
         // No script: the catalog does not run.
         assert_eq!(run_lua_pre(&[], &mut req, &mut s), Ok(LuaOut::default()));
+    }
+
+    #[test]
+    fn api_lists_the_sendito_names_and_no_other() {
+        fn global(sig: &str) -> &str {
+            sig.split(['.', ':', '(']).next().unwrap_or(sig)
+        }
+        let listed: Vec<&str> = API.iter().map(|(sig, _, _)| global(sig)).collect();
+        for name in SENDITO_NAMES {
+            assert!(listed.contains(&name), "{name} has no line in API");
+        }
+        for name in listed {
+            assert!(
+                SENDITO_NAMES.contains(&name),
+                "{name} is not a Sendito name"
+            );
+        }
     }
 
     #[test]

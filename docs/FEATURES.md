@@ -583,7 +583,8 @@ Any string field may contain `{{name}}` (spaces allowed: `{{ name }}`).
   `$padLeft`, `$default`, …) and random values (`$randomInt`, `$randomHex`,
   `$randomString`). A random call keeps one value for the whole send. A bad
   value or an unknown function leaves the placeholder unresolved. The list is
-  in `FORMAT.md`, "Functions".
+  in the help (F1, `Tab` for the functions page) and in `FORMAT.md`,
+  "Functions".
 * **Values asked at send time**: `{{ $prompt('OTP') }}`,
   `{{ $prompt('Password', 'secret') }}` and
   `{{ $select('Mode', 'sandbox', 'live') }}` ask the value when the request is
@@ -974,8 +975,11 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
   comes from the keymap, so your overrides show. Press a key or click an
   entry to run it; `Esc` or a click elsewhere closes it.
-* **Overlays** over a dimmed backdrop: command palette, help (searchable, two
-  columns at ≥ 180 columns), settings, confirm questions, prompts, fuzzy
+* **Overlays** over a dimmed backdrop: command palette, help (searchable; two
+  pages: the keys, in two columns at ≥ 180 columns, and the functions — `Tab`
+  switches; the functions are the template functions, `$prompt` / `$select` /
+  `$response`, the names a Lua script has with its phase, and `$lua.name`, in
+  one column), settings, confirm questions, prompts, fuzzy
   pickers (environment, method, gRPC service/method, MCP server/tool, move-to-
   folder, theme, OAuth sign-in, OAuth identity, cookie jar), the environment
   editor, the MCP servers, OAuth and keymap editors, the import dialog and the

@@ -1793,6 +1793,39 @@ fn flow_help_two_columns() {
 }
 
 #[test]
+fn flow_help_pages() {
+    // Tab switches between the keys and the functions; the search follows.
+    let mut h = Harness::new(200, 60);
+    h.key("f1");
+    assert!(h.find("$base64(text)").is_none());
+    h.type_text("$base64");
+    assert!(h.find("no match for \"$base64\"").is_some());
+    h.key("tab");
+    assert!(h.find("Help — functions").is_some());
+    assert!(h.find("$base64(text)").is_some(), "the search follows");
+    // One column: the dialog is 134 wide, so its title rule is short.
+    let screen = h.screen();
+    let title = screen
+        .lines()
+        .find(|l| l.contains("Help — functions"))
+        .must();
+    let rule = title.split("Esc closes)").nth(1).must();
+    let dashes = rule.chars().take_while(|c| *c == '─').count();
+    assert!(dashes < 100, "{dashes}");
+    h.key("shift+tab");
+    assert!(h.find("Help — keys and actions").is_some());
+    assert!(h.find("no match for \"$base64\"").is_some());
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    // An empty search shows the placeholder of the page.
+    let mut h = Harness::new(120, 40);
+    h.key("f1 tab");
+    assert!(h.find("(type to filter the functions)").is_some());
+    h.key("shift+tab");
+    assert!(h.find("(type to filter the keys)").is_some());
+}
+
+#[test]
 fn flow_watch_repeats_and_stops() {
     let s = servers();
     let mut h = harness(&s, 120, 34);

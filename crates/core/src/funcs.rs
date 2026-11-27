@@ -4,8 +4,9 @@
 //! `'literal'` (it ends at the next `'`), a number (`8`, `-1`), a variable
 //! name or another call.
 //!
-//! To add a function, write it here, add a row to [`FUNCS`] and a row to the
-//! "Functions" table of `FORMAT.md` (a test checks the table).
+//! To add a function, write it here, add a row to [`FUNCS`] (its `doc` is the
+//! line of the help, F1) and a row to the "Functions" table of `FORMAT.md`
+//! (a test checks the table).
 
 use std::str::FromStr;
 
@@ -25,31 +26,55 @@ type Apply = fn(&[String]) -> Result<String, String>;
 pub struct Func {
     /// The name with its `$`, as written in a template.
     pub name: &'static str,
-    /// The number of arguments.
-    pub arity: usize,
+    /// The arguments, as the help shows them: `"key, text"`; empty for none.
+    /// The count of the arguments is the arity.
+    pub params: &'static str,
     /// The value is random: the scope keeps the first value of each call text
     /// for the whole send, as for `$uuid`.
     pub random: bool,
-    /// Gets the rendered arguments (`arity` of them); an error leaves the
-    /// placeholder unresolved.
+    /// One line for the help (F1).
+    pub doc: &'static str,
+    /// Gets the rendered arguments ([`Func::arity`] of them); an error leaves
+    /// the placeholder unresolved.
     pub apply: Apply,
 }
 
 impl Func {
-    const fn new(name: &'static str, arity: usize, apply: Apply) -> Self {
+    /// The number of arguments.
+    pub fn arity(&self) -> usize {
+        if self.params.is_empty() {
+            0
+        } else {
+            self.params.split(',').count()
+        }
+    }
+
+    const fn new(
+        name: &'static str,
+        params: &'static str,
+        doc: &'static str,
+        apply: Apply,
+    ) -> Self {
         Self {
             name,
-            arity,
+            params,
             random: false,
+            doc,
             apply,
         }
     }
 
-    const fn random(name: &'static str, arity: usize, apply: Apply) -> Self {
+    const fn random(
+        name: &'static str,
+        params: &'static str,
+        doc: &'static str,
+        apply: Apply,
+    ) -> Self {
         Self {
             name,
-            arity,
+            params,
             random: true,
+            doc,
             apply,
         }
     }
@@ -109,6 +134,24 @@ pub enum PreSend {
 pub fn is_pre_send(name: &str) -> bool {
     matches!(name, PROMPT | SELECT | RESPONSE)
 }
+
+/// The calls the pipeline resolves before the send, as the help (F1) shows
+/// them: the call and the value it gives.
+pub const PRE_SEND: &[(&str, &str)] = &[
+    ("$prompt('Label')", "the text typed for Label at send time"),
+    (
+        "$prompt('Label', 'secret')",
+        "the same, typed without echo; the value is a secret",
+    ),
+    (
+        "$select('Label', 'a', 'b', ...)",
+        "the option chosen for Label at send time",
+    ),
+    (
+        "$response('Folder/request', '$.json.path')",
+        "a value from the body of the last response of another saved HTTP request; a secret",
+    ),
+];
 
 /// The pre-send call `c`, or why it is not valid. `None` when `c` is not a
 /// pre-send call. Every argument must be a `'literal'`.
@@ -174,124 +217,263 @@ fn policy(s: &str) -> Result<Policy, String> {
 /// of a protobuf `bytes` field.
 pub const FUNCS: &[Func] = &[
     // IDs and bytes
-    Func::new("$uuidBytes", 1, |a| {
-        uuid_parse(arg(a, 0)).map(|b| STANDARD.encode(b))
-    }),
-    Func::new("$uuidFromBytes", 1, |a| {
-        let b: [u8; 16] = base64_decode(arg(a, 0))?
-            .try_into()
-            .map_err(|b: Vec<u8>| format!("{} bytes are not a UUID (16 bytes)", b.len()))?;
-        Ok(uuid_text(&b))
-    }),
-    Func::new("$uuidV5", 2, |a| {
-        let mut h = Sha1::new();
-        h.update(uuid_parse(arg(a, 0))?);
-        h.update(arg(a, 1).as_bytes());
-        let mut b = [0u8; 16];
-        b.copy_from_slice(&h.finalize()[..16]);
-        Ok(uuid_text(&with_version(b, 5)))
-    }),
-    Func::random("$uuidV7", 0, |_| {
+    Func::new(
+        "$uuidBytes",
+        "uuid",
+        "the 16 bytes of a UUID, base64; hyphens are optional, any case",
+        |a| uuid_parse(arg(a, 0)).map(|b| STANDARD.encode(b)),
+    ),
+    Func::new(
+        "$uuidFromBytes",
+        "base64",
+        "the UUID text of 16 bytes (lowercase, with hyphens)",
+        |a| {
+            let b: [u8; 16] = base64_decode(arg(a, 0))?
+                .try_into()
+                .map_err(|b: Vec<u8>| format!("{} bytes are not a UUID (16 bytes)", b.len()))?;
+            Ok(uuid_text(&b))
+        },
+    ),
+    Func::new(
+        "$uuidV5",
+        "namespace, name",
+        "the name-based UUID v5: namespace is a UUID, name the text",
+        |a| {
+            let mut h = Sha1::new();
+            h.update(uuid_parse(arg(a, 0))?);
+            h.update(arg(a, 1).as_bytes());
+            let mut b = [0u8; 16];
+            b.copy_from_slice(&h.finalize()[..16]);
+            Ok(uuid_text(&with_version(b, 5)))
+        },
+    ),
+    Func::random("$uuidV7", "", "a time-ordered UUID v7; random", |_| {
         let mut b: [u8; 16] = fastrand::u128(..).to_le_bytes();
         b[..6].copy_from_slice(&now_ms().to_be_bytes()[2..]);
         Ok(uuid_text(&with_version(b, 7)))
     }),
-    Func::random("$ulid", 0, |_| {
-        const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        let v = (u128::from(now_ms()) << 80) | (fastrand::u128(..) >> 48);
-        Ok((0..26)
-            .rev()
-            .map(|i| char::from(CROCKFORD[((v >> (5 * i)) & 31) as usize]))
-            .collect())
-    }),
-    Func::new("$hexBytes", 1, |a| {
-        hex_decode(arg(a, 0)).map(|b| STANDARD.encode(b))
-    }),
-    Func::new("$bytesHex", 1, |a| {
+    Func::random(
+        "$ulid",
+        "",
+        "a ULID (26 Crockford base32 characters); random",
+        |_| {
+            const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+            let v = (u128::from(now_ms()) << 80) | (fastrand::u128(..) >> 48);
+            Ok((0..26)
+                .rev()
+                .map(|i| char::from(CROCKFORD[((v >> (5 * i)) & 31) as usize]))
+                .collect())
+        },
+    ),
+    Func::new(
+        "$hexBytes",
+        "hex",
+        "the bytes of an even number of hex digits, base64",
+        |a| hex_decode(arg(a, 0)).map(|b| STANDARD.encode(b)),
+    ),
+    Func::new("$bytesHex", "base64", "the bytes in lowercase hex", |a| {
         base64_decode(arg(a, 0)).map(|b| hex(&b))
     }),
     // Encoding
-    Func::new("$base64", 1, |a| Ok(STANDARD.encode(arg(a, 0)))),
-    Func::new("$base64Url", 1, |a| Ok(URL_SAFE_NO_PAD.encode(arg(a, 0)))),
-    Func::new("$base64Decode", 1, |a| {
-        String::from_utf8(base64_decode(arg(a, 0))?)
-            .map_err(|_| "the bytes are not UTF-8 text".to_string())
+    Func::new(
+        "$base64",
+        "text",
+        "standard base64 of the UTF-8 text",
+        |a| Ok(STANDARD.encode(arg(a, 0))),
+    ),
+    Func::new(
+        "$base64Url",
+        "text",
+        "URL-safe base64 of the UTF-8 text, no padding",
+        |a| Ok(URL_SAFE_NO_PAD.encode(arg(a, 0))),
+    ),
+    Func::new(
+        "$base64Decode",
+        "base64",
+        "the decoded text; the bytes must be UTF-8",
+        |a| {
+            String::from_utf8(base64_decode(arg(a, 0))?)
+                .map_err(|_| "the bytes are not UTF-8 text".to_string())
+        },
+    ),
+    Func::new("$hex", "text", "lowercase hex of the UTF-8 text", |a| {
+        Ok(hex(arg(a, 0).as_bytes()))
     }),
-    Func::new("$hex", 1, |a| Ok(hex(arg(a, 0).as_bytes()))),
-    Func::new("$urlEncode", 1, |a| {
-        Ok(crate::resolve::query_encode(arg(a, 0)))
-    }),
+    Func::new(
+        "$urlEncode",
+        "text",
+        "the text percent-encoded as a query component",
+        |a| Ok(crate::resolve::query_encode(arg(a, 0))),
+    ),
     // Hashes and signatures
-    Func::new("$md5", 1, |a| digest("md5", arg(a, 0).as_bytes())),
-    Func::new("$sha1", 1, |a| digest("sha1", arg(a, 0).as_bytes())),
-    Func::new("$sha256", 1, |a| digest("sha256", arg(a, 0).as_bytes())),
-    Func::new("$sha512", 1, |a| digest("sha512", arg(a, 0).as_bytes())),
-    Func::new("$hmacSha256", 2, |a| Ok(hex(&hmac_sha256(a)))),
-    Func::new("$hmacSha256Base64", 2, |a| {
-        Ok(STANDARD.encode(hmac_sha256(a)))
-    }),
+    Func::new(
+        "$md5",
+        "text",
+        "the MD5 of the text, in lowercase hex",
+        |a| digest("md5", arg(a, 0).as_bytes()),
+    ),
+    Func::new(
+        "$sha1",
+        "text",
+        "the SHA-1 of the text, in lowercase hex",
+        |a| digest("sha1", arg(a, 0).as_bytes()),
+    ),
+    Func::new(
+        "$sha256",
+        "text",
+        "the SHA-256 of the text, in lowercase hex",
+        |a| digest("sha256", arg(a, 0).as_bytes()),
+    ),
+    Func::new(
+        "$sha512",
+        "text",
+        "the SHA-512 of the text, in lowercase hex",
+        |a| digest("sha512", arg(a, 0).as_bytes()),
+    ),
+    Func::new(
+        "$hmacSha256",
+        "key, text",
+        "the HMAC-SHA256 of the text, in lowercase hex",
+        |a| Ok(hex(&hmac_sha256(a))),
+    ),
+    Func::new(
+        "$hmacSha256Base64",
+        "key, text",
+        "the HMAC-SHA256 of the text, in base64",
+        |a| Ok(STANDARD.encode(hmac_sha256(a))),
+    ),
     // Time
-    Func::new("$timeAdd", 2, |a| {
-        let t = iso_parse(arg(a, 0))?;
-        let d = duration(arg(a, 1))?;
-        iso_format(t.checked_add(d).ok_or("the time is out of range")?)
-    }),
-    Func::new("$isoFromUnix", 1, |a| {
-        let t =
-            OffsetDateTime::from_unix_timestamp(number(arg(a, 0))?).map_err(|e| e.to_string())?;
-        iso_format(t)
-    }),
-    Func::new("$unixFromIso", 1, |a| {
-        Ok(iso_parse(arg(a, 0))?.unix_timestamp().to_string())
-    }),
+    Func::new(
+        "$timeAdd",
+        "time, duration",
+        "an RFC 3339 time plus a duration such as 90s, 1h30m or -2d (units ms, s, m, h, d)",
+        |a| {
+            let t = iso_parse(arg(a, 0))?;
+            let d = duration(arg(a, 1))?;
+            iso_format(t.checked_add(d).ok_or("the time is out of range")?)
+        },
+    ),
+    Func::new(
+        "$isoFromUnix",
+        "seconds",
+        "the Unix seconds as an RFC 3339 time",
+        |a| {
+            let t = OffsetDateTime::from_unix_timestamp(number(arg(a, 0))?)
+                .map_err(|e| e.to_string())?;
+            iso_format(t)
+        },
+    ),
+    Func::new(
+        "$unixFromIso",
+        "time",
+        "the RFC 3339 time as Unix seconds",
+        |a| Ok(iso_parse(arg(a, 0))?.unix_timestamp().to_string()),
+    ),
     // Text and JSON
-    Func::new("$upper", 1, |a| Ok(arg(a, 0).to_uppercase())),
-    Func::new("$lower", 1, |a| Ok(arg(a, 0).to_lowercase())),
-    Func::new("$trim", 1, |a| Ok(arg(a, 0).trim().to_string())),
-    Func::new("$len", 1, |a| Ok(arg(a, 0).len().to_string())),
-    Func::new("$jsonEscape", 1, |a| Ok(json_escape(arg(a, 0)))),
-    Func::new("$jsonString", 1, |a| {
-        serde_json::to_string(arg(a, 0)).map_err(|e| e.to_string())
+    Func::new("$upper", "text", "the text in upper case", |a| {
+        Ok(arg(a, 0).to_uppercase())
     }),
-    Func::new("$replace", 3, |a| {
-        if arg(a, 1).is_empty() {
-            return Err("the text to replace is empty".into());
-        }
-        Ok(arg(a, 0).replace(arg(a, 1), arg(a, 2)))
+    Func::new("$lower", "text", "the text in lower case", |a| {
+        Ok(arg(a, 0).to_lowercase())
     }),
-    Func::new("$substr", 3, |a| {
-        let (start, len) = (size(arg(a, 1))?, size(arg(a, 2))?);
-        Ok(arg(a, 0).chars().skip(start).take(len).collect())
-    }),
-    Func::new("$padLeft", 3, |a| {
-        let mut pad = arg(a, 2).chars();
-        let (Some(c), None) = (pad.next(), pad.next()) else {
-            return Err("the pad must be one character".into());
-        };
-        let s = arg(a, 0);
-        let missing = size(arg(a, 1))?.saturating_sub(s.chars().count());
-        Ok(std::iter::repeat_n(c, missing).chain(s.chars()).collect())
-    }),
-    Func::new(DEFAULT, 2, |a| Ok(arg(a, 0).to_string())),
+    Func::new(
+        "$trim",
+        "text",
+        "the text without the spaces at the ends",
+        |a| Ok(arg(a, 0).trim().to_string()),
+    ),
+    Func::new(
+        "$len",
+        "text",
+        "the length of the UTF-8 text in bytes",
+        |a| Ok(arg(a, 0).len().to_string()),
+    ),
+    Func::new(
+        "$jsonEscape",
+        "text",
+        "the text as it is written inside a JSON string, without the quotes",
+        |a| Ok(json_escape(arg(a, 0))),
+    ),
+    Func::new(
+        "$jsonString",
+        "text",
+        "the text as a JSON string, with the quotes",
+        |a| serde_json::to_string(arg(a, 0)).map_err(|e| e.to_string()),
+    ),
+    Func::new(
+        "$replace",
+        "text, from, to",
+        "the text with every from replaced by to",
+        |a| {
+            if arg(a, 1).is_empty() {
+                return Err("the text to replace is empty".into());
+            }
+            Ok(arg(a, 0).replace(arg(a, 1), arg(a, 2)))
+        },
+    ),
+    Func::new(
+        "$substr",
+        "text, start, length",
+        "length characters from character start (0 is the first)",
+        |a| {
+            let (start, len) = (size(arg(a, 1))?, size(arg(a, 2))?);
+            Ok(arg(a, 0).chars().skip(start).take(len).collect())
+        },
+    ),
+    Func::new(
+        "$padLeft",
+        "text, length, char",
+        "the text with char added on the left up to length characters",
+        |a| {
+            let mut pad = arg(a, 2).chars();
+            let (Some(c), None) = (pad.next(), pad.next()) else {
+                return Err("the pad must be one character".into());
+            };
+            let s = arg(a, 0);
+            let missing = size(arg(a, 1))?.saturating_sub(s.chars().count());
+            Ok(std::iter::repeat_n(c, missing).chain(s.chars()).collect())
+        },
+    ),
+    Func::new(
+        DEFAULT,
+        "name, fallback",
+        "the first argument, or the fallback when the first does not resolve",
+        |a| Ok(arg(a, 0).to_string()),
+    ),
     // Random
-    Func::random("$randomInt", 2, |a| {
-        let (min, max): (i64, i64) = (number(arg(a, 0))?, number(arg(a, 1))?);
-        if min > max {
-            return Err(format!("{min} is more than {max}"));
-        }
-        Ok(fastrand::i64(min..=max).to_string())
-    }),
-    Func::random("$randomHex", 1, |a| {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        Ok((0..size(arg(a, 0))?)
-            .map(|_| char::from(HEX[fastrand::usize(..16)]))
-            .collect())
-    }),
-    Func::random("$randomString", 1, |a| {
-        Ok((0..size(arg(a, 0))?)
-            .map(|_| fastrand::alphanumeric())
-            .collect())
-    }),
+    Func::random(
+        "$randomInt",
+        "min, max",
+        "a random integer from min to max, both included; random",
+        |a| {
+            let (min, max): (i64, i64) = (number(arg(a, 0))?, number(arg(a, 1))?);
+            if min > max {
+                return Err(format!("{min} is more than {max}"));
+            }
+            Ok(fastrand::i64(min..=max).to_string())
+        },
+    ),
+    Func::random(
+        "$randomHex",
+        "length",
+        "random lowercase hex digits; random",
+        |a| {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            Ok((0..size(arg(a, 0))?)
+                .map(|_| char::from(HEX[fastrand::usize(..16)]))
+                .collect())
+        },
+    ),
+    Func::random(
+        "$randomString",
+        "length",
+        "random ASCII letters and digits; random",
+        |a| {
+            Ok((0..size(arg(a, 0))?)
+                .map(|_| fastrand::alphanumeric())
+                .collect())
+        },
+    ),
 ];
 
 /// The function named `name` (with its `$`).
@@ -549,7 +731,7 @@ mod tests {
 
     fn run(name: &str, args: &[&str]) -> Result<String, String> {
         let f = find(name).ok_or("unknown")?;
-        assert_eq!(f.arity, args.len(), "{name}");
+        assert_eq!(f.arity(), args.len(), "{name}");
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         (f.apply)(&args)
     }
@@ -645,7 +827,7 @@ mod tests {
         // A random function with no argument is in `random_values`.
         for f in FUNCS {
             assert!(
-                (f.random && f.arity == 0) || cases.iter().any(|(n, _, _)| *n == f.name),
+                (f.random && f.arity() == 0) || cases.iter().any(|(n, _, _)| *n == f.name),
                 "{} has no case",
                 f.name
             );
@@ -711,6 +893,7 @@ mod tests {
         let format = include_str!("../../../FORMAT.md");
         for (i, f) in FUNCS.iter().enumerate() {
             assert!(f.name.starts_with('$') && f.name.len() > 1);
+            assert!(!f.doc.is_empty(), "{} has no help line", f.name);
             assert!(FUNCS[..i].iter().all(|g| g.name != f.name), "{}", f.name);
             assert!(
                 format.contains(&format!("`{}(", f.name)),
@@ -718,8 +901,18 @@ mod tests {
                 f.name
             );
         }
+        let named = |sig: &str| {
+            [PROMPT, SELECT, RESPONSE]
+                .iter()
+                .any(|n| sig.starts_with(n))
+        };
+        assert!(PRE_SEND.iter().all(|(sig, _)| named(sig)));
         for name in [PROMPT, SELECT, RESPONSE] {
             assert!(find(name).is_none(), "{name}");
+            assert!(
+                PRE_SEND.iter().any(|(sig, _)| sig.starts_with(name)),
+                "{name} has no help line"
+            );
             assert!(
                 format.contains(&format!("`{name}('")),
                 "{name} is not in FORMAT.md"

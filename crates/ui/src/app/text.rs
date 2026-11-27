@@ -540,7 +540,14 @@ pub(super) fn ws_timing_text(st: &crate::tab::StreamStats) -> String {
     )
 }
 
-pub(super) fn help_text(km: &Keymap, vim: bool) -> String {
+pub(super) fn help_text(page: HelpPage, km: &Keymap, vim: bool) -> String {
+    match page {
+        HelpPage::Keys => help_keys(km, vim),
+        HelpPage::Functions => help_functions(),
+    }
+}
+
+fn help_keys(km: &Keymap, vim: bool) -> String {
     let mut s = String::from("All keys, including any you changed in the config.\n");
     s.push_str(&format!(
         "Current mode: {} (switch in Settings, {}).\n",
@@ -583,4 +590,137 @@ pub(super) fn help_text(km: &Keymap, vim: bool) -> String {
         s.push_str(&format!("  {c:<28} {d}\n"));
     }
     s
+}
+
+/// The functions page: the same tables the send runs, so the help cannot
+/// drift. `FORMAT.md` has the full reference.
+fn help_functions() -> String {
+    let mut s = String::from(
+        "The functions of a request and of its scripts. FORMAT.md has the full reference.\n",
+    );
+    let funcs: Vec<Vec<String>> = sendito_core::funcs::FUNCS
+        .iter()
+        .map(|f| vec![format!("{}({})", f.name, f.params), f.doc.to_string()])
+        .collect();
+    section(&mut s, "Template functions", FUNC_INTRO, &funcs);
+    let pre: Vec<Vec<String>> = sendito_core::funcs::PRE_SEND
+        .iter()
+        .map(|(c, d)| vec![(*c).to_string(), (*d).to_string()])
+        .collect();
+    section(
+        &mut s,
+        "Values asked at send time, or from another response",
+        PRE_SEND_INTRO,
+        &pre,
+    );
+    let api: Vec<Vec<String>> = sendito_core::lua_script::API
+        .iter()
+        .map(|(c, p, d)| vec![(*c).to_string(), (*p).to_string(), (*d).to_string()])
+        .collect();
+    section(&mut s, "Lua scripts ([scripts.lua])", LUA_INTRO, &api);
+    section(&mut s, "Lua function catalog", LUA_CATALOG, &[]);
+    s
+}
+
+/// A section of the help: a title, the lines of `intro` indented, then the
+/// rows. Every column but the last is padded to the width of its column.
+fn section(out: &mut String, title: &str, intro: &str, rows: &[Vec<String>]) {
+    out.push_str(&format!("\n── {title} ──\n"));
+    for line in intro.lines() {
+        out.push_str(&format!("  {line}\n"));
+    }
+    let cols = rows.first().map_or(0, Vec::len);
+    let width: Vec<usize> = (0..cols.saturating_sub(1))
+        .map(|c| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
+        .collect();
+    for row in rows {
+        out.push_str("  ");
+        for (c, cell) in row.iter().enumerate() {
+            if c + 1 < cols {
+                out.push_str(&format!("{cell:<w$}  ", w = width[c]));
+            } else {
+                out.push_str(cell);
+            }
+        }
+        out.push('\n');
+    }
+}
+
+const FUNC_INTRO: &str = "{{ $name(argument, ...) }} in any field. An argument is a 'literal', a
+number, a variable (user_id, $uuid, $processEnv.NAME) or another call; calls
+nest up to 8 levels. A random call keeps one value for the whole send. An
+unknown function, a wrong number of arguments or a bad value leaves the
+placeholder unresolved; the send gives the reason.";
+
+const PRE_SEND_INTRO: &str = "Every argument is a 'literal'. One question per label for a send; Esc
+cancels the send. The third argument of $response is the policy: if_missing
+(default) sends the request when no response is kept; if_older:<seconds> also
+when the kept one is older; always before every send; never (with no kept
+response, the send stops).";
+
+const LUA_INTRO: &str = "pre runs before the send, post after it (folders first, then the request).
+An error in a pre script stops the send; in a post script it is a failed test.
+The state loads string, table, math and utf8 only: no files, no network, no
+processes. A value a script sets is a template: {{variables}} resolve at the
+send.";
+
+const LUA_CATALOG: &str =
+    "{{ $lua.name(args) }} calls a function of the *.lua files in .sendito/lua/ of
+the collection and in lua/ next to the global config.toml (~/.config/sendito/).
+In scripts the same functions are globals. The value is a secret when an
+argument is a secret or the function read one. An unknown function leaves the
+placeholder unresolved.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_keys_page_lists_the_keys_only() {
+        let s = help_text(HelpPage::Keys, &crate::keymap::Keymap::defaults(), false);
+        assert!(s.contains("\n── Global ──\n"), "{}", s);
+        assert!(s.contains("\n── Commands (command palette) ──\n"), "{}", s);
+        assert!(!s.contains("Template functions"), "{}", s);
+    }
+
+    #[test]
+    fn help_functions_page_lists_every_call() {
+        let s = help_text(
+            HelpPage::Functions,
+            &crate::keymap::Keymap::defaults(),
+            false,
+        );
+        for title in [
+            "── Template functions ──",
+            "── Values asked at send time, or from another response ──",
+            "── Lua scripts ([scripts.lua]) ──",
+            "── Lua function catalog ──",
+        ] {
+            assert!(s.contains(&format!("\n{title}\n")), "{title}");
+        }
+        // Every call starts a row, and the widest call of a table has the
+        // two spaces that separate the columns.
+        for f in sendito_core::funcs::FUNCS {
+            let sig = format!("{}({})", f.name, f.params);
+            assert!(s.contains(&format!("\n  {sig}")), "{sig}");
+        }
+        for (c, _) in sendito_core::funcs::PRE_SEND {
+            assert!(s.contains(&format!("\n  {c}")), "{c}");
+        }
+        for (c, p, _) in sendito_core::lua_script::API {
+            assert!(s.contains(&format!("\n  {c}")), "{c}");
+            assert!(matches!(*p, "pre" | "post" | "pre, post"), "{c}: {p}");
+        }
+        assert!(
+            s.contains("$hmacSha256Base64(key, text)  the HMAC-SHA256"),
+            "{}",
+            s
+        );
+        assert!(s.contains("'$.json.path')  a value"), "{}", s);
+        assert!(
+            s.contains("vars.set_secret(name, value)  pre, post  the same"),
+            "{}",
+            s
+        );
+    }
 }

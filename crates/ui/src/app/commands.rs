@@ -150,9 +150,17 @@ impl App {
     pub fn open_help(&mut self) {
         self.clear_transient_status();
         self.overlay = Some(Overlay::Help {
-            viewer: crate::tab::wrapped(Doc::text(&help_text(&self.keymap, self.vim))),
-            filter: TextEditor::single("").with_placeholder("(type to filter the keys)"),
+            viewer: self.help_viewer(HelpPage::Keys, ""),
+            filter: TextEditor::single("").with_placeholder(HelpPage::Keys.placeholder()),
+            page: HelpPage::Keys,
         });
+    }
+
+    /// The help on `page`, with the search `q` applied.
+    pub(super) fn help_viewer(&self, page: HelpPage, q: &str) -> Viewer {
+        let mut viewer = crate::tab::wrapped(Doc::text(&help_text(page, &self.keymap, self.vim)));
+        viewer.search(q);
+        viewer
     }
 
     // ----- palette commands ---------------------------------------------

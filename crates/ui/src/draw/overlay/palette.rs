@@ -194,6 +194,7 @@ pub(super) fn draw_palette(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_help(
     app: &mut App,
     buf: &mut Buffer,
@@ -201,14 +202,22 @@ pub(super) fn draw_help(
     is_def: &impl Fn(&str) -> bool,
     viewer: &mut Viewer,
     filter: &mut TextEditor,
+    page: HelpPage,
     cursor: &mut Option<(u16, u16)>,
 ) {
-    // Wide screens read the keys in two columns, like a newspaper.
-    let two_cols = frame.area.width >= 180;
-    let mw = if two_cols {
-        frame.area.width.saturating_sub(8).min(200)
-    } else {
-        110
+    // Wide screens read the keys in two columns, like a newspaper. The
+    // function tables stay in one: side by side they read as duplicates, and
+    // their rows are too long for half a screen.
+    let two_cols = page == HelpPage::Keys && frame.area.width >= 180;
+    let title = match page {
+        HelpPage::Keys => "Help — keys and actions (Tab: functions, Esc closes)",
+        HelpPage::Functions => "Help — functions (Tab: keys, Esc closes)",
+    };
+    let mw = match page {
+        HelpPage::Keys if two_cols => frame.area.width.saturating_sub(8).min(200),
+        // The longest row fits in one line.
+        HelpPage::Functions => frame.area.width.saturating_sub(8).min(132),
+        HelpPage::Keys => 110,
     };
     let (r, inner) = shell(
         app,
@@ -216,7 +225,7 @@ pub(super) fn draw_help(
         frame.body,
         mw,
         frame.area.height.saturating_sub(2),
-        "Help — keys and actions (Esc closes)",
+        title,
         frame.theme,
     );
     let ir = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1);

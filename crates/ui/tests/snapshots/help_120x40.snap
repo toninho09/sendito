@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮
+╭─ Help — keys and actions (Tab: functions, Esc closes) ─────────────────────────────────────────────────────╮
 │ Search ▍  (type to filter the keys)                                            line 1/275 · ↑↓ PgUp PgDn   ┃
 │                                                                                                            ┃
 │ All keys, including any you changed in the config.                                                         ┃

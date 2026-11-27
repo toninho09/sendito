@@ -130,7 +130,8 @@ message = '''
 Bytes come out as standard base64, the JSON form of a protobuf `bytes` field.
 A function that reads bytes takes standard or URL-safe base64, with or without
 padding. Times come out in RFC 3339, UTC. `{{ $uuidBytes($uuid) }}` uses the
-same UUID as `{{$uuid}}` in the same send.
+same UUID as `{{$uuid}}` in the same send. The in-app help (F1, `Tab`) lists the same
+functions with their arguments.
 
 | Function | Value |
 |---|---|

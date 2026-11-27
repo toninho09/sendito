@@ -225,9 +225,17 @@ impl App {
                     ("Esc".into(), "close".into()),
                     (":report".into(), "shows this report again".into()),
                 ]),
-                Overlay::Help { .. } => v.extend([
+                Overlay::Help { page, .. } => v.extend([
                     ("type".into(), "search".into()),
                     ("↑↓ PgUp PgDn".into(), "scroll".into()),
+                    (
+                        "Tab".into(),
+                        match page {
+                            HelpPage::Keys => "functions",
+                            HelpPage::Functions => "keys",
+                        }
+                        .into(),
+                    ),
                     ("Esc".into(), "close".into()),
                 ]),
                 Overlay::Settings(s) if s.edit.is_some() => v.extend([

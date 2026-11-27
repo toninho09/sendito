@@ -297,7 +297,7 @@ impl Scope {
         }
         let known = match c.name.strip_prefix(funcs::LUA) {
             Some(name) => self.catalog.has(name),
-            None => funcs::find(c.name).is_some_and(|f| f.arity == c.args.len()),
+            None => funcs::find(c.name).is_some_and(|f| f.arity() == c.args.len()),
         };
         if !known {
             return false;
@@ -389,11 +389,11 @@ impl Scope {
             Some(_) => None,
             None => {
                 let f = funcs::find(c.name).ok_or("unknown function")?;
-                if f.arity != c.args.len() {
-                    let plural = if f.arity == 1 { "" } else { "s" };
+                if f.arity() != c.args.len() {
+                    let plural = if f.arity() == 1 { "" } else { "s" };
                     return Err(format!(
                         "it takes {} argument{plural}, not {}",
-                        f.arity,
+                        f.arity(),
                         c.args.len()
                     ));
                 }

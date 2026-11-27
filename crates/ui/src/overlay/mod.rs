@@ -282,9 +282,38 @@ impl Import {
     }
 }
 
+/// The two pages of the help (F1): the keys, and the functions a request or
+/// a script calls. `Tab` switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpPage {
+    Keys,
+    Functions,
+}
+
+impl HelpPage {
+    pub fn other(self) -> Self {
+        match self {
+            Self::Keys => Self::Functions,
+            Self::Functions => Self::Keys,
+        }
+    }
+
+    /// The placeholder of the search field when it is empty.
+    pub fn placeholder(self) -> &'static str {
+        match self {
+            Self::Keys => "(type to filter the keys)",
+            Self::Functions => "(type to filter the functions)",
+        }
+    }
+}
+
 pub enum Overlay {
     Palette(Palette),
-    Help { viewer: Viewer, filter: TextEditor },
+    Help {
+        viewer: Viewer,
+        filter: TextEditor,
+        page: HelpPage,
+    },
     Settings(SettingsView),
     Confirm(Confirm),
     Prompt(Prompt),

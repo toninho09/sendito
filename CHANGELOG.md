@@ -304,6 +304,21 @@
   cursor and counts as typed text; before, the paste was dropped. A newline
   in the pasted text folds to a space.
 
+### Functions in the help
+
+* The help (F1) has two pages. `Tab` and `Shift+Tab` switch between them; the
+  search stays and applies to the new page, and the title names the page.
+  The keys page is the help of before (two columns at ≥ 180 columns).
+* The functions page lists, in one column at any width, the template functions
+  (`$base64(text)`, `$hmacSha256(key, text)`, ... with the names of the
+  arguments), the calls of the send (`$prompt`, `$select`, `$response` and
+  its policies), the names a Lua script has (`vars.set`, `render`,
+  `request:header`, ... with the phase they run in) and the Lua function
+  catalog (`{{ $lua.name(args) }}`), each with a line of introduction.
+  `FORMAT.md` stays the full reference.
+* The page reads the tables the send runs (`FUNCS`, `PRE_SEND`, `API`), so a
+  new function and its help line change one file.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

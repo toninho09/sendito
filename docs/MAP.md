@@ -313,6 +313,7 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
 | A new `:command` | `crates/ui/src/overlay/palette.rs::COMMANDS` → dispatch in `crates/ui/src/app/commands.rs::run_command` → `KEYMAP.md` via `make keymap` |
+| A template function, a call of the send or a name for scripts | `crates/core/src/funcs.rs` (`FUNCS`: `params`, `doc`; `PRE_SEND`) or `crates/core/src/lua_script.rs::API` → the matching table of `FORMAT.md` (a test checks it) → the in-app help (F1) reads the same tables |
 | A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay/settings.rs::SettingId` (`key`, `typed`, `opens`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
 | A new dialog | `crates/ui/src/overlay/mod.rs::Overlay` → `crates/ui/src/draw/overlay/` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app/mouse.rs` → snapshots |
 

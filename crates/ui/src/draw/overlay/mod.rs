@@ -71,9 +71,11 @@ pub(super) fn draw_overlay(
     };
     match &mut ov {
         Overlay::Palette(p) => draw_palette(app, buf, frame, &is_def, p, &mut cursor),
-        Overlay::Help { viewer, filter } => {
-            draw_help(app, buf, frame, &is_def, viewer, filter, &mut cursor)
-        }
+        Overlay::Help {
+            viewer,
+            filter,
+            page,
+        } => draw_help(app, buf, frame, &is_def, viewer, filter, *page, &mut cursor),
         Overlay::Settings(v) => draw_settings(app, buf, frame, v, &mut cursor),
         Overlay::Confirm(c) => draw_confirm(app, buf, frame, c),
         Overlay::Prompt(p) => draw_prompt(app, buf, frame, &is_def, p, &mut cursor),

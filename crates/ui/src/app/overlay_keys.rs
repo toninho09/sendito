@@ -35,7 +35,11 @@ impl App {
     pub(super) fn overlay_key_inner(&mut self, ov: &mut Overlay, key: KeyEvent) -> bool {
         match ov {
             Overlay::Report(r) => self.report_key(r, key),
-            Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
+            Overlay::Help {
+                viewer,
+                filter,
+                page,
+            } => self.help_key(viewer, filter, page, key),
             Overlay::Settings(v) => self.settings_key(v, key),
             Overlay::Confirm(c) => self.confirm_key(c, key),
             Overlay::Picker(p) => self.picker_key(p, key),
@@ -86,10 +90,18 @@ impl App {
         &mut self,
         viewer: &mut Viewer,
         filter: &mut TextEditor,
+        page: &mut HelpPage,
         key: KeyEvent,
     ) -> bool {
         match key.code {
             KeyCode::Esc => false,
+            // The other page keeps the search.
+            KeyCode::Tab | KeyCode::BackTab => {
+                *page = page.other();
+                *viewer = self.help_viewer(*page, &filter.text());
+                filter.placeholder = page.placeholder().to_string();
+                true
+            }
             KeyCode::Up => {
                 viewer.move_cursor(-1);
                 true
