@@ -866,6 +866,30 @@ value = "true"
 * In the UI, Send on an open session pushes the message editor's content as one
   frame; `Ctrl+W d` starts the close handshake and `Ctrl+W x` aborts it.
 
+### GraphQL subscriptions
+
+A `[graphql]` table makes the session run one GraphQL operation (usually a
+subscription) over the GraphQL protocol instead of sending `messages`. A file
+with both `[graphql]` and `messages` is refused.
+
+```toml
+kind = "websocket"
+url = "wss://{{host}}/graphql"
+
+[graphql]
+query = "subscription OnTick($n: Int) { tick(n: $n) }"
+variables = '''{"n": 3}'''        # optional JSON object
+operation_name = "OnTick"         # optional
+protocol = "graphql-transport-ws" # the default; "graphql-ws" is the legacy
+                                  # subscriptions-transport-ws protocol
+init_payload = '''{"token": "{{token}}"}'''  # optional connection_init payload
+```
+
+All the text fields hold `{{placeholders}}`. The scripts read the payload of
+the last result (`next`, legacy `data`) as the body: `$.data.tick`. The status
+is the close code. `:graphqlschema` asks the HTTP equivalent of the URL
+(`wss://` → `https://`) for the schema, with the request's headers and auth.
+
 ### What goes on the wire
 
 The handshake is one HTTP/1.1 request: `GET <path> HTTP/1.1` with `Host`,
@@ -892,9 +916,27 @@ proxy is itself reached over TLS, verified against `[http.tls] ca` when set and
 the platform roots otherwise. `socks*` proxies and `proxy = "env"` are refused
 for WebSocket sessions (`docs/DEBT.md`).
 
+A `[graphql]` session offers its protocol first in `Sec-WebSocket-Protocol`
+(`graphql-transport-ws` or `graphql-ws`), then the request's `subprotocols`.
+After the handshake it sends compact JSON text frames, with the keys in this
+order:
+
+1. `{"type":"connection_init"}`, with `"payload"` when `init_payload` is set.
+2. After the server's `connection_ack`: `{"id":"1","type":"subscribe","payload":
+   {"query":…,"variables":…,"operationName":…}}` (legacy: `"type":"start"`).
+   `variables` and `operationName` are left out when they are empty. The
+   server must answer `connection_init` within the handshake timeout.
+3. `{"type":"pong"}` for each server `ping`; a legacy `ka` gets no answer.
+4. The client closes with 1000 after the server's `complete` for id `1`, or
+   after an `error` (the session then fails with the error payload). Cancel and
+   `Ctrl+W d` send `{"id":"1","type":"complete"}` (legacy: `"type":"stop"`)
+   before the close. Without a controller (`sendito run`) the session waits
+   for `complete` or the deadline.
+
 ## MCP request
 
-An MCP request calls one tool on a server configured in `[mcp.servers]`:
+An MCP request calls one tool, reads one resource or gets one prompt on a
+server configured in `[mcp.servers]`:
 
 ```toml
 kind = "mcp"
@@ -914,6 +956,27 @@ op = "eq"
 value = "true"
 ```
 
+`op` chooses what the request does: `tool` (the default, left out of the file)
+calls `tool`; `resource` reads the resource `uri`; `prompt` gets the prompt
+`prompt` with `arguments`. Only the field of the op is written:
+
+```toml
+kind = "mcp"
+server = "docs"
+op = "resource"
+uri = "file:///{{name}}"
+```
+
+```toml
+kind = "mcp"
+server = "docs"
+op = "prompt"
+prompt = "summarize"
+arguments = '''
+{"topic":"{{topic}}"}
+'''
+```
+
 `arguments` is JSON text and must be an object or empty. When omitted it defaults
 to `{}`; an explicitly empty string omits the `arguments` property on the wire.
 The text is stored and read as written (a half-typed object is a valid file) and
@@ -923,17 +986,29 @@ with the active scope. `server` is either a name from `[mcp.servers]` or a
 auth; variables may hold the whole URL). Authentication is configured on the
 server, not on the request. The timeout covers the entire session; it defaults
 to `[mcp] timeout_ms`
-(30000 ms). Scripts see the full tool result as JSON; status is 0 for success or
-1 for `isError: true`.
+(30000 ms). Scripts see the full result as JSON (the tool result, the
+`resources/read` result with its `contents`, or the `prompts/get` result with
+its `messages`); status is 0 for success or 1 for a tool's `isError: true`.
 
 ### What goes on the wire
 
-Each list or call opens a separate session. Sendito sends compact JSON-RPC 2.0:
+A single request and each list open a separate session. A folder run of
+`sendito run` keeps one session per server for the run, and the interface
+keeps one per server and environment until it is idle for `[mcp]
+idle_timeout_s` seconds (default 300; 0 opens a session per call), the
+environment changes, `:mcp restart` runs or the app quits. A kept session
+skips `initialize` and continues the IDs; when it fails on the transport, a
+new session sends the call once more. Sendito sends compact JSON-RPC 2.0:
 `initialize` (ID 1, proposed protocol version `2025-06-18`, empty capabilities
-and client name/version), `notifications/initialized` (no ID), then `tools/list`
-or `tools/call` (ID 2). List pagination sends additional requests with increasing
-IDs and the returned cursor. Tool arguments are parsed and serialized as JSON,
-not sent byte-for-byte as written. The client recognizes `2024-11-05`,
+and client name/version), `notifications/initialized` (no ID), then
+`tools/list`, `tools/call`, `resources/read` (`{"uri": …}`) or `prompts/get`
+(`{"name": …, "arguments": …}`, without `arguments` when the text is empty)
+(ID 2). The interface's list asks `resources/list`,
+`resources/templates/list` and `prompts/list` too, only when the server
+declares `resources` or `prompts` in its capabilities. List pagination sends
+additional requests with increasing IDs and the returned cursor. Tool and
+prompt arguments are parsed and serialized as JSON, not sent byte-for-byte as
+written. The client recognizes `2024-11-05`,
 `2025-03-26` and `2025-06-18`; other versions produce a warning.
 
 * **stdio:** one UTF-8 JSON object and newline per message on the child process's
@@ -950,8 +1025,8 @@ not sent byte-for-byte as written. The client recognizes `2024-11-05`,
   resource URL require HTTPS except for loopback HTTP. Authorization, token
   exchange and refresh send the MCP server URL as the `resource` parameter.
 
-The client supports tools only; it does not consume a server-initiated GET stream
-or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
+The client calls tools, reads resources and gets prompts; it does not consume
+a server-initiated GET stream or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
 
 ## Folder settings
 
@@ -1174,6 +1249,8 @@ timeout_ms = 30000       # wait for CONNACK when a request sets none (0 = no lim
 
 [mcp]
 timeout_ms = 30000
+idle_timeout_s = 300     # the interface closes a kept server session after
+                         # this many idle seconds (0 = a session per call)
 
 [mcp.servers.local]
 command = "my-mcp-server"

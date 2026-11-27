@@ -478,6 +478,14 @@ impl App {
             "mcpservers" => self.open_mcp_server_picker(),
             "mcpadd" => self.prompt_mcp_add(arg),
             "mcptools" => self.load_mcp_tools(true),
+            "mcp" if arg == "restart" => {
+                let n = self.mcp_pool.len();
+                self.mcp_pool.clear();
+                self.set_status(
+                    format!("closed {n} MCP session(s); the next call opens a new one"),
+                    StatusKind::Ok,
+                );
+            }
             "mcpedit" if arg.is_empty() => self.open_mcp_editor(),
             "mcpedit" => {
                 if let Err(e) = self.open_mcp_server_editor(arg) {
@@ -508,6 +516,7 @@ impl App {
                 }
             }
             "folder" => self.folder_settings_of_active(),
+            "run" => self.run_folder_command(arg),
             "saveexample" => self.save_example(arg),
             "examples" => self.examples_command(arg),
             "rescan" => {

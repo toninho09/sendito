@@ -17,6 +17,7 @@ for kind in http grpc ws sse mqtt mcp; do
   done
 done
 cp target/corpus/captures/mcp/list.wire "$C/mcp/list.wire"
+cp target/corpus/captures/mcp/session-reuse.wire "$C/mcp/session-reuse.wire"
 cp tests/corpus/collection/.sendito/config.toml "$C/environment/config.toml"
 cp tests/corpus/collection/.sendito/collection.toml "$C/environment/collection.toml"
 cp tests/corpus/collection/.sendito/environments/corpus.toml "$C/environment/corpus.toml"
@@ -71,21 +72,29 @@ ws/NAME.wire     the handshake head the WebSocket echo server received verbatim 
                  line per frame: "<" received by the server, ">" sent by it, the frame
                  kind, the payload length and the payload (text as text, binary as
                  base64). The first line is the close code the client ended with.
-mcp/NAME.toml    a saved MCP tool call; server definitions are in environment/config.toml.
+mcp/NAME.toml    a saved MCP request: a tool call, a resource read (op = "resource") or a
+                 prompt get (op = "prompt"); server definitions are in
+                 environment/config.toml.
 mcp/NAME.wire    the HTTP request lines, headers and compact JSON-RPC bodies received
                  by the echo server. The dynamically assigned port and session ID are
                  replaced with <port> and <session>; the response is not included.
                  {{mcp_url}} is the local echo server URL.
 mcp/list.wire    a tools/list session over HTTP; the echo server returns a second
                  page with cursor "page-two".
+mcp/session-reuse.wire  call.toml sent twice in one kept session (a folder run or
+                 the interface keeps it): initialize and notifications/initialized
+                 once, then two tools/call requests with IDs 2 and 3.
 
 Deliberate behaviour (documented in the application's FORMAT.md). The rules
 below are design decisions, not defects: check that every capture follows them
 and report any case that does not, but do not report the rules themselves or
 ask for them to be removed.
 
-MCP: every call starts a session with initialize, notifications/initialized, then
-tools/call. The first request proposes protocol version 2025-06-18; subsequent
+MCP: a call starts a session with initialize, notifications/initialized, then
+tools/call, resources/read (params: uri only; arguments are not sent) or
+prompts/get (params: name, then arguments when the file has them). A kept
+session (session-reuse.wire) skips initialize and continues the IDs. The first
+request proposes protocol version 2025-06-18; subsequent
 requests carry the negotiated Mcp-Protocol-Version and any Mcp-Session-Id. A missing
 arguments field in a request file defaults to {}, which is sent as an object.
 
@@ -183,6 +192,14 @@ same payload. The client closes with code 1000 and waits at most 5 s for the
 peer's answer; a session deadline also closes with 1000, with a
 "deadline … reached" reason. Every string field may hold {{placeholders}},
 which are rendered when the session opens.
+
+A request with a [graphql] table (ws/13-graphql-transport-ws, ws/14-graphql-legacy)
+sends no messages: it offers its protocol first in Sec-WebSocket-Protocol, sends
+{"type":"connection_init"} (with "payload" when init_payload is set), then after
+connection_ack {"id":"1","type":"subscribe","payload":{"query","variables",
+"operationName"}} ("type":"start" for graphql-ws; empty variables and operation
+name are left out), answers ping with {"type":"pong"}, and closes with 1000 after
+the server's complete. The JSON is compact with keys in that order.
 
 import/postman/input.json                a Postman collection that was imported;
 import/postman/output/                    the request files it produced (one per request);

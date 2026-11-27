@@ -301,7 +301,10 @@ struct RawRequest {
     message: Option<String>,
     messages: Option<String>,
     server: Option<String>,
+    op: Option<String>,
     tool: Option<String>,
+    uri: Option<String>,
+    prompt: Option<String>,
     arguments: Option<String>,
     #[serde(default)]
     subprotocols: Vec<String>,
@@ -329,6 +332,21 @@ struct RawRequest {
     #[serde(default)]
     publish: Vec<RawMessage>,
     last_will: Option<RawMessage>,
+    graphql: Option<RawWsGraphql>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWsGraphql {
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    variables: String,
+    #[serde(default)]
+    operation_name: String,
+    protocol: Option<String>,
+    #[serde(default)]
+    init_payload: String,
 }
 
 pub(crate) fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
@@ -573,15 +591,42 @@ pub fn parse(text: &str) -> Result<Request, String> {
             // object is a valid draft and saving must never produce a file the
             // app cannot reopen. `sendito-mcp` rejects a non-object at send time.
             let arguments = r.arguments.unwrap_or_else(|| "{}".into());
+            let op = match r.op.as_deref() {
+                None => McpOp::Tool,
+                Some(o) => McpOp::parse(o).ok_or_else(|| {
+                    format!("unknown MCP op {o:?} (expected \"tool\", \"resource\" or \"prompt\")")
+                })?,
+            };
             Ok(Request::Mcp(McpRequest {
                 server: r.server.unwrap_or_default(),
+                op,
                 tool: r.tool.unwrap_or_default(),
+                uri: r.uri.unwrap_or_default(),
+                prompt: r.prompt.unwrap_or_default(),
                 arguments,
                 timeout_ms: r.options.timeout_ms,
                 common,
             }))
         }
+        "websocket" if r.graphql.is_some() && r.messages.is_some() => Err(
+            "a WebSocket request with [graphql] sends the GraphQL protocol: remove `messages`".into(),
+        ),
         "websocket" => Ok(Request::Ws(WebSocketRequest {
+            graphql: match r.graphql {
+                None => None,
+                Some(g) => Some(WsGraphql {
+                    query: g.query,
+                    variables: g.variables,
+                    operation_name: g.operation_name,
+                    protocol: match g.protocol.as_deref() {
+                        None => WsGraphqlProtocol::TransportWs,
+                        Some(p) => WsGraphqlProtocol::parse(p).ok_or_else(|| {
+                            format!("unknown GraphQL protocol {p:?} (expected \"graphql-transport-ws\" or \"graphql-ws\")")
+                        })?,
+                    },
+                    init_payload: g.init_payload,
+                }),
+            },
             url: r.url.unwrap_or_default(),
             headers: kvs(r.headers),
             subprotocols: r.subprotocols,
@@ -900,8 +945,19 @@ pub fn to_toml(req: &Request) -> String {
         Request::Mcp(m) => {
             w.str("kind", "mcp");
             w.str("server", &m.server);
-            w.str("tool", &m.tool);
-            if m.arguments != "{}" {
+            // The default op is left out; only the fields of the op are written.
+            match m.op {
+                McpOp::Tool => w.str("tool", &m.tool),
+                McpOp::Resource => {
+                    w.str("op", "resource");
+                    w.str("uri", &m.uri);
+                }
+                McpOp::Prompt => {
+                    w.str("op", "prompt");
+                    w.str("prompt", &m.prompt);
+                }
+            }
+            if m.op != McpOp::Resource && m.arguments != "{}" {
                 w.str("arguments", &m.arguments);
             }
             write_description(&mut w, req.description());
@@ -1003,7 +1059,7 @@ pub fn to_toml(req: &Request) -> String {
             if !wq.subprotocols.is_empty() {
                 w.str_array("subprotocols", &wq.subprotocols);
             }
-            if wq.messages != "[]" {
+            if wq.messages != "[]" && wq.graphql.is_none() {
                 w.str("messages", &wq.messages);
             }
             write_description(&mut w, req.description());
@@ -1032,6 +1088,22 @@ pub fn to_toml(req: &Request) -> String {
             });
             write_kvs(&mut w, "headers", &wq.headers);
             write_auth(&mut w, &wq.auth);
+            if let Some(g) = &wq.graphql {
+                w.table("graphql");
+                w.str("query", &g.query);
+                if !g.variables.is_empty() {
+                    w.str("variables", &g.variables);
+                }
+                if !g.operation_name.is_empty() {
+                    w.str("operation_name", &g.operation_name);
+                }
+                if g.protocol != WsGraphqlProtocol::TransportWs {
+                    w.str("protocol", g.protocol.as_str());
+                }
+                if !g.init_payload.is_empty() {
+                    w.str("init_payload", &g.init_payload);
+                }
+            }
             write_scripts(&mut w, &wq.common.scripts);
         }
     }
@@ -1344,6 +1416,7 @@ mod tests {
                 description: "Creates an *issue*.".into(),
                 ..Default::default()
             },
+            ..McpRequest::default()
         });
         let t = to_toml(&m);
         assert_eq!(parse(&t).ok(), Some(m.clone()));
@@ -1353,6 +1426,32 @@ mod tests {
         let text = to_toml(&d);
         assert_eq!(text, "kind = \"mcp\"\nserver = \"\"\ntool = \"\"\n");
         assert_eq!(parse(&text).ok(), Some(d));
+        // A resource and a prompt write their op and their own field only.
+        let r = Request::Mcp(McpRequest {
+            server: "docs".into(),
+            op: McpOp::Resource,
+            uri: "file:///{{name}}".into(),
+            ..McpRequest::default()
+        });
+        let text = to_toml(&r);
+        assert_eq!(
+            text,
+            "kind = \"mcp\"\nserver = \"docs\"\nop = \"resource\"\nuri = \"file:///{{name}}\"\n"
+        );
+        assert_eq!(parse(&text).ok(), Some(r));
+        let p = Request::Mcp(McpRequest {
+            server: "docs".into(),
+            op: McpOp::Prompt,
+            prompt: "hello".into(),
+            arguments: "{\"who\":\"ana\"}".into(),
+            ..McpRequest::default()
+        });
+        assert_eq!(parse(&to_toml(&p)).ok(), Some(p));
+        assert!(
+            parse("kind = \"mcp\"\nop = \"call\"\n")
+                .unwrap_err()
+                .contains("unknown MCP op")
+        );
         // Empty arguments omit the wire property and must survive save/load.
         for arguments in ["", "  ", " {} "] {
             let request = Request::Mcp(McpRequest {
@@ -1465,7 +1564,7 @@ mod tests {
                 tls: true,
                 cookies: Some(false),
             },
-            common: RequestCommon::default(),
+            ..Default::default()
         });
         let t = to_toml(&w);
         assert_eq!(parse(&t).ok(), Some(w.clone()));
@@ -1481,6 +1580,31 @@ mod tests {
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }
+        // A GraphQL session writes [graphql] and no messages.
+        let g = Request::Ws(WebSocketRequest {
+            url: "wss://h/graphql".into(),
+            graphql: Some(WsGraphql {
+                query: "subscription { tick }".into(),
+                variables: "{\"n\":1}".into(),
+                operation_name: "T".into(),
+                protocol: WsGraphqlProtocol::Legacy,
+                init_payload: "{\"token\":\"{{t}}\"}".into(),
+            }),
+            ..WebSocketRequest::default()
+        });
+        let t = to_toml(&g);
+        assert!(
+            t.contains("[graphql]\nquery = \"subscription { tick }\"\n"),
+            "{t}"
+        );
+        assert!(t.contains("protocol = \"graphql-ws\"\n"), "{t}");
+        assert!(!t.contains("messages"), "{t}");
+        assert_eq!(parse(&t).ok(), Some(g));
+        let both =
+            "kind = \"websocket\"\nurl = \"ws://h\"\nmessages = \"[]\"\n[graphql]\nquery = \"x\"\n";
+        assert!(parse(both).unwrap_err().contains("remove `messages`"));
+        let bad = "kind = \"websocket\"\nurl = \"ws://h\"\n[graphql]\nquery = \"x\"\nprotocol = \"apollo\"\n";
+        assert!(parse(bad).unwrap_err().contains("unknown GraphQL protocol"));
     }
 
     #[test]

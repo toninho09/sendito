@@ -28,7 +28,7 @@ pub enum SseUpdate {
     },
 }
 
-async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
+pub(super) async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(end) => tokio::time::sleep_until(end).await,
         None => std::future::pending().await,

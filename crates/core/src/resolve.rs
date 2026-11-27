@@ -519,7 +519,9 @@ pub struct ResolvedGrpc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedMcp {
     pub server: String,
-    pub tool: String,
+    pub op: McpOp,
+    /// The tool, the resource URI or the prompt name, as `op` says.
+    pub target: String,
     /// Argument JSON text as written, variables rendered.
     pub arguments: String,
     pub timeout_ms: Option<u64>,
@@ -536,6 +538,8 @@ pub struct ResolvedWs {
     pub subprotocols: Vec<String>,
     /// Messages sent right after the handshake, as a JSON document as written.
     pub messages: String,
+    /// The GraphQL operation, its variables rendered; it replaces `messages`.
+    pub graphql: Option<WsGraphql>,
     pub timeout_ms: Option<u64>,
     pub deadline_ms: Option<u64>,
     pub cookies: Option<bool>,
@@ -554,7 +558,8 @@ pub fn resolve_mcp(req: &McpRequest, scope: &Scope) -> ResolvedMcp {
     };
     ResolvedMcp {
         server: ctx.r(req.server.trim()),
-        tool: ctx.r(req.tool.trim()),
+        op: req.op,
+        target: ctx.r(req.target().trim()),
         arguments: ctx.r(&req.arguments),
         timeout_ms: req.timeout_ms,
         unresolved: ctx.unresolved,
@@ -686,6 +691,13 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
             .filter(|p| !p.is_empty())
             .collect(),
         messages: ctx.r(&req.messages),
+        graphql: req.graphql.as_ref().map(|g| WsGraphql {
+            query: ctx.r(&g.query),
+            variables: ctx.r(&g.variables),
+            operation_name: ctx.r(g.operation_name.trim()),
+            protocol: g.protocol,
+            init_payload: ctx.r(&g.init_payload),
+        }),
         timeout_ms: req.options.timeout_ms,
         deadline_ms: req.options.deadline_ms,
         cookies: req.options.cookies,
@@ -1141,15 +1153,21 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             subprotocols: w.subprotocols.iter().map(|p| s.render_masked(p)).collect(),
             messages: s.render_masked(&w.messages),
             auth: mask_auth(&w.auth, s),
+            graphql: w.graphql.as_ref().map(|g| WsGraphql {
+                query: s.render_masked(&g.query),
+                variables: s.render_masked(&g.variables),
+                operation_name: s.render_masked(&g.operation_name),
+                init_payload: s.render_masked(&g.init_payload),
+                protocol: g.protocol,
+            }),
             options: w.options.clone(),
             common: w.common.clone(),
         }),
         Request::Mcp(m) => Request::Mcp(McpRequest {
             server: s.render_masked(&m.server),
-            tool: m.tool.clone(),
+            uri: s.render_masked(&m.uri),
             arguments: s.render_masked(&m.arguments),
-            timeout_ms: m.timeout_ms,
-            common: m.common.clone(),
+            ..m.clone()
         }),
     }
 }

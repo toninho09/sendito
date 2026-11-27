@@ -176,6 +176,9 @@ impl App {
         if self.complete.is_some() && self.complete_key(key) {
             return;
         }
+        if self.tab().is_some_and(|t| t.run.is_some()) && self.run_key(key) {
+            return;
+        }
         let chord = Chord::from_event(&key);
         // The query bar closes with a new response or on another tab.
         if self.focus == Focus::RespQuery && !self.query_shown() {

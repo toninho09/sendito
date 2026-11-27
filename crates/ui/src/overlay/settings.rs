@@ -28,6 +28,7 @@ pub enum SettingId {
     SseTimeout,
     MqttTimeout,
     McpTimeout,
+    McpIdle,
     McpServers,
     MaxBody,
     CookieJar,
@@ -68,6 +69,7 @@ impl SettingId {
             SseTimeout => ("sse", "timeout_ms"),
             MqttTimeout => ("mqtt", "timeout_ms"),
             McpTimeout => ("mcp", "timeout_ms"),
+            McpIdle => ("mcp", "idle_timeout_s"),
             MaxBody => ("http", "max_body_mb"),
             CookieJar => ("http", "cookie_jar"),
             Proxy => ("http", "proxy"),
@@ -95,6 +97,7 @@ impl SettingId {
                 | SseTimeout
                 | MqttTimeout
                 | McpTimeout
+                | McpIdle
                 | MaxBody
                 | Proxy
                 | TlsCa
@@ -126,7 +129,7 @@ impl SettingId {
     pub fn min(self) -> Option<u64> {
         use SettingId::*;
         match self {
-            GrpcDeadline | WsTimeout | MqttTimeout | HistoryBody => Some(0),
+            GrpcDeadline | WsTimeout | MqttTimeout | HistoryBody | McpIdle => Some(0),
             HistoryMax | WatchInterval | StreamKept | HttpTimeout | SseTimeout | McpTimeout
             | MaxBody => Some(1),
             _ => None,
@@ -241,6 +244,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::SseTimeout, "SSE opening timeout"),
     (SettingId::MqttTimeout, "MQTT timeout"),
     (SettingId::McpTimeout, "MCP call timeout"),
+    (SettingId::McpIdle, "MCP session idle time"),
     (SettingId::McpServers, "MCP servers"),
     (SettingId::MaxBody, "Largest response body"),
     (SettingId::CookieJar, "Cookie jar"),

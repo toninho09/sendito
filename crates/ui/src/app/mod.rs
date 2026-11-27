@@ -51,6 +51,7 @@ mod mouse;
 mod mqtt;
 mod overlay_keys;
 mod query;
+mod run_tab;
 mod schema;
 mod send;
 mod settings;
@@ -239,6 +240,15 @@ pub enum Drag {
 }
 
 pub enum AppMsg {
+    /// Progress of the folder run of a run tab.
+    Run {
+        tab: u64,
+        event: Box<sendito_pipeline::suite::Event>,
+    },
+    /// The folder run of a run tab ended.
+    RunDone {
+        tab: u64,
+    },
     Http {
         tab: u64,
         outcome: Box<HttpOutcome>,
@@ -290,7 +300,7 @@ pub enum AppMsg {
         /// Open the picker; a false value only fills the tab's tool list
         /// (completion pulls it in the background).
         open_picker: bool,
-        result: Result<Vec<sendito_pipeline::mcp::Tool>, String>,
+        result: Result<sendito_pipeline::mcp::Catalog, String>,
         /// The server needs an OAuth sign-in.
         needs_login: bool,
     },
@@ -483,6 +493,8 @@ pub struct App {
     /// The last value of each `$prompt` / `$select` label (not secrets),
     /// saved in the session.
     prompt_values: BTreeMap<String, String>,
+    /// The MCP server sessions kept between calls (`[mcp] idle_timeout_s`).
+    pub mcp_pool: sendito_pipeline::mcp::Pool,
     /// The stamp of the Lua catalog files and when `tick` last read it.
     lua_stamp: (u64, Instant),
     /// Credentials typed as plain text show as typed although Hide plain
@@ -631,6 +643,7 @@ impl App {
             answers: None,
             prompt_values: session.prompt_values.clone(),
             lua_stamp,
+            mcp_pool: Default::default(),
             reveal_secrets: false,
             parked_records: None,
             parked_keymap: None,
@@ -735,12 +748,18 @@ impl App {
     }
 
     pub fn session(&self) -> Session {
+        // Run tabs are not kept: the active index counts the other tabs.
+        let active_tab = (self.tabs.iter().take(self.active + 1))
+            .filter(|t| t.run.is_none())
+            .count()
+            .saturating_sub(1);
         Session {
             active_env: self.active_env.clone(),
-            active_tab: self.active,
+            active_tab,
             tabs: self
                 .tabs
                 .iter()
+                .filter(|t| t.run.is_none())
                 .map(|t| SessionTab {
                     path: t.path.clone(),
                     name: t.name.clone(),
@@ -796,6 +815,8 @@ impl App {
         if self.reload_lua_catalog() {
             return true;
         }
+        self.mcp_pool
+            .reap(Duration::from_secs(self.project.config.mcp.idle_timeout_s));
         // Skip missed intervals while a request is running. Each watched tab
         // can continue in the background; dialogs pause automatic sends.
         let now = Instant::now();

@@ -676,6 +676,9 @@ pub(in crate::draw) fn choice_hint(f: Field) -> &'static str {
         Field::JwtAlgorithm => "HS* sign with a secret; RS256 and ES256 with a PEM key",
         Field::MqttWillQos => "delivery guarantee of the Last Will message",
         Field::MqttProtocol => "MQTT version the broker speaks",
+        Field::McpOp => "call a tool, read a resource or get a prompt",
+        Field::WsMode => "frames as written, or one GraphQL subscription",
+        Field::WsGraphqlProtocol => "the GraphQL over WebSocket protocol the server speaks",
         _ => "",
     }
 }

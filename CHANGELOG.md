@@ -139,6 +139,56 @@
 * The JSON report gives `attempts` for each request.
 * The echo test server has a `/flaky/<key>/<n>` route.
 
+### Data files
+
+* `sendito run --data <file>` runs a folder, or one request, once per row of a
+  CSV file or a JSON array of objects. A row's values are variables above the
+  folder variables and below the runtime values.
+* Each row starts with a clean runtime and its own `$response` values, and
+  does not read the history.
+* The reports name each row (`Users/login.toml[2]`). `--data` with `--repeat`
+  is refused (exit 3).
+* The folder run engine moved to `crates/pipeline/src/suite.rs`, so the TUI
+  uses the same one. Ctrl+C now stops a folder run and still writes the
+  summary and the reports.
+
+### Run tab
+
+* `R` on a folder in the tree, or `:run [folder] [--data file]`, runs every
+  request of the folder in a run tab, with the engine of `sendito run`.
+* One row per request (mark, path, status, time, assertions); the response
+  pane shows the selected row's response.
+* The run uses the active environment and its own runtime values. The send
+  key runs it again; the cancel key stops it. The session does not keep the
+  tab.
+
+### MCP resources, prompts and kept sessions
+
+* An MCP request has an `op`: `tool` (the default), `resource` (reads `uri`)
+  or `prompt` (gets `prompt` with `arguments`). The editor has an Operation
+  field; the Target field holds the tool, the URI or the prompt name.
+* F2 on the target (and `:mcptools`) lists the tools, resources, resource
+  templates and prompts of the server.
+* The interface keeps one session per server and environment, closed after
+  `[mcp] idle_timeout_s` (default 300 s), on an environment change or with
+  `:mcp restart`. A folder run of `sendito run` keeps one session per server
+  for the run.
+* New wire corpus cases `mcp/resource`, `mcp/prompt` and `mcp/session-reuse`.
+
+### GraphQL subscriptions over WebSocket
+
+* A WebSocket request with a `[graphql]` table runs one GraphQL operation over
+  `graphql-transport-ws` (the default) or the legacy `graphql-ws`: query,
+  variables, operation name and an optional `init_payload`. A file with
+  `[graphql]` and `messages` is refused.
+* The editor's Messages tab has a Send choice (Messages or GraphQL) and reuses
+  the GraphQL body editors and completion; `:graphqlschema` asks the HTTP
+  equivalent of the URL.
+* Scripts read the last result's payload. A GraphQL `error` fails the session
+  (`sendito run` exits 2).
+* The WebSocket test server has a `/graphql` route; new wire corpus cases
+  `ws/13-graphql-transport-ws` and `ws/14-graphql-legacy`.
+
 ### Shell completions and man page
 
 * `sendito completions <shell>` prints a completion script for bash, zsh,

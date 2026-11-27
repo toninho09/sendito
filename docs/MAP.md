@@ -27,7 +27,7 @@ the file, so you can jump straight to it.
 | `sendito-grpc` | `crates/grpc/` | Dynamic gRPC calls and schema loading | `crates/grpc/src/lib.rs::start_call` |
 | `sendito-ws` | `crates/ws/` | WebSocket handshake (`lib.rs`), proxy tunnel (`proxy.rs`), frames and close (`session.rs`) | `crates/ws/src/lib.rs::open` |
 | `sendito-mqtt` | `crates/mqtt/` | MQTT v3.1.1 and v5 sessions, subscriptions, publishes, Last Will | `crates/mqtt/src/lib.rs::open` |
-| `sendito-mcp` | `crates/mcp/` | JSON-RPC client, transports, MCP OAuth | `crates/mcp/src/lib.rs::call_tool` |
+| `sendito-mcp` | `crates/mcp/` | JSON-RPC client, transports, kept sessions, MCP OAuth | `crates/mcp/src/lib.rs::perform` |
 | `sendito-store` | `crates/store/` | Everything on disk: collection, config, env, history, cookies, session, themes | `crates/store/src/lib.rs` |
 | `sendito-import` | `crates/import/` | Postman, Insomnia, Bruno, curl, `.http` | `crates/import/src/lib.rs` |
 | `sendito-pipeline` | `crates/pipeline/` | The send pipeline the TUI and `sendito run` share (`runner/`: one module per protocol plus project, scope, OAuth and history), the response document model, and the protocol types the TUI reads (`http`, `grpc`, `ws`, `mcp` re-exports) | `crates/pipeline/src/runner/http.rs::exec_http` |
@@ -148,7 +148,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 |---|---|---|
 | Saved request and resolution | `crates/core/src/model.rs::SseRequest`, `crates/core/src/resolve.rs::resolve_sse` | `crates/store/src/request_file.rs`; `tests/sse.rs` |
 | Authenticated live session | `crates/pipeline/src/runner/sse.rs::exec_sse` | Shared HTTP auth in `crates/pipeline/src/runner/http.rs`; `tests/sse_pipeline.rs` |
-| Headless output and report | `src/cli/sse.rs::run_sse` | `src/cli/run.rs`; `tests/sse.rs` |
+| Headless output and report | `src/cli/sse.rs::run_sse` → `crates/pipeline/src/suite.rs::run_sse` | `src/cli/run.rs`; `tests/sse.rs` |
 | Live UI response | `crates/ui/src/app/sse.rs::App::on_sse` | `crates/ui/src/tab/response.rs`; `crates/ui/tests/sse.rs` |
 | Echo routes | `crates/testkit/src/sse_echo.rs` | `crates/testkit/src/http_echo.rs`; `tests/corpus/sse.rs` |
 | Screens and recordings | `crates/ui/tests/common/sse.rs` | `crates/ui/tests/snapshots.rs`, `crates/ui/tests/media.rs` |
@@ -161,7 +161,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 | Saved request and resolution | `crates/core/src/model.rs::MqttRequest`, `crates/core/src/resolve.rs::resolve_mqtt` | `crates/core/src/resolve.rs::mqtt_target`; `crates/store/src/request_file.rs`; `tests/mqtt.rs` |
 | Folder headers note | `crates/core/src/inherit.rs::ignored_headers_note` | `src/cli/run.rs`, `crates/ui/src/app/send.rs` |
 | Live session | `crates/pipeline/src/runner/mqtt.rs::exec_mqtt` | `MqttControl`, `MqttUpdate`; `tests/mqtt_pipeline.rs` |
-| Headless output and report | `src/cli/mqtt.rs::run_mqtt` | `src/cli/run.rs`; `tests/mqtt.rs` |
+| Headless output and report | `src/cli/mqtt.rs::run_mqtt` → `crates/pipeline/src/suite.rs::run_mqtt` | `src/cli/run.rs`; `tests/mqtt.rs` |
 | Editor | `crates/ui/src/tab/editors.rs::Editors` (`Kind::Mqtt`, `MQTT_TABS`) | `crates/ui/src/tab/fields.rs` |
 | Live UI response and live publish | `crates/ui/src/app/mqtt.rs::App::on_mqtt` | `crates/ui/src/app/mqtt.rs::App::mqtt_publish_selected`; `crates/ui/src/tab/response.rs::MqttMsg`; `crates/ui/tests/mqtt.rs` |
 | Test broker (TCP and TLS) | `crates/testkit/src/mqtt_broker.rs::MqttBroker` | `tests/corpus/mqtt.rs` |
@@ -175,6 +175,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 | Message document (strings and `{"binary": …}`) | `crates/ws/src/lib.rs::parse_messages` | Validated in the editor, tolerated as half-typed |
 | Proxy tunnelling (`CONNECT`, `https://` proxy over TLS) | `crates/ws/src/proxy.rs::WsProxy` | Reuses `sendito_http::ProxySpec` and `tls_config` |
 | UI session control (`Ctrl+W d`, `Ctrl+W x`) | `crates/pipeline/src/runner/::{WsControl, WsUpdate}` | Response summary via `ws_summary` |
+| GraphQL subscriptions (`[graphql]`: `graphql-transport-ws`, legacy `graphql-ws`) | `crates/pipeline/src/runner/graphql_ws.rs::GraphqlWs`, driven by `crates/pipeline/src/runner/ws.rs::exec_ws` | Model `crates/core/src/model.rs::WsGraphql`; editor mode `Field::WsMode`; schema via `crates/pipeline/src/runner/ws.rs::ws_graphql_http`; echo route `/graphql` in `crates/testkit/src/ws_echo.rs`; `tests/integration.rs::cli_ws_graphql_subscription_runs_to_complete` |
 
 Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 `tests/corpus/collection/ws/`, `tests/integration.rs` (cookie jar).
@@ -183,12 +184,13 @@ Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 
 | What | Entry point | Supporting |
 |---|---|---|
-| Session lifecycle (spawn/connect, initialize, work, drop) | `crates/mcp/src/lib.rs::call_tool`, `list_tools` | One timeout covers the whole call |
+| Session lifecycle (spawn/connect, initialize, work, drop) | `crates/mcp/src/lib.rs::perform`, `list_catalog`, `list_tools` | One timeout covers the whole call; `Op` is a tool call, a resource read or a prompt get |
+| Kept sessions (one per key, idle reap, one retry on a broken session) | `crates/mcp/src/pool.rs::Pool` | `crates/pipeline/src/runner/mcp.rs::McpRunInfo` (`pool`); the app's `mcp_pool` (`crates/ui/src/app/mod.rs`, reaped in `tick`); `crates/pipeline/src/suite.rs::run` |
 | Transport selection | `crates/mcp/src/lib.rs::Transport` | `crates/pipeline/src/runner/mcp.rs::mcp_transport` |
 | stdio transport (NDJSON, stderr to the log) | `crates/mcp/src/stdio.rs` | Child killed on drop |
 | Streamable HTTP transport (JSON and SSE bodies) | `crates/mcp/src/http.rs` | Session-id and protocol-version headers |
 | JSON-RPC messages, protocol constants | `crates/mcp/src/protocol.rs` | `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS` |
-| Tool discovery and argument template | `crates/mcp/src/lib.rs::Tool` | `:mcptools`, F2 in the UI |
+| Discovery (tools, resources, templates, prompts) and argument template | `crates/mcp/src/lib.rs::Catalog` | `:mcptools`, F2 in the UI; picker rows in `crates/ui/src/app/ingest.rs::mcp_items` |
 | Servers editor (`Ctrl+W S`, `:mcpedit`): list and form | `crates/ui/src/records.rs::RecordEditor` (`open_mcp_editor`, `open_mcp_server_editor`, `save_records`) | Fields per kind in `crates/ui/src/records.rs::Record`; drawing in `crates/ui/src/draw/overlay/records.rs` |
 | Connection test (`Ctrl+T` in the servers editor) | `crates/ui/src/app/mcp.rs::start_mcp_test` | Answer in `AppMsg::McpTest` (`crates/ui/src/app/ingest.rs`) |
 
@@ -253,6 +255,7 @@ the module for the surface you are changing.
 | History panel | `crates/ui/src/app/history.rs` |
 | Tree operations (new, rename, duplicate, delete, move) | `crates/ui/src/app/tree_ops.rs` |
 | Folder settings: the cache, the folder tab (open, save, restore), what a tab inherits | `crates/ui/src/app/folders.rs` |
+| Run tab: `R` in the tree, `:run [folder] [--data file]`, the rows and the selected response | `crates/ui/src/app/run_tab.rs`, `crates/ui/src/tab/run.rs::RunView`, `crates/ui/src/draw/run_tab.rs`; the engine in `crates/pipeline/src/suite.rs`; `crates/ui/tests/flows.rs::flow_run_tab_runs_a_folder_once_per_row` |
 | Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
 | Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
 | Import, export, body actions | `crates/ui/src/app/import_export.rs` |
@@ -321,8 +324,9 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | `sendito [PATH]` / `--print-keymap` | `src/main.rs::main` → `crates/ui/src/lib.rs::run` |
 | `sendito init` | `crates/store/src/init.rs` |
-| `sendito run <request>` | `src/cli/run.rs::run_one` → `crates/pipeline/src/runner/` |
-| `sendito run <folder>` (tree order, variables carried forward) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) |
+| `sendito run <request>` | `src/cli/run.rs::run` → `crates/pipeline/src/runner/` |
+| `sendito run <folder>` (tree order, variables carried forward) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) → `crates/pipeline/src/suite.rs::run` |
+| Folder run engine (retry, repeat, delay, fail-fast, data rows, cancel), shared with the TUI | `crates/pipeline/src/suite.rs` (`Entry`, `Event`, `Cancel`, `load_data`) | `tests/integration.rs::cli_data_runs_the_folder_once_per_row` |
 | Folder run reports (JSON, JUnit, TAP, HTML) | `src/cli/report.rs::SuiteReport` |
 | `sendito curl` / `sendito http` | `crates/import/src/curl.rs::export`, `crates/import/src/http_file.rs::export` |
 | `sendito har` | `src/cli/convert.rs::har` → `crates/import/src/har.rs::export` |

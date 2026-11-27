@@ -597,7 +597,13 @@ async fn run_ws_case(e: &Env, p: &Project, file: &str, failures: &mut Vec<String
         .collect();
     // The client closes with 1000, so the last received frame is that close.
     let body: Vec<(String, Vec<u8>)> = sent.iter().filter(|(k, _)| k != "close").cloned().collect();
-    if body != expected {
+    // A GraphQL session sends the protocol messages; the golden holds them.
+    if let Some(g) = &req.graphql {
+        let want = format!("Sec-WebSocket-Protocol: {}", g.protocol.as_str());
+        if !head.contains(&want) {
+            failures.push(format!("{case}: {want:?} not offered"));
+        }
+    } else if body != expected {
         failures.push(format!(
             "{case}: frames differ: sent {body:?}, expected {expected:?}"
         ));
@@ -983,6 +989,48 @@ async fn mcp_list_corpus() {
         "mcp",
         "list",
         &normalize_mcp(&caps, &echo.url()),
+        &mut failures,
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A kept session (the pool of a folder run and of the interface): the
+/// second call skips `initialize`, and a new environment opens a new session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mcp_session_reuse_corpus() {
+    let e = setup().await;
+    let p = project(&e);
+    let rel = "mcp/call.toml";
+    let Request::Mcp(req) = p.coll.load(rel).must() else {
+        panic!("{rel} is not MCP");
+    };
+    let mut info = runner::McpRunInfo::of(&p);
+    info.pool = Some(sendito_mcp::Pool::default());
+    let start = e.mcp.captured().len();
+    for env in ["corpus", "corpus", "other"] {
+        let (scope, _) = runner::build_scope(&p.envs, Some("corpus"), &Default::default());
+        let mut ctx = ctx(&e, &p, rel);
+        ctx.env = Some(env.to_string());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        runner::exec_mcp(&ctx, &req, scope, vec![], &info, tx).await;
+        let mut error = Some("no Done update".to_string());
+        while let Ok(u) = rx.try_recv() {
+            if let runner::McpUpdate::Done { error: err, .. } = u {
+                error = err;
+            }
+        }
+        assert_eq!(error, None, "{env}");
+    }
+    let caps = e.mcp.captured();
+    let caps = &caps[start..];
+    // initialize, initialized, call, call; then a new session for `other`.
+    assert_eq!(caps.len(), 7);
+    let dump = normalize_mcp(&caps[..4], &e.mcp.url());
+    let mut failures = Vec::new();
+    check(
+        "mcp",
+        "session-reuse",
+        &mask_secrets(dump, &e.secrets),
         &mut failures,
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));

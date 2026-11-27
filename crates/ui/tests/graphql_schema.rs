@@ -111,10 +111,6 @@ fn graphql_schema_command_requires_graphql_body() {
     let mut h = Harness::new(120, 40);
     h.app.run_command("new");
     h.app.run_command("graphqlschema");
-    assert!(
-        h.app
-            .status
-            .as_ref()
-            .is_some_and(|(text, _, _)| text == "GraphQL schema requires an HTTP GraphQL body")
-    );
+    assert!(h.app.status.as_ref().is_some_and(|(text, _, _)| text
+        == "GraphQL schema requires a GraphQL body or a GraphQL WebSocket session"));
 }

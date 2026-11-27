@@ -3,7 +3,7 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
 ╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the keys)                                                                                                                              line 1/259 · ↑↓ PgUp PgDn   ┃
+│ Search ▍  (type to filter the keys)                                                                                                                              line 1/262 · ↑↓ PgUp PgDn   ┃
 │                                                                                                                                                                                              ┃
 │ All keys, including any you changed in the config.                                           │   Ctrl+W +                     Give the request editor more height                            ┃
 │ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   Ctrl+W -                     Give the response more height                                  ┃
@@ -18,44 +18,44 @@ expression: screen
 │   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   r, F2                        Rename the selected item                                       ┃
 │   Ctrl+W g                     Open a new unsaved gRPC request tab                           │   s                            Edit the settings of the selected folder (headers, auth,       ┃
 │   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │                                variables and scripts its requests inherit)                    ┃
-│   Ctrl+W E                     Open a new unsaved SSE request tab                            │   d                            Duplicate the selected item                                    ┃
-│   Ctrl+W M                     Open a new unsaved MQTT request tab                           │   Delete, x                    Delete the selected item (asks first)                          ┃
-│   Ctrl+W c                     Close the current tab                                         │   m                            Move the selected item to another folder                       ┃
-│   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │   /                            Filter the tree by name                                        ┃
-│   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │   f                            Add or remove the request from the favorites                   │
-│   Ctrl+W P                     Pin or unpin the current tab (pinned tabs stay first)         │   Up                           Move up                                                        │
-│   Ctrl+W F                     Add or remove the request from the favorites                  │   Down                         Move down                                                      │
-│   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   PageUp                       Page up                                                        │
-│   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   PageDown                     Page down                                                      │
-│   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   Home                         Go to the first line                                           │
-│   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   End                          Go to the last line                                            │
-│   Tab, Ctrl+W w                Move focus to the next field or pane                          │                                                                                               │
-│   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │ ── Text editing (conventional mode) ──                                                        │
-│   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Ctrl+Z                       Undo                                                           │
-│   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+Y                       Redo                                                           │
-│   Alt+1                        Jump to tab 1 of the focused pane                             │   Ctrl+A                       Select all text                                                │
-│   Alt+2                        Jump to tab 2 of the focused pane                             │   Ctrl+C                       Copy selection (whole field if nothing selected)               │
-│   Alt+3                        Jump to tab 3 of the focused pane                             │   Ctrl+X                       Cut selection                                                  │
-│   Alt+4                        Jump to tab 4 of the focused pane                             │   Ctrl+V                       Paste                                                          │
-│   Alt+5                        Jump to tab 5 of the focused pane                             │                                                                                               │
-│   Alt+6                        Jump to tab 6 of the focused pane                             │ ── Params / headers / form tables ──                                                          │
-│   Ctrl+P                       Open the command palette                                      │   Enter                        Edit the next cell (name → value → next row)                   │
-│   F1, Ctrl+W ?                 Show all keys and actions                                     │   Ctrl+T                       Enable or disable the row                                      │
-│   Ctrl+W ,                     Open settings                                                 │   Ctrl+D                       Delete the row                                                 │
-│   F4, Ctrl+W v                 Choose the active environment                                 │                                                                                               │
-│   Ctrl+W V                     Edit environments and their variables                         │ ── Response viewer ──                                                                         │
-│   Ctrl+W S                     Edit the MCP servers in the config file chosen in Settings    │   Up                           Move up                                                        │
-│   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   Down                         Move down                                                      │
-│   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   PageUp                       Page up                                                        │
-│   Ctrl+W i                     Import a collection or a curl command                         │   PageDown                     Page down                                                      │
-│   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   Home, Ctrl+Home              Go to the first line                                           │
-│   Ctrl+W f                     Pretty-print the JSON body / message                          │   End, Ctrl+End                Go to the last line                                            │
-│   Ctrl+W O                     Edit the focused text in $VISUAL or $EDITOR                   │   Left                         Scroll left                                                    │
-│   Ctrl+W K                     Move the plain value of the focused credential field into an  │   Right                        Scroll right                                                   │
-│                                environment secret                                            │   p                            Body view: pretty (formatted and highlighted)                  │
-│   Ctrl+W *                     Show or hide credentials typed as plain text (with Hide       │   r                            Body view: raw text                                            │
-│                                plain secrets on)                                             │   x                            Body view: hex dump                                            │
-│   Ctrl+W z                     Maximize or restore the focused pane                          │   /, Ctrl+F                    Search in the response                                         │
-│   Ctrl+W >                     Widen the sidebar                                             │   j                            Filter the response body with a jq expression                  │
-│   Ctrl+W <                     Narrow the sidebar                                            │   f                            Filter the body to the JSON value at the cursor                │
+│   Ctrl+W E                     Open a new unsaved SSE request tab                            │   R                            Run every request of the selected folder in a run tab          ┃
+│   Ctrl+W M                     Open a new unsaved MQTT request tab                           │   d                            Duplicate the selected item                                    ┃
+│   Ctrl+W c                     Close the current tab                                         │   Delete, x                    Delete the selected item (asks first)                          ┃
+│   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │   m                            Move the selected item to another folder                       ┃
+│   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │   /                            Filter the tree by name                                        │
+│   Ctrl+W P                     Pin or unpin the current tab (pinned tabs stay first)         │   f                            Add or remove the request from the favorites                   │
+│   Ctrl+W F                     Add or remove the request from the favorites                  │   Up                           Move up                                                        │
+│   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   Down                         Move down                                                      │
+│   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   PageUp                       Page up                                                        │
+│   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   PageDown                     Page down                                                      │
+│   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │   Home                         Go to the first line                                           │
+│   Tab, Ctrl+W w                Move focus to the next field or pane                          │   End                          Go to the last line                                            │
+│   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │                                                                                               │
+│   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │ ── Text editing (conventional mode) ──                                                        │
+│   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+Z                       Undo                                                           │
+│   Alt+1                        Jump to tab 1 of the focused pane                             │   Ctrl+Y                       Redo                                                           │
+│   Alt+2                        Jump to tab 2 of the focused pane                             │   Ctrl+A                       Select all text                                                │
+│   Alt+3                        Jump to tab 3 of the focused pane                             │   Ctrl+C                       Copy selection (whole field if nothing selected)               │
+│   Alt+4                        Jump to tab 4 of the focused pane                             │   Ctrl+X                       Cut selection                                                  │
+│   Alt+5                        Jump to tab 5 of the focused pane                             │   Ctrl+V                       Paste                                                          │
+│   Alt+6                        Jump to tab 6 of the focused pane                             │                                                                                               │
+│   Ctrl+P                       Open the command palette                                      │ ── Params / headers / form tables ──                                                          │
+│   F1, Ctrl+W ?                 Show all keys and actions                                     │   Enter                        Edit the next cell (name → value → next row)                   │
+│   Ctrl+W ,                     Open settings                                                 │   Ctrl+T                       Enable or disable the row                                      │
+│   F4, Ctrl+W v                 Choose the active environment                                 │   Ctrl+D                       Delete the row                                                 │
+│   Ctrl+W V                     Edit environments and their variables                         │                                                                                               │
+│   Ctrl+W S                     Edit the MCP servers in the config file chosen in Settings    │ ── Response viewer ──                                                                         │
+│   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   Up                           Move up                                                        │
+│   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   Down                         Move down                                                      │
+│   Ctrl+W i                     Import a collection or a curl command                         │   PageUp                       Page up                                                        │
+│   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   PageDown                     Page down                                                      │
+│   Ctrl+W f                     Pretty-print the JSON body / message                          │   Home, Ctrl+Home              Go to the first line                                           │
+│   Ctrl+W O                     Edit the focused text in $VISUAL or $EDITOR                   │   End, Ctrl+End                Go to the last line                                            │
+│   Ctrl+W K                     Move the plain value of the focused credential field into an  │   Left                         Scroll left                                                    │
+│                                environment secret                                            │   Right                        Scroll right                                                   │
+│   Ctrl+W *                     Show or hide credentials typed as plain text (with Hide       │   p                            Body view: pretty (formatted and highlighted)                  │
+│                                plain secrets on)                                             │   r                            Body view: raw text                                            │
+│   Ctrl+W z                     Maximize or restore the focused pane                          │   x                            Body view: hex dump                                            │
+│   Ctrl+W >                     Widen the sidebar                                             │   /, Ctrl+F                    Search in the response                                         │
+│   Ctrl+W <                     Narrow the sidebar                                            │   j                            Filter the response body with a jq expression                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

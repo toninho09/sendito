@@ -97,10 +97,16 @@ allows `accept` as a transport header.
   Signature V4 out.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
-* MCP supports tools only; resources and prompts are not implemented. Each list
-  or call opens a separate session. The legacy HTTP+SSE transport and the
-  server-initiated Streamable HTTP GET stream are not supported. Image and other
-  non-text tool content is shown as JSON, not decoded into a media viewer.
+* MCP calls tools, reads resources and gets prompts. A resource URI template
+  is not expanded: the picker puts it in the request as written, and you edit
+  it. Resource subscriptions, completion (`completion/complete`), sampling and
+  roots are not implemented. The legacy HTTP+SSE transport and the
+  server-initiated Streamable HTTP GET stream are not supported. Image and
+  other non-text content (a resource `blob` too) is shown as JSON, not decoded
+  into a media viewer. A kept session is closed only when it is idle, on an
+  environment change, on `:mcp restart` or at exit: a server whose
+  configuration changed keeps its old session until then, unless the change
+  alters its command, URL or headers.
 * An MCP `arguments` value that is not a JSON object is kept as file text and only
   rejected when the call is sent (so a half-typed object can be saved and
   reopened); the editor shows `✓ JSON` / `✗ JSON` while typing.
@@ -188,10 +194,13 @@ match an SSE opening-only timeout. SSE has no watch mode or saved response examp
 
 ## GraphQL body limits
 
-GraphQL currently sends operations through HTTP POST or the method in the file.
-Query completion uses a heuristic parser, not a GraphQL AST. Subscriptions, GET transport,
-persisted queries, SDL files, a schema tab and schema-based variable validation
-are not implemented.
+GraphQL sends operations through HTTP POST or the method in the file, and
+subscriptions through a WebSocket request with `[graphql]` (one operation per
+session, `graphql-transport-ws` or the legacy `graphql-ws`). Query completion
+uses a heuristic parser, not a GraphQL AST. GET transport, persisted queries,
+SDL files, a schema tab, schema-based variable validation, several operations
+in one WebSocket session and subscriptions over SSE (`graphql-sse`) are not
+implemented.
 
 ## MQTT limits
 
@@ -211,4 +220,4 @@ the 0.102 verifier is never used. `deny.toml` ignores those advisories until
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  54 HTTP, 15 gRPC, 14 WebSocket and 7 MCP cases.

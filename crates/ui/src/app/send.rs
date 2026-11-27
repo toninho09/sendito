@@ -115,7 +115,7 @@ impl App {
             return;
         }
         if let Request::Mcp(m) = &req
-            && (m.server.trim().is_empty() || m.tool.trim().is_empty())
+            && (m.server.trim().is_empty() || m.target().trim().is_empty())
         {
             self.focus = Focus::ReqTabs;
             self.set_status(
@@ -513,7 +513,10 @@ impl App {
                     return;
                 }
                 let ctx = self.run_ctx(name, path);
-                let info = runner::McpRunInfo::of(&self.project);
+                let mut info = runner::McpRunInfo::of(&self.project);
+                if self.project.config.mcp.idle_timeout_s > 0 {
+                    info.pool = Some(self.mcp_pool.clone());
+                }
                 let (utx, mut urx) = mpsc::unbounded_channel::<runner::McpUpdate>();
                 let fwd = tx.clone();
                 let task = self.rt.spawn(async move {

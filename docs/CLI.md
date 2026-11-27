@@ -74,6 +74,7 @@ Sends a request without the UI, or runs every request in a folder.
 | `--retry <n>` | Send a request again up to `n` times after an error or a failed assertion; replaces each request's `[options] retry` |
 | `--repeat <n>` | Run the folder `n` times in a row with one variable scope (folder runs only; default 1) |
 | `--delay <ms>` | Wait between two requests (folder runs only; default 0) |
+| `--data <file>` | Run once per row of a data file: CSV with the variable names in the first line, or a JSON array of objects (`.json`). Not with `--repeat` |
 | `--prompt <label>=<value>` | The value of a `$prompt` or `$select` with that label; repeat it for several labels. Without it, a terminal asks; with no terminal the request is not sent (exit 3) |
 
 One request: the response body goes to **stdout**, and the status, timing,
@@ -111,6 +112,17 @@ again when it does not pass, after `retry_interval_ms`. A folder run prints a
 response of the last attempt only, or of the first attempt that passes.
 `--repeat 3` runs the folder three times and names each round in the
 report (`Users/list.toml#2`); `--fail-fast` stops all rounds.
+
+**Data files.** `--data users.csv` runs the folder once per row. The first
+line of a CSV file gives the variable names; a `.json` file is an array of
+objects, and a value that is not a string becomes its JSON text. A row's
+values are variables above the folder variables and below the runtime values.
+Each row starts with a clean runtime and its own `$response` values, and does
+not read the history: a login in row 1 does not serve row 2. The report names
+each row (`Users/login.toml[2]`). `--data` also runs a single request once per
+row, with the folder output. It cannot be used with `--repeat` (exit 3).
+Ctrl+C stops a folder run: the request in flight ends, and the summary and
+the reports are written.
 
 ### Report formats
 

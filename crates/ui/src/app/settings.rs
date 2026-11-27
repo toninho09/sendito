@@ -35,6 +35,9 @@ pub fn setting_note(id: SettingId) -> &'static str {
         SettingId::McpTimeout => {
             "How long an MCP call (handshake included) may take when the request sets none, e.g. 30 s."
         }
+        SettingId::McpIdle => {
+            "A server session stays open between calls and closes after this many idle seconds; 0 = a new session per call."
+        }
         SettingId::McpServers => {
             "The servers of [mcp.servers] in the file chosen above, as Ctrl+W S shows them."
         }
@@ -96,6 +99,8 @@ impl App {
             SettingId::CookieJar => on(c.http.cookie_jar),
             SettingId::Hints => c.ui.hints.clone(),
             SettingId::WatchInterval => format!("{raw} s"),
+            SettingId::McpIdle if raw == "0" => "none".into(),
+            SettingId::McpIdle => format!("{raw} s"),
             SettingId::MaxBody => format!("{raw} MB"),
             SettingId::HistoryBody if raw == "0" => "none".into(),
             SettingId::HistoryBody => format!("{raw} KB"),
@@ -146,6 +151,7 @@ impl App {
             SettingId::SseTimeout => format_ms(c.sse.timeout_ms),
             SettingId::MqttTimeout => format_ms(c.mqtt.timeout_ms),
             SettingId::McpTimeout => format_ms(c.mcp.timeout_ms),
+            SettingId::McpIdle => c.mcp.idle_timeout_s.to_string(),
             SettingId::MaxBody => c.http.max_body_mb.to_string(),
             SettingId::Proxy => opt(&c.http.proxy),
             SettingId::TlsCa => opt(&c.http.tls.ca),
@@ -276,6 +282,10 @@ impl App {
             SettingId::SseTimeout => c.sse.timeout_ms = num,
             SettingId::MqttTimeout => c.mqtt.timeout_ms = num,
             SettingId::McpTimeout => c.mcp.timeout_ms = num,
+            SettingId::McpIdle => {
+                c.mcp.idle_timeout_s = num;
+                self.mcp_pool.clear();
+            }
             SettingId::MaxBody => c.http.max_body_mb = num,
             SettingId::Proxy => c.http.proxy = s,
             SettingId::TlsCa => c.http.tls.ca = s,

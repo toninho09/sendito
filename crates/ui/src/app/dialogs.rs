@@ -210,22 +210,43 @@ impl App {
             }
             PickAction::McpTool => {
                 if let Some(t) = self.tab_mut() {
+                    let items = super::ingest::mcp_items(&t.mcp);
+                    let op = items.get(index).map(|(op, _, _)| *op).unwrap_or_default();
+                    t.ed.mcp_op = op;
                     t.ed.mcp_tool.set_text(item);
                     let args = t.ed.message.text();
                     let unchanged =
                         matches!(t.saved(), Some(Request::Mcp(saved)) if saved.arguments == args);
                     // Arguments that are still another tool's template are
                     // replaced too: they were not typed by the user.
-                    let a_template = t.mcp_tools.iter().any(|tl| {
+                    let a_template = t.mcp.tools.iter().any(|tl| {
                         sendito_core::json_schema::object_template(&tl.input_schema) == args
                     });
-                    if ((unchanged && (args.trim().is_empty() || args.trim() == "{}"))
-                        || a_template)
-                        && let Some(tool) = t.mcp_tools.get(index)
+                    let blank = unchanged && (args.trim().is_empty() || args.trim() == "{}");
+                    if (blank || a_template)
+                        && op == McpOp::Tool
+                        && let Some(tool) = t.mcp.tools.get(index)
                     {
                         let template =
                             sendito_core::json_schema::object_template(&tool.input_schema);
                         t.ed.message.replace_all(&template);
+                    }
+                    // A prompt's arguments start as an object of its argument names.
+                    let first_prompt = items.len() - t.mcp.prompts.len();
+                    if blank
+                        && op == McpOp::Prompt
+                        && let Some(p) = t.mcp.prompts.get(index.saturating_sub(first_prompt))
+                        && !p.arguments.is_empty()
+                    {
+                        let object: serde_json::Map<String, serde_json::Value> = p
+                            .arguments
+                            .iter()
+                            .map(|(name, _)| {
+                                (name.clone(), serde_json::Value::String(String::new()))
+                            })
+                            .collect();
+                        let text = serde_json::to_string_pretty(&object).unwrap_or_default();
+                        t.ed.message.replace_all(&text);
                     }
                 }
                 self.changed();

@@ -85,6 +85,10 @@ pub(crate) enum Cmd {
         /// placeholder is unresolved.
         #[arg(long = "prompt", value_name = "LABEL=VALUE", value_parser = parse_prompt)]
         prompts: Vec<(String, String)>,
+        /// Run once per row of this data file: CSV with the variable names
+        /// in the first line, or a JSON array of objects (`.json`).
+        #[arg(long, value_name = "FILE")]
+        data: Option<PathBuf>,
     },
     /// Print a request as a curl command (secret variables stay as placeholders).
     Curl {
@@ -230,6 +234,8 @@ pub(crate) struct RunFlags {
     pub(crate) delay_ms: u64,
     /// `--prompt LABEL=VALUE` answers.
     pub(crate) prompts: Vec<(String, String)>,
+    /// `--data FILE`: one run per row.
+    pub(crate) data: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]

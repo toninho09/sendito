@@ -117,11 +117,15 @@ async fn deps_phase_inner(
 }
 
 /// The kept response of `rel` that is not older than `max_age`: from this
-/// session, else from the history of the same environment.
+/// session, else (when `ctx.read_history`) from the history of the same
+/// environment.
 fn kept(ctx: &RunCtx, rel: &str, max_age: Option<Duration>) -> Option<(Cached, String)> {
     let fresh = |at: SystemTime| max_age.is_none_or(|max| at.elapsed().is_ok_and(|age| age <= max));
     if let Some(c) = ctx.responses.get(&ctx.env, rel).filter(|c| fresh(c.at)) {
         return Some((c, "the response of this session".into()));
+    }
+    if !ctx.read_history {
+        return None;
     }
     let path = history::history_path(&ctx.root);
     let entry = history::load(&path, usize::MAX)

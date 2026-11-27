@@ -80,6 +80,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `tree_new_folder` | `N` | `N` | New folder in the selected folder |
 | `tree_rename` | `r`, `F2` | `r`, `F2` | Rename the selected item |
 | `tree_folder_settings` | `s` | `s` | Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit) |
+| `tree_run_folder` | `R` | `R` | Run every request of the selected folder in a run tab |
 | `tree_duplicate` | `d` | `d` | Duplicate the selected item |
 | `tree_delete` | `Delete`, `x` | `Delete`, `x` | Delete the selected item (asks first) |
 | `tree_move` | `m` | `m` | Move the selected item to another folder |
@@ -236,7 +237,8 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:mcpservers edit` | Edit the MCP servers in the config file chosen in Settings (Ctrl+W S) |
 | `:mcpadd <name>` | Add an MCP server to the config file chosen in Settings (asks for the URL or command) |
 | `:mcpedit [name]` | Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name) |
-| `:mcptools` | Discover and choose an MCP tool |
+| `:mcptools` | Discover and choose an MCP tool, resource or prompt |
+| `:mcp restart` | Close the kept MCP server sessions; the next call opens a new one |
 | `:method` | Choose the HTTP method |
 | `:bodytype` | Choose the body type of the HTTP request |
 | `:authtype` | Choose the auth type of the request |
@@ -255,6 +257,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:cookies` | Manage the active environment's cookies: delete one or clear all (values masked) |
 | `:cookies clear` | Clear the active environment's cookies |
 | `:cookies delete <number>` | Delete one cookie from the active environment |
+| `:run [folder] [--data file]` | Run every request of a folder in a run tab (. is the collection root; the data file runs it once per row) |
 | `:history` | Show history |
 | `:clearhistory` | Delete all history entries |
 | `:format` | Pretty-print the JSON body |

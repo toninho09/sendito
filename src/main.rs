@@ -6,7 +6,6 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use sendito_core::script::RUNTIME_LAYER;
 use sendito_core::vars::Scope;
 use sendito_core::{HttpRequest, Request};
 use sendito_pipeline::human_size;
@@ -49,6 +48,7 @@ fn main() -> ExitCode {
             repeat,
             delay_ms,
             prompts,
+            data,
         }) => {
             let flags = RunFlags {
                 env,
@@ -63,6 +63,7 @@ fn main() -> ExitCode {
                 repeat,
                 delay_ms,
                 prompts,
+                data,
             };
             rt.block_on(run_entry(&request, flags))
         }

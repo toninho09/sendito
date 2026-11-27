@@ -24,7 +24,7 @@ pub(super) fn history_entry(
             Request::Ws(w) => w.url.clone(),
             Request::Sse(s) => s.url.clone(),
             Request::Mqtt(m) => m.url.clone(),
-            Request::Mcp(m) => format!("{}/{}", m.server, m.tool),
+            Request::Mcp(m) => format!("{}/{}", m.server, m.target()),
         },
         request: sendito_store::request_file::to_toml(template),
         status,

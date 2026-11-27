@@ -191,6 +191,7 @@ pub fn validate_rel(rel: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct Collection {
     pub root: PathBuf,
     pub ignore: Vec<String>,

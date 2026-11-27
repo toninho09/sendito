@@ -6,6 +6,9 @@ impl App {
     // ----- actions ------------------------------------------------------
 
     pub fn dispatch(&mut self, a: Action) {
+        if self.run_action(a) {
+            return;
+        }
         match a {
             Action::Send => {
                 if self.focus == Focus::Sidebar && self.sidebar_mode == SidebarMode::History {
@@ -96,6 +99,7 @@ impl App {
             Action::TreeNewFolder => self.prompt_new_folder(),
             Action::TreeRename => self.prompt_rename(),
             Action::TreeFolderSettings => self.tree_folder_settings(),
+            Action::TreeRunFolder => self.tree_run_folder(),
             Action::TreeDuplicate => self.tree_duplicate(),
             Action::TreeDelete => self.tree_delete(),
             Action::TreeMove => self.tree_move(),

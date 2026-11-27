@@ -13,9 +13,11 @@ use crate::viewer::{Doc, Viewer};
 mod editors;
 mod fields;
 mod response;
+mod run;
 pub use editors::*;
 pub use fields::*;
 pub use response::*;
+pub use run::*;
 
 /// Summary of the last response for the status line and response header.
 #[derive(Debug, Clone, Default)]
@@ -95,8 +97,9 @@ pub struct Tab {
     pub running: Option<Running>,
     pub watch: Option<Watch>,
     pub services: Option<Vec<ServiceInfo>>,
-    pub mcp_tools: Vec<sendito_pipeline::mcp::Tool>,
-    /// The server `mcp_tools` was loaded from; the list is stale for any other.
+    /// The tools, resources and prompts of `mcp_tools_server`.
+    pub mcp: sendito_pipeline::mcp::Catalog,
+    /// The server `mcp` was loaded from; the lists are stale for any other.
     pub mcp_tools_server: String,
     /// Why listing `mcp_tools_server`'s tools failed; completion does not
     /// retry a dead server by itself.
@@ -119,6 +122,9 @@ pub struct Tab {
     pub jq_history: Vec<String>,
     /// The tab is pinned: it stays before the tabs that are not pinned.
     pub pinned: bool,
+    /// A run tab: a folder run instead of a request. The session does not
+    /// keep it.
+    pub run: Option<RunView>,
 }
 
 /// The largest body (in bytes) that the jq filter runs on at each key press.
@@ -151,7 +157,7 @@ impl Tab {
             running: None,
             watch: None,
             services: None,
-            mcp_tools: Vec::new(),
+            mcp: Default::default(),
             mcp_tools_server: String::new(),
             mcp_tools_error: None,
             schema_error: None,
@@ -163,7 +169,16 @@ impl Tab {
             folder: None,
             jq_history: Vec::new(),
             pinned: false,
+            run: None,
         }
+    }
+
+    /// A tab that shows the folder run `view`.
+    pub fn new_run(id: u64, name: String, view: RunView) -> Self {
+        let req = Request::new_http();
+        let mut tab = Self::new(id, None, name, &req, Some(req.clone()));
+        tab.run = Some(view);
+        tab
     }
 
     /// A tab that edits the settings of the folder `rel`. `saved` is what
@@ -227,6 +242,9 @@ impl Tab {
     pub fn badge(&self) -> String {
         if self.folder.is_some() {
             return "DIR".into();
+        }
+        if self.run.is_some() {
+            return "RUN".into();
         }
         self.model.badge().to_string()
     }

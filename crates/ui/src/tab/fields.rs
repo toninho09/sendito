@@ -10,6 +10,9 @@ pub const SSE_TABS: &[&str] = &["Params", "Headers", "Auth", "Scripts", "Options
 
 pub const WS_TABS: &[&str] = &["Headers", "Messages", "Auth", "Scripts", "Options", "Docs"];
 
+/// The two ways a WebSocket request sends (the Send field of Messages).
+pub const WS_MODES: [&str; 2] = ["Messages", "GraphQL"];
+
 pub const MQTT_TABS: &[&str] = &[
     "Topics", "Publish", "Will", "Auth", "Scripts", "Options", "Docs",
 ];
@@ -102,9 +105,14 @@ pub enum Field {
     Retry,
     RetryInterval,
     McpServer,
+    McpOp,
     McpTool,
     WsSubprotocols,
     WsMessages,
+    /// Messages or a GraphQL subscription.
+    WsMode,
+    WsGraphqlProtocol,
+    WsInitPayload,
     /// A folder's variables.
     Vars,
     AwsAccessKey,
@@ -169,7 +177,11 @@ impl Field {
             Field::Retry => "Retries",
             Field::RetryInterval => "Retry wait",
             Field::McpServer => "Server",
-            Field::McpTool => "Tool",
+            Field::McpOp => "Operation",
+            Field::McpTool => "Target",
+            Field::WsMode => "Send",
+            Field::WsGraphqlProtocol => "Protocol",
+            Field::WsInitPayload => "Init payload",
             Field::WsSubprotocols => "Subprotocols",
             Field::Vars => "Variables",
             Field::AwsAccessKey => "Access key",
@@ -301,7 +313,17 @@ impl Field {
                 "The wait before each retry: 500 ms, 2 s (a bare number is ms)."
             }
             Field::McpServer => "A server name from [mcp.servers] or an http(s):// URL.",
-            Field::McpTool => "The tool to call on the server.",
+            Field::McpOp => "Call a tool, read a resource or get a prompt.",
+            Field::McpTool => "The tool to call, the resource URI to read or the prompt to get.",
+            Field::WsMode => {
+                "Messages sends the frames below; GraphQL runs one subscription over the GraphQL protocol."
+            }
+            Field::WsGraphqlProtocol => {
+                "graphql-transport-ws (current servers) or graphql-ws (subscriptions-transport-ws). It is the subprotocol too."
+            }
+            Field::WsInitPayload => {
+                "JSON object sent in connection_init, often the auth: {\"token\": \"{{token}}\"}. Empty sends none."
+            }
             Field::WsSubprotocols => {
                 "Offered in Sec-WebSocket-Protocol in this order, separated by commas."
             }
@@ -433,6 +455,7 @@ impl Field {
                 | Field::McpTool
                 | Field::WsSubprotocols
                 | Field::WsMessages
+                | Field::WsInitPayload
                 | Field::AwsAccessKey
                 | Field::AwsSecretKey
                 | Field::AwsSessionToken
@@ -466,6 +489,9 @@ impl Field {
                 | Field::JwtAlgorithm
                 | Field::MqttWillQos
                 | Field::MqttProtocol
+                | Field::McpOp
+                | Field::WsMode
+                | Field::WsGraphqlProtocol
                 | Field::DocsView
         )
     }

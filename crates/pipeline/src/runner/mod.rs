@@ -246,6 +246,9 @@ pub struct RunCtx {
     /// The `$response` dependencies being sent, outermost first (paths): a
     /// request already in the list is a cycle.
     pub deps: Vec<String>,
+    /// `$response` may read the history; a data row of a folder run reads
+    /// only the responses of its own sends.
+    pub read_history: bool,
 }
 
 impl Default for RunCtx {
@@ -270,6 +273,7 @@ impl Default for RunCtx {
             oauth: None,
             responses: ResponseCache::default(),
             deps: Vec::new(),
+            read_history: true,
         }
     }
 }
@@ -322,6 +326,7 @@ pub(super) const SIGNED_LAYER: &str = "signed";
 
 mod deps;
 mod graphql;
+mod graphql_ws;
 mod grpc;
 mod http;
 mod mcp;

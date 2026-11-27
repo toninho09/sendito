@@ -32,6 +32,7 @@ expression: screen
 │    SSE opening timeout                                      ‹ 30 s ›   │
 │    MQTT timeout                                             ‹ 30 s ›   │
 │    MCP call timeout                                         ‹ 30 s ›   │
+│    MCP session idle time                                   ‹ 300 s ›   │
 │  MCP                                                                   │
 │    MCP servers                                         ‹ 0 servers ›   │
 │  HTTP                                                                  │

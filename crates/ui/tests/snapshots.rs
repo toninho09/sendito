@@ -738,3 +738,69 @@ fn footer_and_ctrl_w_menu() {
         snap_in(Area::Footer, "footer_hints_off", h);
     });
 }
+
+/// The run tab with fabricated rows: the summary, the rows and the
+/// selected row's response.
+#[test]
+fn run_tab() {
+    use sendito_core::script::AssertResult;
+    use sendito_pipeline::suite::{Entry, Event};
+    each_small(|h| {
+        h.app.run_command("run Users");
+        // Stop the run before it sends: the rows are fabricated below.
+        h.app.dispatch(sendito_ui::keymap::Action::Cancel);
+        h.wait_idle(10);
+        let id = h.app.tabs[h.app.active].id;
+        if let Some(v) = h.app.tabs[h.app.active].run.as_mut() {
+            v.rows.clear();
+            v.shown = None;
+        }
+        h.app.tabs[h.app.active].response = None;
+        let a = |label: &str, pass, actual: &str| AssertResult {
+            label: label.into(),
+            pass,
+            actual: actual.into(),
+        };
+        let rows = [
+            (
+                "Users/list users.toml",
+                "pass",
+                "200 OK",
+                vec![a("status == 200", true, "200")],
+            ),
+            (
+                "Users/get user.toml",
+                "fail",
+                "404 Not Found",
+                vec![a("status == 200", false, "404")],
+            ),
+            ("Users/create user.toml", "pass", "201 Created", vec![]),
+        ];
+        for (i, (path, outcome, status, asserts)) in rows.into_iter().enumerate() {
+            let entry = Entry {
+                path: path.into(),
+                kind: Some("http"),
+                outcome,
+                status: Some(status.into()),
+                duration_ms: Some(10 + i as u128),
+                asserts,
+                unresolved: Some(false),
+                attempts: 1,
+                ..Default::default()
+            };
+            h.app.on_msg(AppMsg::Run {
+                tab: id,
+                event: Box::new(Event::Finished {
+                    entry,
+                    response: None,
+                }),
+            });
+        }
+        h.key("up");
+        if let Some(v) = h.app.tabs[h.app.active].run.as_mut() {
+            v.took = Some(Duration::from_millis(412));
+        }
+        h.app.status = None;
+        snap_in(Area::Main, "run_tab", h);
+    });
+}

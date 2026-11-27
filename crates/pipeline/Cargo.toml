@@ -23,5 +23,8 @@ url.workspace = true
 unicode-width.workspace = true
 csv.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

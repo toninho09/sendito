@@ -1,9 +1,12 @@
-//! CLI SSE output and session termination.
-use super::run::Ran;
+//! CLI SSE output: the session runs in `sendito_pipeline::suite::run_sse`.
 use sendito_core::{Scope, SseRequest};
-use sendito_pipeline::runner::{self, Control, RunCtx, SseControl, SseUpdate};
+use sendito_pipeline::runner::RunCtx;
+use sendito_pipeline::suite::{self, Live, Ran};
 use std::io::Write;
 
+/// Runs one SSE session. With `print`, each event's data goes to `out`
+/// (with `include`, the response head first); progress goes to stderr.
+/// Ctrl+C cancels the session.
 pub(super) async fn run_sse(
     ctx: &RunCtx,
     req: &SseRequest,
@@ -13,57 +16,35 @@ pub(super) async fn run_sse(
     include: bool,
     out: &mut dyn Write,
 ) -> Ran {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-    let (control, controls) = tokio::sync::mpsc::unbounded_channel();
-    let run = runner::exec_sse(ctx, req, scope, errors, tx, controls);
-    let mut result = Ran {
-        outcome: "error",
-        label: "SSE session did not finish".into(),
-        scripts: Default::default(),
-        events: Some(0),
-        messages: None,
-    };
-    let collect = async {
-        let mut interrupted = false;
-        let mut output_failed = false;
-        loop {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c(), if !interrupted => {
-                    interrupted = true;
-                    let _ = control.send(Control::Sse(SseControl::Cancel));
-                }
-                update = rx.recv() => match update {
-                    Some(SseUpdate::Started { response, .. }) => {
-                        eprintln!("SSE connected: {}", response.status);
-                        if print && include {
-                            let _ = writeln!(out, "HTTP {} {}", response.status, response.reason);
-                            for (name, value) in response.headers { let _ = writeln!(out, "{name}: {value}"); }
-                            let _ = writeln!(out);
-                        }
-                    }
-                    Some(SseUpdate::Event { event, .. }) => {
-                        if print {
-                            for line in event.data.split('\n') {
-                                if let Err(e) = writeln!(out, "{line}") {
-                                    eprintln!("sendito: stdout: {e}");
-                                    output_failed = true;
-                                    let _ = control.send(Control::Sse(SseControl::Cancel));
-                                }
-                            }
-                            if out.flush().is_err() { output_failed = true; let _ = control.send(Control::Sse(SseControl::Cancel)); }
-                        }
-                    }
-                    Some(SseUpdate::Done { events, reason, error, scripts, .. }) => {
-                        eprintln!("SSE {reason}: {events} events");
-                        if let Some(error) = &error { eprintln!("sendito: {error}"); }
-                        result = Ran { outcome: if error.is_some() || interrupted || output_failed { "error" } else if scripts.failed_asserts() > 0 { "fail" } else { "pass" },
-                            label: error.unwrap_or(reason), scripts, events: Some(events), messages: None };
-                    }
-                    None => break,
-                }
-            }
+    let ctrl_c = super::run::CtrlC::new();
+    let mut on = |live: Live<'_>| match live {
+        Live::Line(l) => {
+            eprintln!("{l}");
+            true
         }
+        Live::Head(r) => {
+            if print && include {
+                let _ = writeln!(out, "HTTP {} {}", r.status, r.reason);
+                for (name, value) in &r.headers {
+                    let _ = writeln!(out, "{name}: {value}");
+                }
+                let _ = writeln!(out);
+            }
+            true
+        }
+        Live::Data(data) => !print || write_data(out, data),
+        Live::Message { .. } => true,
     };
-    tokio::join!(run, collect);
-    result
+    suite::run_sse(ctx, req, scope, errors, &ctrl_c.cancel, &mut on).await
+}
+
+/// Writes one event's data, one line per data line; `false` when stdout fails.
+fn write_data(out: &mut dyn Write, data: &str) -> bool {
+    for line in data.split('\n') {
+        if let Err(e) = writeln!(out, "{line}") {
+            eprintln!("sendito: stdout: {e}");
+            return false;
+        }
+    }
+    out.flush().is_ok()
 }

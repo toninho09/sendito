@@ -1,31 +1,16 @@
 //! The report of a folder run, and its writers: JSON, JUnit XML, TAP and HTML.
 
 use sendito_core::script::AssertResult;
+pub(crate) use sendito_pipeline::suite::Entry;
 
-/// One request's line in a folder run report.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Entry {
-    /// The request path relative to the collection (`Users/list.toml`).
-    pub(crate) path: String,
-    /// `http`, `grpc`, …; `None` when the file did not load.
-    pub(crate) kind: Option<&'static str>,
-    /// `pass`, `fail` or `error`.
-    pub(crate) outcome: &'static str,
-    /// `200 OK`, `OK`, …; `None` when the request never ran.
-    pub(crate) status: Option<String>,
-    pub(crate) duration_ms: Option<u128>,
-    /// The assertions and the Lua `test` results, secrets masked.
-    pub(crate) asserts: Vec<AssertResult>,
-    /// `None` for a file that did not load (the JSON report leaves the key out).
-    pub(crate) unresolved: Option<bool>,
-    pub(crate) error: Option<String>,
-    pub(crate) events: Option<u64>,
-    pub(crate) messages: Option<u64>,
-    /// How many times the request was sent (0 when it never ran).
-    pub(crate) attempts: u32,
+/// The report text of one entry.
+trait EntryText {
+    fn failed_asserts(&self) -> impl Iterator<Item = &AssertResult>;
+    fn problems(&self) -> Vec<String>;
+    fn class(&self) -> &str;
 }
 
-impl Entry {
+impl EntryText for Entry {
     fn failed_asserts(&self) -> impl Iterator<Item = &AssertResult> {
         self.asserts.iter().filter(|a| !a.pass)
     }

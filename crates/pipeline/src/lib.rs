@@ -5,6 +5,7 @@
 pub mod doc;
 pub mod pretty;
 pub mod runner;
+pub mod suite;
 
 /// The protocol types that callers of the pipeline (the TUI) read.
 pub mod http {
@@ -25,7 +26,9 @@ pub mod ws {
 /// The MCP types and calls that callers of the pipeline use.
 pub mod mcp {
     pub use sendito_mcp::oauth::login_http;
-    pub use sendito_mcp::{McpError, Options, Tool, list_tools};
+    pub use sendito_mcp::{
+        Catalog, McpError, Options, Pool, Prompt, Resource, Tool, list_catalog, list_tools,
+    };
 }
 
 pub fn human_size(n: u64) -> String {

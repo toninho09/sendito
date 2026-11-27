@@ -1847,3 +1847,99 @@ fn cli_response_sends_reads_history_and_reports_errors() {
         }
     });
 }
+
+/// `--data`: the folder runs once per row, each row from a clean runtime;
+/// the report names each row; `--repeat` is refused; a single request runs
+/// once per row too.
+#[test]
+fn cli_data_runs_the_folder_once_per_row() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    rt.block_on(async {
+        let echo = sendito_testkit::http_echo::start().await.unwrap();
+        sendito_store::init::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("F")).unwrap();
+        let url = echo.url();
+        std::fs::write(
+            dir.path().join("F/1-a.toml"),
+            format!("kind = \"http\"\nurl = \"{url}/{{{{user}}}}\"\n\n[[scripts.extract]]\nvar = \"got\"\nfrom = \"jsonpath\"\nexpr = \"$.target\"\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("F/2-b.toml"),
+            format!("kind = \"http\"\nurl = \"{url}/b{{{{got}}}}\"\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("users.csv"), "user\nana\nbob\n").unwrap();
+        std::fs::write(dir.path().join("users.json"), r#"[{"user": "cy"}]"#).unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+                .current_dir(dir.path())
+                .args(args)
+                .env("SENDITO_KEYCHAIN", "memory")
+                .output()
+                .unwrap()
+        };
+        let targets = || echo.take().iter().map(|c| c.target()).collect::<Vec<_>>();
+
+        let out = run(&["run", "F", "--no-history", "--data", "users.csv", "--report", "junit"]);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{stderr}");
+        assert!(stderr.contains("once per data row (2)"), "{stderr}");
+        assert!(stderr.contains("PASS  F/1-a.toml[1]"), "{stderr}");
+        assert!(stderr.contains("PASS  F/2-b.toml[2]"), "{stderr}");
+        assert_eq!(targets(), ["/ana", "/b/ana", "/bob", "/b/bob"]);
+        let junit = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(junit.contains("tests=\"4\""), "{junit}");
+        assert!(junit.contains("2-b.toml[2]"), "{junit}");
+
+        // A single request, from a JSON file.
+        let out = run(&["run", "F/1-a", "--no-history", "--data", "users.json"]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(targets(), ["/cy"]);
+
+        // The second request alone: `got` comes from no row.
+        let out = run(&["run", "F/2-b", "--no-history", "--data", "users.json"]);
+        assert_eq!(out.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(stderr.contains("ERROR F/2-b.toml[1]  unresolved variables: {{got}}"), "{stderr}");
+
+        let out = run(&["run", "F", "--data", "users.csv", "--repeat", "2"]);
+        assert_eq!(out.status.code(), Some(3));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--data and --repeat"));
+        let out = run(&["run", "F", "--data", "missing.csv"]);
+        assert_eq!(out.status.code(), Some(3));
+        assert!(targets().is_empty());
+    });
+}
+
+/// A GraphQL subscription over WebSocket in `sendito run`: the session ends
+/// when the server completes it, and the scripts read the last payload.
+#[test]
+fn cli_ws_graphql_subscription_runs_to_complete() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let ws = rt.block_on(sendito_testkit::ws_echo::start()).unwrap();
+    sendito_store::init::init(root).unwrap();
+    for (file, protocol) in [("a.toml", ""), ("b.toml", "protocol = \"graphql-ws\"\n")] {
+        write(
+            root,
+            &format!("F/{file}"),
+            &format!(
+                "kind = \"websocket\"\nurl = \"{}\"\n\n[graphql]\nquery = \"subscription {{ tick }}\"\n{protocol}\n[[scripts.assert]]\nfrom = \"jsonpath\"\nexpr = \"$.data.tick\"\nop = \"eq\"\nvalue = \"2\"\n",
+                ws.url("/graphql")
+            ),
+        );
+    }
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sendito"))
+        .current_dir(root)
+        .args(["run", "F", "--no-history"])
+        .env("SENDITO_KEYCHAIN", "memory")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("PASS  F/a.toml  (close 1000"), "{stderr}");
+    assert!(stderr.contains("PASS  F/b.toml  (close 1000"), "{stderr}");
+}

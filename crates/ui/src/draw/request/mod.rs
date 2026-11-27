@@ -87,6 +87,10 @@ pub(super) fn draw_request(
     area: Rect,
     theme: &Theme,
 ) -> Option<(u16, u16)> {
+    if app.tabs[app.active].run.is_some() {
+        super::run_tab::draw_run(app, buf, area, theme);
+        return None;
+    }
     let focused = matches!(app.focus, Focus::ReqTabs | Focus::ReqBody);
     let inner = frame(buf, area, theme, focused);
     if inner.height < 1 || inner.width < 10 {

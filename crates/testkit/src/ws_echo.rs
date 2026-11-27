@@ -10,6 +10,9 @@
 //! * `/ping` — right after the handshake, a `Ping` with payload `srv-ping`, then echo
 //! * `/big/<n>` — right after the handshake, one text frame of `n` bytes, then close
 //! * `/mute` — echoes frames but never answers a close (the client must time out)
+//! * `/graphql` — GraphQL over WebSocket, both protocols: `connection_ack`
+//!   after `connection_init`, two results (`next`, legacy `data`) then
+//!   `complete` after `subscribe` (legacy `start`), `pong` after `ping`
 //! * anything else — a plain `404` (not an upgrade)
 
 use std::net::SocketAddr;
@@ -254,6 +257,7 @@ where
         && route != "ping"
         && route != "big"
         && route != "mute"
+        && route != "graphql"
     {
         sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
             .await?;
@@ -349,6 +353,14 @@ where
             Message::Text(t) => {
                 let bytes = t.as_bytes().to_vec();
                 record(&captures, false, "text", bytes.clone());
+                if route == "graphql" {
+                    for reply in graphql_replies(&t) {
+                        if ws.send(Message::Text(reply.clone().into())).await.is_ok() {
+                            record(&captures, true, "text", reply.into_bytes());
+                        }
+                    }
+                    continue;
+                }
                 if route == "close" {
                     let code: u16 = segments.get(1).and_then(|s| s.parse().ok()).unwrap_or(1000);
                     let reason = segments
@@ -410,6 +422,29 @@ where
         }
     }
     Ok(())
+}
+
+/// The answers of `/graphql` to one client message, in order.
+fn graphql_replies(text: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    let id = v.get("id").and_then(|i| i.as_str()).unwrap_or_default();
+    match v.get("type").and_then(|t| t.as_str()).unwrap_or_default() {
+        "connection_init" => vec![r#"{"type":"connection_ack"}"#.into()],
+        "ping" => vec![r#"{"type":"pong"}"#.into()],
+        kind @ ("subscribe" | "start") => {
+            let next = if kind == "subscribe" { "next" } else { "data" };
+            let mut out: Vec<String> = (1..=2)
+                .map(|n| {
+                    format!(
+                        r#"{{"id":"{id}","type":"{next}","payload":{{"data":{{"tick":{n}}}}}}}"#
+                    )
+                })
+                .collect();
+            out.push(format!(r#"{{"id":"{id}","type":"complete"}}"#));
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn percent_decode(s: &str) -> String {

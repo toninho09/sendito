@@ -266,9 +266,38 @@ fn answer(
                 .pointer("/params/protocolVersion")
                 .and_then(|v| v.as_str())
                 .unwrap_or("2025-06-18"),
-            "capabilities": { "tools": {} },
+            "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
             "serverInfo": { "name": "mcp-echo", "version": "0.1.0" }
         }),
+        "resources/list" => serde_json::json!({
+            "resources": [ { "uri": "echo://readme", "name": "readme", "mimeType": "text/plain" } ]
+        }),
+        "resources/templates/list" => serde_json::json!({
+            "resourceTemplates": [ { "uriTemplate": "echo://{name}", "name": "any" } ]
+        }),
+        "prompts/list" => serde_json::json!({
+            "prompts": [ { "name": "hello", "description": "Says hello",
+                           "arguments": [ { "name": "who", "required": true } ] } ]
+        }),
+        "resources/read" => {
+            let uri = msg
+                .pointer("/params/uri")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            serde_json::json!({
+                "contents": [ { "uri": uri, "mimeType": "text/plain", "text": format!("resource {uri}") } ]
+            })
+        }
+        "prompts/get" => {
+            let who = msg
+                .pointer("/params/arguments/who")
+                .and_then(|v| v.as_str())
+                .unwrap_or("nobody");
+            serde_json::json!({
+                "messages": [ { "role": "user",
+                                "content": { "type": "text", "text": format!("hello {who}") } } ]
+            })
+        }
         "tools/list" if paginate && msg.pointer("/params/cursor").is_none() => serde_json::json!({
             "tools": [{"name": "add", "inputSchema": {"type": "object"}}],
             "nextCursor": "page-two"

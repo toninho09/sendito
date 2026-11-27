@@ -1897,16 +1897,16 @@ fn flow_mcp_completion() {
     h.key("f2");
     h.key("enter");
     assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
-    // The tool field pulls the tool list in the background, then filters it.
+    // The target field pulls the tool list in the background, then filters it.
     h.app.focus = sendito_ui::app::Focus::ReqBody;
-    h.app.tabs[h.app.active].field = 1;
+    h.app.tabs[h.app.active].field = 2;
     h.type_text("ad");
     let start = std::time::Instant::now();
     while h.app.complete.as_ref().is_none_or(|c| c.items.is_empty()) {
         assert!(
             start.elapsed() < std::time::Duration::from_secs(10),
             "tool list did not arrive; tools={:?}",
-            h.app.tabs[h.app.active].mcp_tools.len()
+            h.app.tabs[h.app.active].mcp.tools.len()
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.pump();
@@ -2061,7 +2061,7 @@ fn flow_completion_tools_failure() {
         t.refresh_model();
     }
     h.app.focus = sendito_ui::app::Focus::ReqBody;
-    h.app.tabs[h.app.active].field = 1;
+    h.app.tabs[h.app.active].field = 2;
     h.type_text("a");
     assert_eq!(h.app.complete.as_ref().must().loading, Some("tools"));
     let start = std::time::Instant::now();
@@ -4060,5 +4060,159 @@ fn flow_response_sends_the_dependency_once() {
         logs(&h).contains("the response of this session"),
         "{}",
         logs(&h)
+    );
+}
+
+/// The run tab: `:run F --data users.csv` sends the folder once per row with
+/// its own runtime values, Up chooses a row, a `$prompt` request is an error
+/// row, F5 runs again, and the session does not keep the tab.
+#[test]
+fn flow_run_tab_runs_a_folder_once_per_row() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        "F/1-a.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/{{user}}\"\n\n[[scripts.extract]]\nvar = \"got\"\nfrom = \"jsonpath\"\nexpr = \"$.target\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "F/2-b.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/b{{got}}\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "F/3-c.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/c?otp={{ $prompt('OTP') }}\"\n",
+    );
+    common::write(h.dir.path(), "users.csv", "user\nana\nbob\n");
+    h.app.rescan();
+    let targets =
+        |s: &Servers| -> Vec<String> { s.http.take().iter().map(|c| c.target()).collect() };
+    h.app.run_command("run F --data users.csv");
+    h.wait_idle(10);
+    assert_eq!(targets(&s), ["/ana", "/b/ana", "/bob", "/b/bob"]);
+    let screen = h.wait_for("F/2-b.toml[2]", 5);
+    assert!(
+        screen.contains("4 passed, 0 failed, 2 error(s)"),
+        "{screen}"
+    );
+    let view = |h: &Harness| {
+        let v = h.app.tab().and_then(|t| t.run.as_ref()).unwrap();
+        (v.rows.len(), v.sel)
+    };
+    // The selection followed the last row: the `$prompt` error.
+    assert_eq!(view(&h), (6, 5));
+    let body = |h: &Harness| {
+        h.app
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+            .unwrap_or_default()
+    };
+    assert!(body(&h).contains("a run tab cannot ask"), "{}", body(&h));
+    h.key("up");
+    assert_eq!(view(&h), (6, 4));
+    assert!(body(&h).contains("/b/bob"), "{}", body(&h));
+    // The run has its own runtime values.
+    assert!(!h.app.runtime.contains_key("got"));
+    assert!(h.app.session().tabs.is_empty());
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(targets(&s).len(), 4);
+}
+
+/// The target picker lists resources and prompts; a resource pick sets the
+/// operation; the second send uses the kept session; `:mcp restart` closes it.
+#[test]
+fn flow_mcp_resource_pick_and_kept_session() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+    });
+    h.app.run_command("newmcp");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.type_text(&format!("{}/mcp", echo.url()));
+    h.draw();
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("enter");
+    let screen = h.wait_for("Choose an MCP tool, resource or prompt", 10);
+    assert!(screen.contains("prompt · Says hello"), "{screen}");
+    h.type_text("readme");
+    h.key("enter");
+    let ed = &h.app.tabs[h.app.active].ed;
+    assert_eq!(ed.mcp_op, sendito_core::McpOp::Resource);
+    assert_eq!(ed.mcp_tool.text(), "echo://readme");
+    let count = |method: &str| {
+        echo.captured()
+            .iter()
+            .filter(|c| c.method_of_body() == method)
+            .count()
+    };
+    let opened = count("initialize");
+    h.key("f5");
+    h.wait_idle(10);
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(count("resources/read"), 2);
+    assert_eq!(count("initialize"), opened + 1);
+    let body = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+        .unwrap_or_default();
+    assert!(body.contains("resource echo://readme"), "{body}");
+    h.app.run_command("mcp restart");
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(count("initialize"), opened + 2);
+}
+
+/// A WebSocket tab in GraphQL mode: the request has `[graphql]` and no
+/// messages, and the session subscribes and ends when the server completes.
+#[test]
+fn flow_ws_graphql_mode_subscribes() {
+    use sendito_ui::tab::Field;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.app.run_command("newws");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.url.set_text(&s.ws.url("/graphql"));
+        t.ed.set_choice(Field::WsMode, 1);
+        t.ed.body_text.set_text("subscription { tick }");
+        t.refresh_model();
+        let sendito_core::Request::Ws(w) = &t.model else {
+            panic!("not websocket")
+        };
+        assert_eq!(w.messages, "[]");
+        assert_eq!(
+            w.graphql.as_ref().map(|g| g.query.as_str()),
+            Some("subscription { tick }")
+        );
+        assert!(t.fields().contains(&Field::GraphqlSection) || t.req_tab != 1);
+    }
+    h.key("f5");
+    h.wait_idle(10);
+    let frames: Vec<String> =
+        s.ws.take()
+            .iter()
+            .flat_map(|c| c.frames.clone())
+            .filter(|(out, _, _)| !out)
+            .map(|(_, _, p)| String::from_utf8_lossy(&p).into_owned())
+            .collect();
+    assert!(frames[0].contains("connection_init"), "{frames:?}");
+    assert!(frames[1].contains(r#""type":"subscribe""#), "{frames:?}");
+    let summary = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| r.summary.status.clone());
+    assert!(
+        summary.unwrap_or_default().contains("1000"),
+        "{:?}",
+        h.screen()
     );
 }

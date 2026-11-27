@@ -265,6 +265,9 @@ impl OAuthGrant {
 pub struct McpConfig {
     /// Default call timeout when a request sets none (handshake included).
     pub timeout_ms: u64,
+    /// The interface keeps a server session open between calls and closes
+    /// it after this many seconds without a call (0 = a session per call).
+    pub idle_timeout_s: u64,
     pub servers: BTreeMap<String, McpServer>,
 }
 
@@ -272,6 +275,7 @@ impl Default for McpConfig {
     fn default() -> Self {
         Self {
             timeout_ms: 30_000,
+            idle_timeout_s: 300,
             servers: BTreeMap::new(),
         }
     }

@@ -345,6 +345,14 @@ HTTP and gRPC ([FORMAT](../FORMAT.md#websocket-request)).
   `{ "binary": "base64" }` objects (binary frames), sent right after the
   handshake. The editor validates the JSON as you type and never refuses to save
   a half-typed document.
+* **GraphQL subscriptions**: the Send field of the Messages tab switches to
+  GraphQL. The tab then has the Protocol choice (`graphql-transport-ws` or the
+  legacy `graphql-ws`) and the Query, Variables and Operation name editors of
+  an HTTP GraphQL body, with schema completion (`:graphqlschema` asks the
+  HTTP equivalent of the URL); the Options tab has the init payload. The
+  session sends `connection_init`, subscribes after the ack, answers pings
+  and ends when the server completes the operation; the scripts read the
+  last result's payload. Cancel sends `complete` (legacy: `stop`) first.
 * **Live session**: while the session is open, Send pushes the message editor's
   content as one more frame, `Ctrl+W d` starts the close handshake and `Ctrl+W x`
   aborts it. Frames the server sends appear as they arrive, and the last text
@@ -370,15 +378,15 @@ HTTP and gRPC ([FORMAT](../FORMAT.md#websocket-request)).
 document, prints the text frames it receives on stdout and the handshake, the
 close code and the assertions on stderr. The exit code is 0 for a clean close
 (1000) with passing assertions, 1 for a failed assertion and 2 for a failed
-session.
+session (a GraphQL `error` too).
 
 ---
 
 ## MCP
 
-An MCP request calls one tool on a server from `[mcp.servers]`
-([FORMAT.md](../FORMAT.md#mcp-request)). Servers are configured, not discovered
-from the request.
+An MCP request calls one tool, reads one resource or gets one prompt on a
+server from `[mcp.servers]` ([FORMAT.md](../FORMAT.md#mcp-request)). Servers
+are configured, not discovered from the request.
 
 * **Transports**:
   * **stdio** — a child process (`command`, `args`, `env` entries added to the
@@ -391,13 +399,25 @@ from the request.
     `Mcp-Session-Id` and `Mcp-Protocol-Version` sent after initialization, JSON
     and SSE bodies accepted, `verify_tls` and `[http.tls]` honoured.
 * **Protocol**: JSON-RPC 2.0 — `initialize`, `notifications/initialized`, then
-  `tools/list` or `tools/call`. Proposed version `2025-06-18`; recognizes
-  `2024-11-05`, `2025-03-26` and `2025-06-18`. `tools/list` handles cursor
-  pagination.
-* **Tool discovery in the UI**: F2 on the server field lists the configured
-  servers; F2 on the tool field lists the tools and, when the arguments editor is
-  empty or `{}`, fills an argument template from the tool's input schema.
-  `:mcpservers` and `:mcptools` run the same pickers from the palette.
+  `tools/list`, `tools/call`, `resources/read` or `prompts/get`. Proposed
+  version `2025-06-18`; recognizes `2024-11-05`, `2025-03-26` and
+  `2025-06-18`. Every list handles cursor pagination.
+* **Operation**: the Operation field (`tool`, `resource` or `prompt`) chooses
+  what the request does; the Target field holds the tool name, the resource
+  URI or the prompt name.
+* **Discovery in the UI**: F2 on the server field lists the configured
+  servers; F2 on the target lists the server's tools, resources, resource
+  templates and prompts (a server is asked for resources and prompts only
+  when it declares them). A pick sets the operation too. When the arguments
+  editor is empty or `{}`, a tool fills an argument template from its input
+  schema and a prompt fills an object of its argument names. `:mcpservers`
+  and `:mcptools` run the same pickers from the palette.
+* **Kept sessions**: the interface keeps one session per server and
+  environment and closes it after `[mcp] idle_timeout_s` seconds without a
+  call (Settings: MCP session idle time; default 300, 0 = a session per call),
+  on an environment change or with `:mcp restart`. A folder run of
+  `sendito run` keeps one session per server for the run. A kept session skips
+  the handshake; when it fails, a new session sends the call once more.
 * **Servers from the interface**: `Ctrl+W S` (or `:mcpservers edit`) lists
   the servers on the left (name and kind) and shows the form of the selected
   one on the right. The form shows only what applies: an `http` server has a
@@ -436,11 +456,12 @@ from the request.
     auth table gets `type = "oauth"` in the config file that defines it.
     Background tool completion does not open the dialog.
 * **Results**: `isError: true` is treated as a result, not a transport failure —
-  it is exit code 1 in `sendito run`. `content` items and `structuredContent` are
-  visible to scripts. Tabs: **Body · Request · Timing · Log**.
-* **Not supported**: resources and prompts, the legacy HTTP+SSE transport, the
-  server-initiated GET stream, and non-text content is shown as JSON — see
-  [DEBT.md](DEBT.md).
+  it is exit code 1 in `sendito run`. `content` items and `structuredContent`
+  (a resource's `contents`, a prompt's `messages`) are visible to scripts.
+  Tabs: **Body · Request · Timing · Log**.
+* **Not supported**: resource subscriptions, URI template expansion, the
+  legacy HTTP+SSE transport, the server-initiated GET stream, and non-text
+  content is shown as JSON — see [DEBT.md](DEBT.md).
 
 ```toml
 [mcp.servers.local]
@@ -849,6 +870,18 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   tree scrolls, the folders of the top row stay pinned above the list (at most
   half its height, the last one underlined); a click on a pinned folder
   selects it and scrolls the tree to it (`ui.sticky_folders`).
+* **Run tab**: `R` on a folder in the tree (for a request, its folder) or
+  `:run [folder] [--data file]` runs every request of the folder in a new tab,
+  with the engine of `sendito run`. `:run` without a folder takes the folder
+  of the active request; `.` is the collection root; a data file (relative to
+  the collection root) runs the folder once per row. The URL card shows the
+  counts and the time; the request pane shows one row per request (mark,
+  path, status, time, assertions). Up and Down choose a row and the response
+  pane shows its response; Enter goes to the response. The run uses the
+  active environment and its own runtime values, so it does not change the
+  other tabs. `$prompt` and `$select` cannot ask in a run: such a request is
+  an error row. The cancel key stops the run, the send key runs it again. The
+  session does not keep a run tab.
 * **Favorites**: `f` on a request in the tree (or `Ctrl+W F` for the current
   tab) adds it to the favorites or removes it. A **★ Favorites** section at the
   top of the tree lists them (hidden while the filter is set); Enter opens one.
@@ -1099,6 +1132,11 @@ that file has an error.
   `--retry N`) send a request again after an error or a failed assertion;
   `--repeat N` runs the folder N times and `--delay ms` waits between two
   requests. The Options tab of every request kind edits the two keys.
+* **Data files**: `--data users.csv` (or a `.json` array of objects) runs the
+  folder, or one request, once per row. A row's values are variables; each
+  row starts with a clean runtime and its own `$response` values. The report
+  names each row (`Users/login.toml[2]`). Ctrl+C stops a folder run and still
+  writes the summary and the reports.
 * **Exit codes**: `0` success, `1` a failed assertion or an MCP `isError`, `2`
   the request failed, `3` usage or unresolved variables. A folder run returns
   the worst code.

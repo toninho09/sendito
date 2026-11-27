@@ -68,7 +68,14 @@ pub const COMMANDS: &[(&str, &str)] = &[
         ":mcpedit [name]",
         "Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name)",
     ),
-    (":mcptools", "Discover and choose an MCP tool"),
+    (
+        ":mcptools",
+        "Discover and choose an MCP tool, resource or prompt",
+    ),
+    (
+        ":mcp restart",
+        "Close the kept MCP server sessions; the next call opens a new one",
+    ),
     (":method", "Choose the HTTP method"),
     (":bodytype", "Choose the body type of the HTTP request"),
     (":authtype", "Choose the auth type of the request"),
@@ -110,6 +117,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     (
         ":cookies delete <number>",
         "Delete one cookie from the active environment",
+    ),
+    (
+        ":run [folder] [--data file]",
+        "Run every request of a folder in a run tab (. is the collection root; the data file runs it once per row)",
     ),
     (":history", "Show history"),
     (":clearhistory", "Delete all history entries"),

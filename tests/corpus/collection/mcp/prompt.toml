@@ -1,0 +1,7 @@
+kind = "mcp"
+server = "echo"
+op = "prompt"
+prompt = "hello"
+arguments = '''
+{"who":"{{greeting}}"}
+'''

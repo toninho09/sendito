@@ -1,9 +1,10 @@
 //! `sendito run`: sends one request or a suite and prints the report.
 
 use super::mqtt::run_mqtt;
-use super::report::{Entry, SuiteReport};
+use super::report::SuiteReport;
 use super::sse::run_sse;
 use crate::*;
+use sendito_pipeline::suite;
 
 /// Routes `run` to one request or a folder: a request file wins over a folder
 /// of the same name, and errors from whichever path matched are reported as
@@ -33,6 +34,13 @@ pub(crate) async fn run_entry(request: &Path, flags: RunFlags) -> ExitCode {
 }
 
 pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &RunFlags) -> ExitCode {
+    if flags.data.is_some() {
+        if flags.include {
+            eprintln!("sendito: -i does not apply to a run with --data");
+            return ExitCode::from(3);
+        }
+        return run_rels(project, rel.clone(), vec![rel], flags).await;
+    }
     let RunFlags {
         env,
         include,
@@ -46,6 +54,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         repeat,
         delay_ms,
         prompts,
+        data: _,
     } = flags.clone();
     if repeat > 1 || delay_ms > 0 {
         eprintln!(
@@ -367,6 +376,7 @@ impl Once<'_> {
                 let run = runner::exec_ws(ctx, &w, scope, errors, utx, ctl_rx);
                 let mut code = 1006i64;
                 let mut fails = 0;
+                let mut failed = false;
                 let print = async {
                     while let Some(u) = urx.recv().await {
                         match u {
@@ -423,6 +433,7 @@ impl Once<'_> {
                                 eprintln!("sent {} frame ({size} B)", kind.as_str());
                             }
                             runner::WsUpdate::Error(e) => {
+                                failed = true;
                                 eprintln!("sendito: session failed: {e}");
                             }
                             runner::WsUpdate::Done { scripts, .. } => {
@@ -432,7 +443,7 @@ impl Once<'_> {
                     }
                 };
                 tokio::join!(run, print);
-                if code != 1000 {
+                if code != 1000 || failed {
                     return 2;
                 }
                 if fails > 0 {
@@ -500,36 +511,34 @@ impl Once<'_> {
     }
 }
 
-/// One request's result in a folder run.
-pub(crate) struct Ran {
-    /// `pass`, `fail` (a failed assertion or a tool `isError`) or `error`.
-    pub(super) outcome: &'static str,
-    /// Status text: `201 Created`, `OK`, or the error message.
-    pub(super) label: String,
-    pub(super) scripts: runner::ScriptResults,
-    pub(super) events: Option<u64>,
-    /// MQTT messages received; only MQTT sets it.
-    pub(super) messages: Option<u64>,
+/// Cancels a run on Ctrl+C while it is alive.
+pub(super) struct CtrlC {
+    pub(super) cancel: suite::Cancel,
+    task: tokio::task::JoinHandle<()>,
 }
 
-/// Runs every request under `folder` in tree order, chaining variables: a
-/// value a request extracts is available to the ones after it.
+impl CtrlC {
+    pub(super) fn new() -> Self {
+        let cancel = suite::Cancel::default();
+        let c = cancel.clone();
+        let task = tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                c.cancel();
+            }
+        });
+        Self { cancel, task }
+    }
+}
+
+impl Drop for CtrlC {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Runs every request under `folder` in tree order (see [`run_rels`]).
 pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags) -> ExitCode {
-    let RunFlags {
-        env,
-        include,
-        allow_unresolved,
-        no_history,
-        no_cookies,
-        fail_fast,
-        report,
-        report_files,
-        retry,
-        repeat,
-        delay_ms,
-        prompts,
-    } = flags.clone();
-    if include {
+    if flags.include {
         eprintln!(
             "sendito: -i prints response headers of a single request; it does not apply to a folder run"
         );
@@ -551,22 +560,60 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         eprintln!("sendito: no requests under {what}");
         return ExitCode::from(3);
     }
-    let (mut scope, scope_errors, failed) = scope_of(&project, &env).await;
+    let label = if folder.is_empty() {
+        ".".to_string()
+    } else {
+        folder
+    };
+    run_rels(project, label, rels, flags).await
+}
+
+/// Runs `rels` with the shared suite engine, chaining variables: a value a
+/// request extracts is available to the ones after it. Prints one line per
+/// request and the summary, then writes the reports.
+async fn run_rels(
+    project: Project,
+    label: String,
+    rels: Vec<String>,
+    flags: &RunFlags,
+) -> ExitCode {
+    let RunFlags {
+        env,
+        allow_unresolved,
+        no_history,
+        no_cookies,
+        fail_fast,
+        report,
+        report_files,
+        retry,
+        repeat,
+        delay_ms,
+        prompts,
+        data,
+        ..
+    } = flags.clone();
+    let data = match &data {
+        Some(_) if repeat > 1 => {
+            eprintln!("sendito: --data and --repeat cannot be used together");
+            return ExitCode::from(3);
+        }
+        Some(path) => match suite::load_data(path) {
+            Ok(rows) => rows,
+            Err(e) => {
+                eprintln!("sendito: {e}");
+                return ExitCode::from(3);
+            }
+        },
+        None => Vec::new(),
+    };
+    let (scope, scope_errors, failed) = scope_of(&project, &env).await;
     for e in &scope_errors {
         eprintln!("warning: {e}");
     }
-    let mcp_info = runner::McpRunInfo::of(&project);
-    // One schema cache for the whole run: reflection and `.proto` files are
-    // loaded once, not once per gRPC request.
-    let schemas: runner::SchemaCache = Default::default();
     let started = Instant::now();
     let mut suite = SuiteReport {
         environment: env.clone(),
-        folder: if folder.is_empty() {
-            ".".to_string()
-        } else {
-            folder.clone()
-        },
+        folder: label,
         ..Default::default()
     };
     eprintln!(
@@ -575,152 +622,62 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
         suite.folder,
         if repeat > 1 {
             format!(", {repeat} times")
+        } else if !data.is_empty() {
+            format!(", once per data row ({})", data.len())
         } else {
             String::new()
         }
     );
+    let opts = suite::Options {
+        env,
+        allow_unresolved,
+        no_history,
+        no_cookies,
+        fail_fast,
+        retry,
+        repeat,
+        delay_ms,
+        mask_echoed_secrets: false,
+        data,
+    };
+    let plan = suite::Plan {
+        project: &project,
+        rels: &rels,
+        scope,
+        scope_errors: &scope_errors,
+        failed: &failed,
+    };
     // A folder run asks each `$prompt` label once.
     let mut answers = super::ask::Answers::new();
-    // Repeats share one scope: a value extracted in one round is seen by the next.
-    let runs = (1..=repeat).flat_map(|round| rels.iter().map(move |rel| (round, rel)));
-    for (i, (round, rel)) in runs.enumerate() {
-        if i > 0 && delay_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        }
-        // The report names each round: `Users/list.toml#2`.
-        let path = if repeat > 1 {
-            format!("{rel}#{round}")
-        } else {
-            rel.clone()
-        };
-        let path = &path;
-        // Each request gets its folders' variables on top of the shared
-        // scope; the runtime values it extracts go to the shared scope.
-        let mut rscope = scope.clone();
-        let loaded = project
-            .coll
-            .load(rel)
-            .and_then(|r| project.coll.chain(rel).map(|chain| (r, chain)));
-        let req = match loaded {
-            Ok((r, chain)) => {
-                if let Some(note) = sendito_core::inherit::ignored_headers_note(&r, &chain) {
-                    eprintln!("note: {rel}: {note}");
-                }
-                runner::with_folders(&r, &chain, &mut rscope)
-            }
-            Err(e) => {
-                // Multi-line parse errors: the first line names the file and
-                // position; the full message stays in the report.
-                let first = e.to_string().lines().next().unwrap_or_default().to_string();
-                eprintln!("ERROR {path}  {first}");
-                suite.entries.push(Entry {
-                    path: path.clone(),
-                    outcome: "error",
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                });
-                if fail_fast {
-                    break;
-                }
-                continue;
-            }
-        };
-        let kind = match &req {
-            Request::Http(_) => "http",
-            Request::Grpc(_) => "grpc",
-            Request::Ws(_) => "websocket",
-            Request::Sse(_) => "sse",
-            Request::Mqtt(_) => "mqtt",
-            Request::Mcp(_) => "mcp",
-        };
-        if let Err(e) = super::ask::answer_prompts(&req, &rscope, &prompts, &mut answers)
-            && !allow_unresolved
-        {
-            eprintln!("ERROR {path}  {e}");
-            suite.entries.push(Entry {
-                path: path.clone(),
-                kind: Some(kind),
-                outcome: "error",
-                unresolved: Some(true),
-                error: Some(e),
-                ..Default::default()
-            });
-            if fail_fast {
-                break;
-            }
-            continue;
-        }
-        let un = runner::unresolved_send(&req, &rscope, &failed, &project.config.mcp.servers);
-        if !un.is_empty() && !allow_unresolved {
-            let names = runner::unresolved_list(&un, &rscope);
-            eprintln!("ERROR {path}  unresolved variables: {names}");
-            suite.entries.push(Entry {
-                path: path.clone(),
-                kind: Some(kind),
-                outcome: "error",
-                unresolved: Some(true),
-                error: Some(format!("unresolved variables: {names}")),
-                ..Default::default()
-            });
-            if fail_fast {
-                break;
-            }
-            continue;
-        }
-        let ctx = ctx_for(&project, &env, rel, no_history, no_cookies, schemas.clone());
-        let attempts = retry.unwrap_or(req.common().retry).saturating_add(1);
-        let interval = req.common().retry_interval();
-        let mut attempt = 1;
-        let (ran, ms) = loop {
-            let t0 = Instant::now();
-            let ran = run_one(&ctx, &req, &rscope, &scope_errors, &mcp_info, no_cookies).await;
-            let ms = t0.elapsed().as_millis();
-            if ran.outcome == "pass" || attempt == attempts {
-                break (ran, ms);
-            }
+    let ask = |req: &Request, scope: &Scope| {
+        super::ask::answer_prompts(req, scope, &prompts, &mut answers)
+    };
+    // The attempt count of the request that is retried, for its final line.
+    let mut attempts_of = 0;
+    let on = |ev: suite::Event| match ev {
+        suite::Event::Note(n) => eprintln!("note: {n}"),
+        suite::Event::Log(l) => eprintln!("{l}"),
+        suite::Event::Retry {
+            path,
+            label,
+            attempt,
+            attempts,
+            interval_ms,
+        } => {
+            attempts_of = attempts;
             eprintln!(
-                "RETRY {path}  ({}, attempt {attempt}/{attempts}; next in {})",
-                ran.label,
-                sendito_ui::units::format_ms(interval)
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
-            attempt += 1;
-        };
-        let mark = match ran.outcome {
-            "pass" => "PASS",
-            "fail" => "FAIL",
-            _ => "ERROR",
-        };
-        let tries = if attempt > 1 {
-            format!(", attempt {attempt}/{attempts}")
-        } else {
-            String::new()
-        };
-        eprintln!("{mark:<5} {path}  ({}, {ms} ms{tries})", ran.label);
-        for a in ran.scripts.asserts.iter().filter(|a| !a.pass) {
-            eprintln!("      ✗ {}  (actual: {})", a.label, a.actual);
+                "RETRY {path}  ({label}, attempt {attempt}/{attempts}; next in {})",
+                sendito_ui::units::format_ms(interval_ms)
+            )
         }
-        for (var, value) in ran.scripts.updates() {
-            scope.set(RUNTIME_LAYER, &var, value);
+        suite::Event::Finished { entry, .. } => {
+            print_entry(&entry, attempts_of);
+            suite.entries.push(entry);
         }
-        let outcome = ran.outcome;
-        suite.entries.push(Entry {
-            path: path.clone(),
-            kind: Some(kind),
-            outcome,
-            attempts: attempt,
-            status: Some(ran.label),
-            duration_ms: Some(ms),
-            asserts: ran.scripts.asserts,
-            unresolved: Some(false),
-            error: None,
-            events: ran.events,
-            messages: ran.messages,
-        });
-        if fail_fast && outcome != "pass" {
-            break;
-        }
-    }
+    };
+    let ctrl_c = CtrlC::new();
+    suite::run(plan, &opts, ask, on, &ctrl_c.cancel).await;
+    drop(ctrl_c);
     suite.duration_ms = started.elapsed().as_millis();
     let nunresolved = suite.unresolved();
     eprintln!(
@@ -758,6 +715,38 @@ pub(crate) async fn run_suite(project: Project, folder: String, flags: &RunFlags
     }
 }
 
+/// The stderr line of one finished request, and its failed assertions.
+/// `attempts` is the attempt count when the request was retried.
+fn print_entry(e: &suite::Entry, attempts: u32) {
+    if e.attempts == 0 {
+        // Multi-line parse errors: the first line names the file and
+        // position; the full message stays in the report.
+        let error = e.error.as_deref().unwrap_or_default();
+        let first = error.lines().next().unwrap_or_default();
+        eprintln!("ERROR {}  {first}", e.path);
+        return;
+    }
+    let mark = match e.outcome {
+        "pass" => "PASS",
+        "fail" => "FAIL",
+        _ => "ERROR",
+    };
+    let tries = if e.attempts > 1 {
+        format!(", attempt {}/{attempts}", e.attempts)
+    } else {
+        String::new()
+    };
+    eprintln!(
+        "{mark:<5} {}  ({}, {} ms{tries})",
+        e.path,
+        e.status.as_deref().unwrap_or_default(),
+        e.duration_ms.unwrap_or_default()
+    );
+    for a in e.asserts.iter().filter(|a| !a.pass) {
+        eprintln!("      ✗ {}  (actual: {})", a.label, a.actual);
+    }
+}
+
 /// The report in `format`; `None` for `text`, which is only the stderr lines.
 fn report_text(suite: &SuiteReport, format: RunReport) -> Option<String> {
     match format {
@@ -776,244 +765,6 @@ fn report_name(format: RunReport) -> &'static str {
         RunReport::Junit => "junit",
         RunReport::Tap => "tap",
         RunReport::Html => "html",
-    }
-}
-
-/// Executes one request of a suite run and classifies the outcome.
-pub(crate) async fn run_one(
-    ctx: &RunCtx,
-    req: &Request,
-    scope: &Scope,
-    scope_errors: &[String],
-    mcp_info: &runner::McpRunInfo,
-    no_cookies: bool,
-) -> Ran {
-    match req {
-        Request::Sse(s) => {
-            let mut s = s.clone();
-            if no_cookies {
-                s.options.cookies = Some(false);
-            }
-            run_sse(
-                ctx,
-                &s,
-                scope.clone(),
-                scope_errors.to_vec(),
-                false,
-                false,
-                &mut std::io::sink(),
-            )
-            .await
-        }
-        Request::Mqtt(m) => {
-            run_mqtt(
-                ctx,
-                m,
-                scope.clone(),
-                scope_errors.to_vec(),
-                false,
-                false,
-                &mut std::io::sink(),
-            )
-            .await
-        }
-        Request::Http(h) => {
-            let mut h = h.clone();
-            if no_cookies {
-                h.options.cookies = Some(false);
-            }
-            let o = runner::exec_http(ctx, &h, scope.clone(), scope_errors.to_vec()).await;
-            let failed_asserts = o.scripts.failed_asserts();
-            match &o.response {
-                Ok(r) => Ran {
-                    events: None,
-                    messages: None,
-                    outcome: if failed_asserts > 0 { "fail" } else { "pass" },
-                    label: format!("{} {}", r.status, r.reason),
-                    scripts: o.scripts,
-                },
-                Err(e) => Ran {
-                    events: None,
-                    messages: None,
-                    outcome: "error",
-                    label: e.clone(),
-                    scripts: o.scripts,
-                },
-            }
-        }
-        Request::Grpc(g) => {
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel();
-            drop(ctl_tx);
-            let run = runner::exec_grpc(ctx, g, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
-            let mut code = 0i32;
-            let mut label = String::from("OK");
-            let mut scripts = runner::ScriptResults::default();
-            // Drive the call and collect its updates together: the channel is
-            // only fed while `run` is polled.
-            let collect = async {
-                while let Some(u) = urx.recv().await {
-                    match u {
-                        GrpcUpdate::Event(sendito_grpc::Event::Finished {
-                            code: c,
-                            message,
-                            ..
-                        }) => {
-                            code = c;
-                            label = if c == 0 {
-                                "OK".into()
-                            } else if message.is_empty() {
-                                format!("{} ({c})", sendito_grpc::code_name(c))
-                            } else {
-                                format!("{}: {message}", sendito_grpc::code_name(c))
-                            };
-                        }
-                        GrpcUpdate::Error(e) => {
-                            code = -1;
-                            label = e;
-                        }
-                        GrpcUpdate::Done { scripts: s, .. } => scripts = s,
-                        _ => {}
-                    }
-                }
-            };
-            tokio::join!(run, collect);
-            if code != 0 {
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: "error",
-                    label,
-                    scripts,
-                }
-            } else {
-                let fails = scripts.failed_asserts();
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: if fails > 0 { "fail" } else { "pass" },
-                    label,
-                    scripts,
-                }
-            }
-        }
-        Request::Ws(w) => {
-            let mut w = w.clone();
-            if no_cookies {
-                w.options.cookies = Some(false);
-            }
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let (ctl_tx, ctl_rx) = tokio::sync::mpsc::unbounded_channel::<runner::Control>();
-            drop(ctl_tx);
-            let run = runner::exec_ws(ctx, &w, scope.clone(), scope_errors.to_vec(), utx, ctl_rx);
-            let mut code = 1006i64;
-            let mut label = String::from("close 1006");
-            let mut error: Option<String> = None;
-            let mut scripts = runner::ScriptResults::default();
-            let collect = async {
-                while let Some(u) = urx.recv().await {
-                    match u {
-                        runner::WsUpdate::Event(sendito_ws::Event::Finished {
-                            code: c,
-                            reason,
-                            ..
-                        }) => {
-                            code = c as i64;
-                            label = if reason.is_empty() {
-                                format!("close {c}")
-                            } else {
-                                format!("close {c}: {reason}")
-                            };
-                        }
-                        runner::WsUpdate::Error(e) => {
-                            error = Some(e.clone());
-                            label = e;
-                        }
-                        runner::WsUpdate::Done { scripts: s, .. } => scripts = s,
-                        _ => {}
-                    }
-                }
-            };
-            tokio::join!(run, collect);
-            if let Some(e) = error {
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: "error",
-                    label: e,
-                    scripts,
-                }
-            } else if code != 1000 {
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: "error",
-                    label,
-                    scripts,
-                }
-            } else {
-                let failed_asserts = scripts.failed_asserts();
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: if failed_asserts > 0 { "fail" } else { "pass" },
-                    label,
-                    scripts,
-                }
-            }
-        }
-        Request::Mcp(m) => {
-            let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
-            let run = runner::exec_mcp(ctx, m, scope.clone(), scope_errors.to_vec(), mcp_info, utx);
-            let mut code = 0u8;
-            let mut label = String::from("ok");
-            let mut scripts = runner::ScriptResults::default();
-            // Same as gRPC: the future must be polled while the updates are
-            // read, or the channel never produces anything.
-            let collect = async {
-                while let Some(u) = urx.recv().await {
-                    if let runner::McpUpdate::Done {
-                        error,
-                        is_error,
-                        scripts: s,
-                        ..
-                    } = u
-                    {
-                        scripts = s;
-                        if let Some(e) = error {
-                            code = 2;
-                            label = e;
-                        } else if is_error {
-                            code = 1;
-                            label = "the tool reported an error".into();
-                        }
-                    }
-                }
-            };
-            tokio::join!(run, collect);
-            if code == 2 {
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: "error",
-                    label,
-                    scripts,
-                }
-            } else {
-                let fails = scripts.failed_asserts();
-                Ran {
-                    events: None,
-                    messages: None,
-                    outcome: if code == 1 || fails > 0 {
-                        "fail"
-                    } else {
-                        "pass"
-                    },
-                    label,
-                    scripts,
-                }
-            }
-        }
     }
 }
 

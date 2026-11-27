@@ -15,6 +15,7 @@ mod kit;
 mod overlay;
 mod request;
 mod response;
+mod run_tab;
 mod sidebar;
 mod table;
 mod welcome;
@@ -27,6 +28,7 @@ use kit::*;
 use overlay::*;
 use request::*;
 use response::*;
+
 use sidebar::*;
 use welcome::*;
 use whichkey::*;

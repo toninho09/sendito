@@ -3,6 +3,7 @@
 use super::*;
 
 /// An opened collection with its settings.
+#[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
     pub coll: Collection,

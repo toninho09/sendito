@@ -35,6 +35,8 @@ impl App {
 
     pub fn set_env(&mut self, env: Option<String>) {
         self.active_env = env;
+        // The kept MCP sessions belong to the old environment.
+        self.mcp_pool.clear();
         // A watch re-resolves variables at every send; a new environment makes
         // that a different request, so watches stop.
         let watched = self.tabs.iter_mut().filter_map(|t| t.watch.take()).count();
