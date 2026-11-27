@@ -196,6 +196,9 @@ pub(super) async fn exec_http_inner(
     } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_http(req, &scope, &ctx.root);
+    if let Err(message) = ctx.check_files(body_files(&resolved.body)) {
+        resolved.body = sendito_core::resolve::ResolvedBody::Invalid(message);
+    }
     if let Some(message) = pre_error {
         mask_shown(&mut resolved, &http_secrets(req, &scope));
         return HttpRun {
@@ -499,6 +502,8 @@ pub(super) async fn exec_http_inner(
             } else {
                 Vec::new()
             };
+            // A redirect can carry a secret in the query of the final URL.
+            resp.url = sendito_core::vars::scrub(&resp.url, &secrets);
             for (name, value) in resp.headers.iter_mut() {
                 if ctx.mask_echoed_secrets && name.eq_ignore_ascii_case("set-cookie") {
                     *value = "••••••".into();
@@ -677,7 +682,7 @@ async fn sign_before_send(
     let fail = sendito_http::HttpError::Send;
     let added = match resolved.signed.clone() {
         Some(SignedAuth::Jwt { .. }) => {
-            let token = jwt_token(&ctx.root, resolved.signed.as_ref())
+            let token = jwt_token(&ctx.root, ctx.confine_files, resolved.signed.as_ref())
                 .await
                 .map_err(fail)?;
             vec![(
@@ -745,10 +750,29 @@ async fn payload_sha256(body: &sendito_core::resolve::ResolvedBody) -> Result<St
     }
 }
 
+/// The files a body reads: the file of a file body, the file parts of a
+/// multipart body.
+fn body_files(body: &sendito_core::resolve::ResolvedBody) -> Vec<&Path> {
+    use sendito_core::resolve::{PartData, ResolvedBody};
+    match body {
+        ResolvedBody::File(p) => vec![p.as_path()],
+        ResolvedBody::Multipart(parts) => parts
+            .iter()
+            .filter_map(|p| match &p.data {
+                PartData::File { path, .. } => Some(path.as_path()),
+                PartData::Text(_) => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The token of a JWT auth, signed now; `None` for any other auth. The
-/// private key path is relative to the collection root.
+/// private key path is relative to the collection root; with `confine`, it
+/// must pass [`confined`].
 pub(super) async fn jwt_token(
     root: &Path,
+    confine: bool,
     signed: Option<&SignedAuth>,
 ) -> Result<Option<String>, String> {
     let Some(SignedAuth::Jwt {
@@ -767,6 +791,9 @@ pub(super) async fn jwt_token(
         return Err(format!("{} needs a private key file", algorithm.as_str()));
     } else {
         let path = sendito_store::env::expand(root, private_key);
+        if confine {
+            confined(root, &path)?;
+        }
         Some(
             tokio::fs::read(&path)
                 .await

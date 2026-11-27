@@ -160,6 +160,8 @@ impl KeymapEditor {
             Ctx::Editor,
             Ctx::Table,
             Ctx::Response,
+            Ctx::Query,
+            Ctx::Dialog,
         ] {
             let actions: Vec<Action> = Action::ALL
                 .iter()
@@ -226,6 +228,14 @@ impl KeymapEditor {
         let defaults = Keymap::defaults();
         let ctx = ctx_of(&defaults, a);
         let vim = self.mode == 2;
+        let seqs: Vec<KeySeq> = km
+            .keys_for(a, vim)
+            .iter()
+            .filter_map(|k| KeySeq::parse(k).ok())
+            .collect();
+        if let Some(w) = crate::keymap::dialog_sequence(ctx, &seqs) {
+            return Some(format!("⚠ {w}"));
+        }
         for key in km.keys_for(a, vim) {
             let Ok(seq) = KeySeq::parse(&key) else {
                 continue;
@@ -483,6 +493,13 @@ mod tests {
         // Ctrl+W alone starts every menu key.
         e.set_keys(Action::FormatBody, Some(vec!["ctrl+w".into()]));
         assert!(e.note.is_some());
+        // A dialog reads one key: a sequence for a dialog action gets a note.
+        e.set_keys(Action::DialogNew, Some(vec!["ctrl+w n".into()]));
+        assert!(
+            e.note.as_deref().unwrap().contains("one key at a time"),
+            "{:?}",
+            e.note
+        );
         // Back to the default.
         e.set_keys(Action::FormatBody, None);
         assert!(!e.overrides[0].contains_key(&Action::FormatBody));

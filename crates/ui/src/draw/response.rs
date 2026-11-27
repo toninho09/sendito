@@ -376,6 +376,7 @@ fn draw_query_bar(app: &mut App, buf: &mut Buffer, view: Rect, theme: &Theme) ->
         return view;
     }
     let focused = app.focus == Focus::RespQuery;
+    let bypass_key = app.keymap.hint(Action::JqBypass, app.vim);
     let names = app.names.clone();
     let tab = &mut app.tabs[app.active];
     let Some(r) = tab.response.as_mut() else {
@@ -394,6 +395,9 @@ fn draw_query_bar(app: &mut App, buf: &mut Buffer, view: Rect, theme: &Theme) ->
     let text = q.input.text();
     // What the typed text gives, on the right of the bar.
     let state: Option<(String, ratatui::style::Style)> = match q.mode {
+        QueryMode::Jq if q.bypass => {
+            Some((format!("filter off · {bypass_key}"), theme.fg(theme.warn)))
+        }
         _ if text.trim().is_empty() => None,
         QueryMode::Jq => match &q.error {
             Some(e) => Some((format!("✗ {e}"), theme.fg(theme.err))),

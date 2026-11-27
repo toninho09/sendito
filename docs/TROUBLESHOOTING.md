@@ -108,14 +108,20 @@ nearest 256-color palette. Themes are in [THEMES.md](THEMES.md).
 
 ## Copy (`y`) does nothing
 
-Sendito copies through the terminal (OSC 52). In tmux, turn it on:
+Sendito copies through the terminal (OSC 52) and through the local
+clipboard program: `pbcopy` on macOS, `wl-copy` on Wayland, `xclip` on X11.
+On Linux, install `wl-clipboard` or `xclip` when the copy does not arrive.
+
+Over SSH, only OSC 52 reaches your computer. In tmux, turn it on:
 
 ```
 set -g set-clipboard on
 ```
 
 Some terminals ask for permission to write to the clipboard, or turn OSC 52
-off. Look for "clipboard" in the settings of your terminal.
+off. Look for "clipboard" in the settings of your terminal. In iTerm2, turn
+on Settings → General → Selection → "Applications in terminal may access
+clipboard".
 
 ## `:edit` comes back at once with no change
 
@@ -154,6 +160,42 @@ max_body_mb = 500
 The Lua engine is compiled with Sendito, so the build needs a C compiler
 (`cc`): install `build-essential` on Debian or Ubuntu, or the Xcode Command
 Line Tools on macOS (`xcode-select --install`).
+
+## The agent does not see Sendito (`sendito serve`)
+
+The agent starts `sendito serve` and shows no Sendito tools, or it says that
+the server stopped.
+
+1. Use the full path of the binary in the agent's configuration
+   (`which sendito` prints it). An app that you start from the Dock or the
+   menu does not get the `PATH` of your shell.
+2. Run the same command in a terminal: `sendito serve /path/to/collection
+   --env local`. When it works, it prints `sendito: serving … on stdin/stdout`
+   and waits; `Ctrl+D` stops it. Otherwise it prints the error:
+   * `no collection at …`: give the path of the collection, or run
+     `sendito init` there.
+   * `environment "…" does not exist`: give a name from
+     `.sendito/environments/`.
+3. Start the agent again after you change its configuration.
+
+## The agent's request has an unresolved secret
+
+The agent starts `sendito serve` as a new process, without your shell.
+
+* A `{{$processEnv.NAME}}` value needs `NAME` in the agent's configuration:
+  `claude mcp add -e NAME=value …`, or `"env": {"NAME": "value"}` in the JSON
+  ([the guide](GUIDES.md#secrets)).
+* A keychain value needs a keychain that the process can open. When the agent
+  runs over SSH or in a container, use `source = "local"` or
+  `source = "file"` (see [The keychain does not work](#the-keychain-does-not-work-linux-ci-ssh)).
+
+No tool shows a secret value. This is by design: tell the agent to use the
+`{{name}}` placeholder.
+
+## The agent cannot create or delete requests
+
+The server runs with `--read-only`, which removes the tools that write. Remove
+the flag from the agent's configuration and start the agent again.
 
 ## Windows
 

@@ -80,6 +80,18 @@ impl App {
                     | Action::NextCell
                     | Action::FocusNext
                     | Action::FocusPrev
+                    | Action::JqComplete
+                    | Action::JqHistoryPrev
+                    | Action::JqHistoryNext
+                    | Action::JqBypass
+                    | Action::DialogConfirm
+                    | Action::DialogNew
+                    | Action::DialogDelete
+                    | Action::DialogPrevEnv
+                    | Action::DialogNextEnv
+                    | Action::DialogBrowse
+                    | Action::DialogTest
+                    | Action::DialogSignIn
             ) {
                 continue;
             }

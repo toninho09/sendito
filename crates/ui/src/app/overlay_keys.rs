@@ -15,9 +15,24 @@ impl App {
         }
     }
 
+    /// The dialog action of a key press (the `Dialogs` keymap context).
+    pub(crate) fn dialog_action(&self, key: &KeyEvent) -> Option<Action> {
+        match self
+            .keymap
+            .lookup(&[Ctx::Dialog], self.vim, &[Chord::from_event(key)])
+        {
+            Lookup::Action(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The first key of a dialog action, for buttons and messages.
+    pub(crate) fn dialog_key(&self, a: Action) -> String {
+        self.keymap.hint_in(Ctx::Dialog, a, self.vim)
+    }
+
     /// Returns whether the overlay stays open.
     pub(super) fn overlay_key_inner(&mut self, ov: &mut Overlay, key: KeyEvent) -> bool {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match ov {
             Overlay::Report(r) => self.report_key(r, key),
             Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
@@ -25,9 +40,9 @@ impl App {
             Overlay::Confirm(c) => self.confirm_key(c, key),
             Overlay::Picker(p) => self.picker_key(p, key),
             Overlay::Palette(p) => self.palette_key(p, key),
-            Overlay::Prompt(p) => self.prompt_key(p, key, ctrl),
-            Overlay::Import(i) => self.import_key(i, key, ctrl),
-            Overlay::Env(e) => self.env_key(e, key, ctrl),
+            Overlay::Prompt(p) => self.prompt_key(p, key),
+            Overlay::Import(i) => self.import_key(i, key),
+            Overlay::Env(e) => self.env_key(e, key),
             Overlay::Records(e) => self.records_key(e, key),
             Overlay::Keymap(e) => self.keymap_key(e, key),
         }
@@ -43,7 +58,6 @@ impl App {
             }
             KeyCode::Char('y') => {
                 self.clipboard.set(r.copy_text.clone(), false);
-                self.osc52.push(r.copy_text.clone());
                 r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
                 true
@@ -375,7 +389,7 @@ impl App {
         }
     }
 
-    pub(super) fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent) -> bool {
         {
             // The open option list of a choice row takes the keys first.
             if let Some(hl) = p.open {
@@ -399,10 +413,9 @@ impl App {
                 }
                 return true;
             }
-            // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
-            let confirm_any =
-                matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
-            if confirm_any {
+            // `dialog_confirm` confirms from any row (Enter on a choice row
+            // opens its list).
+            if self.dialog_action(&key) == Some(Action::DialogConfirm) {
                 return match self.prompt_ok(p) {
                     Ok(()) => false,
                     Err(e) => {
@@ -462,10 +475,9 @@ impl App {
         }
     }
 
-    pub(super) fn import_key(&mut self, i: &mut Import, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn import_key(&mut self, i: &mut Import, key: KeyEvent) -> bool {
         {
-            let submit = matches!(key.code, KeyCode::F(5))
-                || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
+            let submit = self.dialog_action(&key) == Some(Action::DialogConfirm);
             if key.code == KeyCode::Esc {
                 return false;
             }
@@ -492,7 +504,7 @@ impl App {
         }
     }
 
-    pub(super) fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent) -> bool {
         {
             if key.code == KeyCode::Esc {
                 if e.dirty {
@@ -510,17 +522,21 @@ impl App {
                 }
                 return false;
             }
-            if ctrl && key.code == KeyCode::Char('s') {
+            let act = self.dialog_action(&key);
+            let save = self.dialog_key(Action::DialogConfirm);
+            if act == Some(Action::DialogConfirm) {
                 let mut ed = std::mem::take(e);
                 self.save_env_editor(&mut ed);
                 *e = ed;
                 return true;
             }
-            if ctrl && key.code == KeyCode::Char('n') {
+            if act == Some(Action::DialogNew) {
                 // Creating an environment loads it into the editor: unsaved
                 // edits would be lost, as when switching.
                 if e.dirty {
-                    e.error = Some("save (Ctrl+S) or discard changes before creating one".into());
+                    e.error = Some(format!(
+                        "save ({save}) or discard changes before creating one"
+                    ));
                     return true;
                 }
                 let ed = std::mem::take(e);
@@ -528,12 +544,16 @@ impl App {
                 self.prompt_new_env();
                 return false;
             }
-            if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            if matches!(act, Some(Action::DialogPrevEnv | Action::DialogNextEnv)) {
                 if e.dirty {
-                    e.error = Some("save (Ctrl+S) or discard changes before switching".into());
+                    e.error = Some(format!("save ({save}) or discard changes before switching"));
                     return true;
                 }
-                let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
+                let d: isize = if act == Some(Action::DialogPrevEnv) {
+                    -1
+                } else {
+                    1
+                };
                 e.current = crate::list::cycle(e.current, d, e.envs.len());
                 let mut ed = std::mem::take(e);
                 self.load_env_into(&mut ed);
@@ -542,7 +562,7 @@ impl App {
             }
             let on_file =
                 e.table.sel_col == 2 && e.selected_type() == Some(crate::overlay::env_editor::FILE);
-            if key.code == KeyCode::F(2) && (e.on_dotenv || on_file) {
+            if act == Some(Action::DialogBrowse) && (e.on_dotenv || on_file) {
                 let ed = std::mem::take(e);
                 self.open_env_file_picker(ed);
                 return false;
@@ -551,7 +571,7 @@ impl App {
                 self.env_dotenv_key(e, key);
                 return true;
             }
-            if ctrl && key.code == KeyCode::Char('d') {
+            if act == Some(Action::DialogDelete) {
                 if e.table.delete_row() {
                     e.dirty = true;
                 }

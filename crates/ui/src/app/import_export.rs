@@ -333,7 +333,6 @@ impl App {
     /// notes. `what` names the export in the status line (`curl command`).
     fn copy_export(&mut self, title: &str, what: &str, text: String, notes: String, warning: &str) {
         self.clipboard.set(text.clone(), false);
-        self.osc52.push(text.clone());
         self.overlay = Some(Overlay::Report(Report {
             title: title.into(),
             viewer: Viewer::new(Doc::text(&format!(
@@ -504,8 +503,7 @@ impl App {
             return;
         }
         let n = text.len();
-        self.clipboard.set(text.clone(), false);
-        self.osc52.push(text);
+        self.clipboard.set(text, false);
         self.set_status(
             format!("copied {} to the clipboard", human_size(n as u64)),
             StatusKind::Ok,
@@ -567,7 +565,6 @@ impl App {
             return;
         };
         self.clipboard.set(path.clone(), false);
-        self.osc52.push(path.clone());
         self.set_status(format!("copied {path}"), StatusKind::Ok);
     }
 

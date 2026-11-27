@@ -67,8 +67,8 @@ pub struct UiConfig {
     /// Default watch interval, in seconds (`:watch` re-sends the active
     /// request on this interval until stopped).
     pub watch_interval_s: u64,
-    /// Key hints in the footer: `full` (as many as fit), `short` (the three
-    /// most used) or `off` (only the menu and help keys).
+    /// Key hints in the footer: `full` (as many as fit, the default),
+    /// `short` (the three most used) or `off` (only the menu and help keys).
     pub hints: String,
     /// Messages a gRPC or WebSocket stream keeps in the response; the oldest
     /// go first. The counts and sizes still cover every message.
@@ -89,7 +89,7 @@ impl Default for UiConfig {
             confirm_quit: true,
             sticky_folders: true,
             watch_interval_s: 5,
-            hints: "short".into(),
+            hints: "full".into(),
             stream_messages_kept: 10_000,
             hide_plain_secrets: false,
         }

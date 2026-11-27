@@ -115,15 +115,17 @@ make build                    # cargo build -j 4
 make check    [P=package]     # type-check only: the fastest "does it compile"
 make fmt                      # cargo fmt --all
 make lint     [P=package]     # clippy on all targets, -D warnings
-make test     [P=package] [F=name]   # the workspace suite, one crate or one test name
+make test     [P=package] [T=file] [F=name]   # the workspace suite, one crate, one tests/ file or one test name
 make deny                     # cargo deny check
 make docs                     # the documentation still matches the code
 make ci                       # fmt-check + lint + deny + test
 ```
 
 `P` is a cargo package (`sendito-core`, `sendito-ui`, `sendito` for the binary)
-and narrows `check`, `lint` and `test` to it. `F` is a test-name filter; `make
-test` fails when no test matches it. Others, when a task calls for them:
+and narrows `check`, `lint` and `test` to it. `T` is an integration test file
+without `.rs` (`make test T=serve` runs `tests/serve.rs`; add `P` for a file
+of another crate). `F` is a test-name filter: it matches the test names, not
+the file names. `make test` fails when no test matches it. Others, when a task calls for them:
 `make run ARGS="req.http"`, `make servers` (the echo servers), `make cov` (line
 coverage, 80 % gate), `make bench`, `make bundles` (the reviewer bundles of
 `docs/PLAN.md`), `make site` (the documentation site in `book/`, published to

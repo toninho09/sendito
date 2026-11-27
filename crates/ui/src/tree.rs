@@ -476,6 +476,7 @@ mod tests {
             name: sendito_store::collection::name_of(rel).to_string(),
             rel: rel.to_string(),
             badge: badge.to_string(),
+            description: String::new(),
         };
         Folder {
             name: "root".into(),

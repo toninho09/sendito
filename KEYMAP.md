@@ -68,6 +68,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `grow_request` | `Ctrl+W +` | `Ctrl+W +` | Give the request editor more height |
 | `shrink_request` | `Ctrl+W -` | `Ctrl+W -` | Give the response more height |
 | `complete` | `Ctrl+Space` | `Ctrl+Space` | Show completion suggestions at the cursor |
+| `pick_value` | `F2` | `F2` | Choose the value of the focused field from a list (MCP server, MCP target, OAuth identity) |
 
 ## Sidebar tree
 
@@ -143,6 +144,28 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `save_body` | `s` | `s` | Save the response body to a file |
 | `open_pager` | `o` | `o` | Show the response text in $PAGER |
 
+## Response query bar (jq)
+
+| Action | Conventional | Vim mode | Description |
+|---|---|---|---|
+| `jq_complete` | `Tab` | `Tab` | Complete the object key at the cursor in the jq bar |
+| `jq_history_prev` | `Up` | `Up` | Show the previous jq expression used in the tab |
+| `jq_history_next` | `Down` | `Down` | Show the next jq expression used in the tab |
+| `jq_bypass` | `Ctrl+R` | `Ctrl+R` | Show the body without the jq filter while you type (again: filter on) |
+
+## Dialogs (environments, MCP servers, identities, import, input)
+
+| Action | Conventional | Vim mode | Description |
+|---|---|---|---|
+| `dialog_confirm` | `Ctrl+S`, `F5`, `Ctrl+Enter` | `Ctrl+S`, `F5`, `Ctrl+Enter` | Save the dialog (environments, MCP servers, identities), import, or confirm an input dialog from any field |
+| `dialog_new` | `Ctrl+N` | `Ctrl+N` | New environment, MCP server or identity in its editor |
+| `dialog_delete` | `Ctrl+D` | `Ctrl+D` | Delete the table row or the list entry of an editor |
+| `dialog_prev_env` | `Ctrl+PageUp` | `Ctrl+PageUp` | Previous environment in the environment editor |
+| `dialog_next_env` | `Ctrl+PageDown` | `Ctrl+PageDown` | Next environment in the environment editor |
+| `dialog_browse` | `F2` | `F2` | Choose a file in the environment editor (.env file or a file value) |
+| `dialog_test` | `Ctrl+T` | `Ctrl+T` | Test the MCP server in the MCP server editor |
+| `dialog_sign_in` | `Ctrl+L` | `Ctrl+L` | Sign in with the identity in the OAuth identity editor |
+
 ## Fixed keys
 
 These are handled by the widgets themselves and cannot be remapped.
@@ -159,19 +182,17 @@ These are handled by the widgets themselves and cannot be remapped.
 | Tab bars | Left / Right | Switch tab when a tab bar is focused |
 | Tab bars | Enter / Down | Go into the tab's content |
 | Method / pickers | Enter or Space | Open the picker; type to filter, Enter to choose, Esc to close |
-| Dialogs | Enter / Esc | Input dialogs: Enter confirms from any field (Ctrl+S too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly |
+| Dialogs | Enter / Esc | Input dialogs: Enter confirms from any field (dialog_confirm too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly |
 | History (sidebar) | Enter | Open a copy of the entry in a new tab |
 | History (sidebar) | Ctrl+Enter / F5 | Resend the entry (opens a copy and sends it) |
 | History (sidebar) | s | Save the entry to the tree |
 | History (sidebar) | F7 | Back to the tree |
 | Tables | Space (on a ‹choice› cell: multipart Kind, env Source) | Change the value |
 | Environment editor | Space (Source cell) | Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file |
-| Environment editor | Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown | Save / new environment / previous, next environment |
-| Environment editor | Enter / Ctrl+D / Esc | Next cell / delete the row / close |
-| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or collection / cancel |
+| Environment editor | Enter / Esc | Next cell / close |
+| Import dialog | Tab / Esc | Complete the file path / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
-| MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
 | Command palette | :\<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |

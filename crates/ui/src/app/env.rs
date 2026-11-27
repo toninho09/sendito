@@ -294,7 +294,11 @@ impl App {
         ed.table.select(first, 2);
         ed.dirty = true;
         self.set_status(
-            format!("type the value of {} and save (Ctrl+S)", names.join(", ")),
+            format!(
+                "type the value of {} and save ({})",
+                names.join(", "),
+                self.dialog_key(Action::DialogConfirm)
+            ),
             StatusKind::Info,
         );
     }

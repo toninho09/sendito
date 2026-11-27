@@ -58,6 +58,10 @@ impl App {
             }
             Action::Palette => self.open_palette(""),
             Action::Complete => self.refresh_complete(),
+            Action::JqComplete
+            | Action::JqHistoryPrev
+            | Action::JqHistoryNext
+            | Action::JqBypass => self.query_action(a),
             Action::Help => self.open_help(),
             Action::Settings => self.open_settings(SettingId::Theme),
             Action::SelectEnv => self.open_env_picker(),
@@ -162,6 +166,16 @@ impl App {
             | Action::Copy
             | Action::Cut
             | Action::Paste => {}
+            Action::PickValue => self.pick_value(),
+            // The dialogs read their own keys (`dialog_action`).
+            Action::DialogConfirm
+            | Action::DialogNew
+            | Action::DialogDelete
+            | Action::DialogPrevEnv
+            | Action::DialogNextEnv
+            | Action::DialogBrowse
+            | Action::DialogTest
+            | Action::DialogSignIn => {}
         }
     }
 
@@ -274,6 +288,23 @@ impl App {
             ]);
         }
         v
+    }
+
+    /// `pick_value`: the list of values for the focused field. On the MCP
+    /// server input it lists the configured servers (a direct URL needs
+    /// none); elsewhere in the MCP bar it discovers the server's targets.
+    fn pick_value(&mut self) {
+        let Some(t) = self.tab() else { return };
+        let mcp = t.ed.kind == Kind::Mcp;
+        let no_server = t.ed.mcp_server.text().is_empty();
+        match (self.focus, t.current_field()) {
+            (Focus::Bar(1), _) if mcp && no_server => self.open_mcp_server_picker(),
+            (Focus::Bar(_), _) if mcp => self.load_mcp_tools(true),
+            (Focus::ReqBody, Some(Field::McpServer)) => self.open_mcp_server_picker(),
+            (Focus::ReqBody, Some(Field::McpTool)) => self.load_mcp_tools(true),
+            (Focus::ReqBody, Some(Field::AuthOAuthName)) => self.open_oauth_identity_picker(),
+            _ => {}
+        }
     }
 
     pub fn focus_cycle(&mut self, dir: isize) {

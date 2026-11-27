@@ -1118,30 +1118,56 @@ fn write_description(w: &mut Writer, text: &str) {
     }
 }
 
+/// Reads a TOML file line by line and knows which lines are inside a
+/// multi-line string (`'''` or `"""`): those lines (a description, for
+/// example) are text, not keys or table headers.
+#[derive(Default)]
+pub struct TextLines {
+    /// The closing quotes of the multi-line string the reader is in.
+    open: Option<&'static str>,
+}
+
+impl TextLines {
+    /// `line` opens, continues or closes a multi-line string.
+    pub fn in_text(&mut self, line: &str) -> bool {
+        if let Some(d) = self.open {
+            if line.contains(d) {
+                self.open = None;
+            }
+            return true;
+        }
+        self.open = ["'''", "\"\"\""]
+            .into_iter()
+            .find(|d| line.matches(d).count() == 1);
+        self.open.is_some()
+    }
+}
+
+/// The `description` of a request from the top-level keys of its file
+/// (see [`write_description`]); empty when it has none or they do not parse.
+pub fn sniff_description(head: &str) -> String {
+    if !head.contains("description") {
+        return String::new();
+    }
+    head.parse::<toml::Table>()
+        .ok()
+        .and_then(|t| t.get("description")?.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// Cheap sniff of `kind`/`method` from the top of a request file (for tree badges
 /// without a full parse). Returns `None` when the file is not a request.
 pub fn sniff_badge(text: &str) -> Option<String> {
     let mut kind = None;
     let mut method = None;
-    // The closing quotes of the multi-line string the scan is in: its lines
-    // (a description, for example) are text, not keys.
-    let mut open: Option<&str> = None;
+    let mut text_lines = TextLines::default();
     for line in text.lines() {
-        if let Some(d) = open {
-            if line.contains(d) {
-                open = None;
-            }
+        if text_lines.in_text(line) {
             continue;
         }
         let l = line.trim();
         if l.starts_with('[') {
             break;
-        }
-        open = ["'''", "\"\"\""]
-            .into_iter()
-            .find(|d| l.matches(d).count() == 1);
-        if open.is_some() {
-            continue;
         }
         if !l.contains("kind") && !l.contains("method") {
             continue;
@@ -1733,5 +1759,13 @@ op = "exists"
             Some("POST".into())
         );
         assert_eq!(sniff_badge("kind = \"grpc\"   \n"), Some("GRPC".into()));
+    }
+
+    #[test]
+    fn the_description_is_sniffed_from_the_top_level_keys() {
+        let head = "kind = \"http\"\ndescription = '''\n# Users\n[a](b)\n'''\n";
+        assert_eq!(sniff_description(head), "# Users\n[a](b)\n");
+        assert_eq!(sniff_description("kind = \"http\"\n"), "");
+        assert_eq!(sniff_description("description = '''\nnot closed\n"), "");
     }
 }

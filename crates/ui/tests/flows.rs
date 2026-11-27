@@ -758,6 +758,47 @@ fn flow_lua_pre_script() {
     assert!(sc.contains("  hi"), "{sc}");
 }
 
+/// The response tab bar: Left and Right switch the tab and Enter opens it,
+/// before the viewer bindings see the keys; the hint row says so.
+#[test]
+fn flow_response_tab_bar_keys() {
+    use sendito_ui::app::Focus;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    h.app.focus = Focus::RespTabs;
+    let labels: Vec<String> = h.app.hints().into_iter().map(|(_, l)| l).collect();
+    assert!(labels.iter().any(|l| l == "switch tab"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "fold"), "{labels:?}");
+    let tab = |h: &Harness| h.app.tab().must().resp_tab;
+    h.key("right");
+    assert_eq!(tab(&h), 1);
+    h.key("left");
+    assert_eq!(tab(&h), 0);
+    h.key("enter");
+    assert_eq!(h.app.focus, Focus::RespBody);
+}
+
+/// A note leaves the footer after its time; a warning stays until a new
+/// message replaces it.
+#[test]
+fn flow_status_note_expires_warning_stays() {
+    use sendito_ui::app::StatusKind;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let old = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(30))
+        .must();
+    h.app.status = Some(("check the url".into(), StatusKind::Warn, old));
+    h.app.tick();
+    assert!(h.app.status.is_some());
+    h.app.status = Some(("saved".into(), StatusKind::Ok, old));
+    h.app.tick();
+    assert!(h.app.status.is_none());
+}
+
 #[test]
 fn flow_response_jq_filter() {
     let s = servers();
@@ -819,6 +860,35 @@ fn flow_response_jq_filter() {
         assert!(!sc.contains("jq ▸"), "{sc}");
         assert!(sc.contains("\"method\""), "{sc}");
     }
+    // Ctrl+R shows the body without the filter while the text is typed;
+    // Enter turns the filter on again.
+    h.key("j");
+    h.type_text(".method");
+    h.key("ctrl+r");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("filter off"), "{sc}");
+        assert!(sc.contains("\"target\""), "{sc}");
+    }
+    h.key("enter");
+    {
+        let sc = h.screen();
+        assert!(!sc.contains("filter off"), "{sc}");
+        assert!(sc.contains("\"POST\""), "{sc}");
+        assert!(!sc.contains("\"target\""), "{sc}");
+    }
+    // Esc also ends the bypass and goes back to the kept filter.
+    h.key("j");
+    h.key("ctrl+r");
+    assert!(h.screen().contains("\"target\""));
+    h.key("esc");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
+        assert!(!sc.contains("\"target\""), "{sc}");
+    }
+    h.key("j");
+    h.key("ctrl+a backspace enter");
     // Up walks the expressions used before.
     h.key("j");
     h.key("up");
@@ -1992,7 +2062,8 @@ fn flow_completion_fetches_schema() {
     let c = h.app.complete.as_ref().must();
     assert!(c.loading.is_none());
     assert!(c.items.iter().any(|i| i.name == "text"));
-    assert!(h.screen().contains("insert"), "the hint row describes it");
+    let sc = h.screen();
+    assert!(sc.contains("insert"), "the hint row describes it\n{sc}");
 }
 
 /// A schema that fails to load is reported in the popup and status, and is not
@@ -3889,6 +3960,29 @@ fn flow_new_request_previews_the_file() {
 
 /// The import dialog says what the text would import, and Tab completes
 /// a path.
+/// A dialog key changed in the keymap applies in the dialog and shows in its
+/// hints; the old key does nothing there.
+#[test]
+fn flow_dialog_key_follows_the_keymap() {
+    use sendito_store::config::KeySpec;
+    use sendito_ui::keymap::Keymap;
+    use std::collections::BTreeMap;
+    let mut h = harness(&servers(), 120, 40);
+    let cfg = BTreeMap::from([(
+        "all".to_string(),
+        BTreeMap::from([("dialog_confirm".to_string(), KeySpec::One("f6".into()))]),
+    )]);
+    h.app.keymap = Keymap::defaults().with_overrides(&cfg).0;
+    h.key("ctrl+w i");
+    h.type_text("curl https://example.test/a");
+    let hints: Vec<String> = h.app.hints().into_iter().map(|(k, _)| k).collect();
+    assert_eq!(hints.first().map(String::as_str), Some("F6"), "{hints:?}");
+    h.key("ctrl+s");
+    assert!(h.app.overlay.is_some(), "the old key imported");
+    h.key("f6");
+    assert!(h.app.overlay.is_none(), "the new key did not import");
+}
+
 #[test]
 fn flow_import_preview_and_completion() {
     use sendito_ui::overlay::Overlay;
@@ -4114,6 +4208,15 @@ fn flow_run_tab_runs_a_folder_once_per_row() {
     h.key("up");
     assert_eq!(view(&h), (6, 4));
     assert!(body(&h).contains("/b/bob"), "{}", body(&h));
+    // The footer names the keys of a run tab, not those of a request.
+    let labels: Vec<String> = h.app.hints().into_iter().map(|(_, l)| l).collect();
+    for l in ["run again", "choose row", "show response"] {
+        assert!(labels.iter().any(|x| x == l), "{l}: {labels:?}");
+    }
+    assert!(
+        !labels.iter().any(|x| x == "save" || x == "edit"),
+        "{labels:?}"
+    );
     // The run has its own runtime values.
     assert!(!h.app.runtime.contains_key("got"));
     assert!(h.app.session().tabs.is_empty());

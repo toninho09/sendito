@@ -32,6 +32,7 @@ requests as plain TOML files that you can version in git.
 | OAuth 2.1 (MCP) | yes | `sendito mcp login` | [MCP](#mcp) |
 | Themes and icons | yes | `sendito theme` | [Themes and icons](#themes-and-icons) |
 | Folders of requests in CI | — | `sendito run <folder>` | [Headless and CI](#headless-and-ci) |
+| AI agents (MCP server) | — | `sendito serve` | [Agents](#agents) |
 
 ![Sendito at 200×60: a POST request with a JSON body and the response](media/screenshots/200x60-dusk-request-body-and-response.png)
 
@@ -146,8 +147,11 @@ The wire rules are exact and spelled out in
   and a scrollbar. In the pretty view the bottom border shows the jq path of
   the line at the cursor (`.items[0].email`): `f` filters the body to that
   value and `Y` copies the path (JSON only).
-* **Copy**: `y` and `Ctrl+W u` copy through the terminal clipboard (OSC 52).
-  In tmux, enable it with `set -g set-clipboard on`.
+* **Copy**: `y` and `Ctrl+W u` copy through the terminal clipboard (OSC 52)
+  and through the local clipboard program: `pbcopy` on macOS, `wl-copy`
+  (Wayland) or `xclip` (X11) on Linux. Terminals that ignore OSC 52 (iTerm2
+  by default, Terminal.app) then copy too. Over SSH only OSC 52 reaches your
+  computer; in tmux, enable it with `set -g set-clipboard on`.
 * **Pretty formats**: the Content-Type chooses the format; with none that
   names one, a body that starts with `{` or `[` is JSON, `<?xml` is XML and
   `<!doctype html` or `<html` is HTML. YAML and CSV need their Content-Type.
@@ -167,15 +171,21 @@ The wire rules are exact and spelled out in
     Bodies larger than 10 MB, or with rows of different lengths, show raw.
 * **Query bar**: `/` (search) and `j` (vim `J`, jq filter) open a bar on the
   first row of the response view; there is no dialog. The view follows the
-  text as you type. On the right the bar shows `2 results`, `match 3/12`,
+  text as you type: a search at each key, a jq filter 300 ms after the last
+  key. On the right the bar shows `2 results`, `match 3/12`,
   `no match` or the jq error in red; with an error the body keeps the last
   valid result. Enter keeps the text and goes back to the view (the bar stays
   while a filter applies); Esc goes back to the text the last Enter kept; an
   empty text closes the bar. In the jq bar, Tab completes an object key after
   `.` from the keys the body really has (one match goes in at once, more open
   a list with the type of each value), and Up/Down walk the expressions used
-  in the tab (the last 50, kept in memory only). A body larger than 1 MB is
-  filtered when Enter is pressed, not at each key.
+  in the tab (the last 50, kept in memory only). Ctrl+R turns the jq filter
+  off while you type: the body shows the response as received, the bar shows
+  `filter off · Ctrl+R` and the text does not run. Ctrl+R again, Enter or Esc
+  turns the filter on. A body larger than 1 MB is filtered when Enter is
+  pressed, not after each pause. Tab, Up/Down and Ctrl+R of the jq bar are
+  keymap actions (`jq_complete`, `jq_history_prev`, `jq_history_next`,
+  `jq_bypass`): F1 lists them and `[keymap]` changes them.
 * **Timing**: DNS, TCP connect, TLS handshake, TTFB and download, with the
   remote address, the protocol and the final URL, drawn as a waterfall.
 * **jq filter**: the jq bar or `:jq [expr]` filters the JSON body with a jq
@@ -400,13 +410,13 @@ are configured, not discovered from the request.
     and SSE bodies accepted, `verify_tls` and `[http.tls]` honoured.
 * **Protocol**: JSON-RPC 2.0 — `initialize`, `notifications/initialized`, then
   `tools/list`, `tools/call`, `resources/read` or `prompts/get`. Proposed
-  version `2025-06-18`; recognizes `2024-11-05`, `2025-03-26` and
-  `2025-06-18`. Every list handles cursor pagination.
+  version `2025-06-18`; recognizes `2024-11-05`, `2025-03-26`, `2025-06-18`
+  and `2025-11-25`. Every list handles cursor pagination.
 * **Operation**: the Operation field (`tool`, `resource` or `prompt`) chooses
   what the request does; the Target field holds the tool name, the resource
   URI or the prompt name.
-* **Discovery in the UI**: F2 on the server field lists the configured
-  servers; F2 on the target lists the server's tools, resources, resource
+* **Discovery in the UI**: F2 (the `pick_value` key) on the server field
+  lists the configured servers; F2 on the target lists the server's tools, resources, resource
   templates and prompts (a server is asked for resources and prompts only
   when it declares them). A pick sets the operation too. When the arguments
   editor is empty or `{}`, a tool fills an argument template from its input
@@ -935,10 +945,14 @@ Import gaps are listed in [DEBT.md](DEBT.md).
   unsaved count, undefined variables, watch state, running/stream state). On
   the right, the key hints for what is focused, with short key names (`^S`,
   `⏎`), always ending with `^W menu · F1 all keys`. A note or confirmation
-  takes the place of the hints for 10 s; a warning or an error stays, with
-  `^W menu · F1` beside it. `[ui] hints` sets how many hints show: `full` (all
-  that fit), `short` (the three most used, the default) or `off`. Dialogs
-  always show all their keys.
+  takes the place of the hints for 10 s (or until the next key); a warning or
+  an error stays until a new message replaces it, with the hints that fit
+  beside it (the message gets at most half of the free room). The hints are
+  in order of use: a narrow footer drops the last ones first. They show the
+  keys of the keymap, so a changed key shows in the footer. `[ui] hints` sets
+  how many hints show: `full` (all that fit, the default), `short` (the three
+  most used) or `off`. Dialogs always show all their keys. A run tab shows its
+  own keys (run again, choose row, show response).
 * **Ctrl+W menu**: after `Ctrl+W`, a box at the bottom right lists every key
   that can follow, in groups (Request, Tabs, Focus & layout, Open, App). It
   comes from the keymap, so your overrides show. Press a key or click an
@@ -1021,7 +1035,14 @@ The status line shows the mode.
 
 Every key is in [KEYMAP.md](../KEYMAP.md), generated from the same table as the
 in-app help, and can be remapped in `[keymap.all]`, `[keymap.conventional]` or
-`[keymap.vim]`.
+`[keymap.vim]`. The dialog keys are in the "Dialogs" group: save or confirm
+(`dialog_confirm`), new (`dialog_new`), delete (`dialog_delete`), previous and
+next environment, browse (`dialog_browse`), test an MCP server and sign in
+with an identity. The buttons, the help lines and the hints of the dialogs
+show the keys you set. Esc, Enter, Tab and the arrows stay fixed, and so do the
+keys of the keymap editor, so a change cannot lock you out of it. A dialog
+reads one key at a time: a sequence such as `Ctrl+W s` for a dialog action
+never runs, and the keymap editor and the config load say so.
 
 ![The start screen](media/screenshots/200x60-dusk-welcome.png)
 
@@ -1057,7 +1078,7 @@ their own.
 |---|---|---|
 | Theme | `ui.theme` | Colors; `auto` follows the terminal background |
 | Icons | `ui.icons` | `unicode` (any font) or `nerd` (needs a Nerd Font) |
-| Key hints | `ui.hints` | Footer hints: `full`, `short` (default) or `off` |
+| Key hints | `ui.hints` | Footer hints: `full` (default), `short` or `off` |
 | Hide plain secrets | `ui.hide_plain_secrets` | Show `••••••` for a password, token or key typed as plain text in a request (`Ctrl+W *` shows it); default off |
 | Vim mode | `ui.vim_mode` | Modal editing in editors and lists |
 | Key bindings | `keymap.*` | Opens the keymap editor (`:keymap`) |
@@ -1095,7 +1116,7 @@ required, and so are the URL or username the grant needs; a missing one
 selects the identity and says what to set. A client secret or password
 without `{{variable}}` shows "⚠ plain text" and is saved with a warning.
 `Ctrl+L` signs in with the selected saved identity (the grants that need a
-sign-in). In a request, F2 on the OAuth identity field lists the identities;
+sign-in). In a request, F2 (`pick_value`) on the OAuth identity field lists the identities;
 "New identity…" opens this editor on a new one.
 
 **Keymap editor** (`:keymap`): every action, grouped as in the help, with
@@ -1153,6 +1174,59 @@ sendito run checks/health --fail-fast --env prod
 ```
 
 The flags and the JSON shape are in [CLI.md](CLI.md#sendito-run-request).
+
+---
+
+## Agents
+
+`sendito serve` makes a collection an MCP server on stdin and stdout, so an AI
+agent (Claude Code, Cursor or another MCP client) can use it.
+
+* **Read**: list the requests (with their descriptions) and folders, read a
+  request's TOML with its folder settings, and list the environments.
+* **Preview and import**: show an HTTP request as a curl command without
+  sending it (`preview_request`), and convert a curl command into request
+  TOML (`import_curl`).
+* **Send**: a saved request (`run_request`), a folder (`run_folder`, the same
+  engine as `sendito run <folder>`), or a request the agent writes as TOML
+  (`send_request`). Folder settings, scripts, assertions, retries and
+  `$prompt` values (given by the agent) work as in `sendito run`.
+  `run_folder` reports its progress and, with `failures`, returns the
+  response of each request that does not pass. `--no-send` removes these
+  tools.
+* **Responses of every kind**: status, headers and body for HTTP; the
+  messages for gRPC, WebSocket, SSE, MQTT and MCP. The agent sets the size
+  limit (`max_bytes`, 64 KB by default).
+* **Write**: create or replace a request from TOML, create folders, move,
+  rename and delete. `--read-only` removes these tools. A tool changes only
+  the requests and folders of the tree: not a `.toml` file that is not a
+  request, and nothing in a directory without requests. `delete` on a folder
+  removes the directory with everything in it, as the interface does
+  (`folder.toml`, examples, other files).
+* **Environments**: the agent chooses the environment of each send (`env`);
+  `--env` gives the default. `--allow-env local,staging` limits the agent to
+  those environments: it does not see the others, and a send with one of them
+  is refused.
+* **Secrets**: the agent sees the variable names, not the secret values, and
+  a secret the server echoes back is masked. The masking prevents accidents;
+  it does not stop an agent that wants a secret, because a request that the
+  agent writes can send it to any host. `--allow-env` and `--no-send` limit
+  what the agent can use. No tool reads or writes a hidden file by its path
+  (`.sendito/`, `.env`), and a sent request reads only the files of the
+  collection (a body file, a JWT key, a `.proto` file).
+* Sends go to the history and use the cookie jar, as with `sendito run`;
+  `--no-history` and `--no-cookies` turn that off.
+* The resource `sendito://format` gives the agent [FORMAT.md](../FORMAT.md).
+* A change to the collection or global config is read before the next tool
+  call, so the server does not need a restart.
+
+```sh
+claude mcp add sendito -- sendito serve ~/api-collection --env local
+```
+
+The setup for each agent is in the guide
+[Let an AI agent use your collection](GUIDES.md#let-an-ai-agent-use-your-collection);
+the tools and their arguments are in [CLI.md](CLI.md#sendito-serve-path).
 
 ---
 

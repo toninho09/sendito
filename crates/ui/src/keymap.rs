@@ -15,6 +15,8 @@ pub enum Ctx {
     Editor,
     Table,
     Response,
+    Query,
+    Dialog,
 }
 
 impl Ctx {
@@ -25,6 +27,8 @@ impl Ctx {
             Ctx::Editor => "Text editing (conventional mode)",
             Ctx::Table => "Params / headers / form tables",
             Ctx::Response => "Response viewer",
+            Ctx::Query => "Response query bar (jq)",
+            Ctx::Dialog => "Dialogs (environments, MCP servers, identities, import, input)",
         }
     }
 }
@@ -148,6 +152,19 @@ actions! {
     Cut => "cut", "Cut selection";
     Paste => "paste", "Paste";
     Complete => "complete", "Show completion suggestions at the cursor";
+    PickValue => "pick_value", "Choose the value of the focused field from a list (MCP server, MCP target, OAuth identity)";
+    JqComplete => "jq_complete", "Complete the object key at the cursor in the jq bar";
+    JqHistoryPrev => "jq_history_prev", "Show the previous jq expression used in the tab";
+    JqHistoryNext => "jq_history_next", "Show the next jq expression used in the tab";
+    JqBypass => "jq_bypass", "Show the body without the jq filter while you type (again: filter on)";
+    DialogConfirm => "dialog_confirm", "Save the dialog (environments, MCP servers, identities), import, or confirm an input dialog from any field";
+    DialogNew => "dialog_new", "New environment, MCP server or identity in its editor";
+    DialogDelete => "dialog_delete", "Delete the table row or the list entry of an editor";
+    DialogPrevEnv => "dialog_prev_env", "Previous environment in the environment editor";
+    DialogNextEnv => "dialog_next_env", "Next environment in the environment editor";
+    DialogBrowse => "dialog_browse", "Choose a file in the environment editor (.env file or a file value)";
+    DialogTest => "dialog_test", "Test the MCP server in the MCP server editor";
+    DialogSignIn => "dialog_sign_in", "Sign in with the identity in the OAuth identity editor";
 }
 
 /// One key press: a key and modifiers.
@@ -442,6 +459,10 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (CopyBody, Response, Vim, &["y y", "ctrl+c"]),
         (SaveBody, Response, Both, &["s"]),
         (OpenPager, Response, Both, &["o"]),
+        (JqComplete, Query, Both, &["tab"]),
+        (JqHistoryPrev, Query, Both, &["up"]),
+        (JqHistoryNext, Query, Both, &["down"]),
+        (JqBypass, Query, Both, &["ctrl+r"]),
         (NextCell, Table, Both, &["enter"]),
         (ToggleRow, Table, Both, &["ctrl+t"]),
         (DeleteRow, Table, Both, &["ctrl+d"]),
@@ -452,6 +473,15 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Cut, Editor, Conventional, &["ctrl+x"]),
         (Paste, Editor, Conventional, &["ctrl+v"]),
         (Complete, Global, Both, &["ctrl+space"]),
+        (PickValue, Global, Both, &["f2"]),
+        (DialogConfirm, Dialog, Both, &["ctrl+s", "f5", "ctrl+enter"]),
+        (DialogNew, Dialog, Both, &["ctrl+n"]),
+        (DialogDelete, Dialog, Both, &["ctrl+d"]),
+        (DialogPrevEnv, Dialog, Both, &["ctrl+pageup"]),
+        (DialogNextEnv, Dialog, Both, &["ctrl+pagedown"]),
+        (DialogBrowse, Dialog, Both, &["f2"]),
+        (DialogTest, Dialog, Both, &["ctrl+t"]),
+        (DialogSignIn, Dialog, Both, &["ctrl+l"]),
     ]
 };
 
@@ -513,6 +543,15 @@ impl Keymap {
                         Err(e) => warnings.push(format!("keymap: {id}: {e}")),
                     }
                 }
+                let ctx = self
+                    .bindings
+                    .iter()
+                    .find(|b| b.action == action)
+                    .map(|b| b.ctx)
+                    .unwrap_or(Ctx::Global);
+                if let Some(w) = dialog_sequence(ctx, &keys) {
+                    warnings.push(format!("keymap: {id}: {w}"));
+                }
                 let mut found = false;
                 for b in self.bindings.iter_mut().filter(|b| b.action == action) {
                     if modes == ModeSet::Both || b.modes == modes || b.modes == ModeSet::Both {
@@ -524,12 +563,6 @@ impl Keymap {
                     }
                 }
                 if !found {
-                    let ctx = self
-                        .bindings
-                        .iter()
-                        .find(|b| b.action == action)
-                        .map(|b| b.ctx)
-                        .unwrap_or(Ctx::Global);
                     self.bindings.push(Binding {
                         action,
                         ctx,
@@ -589,6 +622,31 @@ impl Keymap {
             .unwrap_or_else(|| "(unbound)".into())
     }
 
+    /// Keys for an action in one context, formatted; the keys of any context
+    /// when it has none there. The hint row uses it: in the tree, favorite
+    /// is `f`, not the global `Ctrl+W F`.
+    pub fn keys_in(&self, ctx: Ctx, action: Action, vim: bool) -> Vec<String> {
+        let keys: Vec<String> = self
+            .bindings
+            .iter()
+            .filter(|b| b.ctx == ctx && b.action == action && Self::applies(b, vim))
+            .flat_map(|b| b.keys.iter().map(|k| k.to_string()))
+            .collect();
+        if keys.is_empty() {
+            self.keys_for(action, vim)
+        } else {
+            keys
+        }
+    }
+
+    /// The first key for an action in one context, for hints.
+    pub fn hint_in(&self, ctx: Ctx, action: Action, vim: bool) -> String {
+        self.keys_in(ctx, action, vim)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "(unbound)".into())
+    }
+
     /// The bindings of `ctxs` that complete `pending` with one more key, in
     /// table order: what the Ctrl+W menu lists. User overrides are included.
     pub fn continuations(
@@ -641,14 +699,23 @@ impl Keymap {
     }
 }
 
+/// Why a key of a `Dialogs` action never runs: a dialog reads one key at a
+/// time, so a sequence such as `Ctrl+W s` does not work there.
+pub fn dialog_sequence(ctx: Ctx, keys: &[KeySeq]) -> Option<String> {
+    let seq = keys.iter().find(|k| k.0.len() > 1)?;
+    (ctx == Ctx::Dialog)
+        .then(|| format!("{seq} never runs: a dialog reads one key at a time, not a sequence"))
+}
+
 /// Short key names for the footer and the Ctrl+W menu: `Ctrl+S` → `^S`,
-/// `Enter` → `⏎`, `Shift+Tab` → `⇧Tab`, `PageDown` → `PgDn`.
+/// `Enter` → `⏎`, `Shift+Tab` → `⇧Tab`, `PageDown` → `PgDn`, `Delete` → `Del`.
 pub fn short_keys(s: &str) -> String {
     s.replace("Ctrl+", "^")
         .replace("Shift+", "⇧")
         .replace("Enter", "⏎")
         .replace("PageDown", "PgDn")
         .replace("PageUp", "PgUp")
+        .replace("Delete", "Del")
 }
 
 /// The prefix key of the window menu, as the footer shows it.
@@ -776,7 +843,7 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     (
         "Dialogs",
         "Enter / Esc",
-        "Input dialogs: Enter confirms from any field (Ctrl+S too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly",
+        "Input dialogs: Enter confirms from any field (dialog_confirm too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly",
     ),
     (
         "History (sidebar)",
@@ -800,20 +867,11 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
         "Space (Source cell)",
         "Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file",
     ),
-    (
-        "Environment editor",
-        "Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown",
-        "Save / new environment / previous, next environment",
-    ),
-    (
-        "Environment editor",
-        "Enter / Ctrl+D / Esc",
-        "Next cell / delete the row / close",
-    ),
+    ("Environment editor", "Enter / Esc", "Next cell / close"),
     (
         "Import dialog",
-        "F5 or Ctrl+S / Esc",
-        "Import the pasted curl command or collection / cancel",
+        "Tab / Esc",
+        "Complete the file path / cancel",
     ),
     (
         "Settings",
@@ -824,11 +882,6 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
         "Report dialogs",
         "y / Up, Down, PageUp, PageDown / Esc",
         "Copy / scroll / close",
-    ),
-    (
-        "MCP server / tool field",
-        "F2",
-        "Choose a configured server / discover and choose a tool",
     ),
     (
         "Command palette",
@@ -976,6 +1029,7 @@ mod tests {
         assert_eq!(short_keys("Shift+Tab"), "⇧Tab");
         assert_eq!(short_keys("Ctrl+PageDown"), "^PgDn");
         assert_eq!(short_keys("F1"), "F1");
+        assert_eq!(short_keys("Delete/x"), "Del/x");
     }
 
     #[test]
@@ -1127,6 +1181,32 @@ mod tests {
         assert!(
             km.keys_for(Action::TreeDelete, false)
                 .contains(&"Delete".to_string())
+        );
+    }
+
+    /// A dialog reads one key at a time: a sequence for a `Dialogs` action
+    /// gets a warning, a sequence elsewhere does not. F2 in a field is the
+    /// `pick_value` action, and the tree keeps F2 for rename.
+    #[test]
+    fn dialog_sequence_warns_and_f2_picks() {
+        let c = |s: &str| KeySeq::parse(s).map(|k| k.0).unwrap_or_default();
+        let cfg = BTreeMap::from([(
+            "all".to_string(),
+            BTreeMap::from([
+                ("dialog_new".to_string(), KeySpec::One("ctrl+w n".into())),
+                ("save".to_string(), KeySpec::One("ctrl+w s".into())),
+            ]),
+        )]);
+        let (km, w) = Keymap::defaults().with_overrides(&cfg);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].starts_with("keymap: dialog_new:"), "{w:?}");
+        assert_eq!(
+            km.lookup(&[Ctx::Global], false, &c("f2")),
+            Lookup::Action(Action::PickValue)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Tree, Ctx::Global], false, &c("f2")),
+            Lookup::Action(Action::TreeRename)
         );
     }
 

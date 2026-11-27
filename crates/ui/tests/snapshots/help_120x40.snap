@@ -3,10 +3,10 @@ source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
 ╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the keys)                                            line 1/262 · ↑↓ PgUp PgDn   ┃
+│ Search ▍  (type to filter the keys)                                            line 1/275 · ↑↓ PgUp PgDn   ┃
 │                                                                                                            ┃
 │ All keys, including any you changed in the config.                                                         ┃
-│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃
+│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 │
 │                                                                                                            │
 │ ── Global ──                                                                                               │
 │   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                                   │

@@ -1009,7 +1009,7 @@ declares `resources` or `prompts` in its capabilities. List pagination sends
 additional requests with increasing IDs and the returned cursor. Tool and
 prompt arguments are parsed and serialized as JSON, not sent byte-for-byte as
 written. The client recognizes `2024-11-05`,
-`2025-03-26` and `2025-06-18`; other versions produce a warning.
+`2025-03-26`, `2025-06-18` and `2025-11-25`; other versions produce a warning.
 
 * **stdio:** one UTF-8 JSON object and newline per message on the child process's
   stdin/stdout. The child inherits the process environment with configured `env`
@@ -1199,7 +1199,7 @@ mouse = true
 confirm_quit = true
 watch_interval_s = 5     # :watch re-sends the active request this often
 stream_messages_kept = 10000  # messages a gRPC/WebSocket stream keeps; oldest go first
-hints = "short"          # footer key hints: full | short | off
+hints = "full"           # footer key hints: full | short | off
 hide_plain_secrets = false  # show •••••• for a credential typed as plain text
                          # in a request field (Ctrl+W * shows it)
 

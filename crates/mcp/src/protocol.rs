@@ -9,8 +9,10 @@ use serde_json::{Value, json};
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Versions the server may answer with that we know how to speak. A different
-/// one logs a warning and the session continues.
-pub const SUPPORTED_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
+/// one logs a warning and the session continues. `sendito serve` answers a
+/// client with its version when it is in this list. `2025-11-25` is the last
+/// version with the `initialize` handshake; `2026-07-28` removed it.
+pub const SUPPORTED_VERSIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 
 /// A JSON-RPC request. `id` starts at 1 and grows by one per request.
 pub fn request(id: u64, method: &str, params: Value) -> Value {
@@ -20,6 +22,16 @@ pub fn request(id: u64, method: &str, params: Value) -> Value {
 /// A JSON-RPC notification (no `id`, no response expected).
 pub fn notification(method: &str) -> Value {
     json!({ "jsonrpc": "2.0", "method": method })
+}
+
+/// A JSON-RPC response to the request with this `id` (a number or a string).
+pub fn response(id: &Value, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+/// A JSON-RPC error response. `id` is `null` when the request could not be read.
+pub fn error_response(id: &Value, code: i64, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
 /// The `initialize` parameters: our latest protocol version, no client

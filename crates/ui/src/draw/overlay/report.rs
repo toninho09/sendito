@@ -1,6 +1,7 @@
 //! The import and report dialogs.
 
 use super::*;
+use crate::keymap::Action;
 
 pub(super) fn draw_import(
     app: &mut App,
@@ -12,6 +13,15 @@ pub(super) fn draw_import(
 ) {
     let (_, inner) = shell(app, buf, frame.body, 100, 17, "Import", frame.theme);
     let tw = inner.width.saturating_sub(4);
+    let key = app.dialog_key(Action::DialogConfirm);
+    // The button names two keys: a terminal with flow control takes Ctrl+S.
+    let import = app
+        .keymap
+        .keys_in(crate::keymap::Ctx::Dialog, Action::DialogConfirm, app.vim)
+        .into_iter()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" / ");
     let note = frame.theme.dialog_dim();
     put(
         buf,
@@ -25,7 +35,9 @@ pub(super) fn draw_import(
         buf,
         inner.x + 2,
         inner.y + 2,
-        "Paths start where you started Sendito, then the collection. Tab completes; F5 imports.",
+        &format!(
+            "Paths start where you started Sendito, then the collection. Tab completes; {key} imports."
+        ),
         tw,
         note,
     );
@@ -68,7 +80,7 @@ pub(super) fn draw_import(
         app,
         buf,
         inset(inner, 2, 0),
-        &["Import (F5 / Ctrl+S)", "Cancel (Esc)"],
+        &[&format!("Import ({import})"), "Cancel (Esc)"],
         None,
         &|i| OverlayHit::Button(i),
         frame.theme,

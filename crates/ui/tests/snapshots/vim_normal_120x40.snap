@@ -41,4 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- NORMAL   demo                                                  ^⏎/F5 send · ^S save · i insert · ^W menu · F1 all keys
+ NORMAL   demo                   ^⏎/F5 send · ^S save · i insert · Tab next field · ^P commands · ^W menu · F1 all keys

@@ -199,7 +199,7 @@ pub async fn exec_ws(
         );
     }
     // A JWT is signed now; the token is masked like the other secrets.
-    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+    match jwt_token(&ctx.root, ctx.confine_files, resolved.signed.as_ref()).await {
         Ok(Some(token)) => {
             scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
             resolved

@@ -11,7 +11,7 @@ sendito <command> [args]             # headless
 
 `sendito PATH` opens the TUI for `PATH`. The first word is a subcommand only
 when it is one of `init`, `run`, `curl`, `http`, `code`, `har`, `auth`,
-`mcp`, `theme`, `import`, `completions` and `man`.
+`serve`, `mcp`, `theme`, `import`, `completions` and `man`.
 
 `PATH` defaults to the nearest directory above the current one that contains
 `.sendito/`, else the current directory.
@@ -341,6 +341,76 @@ redirect must reach Sendito's local loopback listener. Tokens are stored in the
 OS keychain under `<collection>/mcp/<server>`. Use it before calling a server
 whose auth table has `type = "oauth"`. In the app, `:auth login <server>` does the
 same, and a server that asks for a sign-in offers it.
+
+---
+
+## `sendito serve [PATH]`
+
+Serves a collection to an AI agent (Claude Code, Cursor and other MCP
+clients) as an MCP server on stdin and stdout. The agent starts the process.
+`PATH` defaults to the collection that holds the current directory; a
+directory without `.sendito/` above it is an error (exit `3`).
+
+| Flag | Effect |
+|---|---|
+| `-e, --env <name>` | The environment when a tool call names none |
+| `--allow-env <names>` | The only environments the agent can see and send with, separated by commas (or the flag given again). `list_environments` shows only these, and a call that names another one gets an error. Each name must exist, and `--env` must be one of them (else exit `3`). Default: every environment |
+| `--read-only` | Offer only the tools that do not change files. The tools that send stay |
+| `--no-send` | Offer no tool that sends a request (`run_request`, `run_folder`, `send_request`) |
+| `--no-history` | Do not record the sends in the history |
+| `--no-cookies` | Do not read or write the cookie jar |
+
+```sh
+claude mcp add sendito -- sendito serve ~/api-collection --env local
+```
+
+The setup for Claude Desktop and Cursor, and examples, are in the guide
+[Let an AI agent use your collection](GUIDES.md#let-an-ai-agent-use-your-collection).
+
+The tools:
+
+| Tool | Does |
+|---|---|
+| `list_requests` | The requests (path, method or kind, description) and folders, of the collection or of one `folder`, down to `depth` levels |
+| `read_request` | The TOML of a request and of the `folder.toml` files that apply to it |
+| `list_environments` | The environments and their variables; a secret shows its name and source, never its value |
+| `preview_request` | An HTTP or SSE request (`path` or `toml`, `env`) as a curl command, with its folders applied and secrets as `{{placeholders}}`; nothing is sent |
+| `import_curl` | The request TOML of a curl `command`, with notes on the options that were ignored; nothing is saved |
+| `run_request` | Sends a saved request (`path`, `env`, `prompts`, `retry`, `max_bytes`) |
+| `run_folder` | Sends every request under `folder` in tree order (`env`, `prompts`, `retry`, `fail_fast`, `data`); the result is the [JSON report](#the-json-report). With `failures`, it also holds the response of each request that does not pass (cut at `max_bytes`) |
+| `send_request` | Sends a request given as TOML (`toml`); nothing is saved |
+| `write_request` | Creates or replaces a request file from TOML; missing folders are created |
+| `create_folder`, `move`, `delete` | Change the tree; `move` changes nothing when the new path is taken; `delete` removes a folder with its contents |
+
+Each tool has a `title` and an `outputSchema` for its `structuredContent`.
+A `run_folder` call with `_meta.progressToken` gets a
+`notifications/progress` after each request. A call whose `id` is the id of
+a call in flight gets the error `-32600`.
+
+`run_request` and `send_request` return the `outcome` (`pass`, `fail`,
+`error`), the `status`, the assertions and the response: `http` (status and
+headers) and `body` for HTTP, `messages` for gRPC, WebSocket, SSE, MQTT and MCP.
+The body and the messages are cut at `max_bytes` (default 65536) and
+`truncated` says so; a body that is not UTF-8 is base64 (`body_encoding`).
+Secret values the server echoes back are masked. This masking prevents
+accidents, not an agent that wants a secret: a request that the agent writes
+can encode a secret, or send it to any host. Use `--allow-env` and
+`--no-send` to limit what the agent can use. `prompts` gives the values of
+`$prompt` and `$select` (label → value); a label with no value makes the
+request an `error` that names it.
+
+The resource `sendito://format` is [FORMAT.md](../FORMAT.md), for the agent to
+read before it writes TOML. Paths are relative to the collection root; a path
+that leaves the collection or names a hidden file (`.sendito/`, `.env`) is
+refused. A tool sees the collection as the tree does: a `.toml` file that is
+not a request (`folder.toml`, `Cargo.toml`) and a directory without requests
+(`src/` of a code repository) cannot be read, replaced, moved or deleted, and
+a tool cannot create a request or a folder inside such a directory. A sent
+request reads only the files of the collection: a file body, a multipart
+file, a JWT key or a `.proto` file outside the collection, under a hidden
+directory, or behind a link that leads out, makes the send an `error`. A change to `.sendito/config.toml` or to the global config is read
+before the next tool call; environments are read at each call. Stdout carries
+only the protocol; warnings go to stderr. The server stops when stdin closes.
 
 ---
 

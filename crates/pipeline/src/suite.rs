@@ -52,6 +52,35 @@ pub struct Entry {
     pub attempts: u32,
 }
 
+impl Entry {
+    /// The entry in the JSON report (`docs/CLI.md`, "The JSON report"):
+    /// assertion counts, not the assertions. A key with no value is left out
+    /// for `unresolved`, `events` and `messages`.
+    pub fn json(&self) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "path": self.path,
+            "kind": self.kind,
+            "outcome": self.outcome,
+            "status": self.status,
+            "duration_ms": self.duration_ms,
+            "asserts": self.asserts.len(),
+            "failed_asserts": self.asserts.iter().filter(|a| !a.pass).count(),
+            "attempts": self.attempts,
+        });
+        if let Some(u) = self.unresolved {
+            v["unresolved"] = u.into();
+        }
+        v["error"] = self.error.clone().into();
+        if let Some(n) = self.events {
+            v["events"] = n.into();
+        }
+        if let Some(n) = self.messages {
+            v["messages"] = n.into();
+        }
+        v
+    }
+}
+
 /// The result of one send in a folder run.
 #[derive(Debug, Clone, Default)]
 pub struct Ran {
@@ -64,6 +93,9 @@ pub struct Ran {
     pub events: Option<u64>,
     /// MQTT messages received; only MQTT sets it.
     pub messages: Option<u64>,
+    /// What the server sent, one item per message (gRPC, WebSocket, MCP,
+    /// SSE, MQTT); only with [`Options::keep_output`].
+    pub output: Vec<String>,
 }
 
 impl Ran {
@@ -140,6 +172,10 @@ pub struct Options {
     pub mask_echoed_secrets: bool,
     /// The data rows; empty: no data file. Each row runs the folder once.
     pub data: Vec<Row>,
+    /// Keep what the server sends in [`Event::Finished`] (`output`).
+    pub keep_output: bool,
+    /// Read only the files of the collection (`RunCtx::confine_files`).
+    pub confine_files: bool,
 }
 
 impl Default for Options {
@@ -155,6 +191,8 @@ impl Default for Options {
             delay_ms: 0,
             mask_echoed_secrets: false,
             data: Vec::new(),
+            keep_output: false,
+            confine_files: false,
         }
     }
 }
@@ -174,43 +212,51 @@ pub enum Event {
         attempts: u32,
         interval_ms: u64,
     },
-    /// One request is done; `response` is the HTTP exchange, when there is one.
-    Finished {
-        entry: Entry,
-        response: Option<Box<HttpOutcome>>,
-    },
+    /// One request is done.
+    Finished(Sent),
 }
 
-/// What a folder run starts from: the requests, the loaded scope and what
-/// did not load.
+/// One finished request.
+#[derive(Debug)]
+pub struct Sent {
+    pub entry: Entry,
+    /// The HTTP exchange, when there is one.
+    pub response: Option<Box<HttpOutcome>>,
+    /// What the server sent (see [`Ran::output`]).
+    pub output: Vec<String>,
+}
+
+/// What a run starts from: the loaded scope and what did not load.
 pub struct Plan<'a> {
     pub project: &'a Project,
-    /// The request paths, in run order.
-    pub rels: &'a [String],
     pub scope: Scope,
     pub scope_errors: &'a [String],
     /// The names whose value did not load (see `build_scope_checked`).
     pub failed: &'a [String],
 }
 
-/// Runs `plan` with `opts`. `ask` gives the `$prompt` and `$select` values
-/// of a request (an error makes the request unresolved); `on` gets every
-/// [`Event`].
-pub async fn run<A, F>(plan: Plan<'_>, opts: &Options, mut ask: A, mut on: F, cancel: &Cancel)
-where
+/// Runs the requests `rels` (in run order) from `plan` with `opts`. `ask`
+/// gives the `$prompt` and `$select` values of a request (an error makes the
+/// request unresolved); `on` gets every [`Event`].
+pub async fn run<A, F>(
+    plan: Plan<'_>,
+    rels: &[String],
+    opts: &Options,
+    mut ask: A,
+    mut on: F,
+    cancel: &Cancel,
+) where
     A: FnMut(&Request, &Scope) -> Result<(), String>,
     F: FnMut(Event),
 {
     let Plan {
         project,
-        rels,
         scope: base,
         scope_errors,
         failed,
     } = plan;
     // The MCP sessions stay open for the whole run.
-    let mut mcp_info = McpRunInfo::of(project);
-    mcp_info.pool = Some(sendito_mcp::Pool::default());
+    let mcp_info = run_mcp_info(project);
     // One schema cache for the whole run: reflection and `.proto` files are
     // loaded once, not once per gRPC request.
     let schemas = SchemaCache::default();
@@ -249,18 +295,13 @@ where
                     None if opts.repeat > 1 => format!("{rel}#{round}"),
                     None => rel.clone(),
                 };
-                let mut ctx = RunCtx::of(
+                let mut ctx = run_ctx(
                     project,
+                    opts,
                     sendito_store::collection::name_of(rel).to_string(),
                     Some(rel.clone()),
                 );
-                if opts.no_history {
-                    ctx.history = None;
-                }
-                ctx.cookie_jar &= !opts.no_cookies;
-                ctx.env = opts.env.clone();
                 ctx.schemas = schemas.clone();
-                ctx.mask_echoed_secrets = opts.mask_echoed_secrets;
                 ctx.responses = responses.clone();
                 ctx.read_history = row.is_none();
                 let one = One {
@@ -272,7 +313,7 @@ where
                     mcp_info: &mcp_info,
                     cancel,
                 };
-                let (entry, response) = one
+                let sent = one
                     .send(
                         rel,
                         path,
@@ -282,14 +323,125 @@ where
                         &mut on,
                     )
                     .await;
-                let stop = opts.fail_fast && entry.outcome != "pass";
-                on(Event::Finished { entry, response });
+                let stop = opts.fail_fast && sent.entry.outcome != "pass";
+                on(Event::Finished(sent));
                 if stop {
                     break 'run;
                 }
             }
         }
     }
+}
+
+/// Sends `req`, a request that no file holds, as a run of one request:
+/// no folder settings, no data rows and no rounds. `name` is its name in the
+/// history and its path in the report.
+pub async fn run_request<A, F>(
+    plan: Plan<'_>,
+    req: &Request,
+    name: &str,
+    opts: &Options,
+    mut ask: A,
+    mut on: F,
+    cancel: &Cancel,
+) -> Sent
+where
+    A: FnMut(&Request, &Scope) -> Result<(), String>,
+    F: FnMut(Event),
+{
+    let Plan {
+        project,
+        mut scope,
+        scope_errors,
+        failed,
+    } = plan;
+    let mcp_info = run_mcp_info(project);
+    let ctx = run_ctx(project, opts, name.to_string(), None);
+    let one = One {
+        project,
+        scope_errors,
+        failed,
+        opts,
+        ctx: &ctx,
+        mcp_info: &mcp_info,
+        cancel,
+    };
+    let rscope = scope.clone();
+    one.send_loaded(req, name.to_string(), rscope, &mut scope, &mut ask, &mut on)
+        .await
+}
+
+/// `req`, the request at `rel`, with the settings of the folders above it;
+/// their variables go to `scope`. The note names the folder headers that the
+/// request does not get (see `ignored_headers_note`).
+pub fn in_folders(
+    project: &Project,
+    rel: &str,
+    req: &Request,
+    scope: &mut Scope,
+) -> sendito_store::Result<(Request, Option<String>)> {
+    let chain = project.coll.chain(rel)?;
+    let note = sendito_core::inherit::ignored_headers_note(req, &chain);
+    Ok((runner::with_folders(req, &chain, scope), note))
+}
+
+/// Why a request is not sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotReady {
+    /// A `$prompt` or `$select` has no value: the reason `ask` gave.
+    Ask(String),
+    /// The placeholders that do not resolve, as a list of names.
+    Unresolved(String),
+}
+
+/// Checks that `req` can be sent with `scope`: `ask` gives the values of its
+/// `$prompt` and `$select` calls, then every placeholder must resolve.
+/// `failed` names the values that did not load (see `build_scope_checked`).
+pub fn check_ready<A>(
+    project: &Project,
+    req: &Request,
+    scope: &Scope,
+    failed: &[String],
+    ask: A,
+) -> Result<(), NotReady>
+where
+    A: FnOnce(&Request, &Scope) -> Result<(), String>,
+{
+    ask(req, scope).map_err(NotReady::Ask)?;
+    let un = runner::unresolved_send(req, scope, failed, &project.config.mcp.servers);
+    if un.is_empty() {
+        Ok(())
+    } else {
+        Err(NotReady::Unresolved(runner::unresolved_list(&un, scope)))
+    }
+}
+
+/// How many times `req` is sent at most (`retry`, else its `[options]
+/// retry`, plus one) and the wait before each retry, in milliseconds.
+pub fn attempts(req: &Request, retry: Option<u32>) -> (u32, u64) {
+    let common = req.common();
+    let attempts = retry.unwrap_or(common.retry).saturating_add(1);
+    (attempts, common.retry_interval())
+}
+
+/// The MCP sessions of a run: kept open until the run ends.
+fn run_mcp_info(project: &Project) -> McpRunInfo {
+    let mut mcp_info = McpRunInfo::of(project);
+    mcp_info.pool = Some(sendito_mcp::Pool::default());
+    mcp_info
+}
+
+/// The context of one send of a run.
+fn run_ctx(project: &Project, opts: &Options, name: String, path: Option<String>) -> RunCtx {
+    let mut ctx = RunCtx::of(project, name, path);
+    if opts.no_history {
+        ctx.history = None;
+    }
+    ctx.cookie_jar &= !opts.no_cookies;
+    ctx.env = opts.env.clone();
+    ctx.mask_echoed_secrets = opts.mask_echoed_secrets;
+    ctx.confine_files = opts.confine_files;
+    ctx
 }
 
 /// One request of a run and what it reads.
@@ -314,7 +466,7 @@ impl One<'_> {
         scope: &mut Scope,
         ask: &mut A,
         on: &mut F,
-    ) -> (Entry, Option<Box<HttpOutcome>>)
+    ) -> Sent
     where
         A: FnMut(&Request, &Scope) -> Result<(), String>,
         F: FnMut(Event),
@@ -326,13 +478,13 @@ impl One<'_> {
         let loaded = project
             .coll
             .load(rel)
-            .and_then(|r| project.coll.chain(rel).map(|chain| (r, chain)));
+            .and_then(|r| in_folders(project, rel, &r, &mut rscope));
         let req = match loaded {
-            Ok((r, chain)) => {
-                if let Some(note) = sendito_core::inherit::ignored_headers_note(&r, &chain) {
+            Ok((r, note)) => {
+                if let Some(note) = note {
                     on(Event::Note(format!("{rel}: {note}")));
                 }
-                runner::with_folders(&r, &chain, &mut rscope)
+                r
             }
             Err(e) => {
                 let entry = Entry {
@@ -341,7 +493,11 @@ impl One<'_> {
                     error: Some(e.to_string()),
                     ..Default::default()
                 };
-                return (entry, None);
+                return Sent {
+                    entry,
+                    response: None,
+                    output: Vec::new(),
+                };
             }
         };
         if let Some(row) = row {
@@ -357,35 +513,51 @@ impl One<'_> {
                 }],
             );
         }
-        let kind = kind_of(&req);
-        let unresolved = |error: String| Entry {
-            path: path.clone(),
-            kind: Some(kind),
-            outcome: "error",
-            unresolved: Some(true),
-            error: Some(error),
-            ..Default::default()
+        self.send_loaded(&req, path, rscope, scope, ask, on).await
+    }
+
+    /// Checks and sends `req`, already loaded, with its retries. `rscope` is
+    /// the scope of the request; the runtime values it sets go to `scope`.
+    async fn send_loaded<A, F>(
+        &self,
+        req: &Request,
+        path: String,
+        rscope: Scope,
+        scope: &mut Scope,
+        ask: &mut A,
+        on: &mut F,
+    ) -> Sent
+    where
+        A: FnMut(&Request, &Scope) -> Result<(), String>,
+        F: FnMut(Event),
+    {
+        let project = self.project;
+        let kind = kind_of(req);
+        let unresolved = |error: String| Sent {
+            entry: Entry {
+                path: path.clone(),
+                kind: Some(kind),
+                outcome: "error",
+                unresolved: Some(true),
+                error: Some(error),
+                ..Default::default()
+            },
+            response: None,
+            output: Vec::new(),
         };
-        if let Err(e) = ask(&req, &rscope)
+        if let Err(e) = check_ready(project, req, &rscope, self.failed, &mut *ask)
             && !self.opts.allow_unresolved
         {
-            return (unresolved(e), None);
+            return unresolved(match e {
+                NotReady::Ask(e) => e,
+                NotReady::Unresolved(names) => format!("unresolved variables: {names}"),
+            });
         }
-        let un = runner::unresolved_send(&req, &rscope, self.failed, &project.config.mcp.servers);
-        if !un.is_empty() && !self.opts.allow_unresolved {
-            let names = runner::unresolved_list(&un, &rscope);
-            return (unresolved(format!("unresolved variables: {names}")), None);
-        }
-        let attempts = self
-            .opts
-            .retry
-            .unwrap_or(req.common().retry)
-            .saturating_add(1);
-        let interval = req.common().retry_interval();
+        let (attempts, interval) = attempts(req, self.opts.retry);
         let mut attempt = 1;
         let (ran, response, ms) = loop {
             let t0 = Instant::now();
-            let (ran, response) = self.once(&req, rscope.clone(), on).await;
+            let (ran, response) = self.once(req, rscope.clone(), on).await;
             let ms = t0.elapsed().as_millis();
             if ran.outcome == "pass" || attempt == attempts || self.cancel.is_cancelled() {
                 break (ran, response, ms);
@@ -419,7 +591,11 @@ impl One<'_> {
             events: ran.events,
             messages: ran.messages,
         };
-        (entry, response)
+        Sent {
+            entry,
+            response,
+            output: ran.output,
+        }
     }
 
     /// One send. A cancel ends a session as its cancel control does and
@@ -431,9 +607,14 @@ impl One<'_> {
         on: &mut F,
     ) -> (Ran, Option<Box<HttpOutcome>>) {
         let (ctx, errors, cancel) = (self.ctx, self.scope_errors.to_vec(), self.cancel);
+        let keep = self.opts.keep_output;
+        let mut output = Vec::new();
         let mut log = |live: Live<'_>| {
-            if let Live::Line(l) = live {
-                on(Event::Log(l));
+            match live {
+                Live::Line(l) => on(Event::Log(l)),
+                Live::Data(d) if keep => output.push(d.to_string()),
+                Live::Message { payload, .. } if keep => output.push(payload_text(payload)),
+                _ => {}
             }
             true
         };
@@ -444,15 +625,20 @@ impl One<'_> {
                     s.options.cookies = Some(false);
                 }
                 let ran = run_sse(ctx, &s, scope, errors, cancel, &mut log).await;
-                (ran, None)
+                (Ran { output, ..ran }, None)
             }
             Request::Mqtt(m) => {
                 let ran = run_mqtt(ctx, m, scope, errors, cancel, &mut log).await;
-                (ran, None)
+                (Ran { output, ..ran }, None)
             }
             _ => {
+                let opts = SendOne {
+                    mcp_info: self.mcp_info,
+                    no_cookies: self.opts.no_cookies,
+                    keep,
+                };
                 tokio::select! {
-                    r = send_one(ctx, req, scope, errors, self.mcp_info, self.opts.no_cookies) => r,
+                    r = send_one(ctx, req, scope, errors, opts) => r,
                     _ = cancel.cancelled() => (Ran::error("cancelled"), None),
                 }
             }
@@ -472,15 +658,39 @@ pub fn kind_of(req: &Request) -> &'static str {
     }
 }
 
+/// An MQTT payload as text: UTF-8 when it is, else base64.
+fn payload_text(payload: &[u8]) -> String {
+    match std::str::from_utf8(payload) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(payload)
+        }
+    }
+}
+
+/// How [`send_one`] sends.
+struct SendOne<'a> {
+    mcp_info: &'a McpRunInfo,
+    no_cookies: bool,
+    /// Keep what the server sends ([`Ran::output`]).
+    keep: bool,
+}
+
 /// Sends one HTTP, gRPC, WebSocket or MCP request and classifies the outcome.
 async fn send_one(
     ctx: &RunCtx,
     req: &Request,
     scope: Scope,
     errors: Vec<String>,
-    mcp_info: &McpRunInfo,
-    no_cookies: bool,
+    opts: SendOne<'_>,
 ) -> (Ran, Option<Box<HttpOutcome>>) {
+    let SendOne {
+        mcp_info,
+        no_cookies,
+        keep,
+    } = opts;
+    let mut output = Vec::new();
     match req {
         Request::Http(h) => {
             let mut h = h.clone();
@@ -514,6 +724,9 @@ async fn send_one(
             let collect = async {
                 while let Some(u) = urx.recv().await {
                     match u {
+                        GrpcUpdate::Event(sendito_grpc::Event::Received { json, .. }) if keep => {
+                            output.push(json);
+                        }
                         GrpcUpdate::Event(sendito_grpc::Event::Finished {
                             code: c,
                             message,
@@ -537,7 +750,8 @@ async fn send_one(
                 }
             };
             tokio::join!(run, collect);
-            (Ran::judged(error, label, scripts), None)
+            let ran = Ran::judged(error, label, scripts);
+            (Ran { output, ..ran }, None)
         }
         Request::Ws(w) => {
             let mut w = w.clone();
@@ -555,6 +769,11 @@ async fn send_one(
             let collect = async {
                 while let Some(u) = urx.recv().await {
                     match u {
+                        runner::WsUpdate::Event(sendito_ws::Event::Received {
+                            preview, ..
+                        }) if keep => {
+                            output.push(preview);
+                        }
                         runner::WsUpdate::Event(sendito_ws::Event::Finished {
                             code: c,
                             reason,
@@ -577,7 +796,8 @@ async fn send_one(
             if error.is_none() && code != 1000 {
                 error = Some(label.clone());
             }
-            (Ran::judged(error, label, scripts), None)
+            let ran = Ran::judged(error, label, scripts);
+            (Ran { output, ..ran }, None)
         }
         Request::Mcp(m) => {
             let (utx, mut urx) = tokio::sync::mpsc::unbounded_channel();
@@ -592,11 +812,15 @@ async fn send_one(
                     if let runner::McpUpdate::Done {
                         error: e,
                         is_error: i,
+                        result,
                         scripts: s,
                         ..
                     } = u
                     {
                         (error, is_error, scripts) = (e, i, s);
+                        if keep && let Some(r) = result {
+                            output.push(String::from_utf8_lossy(&r).into_owned());
+                        }
                     }
                 }
             };
@@ -609,12 +833,14 @@ async fn send_one(
                         outcome: "fail",
                         label: "the tool reported an error".into(),
                         scripts,
+                        output,
                         ..Default::default()
                     },
                     None,
                 );
             }
-            (Ran::judged(error, "ok".into(), scripts), None)
+            let ran = Ran::judged(error, "ok".into(), scripts);
+            (Ran { output, ..ran }, None)
         }
         Request::Sse(_) | Request::Mqtt(_) => (Ran::error("not a one-shot request"), None),
     }

@@ -46,7 +46,8 @@ pub async fn load_schema(
             if !metadata
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-                && let Some(token) = jwt_token(root, resolved.signed.as_ref())
+                // The runner checked the key file (`confine_files`) before.
+                && let Some(token) = jwt_token(root, false, resolved.signed.as_ref())
                     .await
                     .map_err(|e| e.to_string())?
             {
@@ -205,7 +206,7 @@ pub async fn exec_grpc(
         );
     }
     // A JWT is signed now; the token is masked like the other secrets.
-    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+    match jwt_token(&ctx.root, ctx.confine_files, resolved.signed.as_ref()).await {
         Ok(Some(token)) => {
             scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
             resolved
@@ -217,6 +218,20 @@ pub async fn exec_grpc(
     }
     if resolved.service.is_empty() || resolved.method.is_empty() {
         return fail("choose a service and method first".into(), results);
+    }
+    if let SchemaSource::Files {
+        files,
+        import_paths,
+    } = &req.schema
+    {
+        let paths: Vec<PathBuf> = files
+            .iter()
+            .chain(import_paths)
+            .map(|p| sendito_store::env::expand(&ctx.root, p))
+            .collect();
+        if let Err(e) = ctx.check_files(paths.iter().map(PathBuf::as_path)) {
+            return fail(e, results);
+        }
     }
     // Loading the schema and connecting are bounded by the [http] timeout,
     // so a server that never answers reflection cannot hang the run; Cancel

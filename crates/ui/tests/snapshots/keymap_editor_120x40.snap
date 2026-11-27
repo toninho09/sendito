@@ -11,7 +11,7 @@ expression: screen
 │   Finish sending on a client/bidi stream (half-close)          Ctrl+W d                                    ┃
 │   Re-send the active request on an interval (watch)            Ctrl+W m                                    ┃
 │   Save the request to its file (asks for a name if new)        Ctrl+S, Ctrl+W s                            ┃
-│   Quit Sendito                                                 Ctrl+W q, Ctrl+Q                            ┃
+│   Quit Sendito                                                 Ctrl+W q, Ctrl+Q                            │
 │   Open a new unsaved HTTP request tab                          Ctrl+N, Ctrl+W t                            │
 │   Open a new unsaved gRPC request tab                          Ctrl+W g                                    │
 │   Open a new unsaved SSE request tab                           Ctrl+W E                                    │

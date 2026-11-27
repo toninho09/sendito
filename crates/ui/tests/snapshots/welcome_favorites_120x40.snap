@@ -41,4 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- demo                                              ⏎ open / fold · n new request · Del/x delete · ^W menu · F1 all keys
+ demo         ⏎ open / fold · n new request · Del/x delete · / filter · r rename · N new folder · ^W menu · F1 all keys

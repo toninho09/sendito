@@ -332,25 +332,27 @@ Every clickable region is registered in `app.hits` while drawing.
 | `sendito har` | `src/cli/convert.rs::har` → `crates/import/src/har.rs::export` |
 | `sendito code` / `:code` | `crates/import/src/codegen.rs::export` (shared start: `crates/import/src/lib.rs::prepare`) |
 | `sendito auth login/logout` | `src/cli/auth.rs::http_auth` → `crates/mcp/src/oauth/flow.rs::login_http` |
+| `sendito serve` (MCP server for agents: NDJSON loop, `initialize`, resources) | `src/cli/serve/mod.rs::serve` → tools in `src/cli/serve/tools.rs::call` → `crates/pipeline/src/suite.rs::run`, `run_request`; the files a sent request may read: `crates/pipeline/src/runner/mod.rs::confined` |
 | `sendito mcp login/logout` | `src/cli/auth.rs::mcp` → `crates/pipeline/src/runner/oauth.rs::mcp_login` → `crates/mcp/src/oauth/flow.rs::login` |
 | `sendito theme list/print` | `src/cli/theme.rs::theme`, `crates/ui/src/theme.rs`, `crates/store/src/themes.rs` |
 | `sendito import` | `crates/import/src/lib.rs::import_path` |
 | `sendito completions` / `sendito man` | `src/cli/meta.rs::completions`, `src/cli/meta.rs::man` |
 
 Tests: `tests/integration.rs`, `tests/mcp_cli.rs`, `tests/proxy.rs` (runs the
-binary in a child process), `tests/corpus.rs`.
+binary in a child process), `tests/serve.rs`, `tests/corpus.rs`.
 
 ## Test and tooling map
 
 | Layer | Where | Command |
 |---|---|---|
-| Unit tests | beside the code in every crate | `make test`; `P=<package>` and `F=<name>` narrow it |
+| Unit tests | beside the code in every crate | `make test`; `P=<package>`, `T=<tests file>` and `F=<name>` narrow it |
 | Wire corpus (exact bytes; 57 HTTP, 15 gRPC, 12 WS, 13 SSE, 13 MQTT, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
 | Corpus golden rewrite | same, `UPDATE_CORPUS=1` | `make corpus-update` |
 | Import, format stability, secret hygiene | `tests/integration.rs`, `tests/fixtures/` | `make test` |
 | TLS and mutual TLS | `tests/tls.rs` | `make test` |
 | Proxy routing | `tests/proxy.rs` | `make test` |
 | MCP over the CLI | `tests/mcp_cli.rs` | `make test` |
+| MCP server for agents (`sendito serve`, driven by the Sendito MCP client) | `tests/serve.rs` | `make test T=serve` |
 | gRPC calls | `crates/grpc/tests/calls.rs` | `make test` |
 | MCP client and OAuth | `crates/mcp/tests/`, `crates/testkit/src/mcp_auth.rs` | `make test` |
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs`, harness in `crates/ui/tests/common/mod.rs` | `make test` |
@@ -379,6 +381,7 @@ type:
 | A secret or masking rule | `crates/core/src/vars.rs` (`scrub_bytes`, taint) → every caller's scrub list → `tests/integration.rs` |
 | A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → [reports/ux-critic.md](reports/ux-critic.md) decisions |
 | A key, command or setting | see [Adding a key, command or setting](#adding-a-key-command-or-setting) |
+| A `sendito serve` tool | `src/cli/serve/tools.rs` (`defs` and `call`) → `tests/serve.rs` → the tool table in [CLI.md](CLI.md#sendito-serve-path) |
 
 ## Documentation coverage
 

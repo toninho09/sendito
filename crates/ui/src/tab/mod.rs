@@ -130,6 +130,9 @@ pub struct Tab {
 /// The largest body (in bytes) that the jq filter runs on at each key press.
 pub const LIVE_JQ_MAX: usize = 1024 * 1024;
 
+/// How long the jq bar waits after the last key before the filter runs.
+pub const JQ_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// How many jq expressions a tab remembers.
 pub const JQ_HISTORY_MAX: usize = 50;
 
@@ -272,6 +275,40 @@ mod tests {
             at: std::time::Duration::from_millis(5),
             wall: std::time::SystemTime::UNIX_EPOCH,
         }
+    }
+
+    #[test]
+    fn jq_bar_waits_for_a_pause_and_bypass_shows_the_raw_body() {
+        let mut r = Response::new();
+        r.set_body(Doc::from_bytes(
+            b"{\"a\":1,\"b\":2}".to_vec(),
+            Some("application/json"),
+        ));
+        r.query = Some(QueryBar::new(QueryMode::Jq, ".a", 0));
+        // The typed text waits for the delay.
+        let now = std::time::Instant::now();
+        r.schedule_query(JQ_DEBOUNCE);
+        assert!(r.jq.is_none());
+        assert!(!r.run_due_query(now));
+        assert!(r.run_due_query(now + JQ_DEBOUNCE * 2));
+        assert_eq!(r.jq.as_deref(), Some(".a"));
+        assert_eq!(r.body.doc.raw.text.trim(), "1");
+        assert!(r.query.as_ref().is_some_and(|q| q.due.is_none()));
+        // The bypass shows the body as received and does not schedule runs.
+        if let Some(q) = r.query.as_mut() {
+            q.bypass = true;
+        }
+        r.run_query();
+        assert!(r.jq.is_none());
+        assert!(r.body.doc.raw.text.contains("\"b\""));
+        r.schedule_query(JQ_DEBOUNCE);
+        assert!(r.query.as_ref().is_some_and(|q| q.due.is_none()));
+        // Off again: the text applies at once.
+        if let Some(q) = r.query.as_mut() {
+            q.bypass = false;
+        }
+        r.run_query();
+        assert_eq!(r.body.doc.raw.text.trim(), "1");
     }
 
     #[test]

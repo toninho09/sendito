@@ -26,6 +26,11 @@ pub struct QueryBar {
     /// The text kept by the last Enter (or the bar's first text): Esc goes
     /// back to it.
     pub committed: String,
+    /// The jq filter is off while the text is typed: the body shows the
+    /// response as received (Ctrl+R).
+    pub bypass: bool,
+    /// When the typed jq text runs: it waits for a pause in the typing.
+    pub due: Option<std::time::Instant>,
 }
 
 impl QueryBar {
@@ -43,6 +48,8 @@ impl QueryBar {
             error: None,
             history_pos: None,
             committed: text.to_string(),
+            bypass: false,
+            due: None,
         }
     }
 }
@@ -610,11 +617,14 @@ impl Response {
     /// the view. A jq error is kept on the bar and the body keeps the last
     /// valid result.
     pub fn run_query(&mut self) {
-        let Some(q) = &self.query else {
+        let Some(q) = &mut self.query else {
             return;
         };
-        let (text, mode, tab) = (q.input.text(), q.mode, q.tab);
+        q.due = None;
+        let (text, mode, tab, bypass) = (q.input.text(), q.mode, q.tab, q.bypass);
         let error = match mode {
+            // The bypass shows the body as received.
+            QueryMode::Jq if bypass => self.apply_jq("").err(),
             QueryMode::Jq => self.apply_jq(&text).err(),
             QueryMode::Find => {
                 self.viewer_mut(tab).search(&text);
@@ -624,6 +634,28 @@ impl Response {
         if let Some(q) = &mut self.query {
             q.error = error;
         }
+    }
+
+    /// The jq text changed: it runs after `delay` without a key press (at
+    /// once for a zero delay). The bypass does not run it.
+    pub fn schedule_query(&mut self, delay: std::time::Duration) {
+        match self.query.as_mut() {
+            Some(q) if q.bypass => {}
+            Some(q) if !delay.is_zero() => q.due = Some(std::time::Instant::now() + delay),
+            Some(_) => self.run_query(),
+            None => {}
+        }
+    }
+
+    /// Runs the query bar's text when its delay ended at `now`. Returns
+    /// whether it ran.
+    pub fn run_due_query(&mut self, now: std::time::Instant) -> bool {
+        let due = self.query.as_ref().and_then(|q| q.due);
+        if due.is_some_and(|d| now >= d) {
+            self.run_query();
+            return true;
+        }
+        false
     }
 
     /// Takes over how `old` showed its body: view mode, wrap, line numbers,

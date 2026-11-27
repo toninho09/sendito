@@ -24,9 +24,9 @@ expression: screen
 │   Focus the pane to the left                                   Ctrl+W h, Ctrl+W Left                       ┃
 │   Focus the pane below                                         Ctrl+W j, Ctrl+W Down                       ┃
 │   Focus the pane above                                         Ctrl+W k, Ctrl+W Up                         ┃
-│   Focus the pane to the right                                  Ctrl+W l, Ctrl+W Right                      ┃
-│   Move focus to the next field or pane                         Tab, Ctrl+W w                               ┃
-│   Move focus to the previous field or pane                     Shift+Tab, Ctrl+W W                         ┃
+│   Focus the pane to the right                                  Ctrl+W l, Ctrl+W Right                      │
+│   Move focus to the next field or pane                         Tab, Ctrl+W w                               │
+│   Move focus to the previous field or pane                     Shift+Tab, Ctrl+W W                         │
 │   Next tab of the focused pane (e.g. Params → Headers)         Ctrl+W ]                                    │
 │   Previous tab of the focused pane                             Ctrl+W [                                    │
 │   Jump to tab 1 of the focused pane                            Alt+1                                       │

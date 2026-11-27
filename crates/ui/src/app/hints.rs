@@ -9,12 +9,7 @@ impl App {
     /// The send keys for hints: the first two bindings ("Ctrl+Enter/F5"), as
     /// Ctrl+Enter only works in terminals that report it.
     pub fn send_hint(&self) -> String {
-        let keys = self.keymap.keys_for(Action::Send, self.vim);
-        match keys.as_slice() {
-            [] => "(unbound)".into(),
-            [one] => one.clone(),
-            [a, b, ..] => format!("{a}/{b}"),
-        }
+        first_two(self.keymap.keys_for(Action::Send, self.vim))
     }
 
     /// The verb for running a request: "send" for HTTP and gRPC alike,
@@ -25,6 +20,10 @@ impl App {
 
     pub fn hints(&mut self) -> Vec<(String, String)> {
         let k = |s: &Self, a: Action| s.keymap.hint(a, s.vim);
+        // The first key of an action in the tree, the response viewer or a dialog.
+        let tk = |s: &Self, a: Action| s.keymap.hint_in(Ctx::Tree, a, s.vim);
+        let rk = |s: &Self, a: Action| s.keymap.hint_in(Ctx::Response, a, s.vim);
+        let dk = |s: &Self, a: Action| s.keymap.hint_in(Ctx::Dialog, a, s.vim);
         let mut v: Vec<(String, String)> = Vec::new();
         if self.complete.is_some() && self.overlay.is_none() {
             v.extend([
@@ -94,17 +93,19 @@ impl App {
                     use crate::overlay::env_editor as t;
                     if e.on_dotenv {
                         v.extend([
-                            ("F2".into(), "browse".into()),
+                            (dk(self, Action::DialogBrowse), "browse".into()),
                             ("Tab".into(), "complete path".into()),
                             ("↓".into(), "variables".into()),
                         ]);
                     } else {
                         v.extend([
-                            ("Ctrl+D".into(), "delete row".into()),
+                            (dk(self, Action::DialogDelete), "delete row".into()),
                             ("Space".into(), "type".into()),
                         ]);
                         match e.selected_type().filter(|_| e.table.sel_col == 2) {
-                            Some(t::FILE) => v.push(("F2".into(), "browse".into())),
+                            Some(t::FILE) => {
+                                v.push((dk(self, Action::DialogBrowse), "browse".into()))
+                            }
                             Some(s) if t::holds_secret(s) => {
                                 v.push(("type".into(), "set secret".into()))
                             }
@@ -112,8 +113,15 @@ impl App {
                         }
                     }
                     v.extend([
-                        ("Ctrl+S".into(), "save".into()),
-                        ("Ctrl+PgUp/Dn".into(), "env".into()),
+                        (dk(self, Action::DialogConfirm), "save".into()),
+                        (
+                            format!(
+                                "{}/{}",
+                                dk(self, Action::DialogPrevEnv),
+                                dk(self, Action::DialogNextEnv)
+                            ),
+                            "env".into(),
+                        ),
                         (
                             "Esc".into(),
                             if e.dirty {
@@ -154,13 +162,13 @@ impl App {
                 }
                 Overlay::Records(e) => {
                     use crate::records::{Input, Pane, RecordKind};
-                    v.push(("Ctrl+S".into(), "save".into()));
+                    v.push((dk(self, Action::DialogConfirm), "save".into()));
                     if e.pane == Pane::List {
                         v.extend([
                             ("↑↓".into(), "choose".into()),
                             ("Enter".into(), "edit".into()),
-                            ("Ctrl+N".into(), "new".into()),
-                            ("Ctrl+D".into(), "delete".into()),
+                            (dk(self, Action::DialogNew), "new".into()),
+                            (dk(self, Action::DialogDelete), "delete".into()),
                         ]);
                     } else {
                         let input = e.focused_field().map(|f| match &f.input {
@@ -174,15 +182,17 @@ impl App {
                             Some(2) => v.push(("Space".into(), "toggle".into())),
                             Some(3) => v.extend([
                                 ("Enter".into(), "next cell".into()),
-                                ("Ctrl+D".into(), "delete row".into()),
+                                (dk(self, Action::DialogDelete), "delete row".into()),
                             ]),
                             _ => {}
                         }
                         v.push(("Tab ↑↓".into(), "fields".into()));
                     }
                     match e.kind {
-                        RecordKind::Mcp => v.push(("Ctrl+T".into(), "test".into())),
-                        RecordKind::OAuth => v.push(("Ctrl+L".into(), "sign in".into())),
+                        RecordKind::Mcp => v.push((dk(self, Action::DialogTest), "test".into())),
+                        RecordKind::OAuth => {
+                            v.push((dk(self, Action::DialogSignIn), "sign in".into()))
+                        }
                     }
                     v.push((
                         "Esc".into(),
@@ -195,7 +205,14 @@ impl App {
                     ));
                 }
                 Overlay::Import(_) => v.extend([
-                    ("F5 / Ctrl+S".into(), "import".into()),
+                    (
+                        first_two(self.keymap.keys_in(
+                            Ctx::Dialog,
+                            Action::DialogConfirm,
+                            self.vim,
+                        )),
+                        "import".into(),
+                    ),
                     ("Tab".into(), "complete path".into()),
                     ("Esc".into(), "cancel".into()),
                 ]),
@@ -272,31 +289,76 @@ impl App {
         } else if running {
             v.push((k(self, Action::Cancel), "cancel".into()));
         }
+        // A watched tab sends again on a timer: say how to stop it.
+        if self.tab().is_some_and(|t| t.watch.is_some()) {
+            v.push((k(self, Action::WatchToggle), "stop watch".into()));
+        }
+        let in_main = !matches!(self.focus, Focus::Sidebar | Focus::Filter);
+        let run_tab = self.tab().is_some_and(|t| t.run.is_some());
+        let folder_tab = self.tab().is_some_and(|t| t.folder.is_some());
         match self.focus {
+            // The start screen: no tab to send or save.
+            _ if in_main && self.tab().is_none() => {
+                v.push((k(self, Action::NewRequest), "new request".into()));
+                v.push((k(self, Action::FocusNext), "next pane".into()));
+            }
+            // A run tab lists the results of a folder run, not a request.
+            Focus::Bar(_) | Focus::ReqTabs | Focus::ReqBody if run_tab => {
+                if !running {
+                    v.push((self.send_hint(), "run again".into()));
+                }
+                v.extend([
+                    ("↑↓".into(), "choose row".into()),
+                    ("Enter".into(), "show response".into()),
+                    (k(self, Action::FocusNext), "next pane".into()),
+                ]);
+            }
             Focus::Sidebar if self.sidebar_mode == SidebarMode::History => {
                 v.extend([
                     ("Enter".into(), "open".into()),
                     (self.send_hint(), "resend entry".into()),
                     ("s".into(), "save to tree".into()),
                     (k(self, Action::History), "back to tree".into()),
+                    (k(self, Action::FocusNext), "next pane".into()),
                 ]);
             }
             Focus::Sidebar => {
                 // Most used and destructive keys first: narrow screens drop the tail.
                 if self.vim {
-                    v.push(("j/k".into(), "up/down".into()));
-                    v.push(("h/l".into(), "collapse/expand".into()));
+                    let up_down = format!(
+                        "{}/{}",
+                        tk(self, Action::CursorDown),
+                        tk(self, Action::CursorUp)
+                    );
+                    let fold = format!(
+                        "{}/{}",
+                        tk(self, Action::TreeCollapse),
+                        tk(self, Action::TreeExpand)
+                    );
+                    v.push((up_down, "up/down".into()));
+                    v.push((fold, "collapse/expand".into()));
                 }
+                let delete =
+                    first_two(self.keymap.keys_in(Ctx::Tree, Action::TreeDelete, self.vim));
                 v.extend([
-                    ("Enter".into(), "open / fold".into()),
-                    ("n".into(), "new request".into()),
-                    ("Del/x".into(), "delete".into()),
-                    ("/".into(), "filter".into()),
-                    ("r".into(), "rename".into()),
-                    ("N".into(), "new folder".into()),
-                    ("m / drag".into(), "move".into()),
-                    ("d".into(), "duplicate".into()),
-                    ("f".into(), "favorite".into()),
+                    (tk(self, Action::TreeOpen), "open / fold".into()),
+                    (tk(self, Action::TreeNewRequest), "new request".into()),
+                    (delete, "delete".into()),
+                    (tk(self, Action::TreeFilter), "filter".into()),
+                    (tk(self, Action::TreeRename), "rename".into()),
+                    (tk(self, Action::TreeNewFolder), "new folder".into()),
+                    (tk(self, Action::TreeRunFolder), "run folder".into()),
+                    (
+                        format!("{} / drag", tk(self, Action::TreeMove)),
+                        "move".into(),
+                    ),
+                    (tk(self, Action::TreeDuplicate), "duplicate".into()),
+                    (tk(self, Action::ToggleFavorite), "favorite".into()),
+                    (
+                        tk(self, Action::TreeFolderSettings),
+                        "folder settings".into(),
+                    ),
+                    (k(self, Action::FocusNext), "next pane".into()),
                 ]);
             }
             Focus::Filter => v.extend([
@@ -310,7 +372,7 @@ impl App {
                 });
                 if no_method {
                     v.push(("method ▾".into(), "pick one to enable Send".into()));
-                } else if !running {
+                } else if !running && !folder_tab {
                     v.push((self.send_hint(), self.send_verb().into()));
                 }
                 // Save comes right after send so narrow terminals keep it.
@@ -338,16 +400,16 @@ impl App {
                         ("←→".into(), "switch tab".into()),
                     ]),
                     (Focus::ReqBody, Some(Field::McpServer)) => {
-                        v.push(("F2".into(), "choose server".into()))
+                        v.push((k(self, Action::PickValue), "choose server".into()))
                     }
                     (Focus::ReqBody, Some(Field::McpTool)) => {
-                        v.push(("F2".into(), "choose tool".into()))
+                        v.push((k(self, Action::PickValue), "choose tool".into()))
                     }
                     (Focus::ReqBody, Some(Field::AuthOAuthName)) => {
-                        v.push(("F2".into(), "choose identity".into()))
+                        v.push((k(self, Action::PickValue), "choose identity".into()))
                     }
                     (Focus::Bar(1), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
-                        v.push(("F2".into(), "choose server".into()))
+                        v.push((k(self, Action::PickValue), "choose server".into()))
                     }
                     (Focus::Bar(0), _) if self.tab().is_some_and(|t| t.ed.kind == Kind::Mcp) => {
                         v.push(("Enter".into(), "choose tool".into()))
@@ -365,7 +427,10 @@ impl App {
                             v.push(("Space".into(), format!("change {}", title.to_lowercase())));
                         }
                         v.extend([
-                            ("Enter".into(), "next cell".into()),
+                            (
+                                self.keymap.hint_in(Ctx::Table, Action::NextCell, self.vim),
+                                "next cell".into(),
+                            ),
                             (k(self, Action::DeleteRow), "delete row".into()),
                             (k(self, Action::ToggleRow), "enable/disable".into()),
                         ]);
@@ -417,48 +482,109 @@ impl App {
                     }
                     _ => {}
                 }
+                // Tab moves the focus on, except where it indents or edits a table.
+                let next = match (self.focus, field) {
+                    (Focus::ReqTabs, _) => Some("next pane"),
+                    (Focus::ReqBody, Some(f)) if f.is_multiline() || f.is_table() => None,
+                    _ => Some("next field"),
+                };
+                if let Some(label) = next {
+                    v.push((k(self, Action::FocusNext), label.into()));
+                }
             }
             Focus::RespQuery => {
                 v.push(("Enter".into(), "keep".into()));
                 v.push(("Esc".into(), "close".into()));
-                let jq = self
-                    .tab()
-                    .and_then(|t| t.response.as_ref())
-                    .and_then(|r| r.query.as_ref())
-                    .is_some_and(|q| q.mode == QueryMode::Jq);
-                if jq {
-                    v.push(("Tab".into(), "complete".into()));
-                    v.push(("↑↓".into(), "history".into()));
+                if self.jq_bar_open() {
+                    v.push((k(self, Action::JqComplete), "complete".into()));
+                    let history = format!(
+                        "{}/{}",
+                        k(self, Action::JqHistoryPrev),
+                        k(self, Action::JqHistoryNext)
+                    );
+                    v.push((history, "history".into()));
+                    v.push((k(self, Action::JqBypass), "raw body".into()));
                 }
             }
             Focus::RespTabs | Focus::RespBody => {
-                v.push(("Alt+1-4".into(), "tabs".into()));
+                let on_bar = self.focus == Focus::RespTabs;
+                if on_bar {
+                    v.extend([
+                        ("←→".into(), "switch tab".into()),
+                        ("Enter/↓".into(), "open".into()),
+                    ]);
+                }
+                // "Alt+1-4" when the four keys differ only in the digit.
+                let (first, last) = (k(self, Action::SubTab1), k(self, Action::SubTab4));
+                let tabs = match (first.strip_suffix('1'), last.strip_suffix('4')) {
+                    (Some(a), Some(b)) if a == b => format!("{first}-4"),
+                    _ => format!("{first}…{last}"),
+                };
+                v.push((tabs, "tabs".into()));
+                let copy = (rk(self, Action::CopyBody), "copy".to_string());
+                let search = (rk(self, Action::Search), "search".to_string());
+                let wrap = (rk(self, Action::ToggleWrap), "wrap".to_string());
                 // View modes, folding and saving only apply to the body.
                 if self.tab().is_some_and(|t| t.resp_tab == 0) {
-                    let stream = self
-                        .tab()
-                        .and_then(|t| t.response.as_ref())
-                        .is_some_and(|r| r.stream.kept() > 1);
+                    let resp = self.tab().and_then(|t| t.response.as_ref());
+                    let stream = resp.is_some_and(|r| r.stream.kept() > 1);
+                    let searching = resp.is_some_and(|r| r.body.search.is_some());
+                    let json = resp.is_some_and(|r| r.body.doc.is_json());
                     if stream {
-                        v.push(("[ ]".into(), "message".into()));
+                        let keys = format!(
+                            "{} {}",
+                            rk(self, Action::PrevMessage),
+                            rk(self, Action::NextMessage)
+                        );
+                        v.push((keys, "message".into()));
                     }
+                    v.extend([copy, search]);
+                    if searching {
+                        let keys = format!(
+                            "{}/{}",
+                            rk(self, Action::SearchNext),
+                            rk(self, Action::SearchPrev)
+                        );
+                        v.push((keys, "next/prev match".into()));
+                    }
+                    let view = format!(
+                        "{}/{}/{}",
+                        rk(self, Action::ViewPretty),
+                        rk(self, Action::ViewRaw),
+                        rk(self, Action::ViewHex)
+                    );
                     v.extend([
-                        ("y".into(), "copy".into()),
-                        ("p/r/x".into(), "view".into()),
-                        ("/".into(), "search".into()),
-                        (k(self, Action::Filter), "jq".into()),
-                        ("s".into(), "save body".into()),
-                        ("Enter".into(), "fold".into()),
-                        ("w".into(), "wrap".into()),
+                        (rk(self, Action::Filter), "jq".into()),
+                        (view, "view".into()),
                     ]);
+                    // On the tab bar, Enter opens the body: folding is for the body.
+                    if !on_bar {
+                        let all = format!(
+                            "{}/{}",
+                            rk(self, Action::FoldAll),
+                            rk(self, Action::UnfoldAll)
+                        );
+                        v.extend([
+                            (rk(self, Action::FoldToggle), "fold".into()),
+                            (all, "fold/unfold all".into()),
+                        ]);
+                    }
+                    v.extend([wrap, (rk(self, Action::SaveBody), "save body".into())]);
+                    if json {
+                        v.extend([
+                            (rk(self, Action::CopyPath), "copy path".into()),
+                            (rk(self, Action::FilterHere), "jq here".into()),
+                        ]);
+                    }
+                    v.push((rk(self, Action::OpenPager), "pager".into()));
                 } else {
-                    v.push(("y".into(), "copy".into()));
+                    v.push(copy);
                     // Timing is a short table: nothing to search or wrap.
                     if self.tab().is_some_and(|t| t.resp_tab != 2) {
-                        v.push(("/".into(), "search".into()));
-                        v.push(("w".into(), "wrap".into()));
+                        v.extend([search, wrap]);
                     }
                 }
+                v.push((k(self, Action::FocusNext), "next pane".into()));
             }
         }
         v.push((k(self, Action::Palette), "commands".into()));
@@ -466,5 +592,14 @@ impl App {
         v.push((crate::keymap::MENU_PREFIX.into(), "menu".into()));
         v.push((k(self, Action::Help), "all keys".into()));
         v
+    }
+}
+
+/// The first two keys of a list, for a hint ("Ctrl+Enter/F5", "Delete/x").
+fn first_two(keys: Vec<String>) -> String {
+    match keys.as_slice() {
+        [] => "(unbound)".into(),
+        [one] => one.clone(),
+        [a, b, ..] => format!("{a}/{b}"),
     }
 }

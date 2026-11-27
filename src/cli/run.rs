@@ -80,32 +80,32 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
     for e in &errors {
         eprintln!("warning: {e}");
     }
-    let req = match project.coll.chain(&rel) {
-        Ok(chain) => {
-            if let Some(note) = sendito_core::inherit::ignored_headers_note(&req, &chain) {
+    let req = match suite::in_folders(&project, &rel, &req, &mut scope) {
+        Ok((req, note)) => {
+            if let Some(note) = note {
                 eprintln!("note: {note}");
             }
-            runner::with_folders(&req, &chain, &mut scope)
+            req
         }
         Err(e) => {
             eprintln!("sendito: {e}");
             return ExitCode::from(3);
         }
     };
-    if let Err(e) = super::ask::answer_prompts(&req, &scope, &prompts, &mut Default::default())
-        && !allow_unresolved
-    {
-        eprintln!("sendito: {e} (or pass --allow-unresolved)");
-        return ExitCode::from(3);
-    }
     // Check against the loaded values, as a folder run does: a secret that
     // failed to load (no keychain entry, no secrets.toml) is unresolved.
-    let un = runner::unresolved_send(&req, &scope, &failed, &project.config.mcp.servers);
-    if !un.is_empty() && !allow_unresolved {
-        eprintln!(
-            "sendito: unresolved variables: {} (define them in the environment or pass --allow-unresolved)",
-            runner::unresolved_list(&un, &scope)
-        );
+    let ask = |req: &Request, scope: &Scope| {
+        super::ask::answer_prompts(req, scope, &prompts, &mut Default::default(), true)
+    };
+    if let Err(e) = suite::check_ready(&project, &req, &scope, &failed, ask)
+        && !allow_unresolved
+    {
+        match e {
+            suite::NotReady::Ask(e) => eprintln!("sendito: {e} (or pass --allow-unresolved)"),
+            suite::NotReady::Unresolved(names) => eprintln!(
+                "sendito: unresolved variables: {names} (define them in the environment or pass --allow-unresolved)"
+            ),
+        }
         return ExitCode::from(3);
     }
     let ctx = ctx_for(
@@ -116,8 +116,7 @@ pub(crate) async fn run(project: Project, rel: String, req: Request, flags: &Run
         no_cookies,
         Default::default(),
     );
-    let attempts = retry.unwrap_or(req.common().retry).saturating_add(1);
-    let interval = req.common().retry_interval();
+    let (attempts, interval) = suite::attempts(&req, retry);
     let mut attempt = 1;
     loop {
         let last = attempt == attempts;
@@ -639,10 +638,10 @@ async fn run_rels(
         delay_ms,
         mask_echoed_secrets: false,
         data,
+        ..Default::default()
     };
     let plan = suite::Plan {
         project: &project,
-        rels: &rels,
         scope,
         scope_errors: &scope_errors,
         failed: &failed,
@@ -650,7 +649,7 @@ async fn run_rels(
     // A folder run asks each `$prompt` label once.
     let mut answers = super::ask::Answers::new();
     let ask = |req: &Request, scope: &Scope| {
-        super::ask::answer_prompts(req, scope, &prompts, &mut answers)
+        super::ask::answer_prompts(req, scope, &prompts, &mut answers, true)
     };
     // The attempt count of the request that is retried, for its final line.
     let mut attempts_of = 0;
@@ -670,13 +669,13 @@ async fn run_rels(
                 sendito_ui::units::format_ms(interval_ms)
             )
         }
-        suite::Event::Finished { entry, .. } => {
+        suite::Event::Finished(suite::Sent { entry, .. }) => {
             print_entry(&entry, attempts_of);
             suite.entries.push(entry);
         }
     };
     let ctrl_c = CtrlC::new();
-    suite::run(plan, &opts, ask, on, &ctrl_c.cancel).await;
+    suite::run(plan, &rels, &opts, ask, on, &ctrl_c.cancel).await;
     drop(ctrl_c);
     suite.duration_ms = started.elapsed().as_millis();
     let nunresolved = suite.unresolved();

@@ -75,34 +75,13 @@ impl SuiteReport {
 
     /// The JSON report (`docs/CLI.md`, "The JSON report").
     pub(crate) fn json(&self) -> String {
-        let requests: Vec<serde_json::Value> = self
-            .entries
-            .iter()
-            .map(|e| {
-                let mut v = serde_json::json!({
-                    "path": e.path,
-                    "kind": e.kind,
-                    "outcome": e.outcome,
-                    "status": e.status,
-                    "duration_ms": e.duration_ms,
-                    "asserts": e.asserts.len(),
-                    "failed_asserts": e.failed_asserts().count(),
-                    "attempts": e.attempts,
-                });
-                if let Some(u) = e.unresolved {
-                    v["unresolved"] = u.into();
-                }
-                v["error"] = e.error.clone().into();
-                if let Some(n) = e.events {
-                    v["events"] = n.into();
-                }
-                if let Some(n) = e.messages {
-                    v["messages"] = n.into();
-                }
-                v
-            })
-            .collect();
-        let out = serde_json::json!({
+        serde_json::to_string_pretty(&self.value()).unwrap_or_default()
+    }
+
+    /// The JSON report as a value.
+    pub(crate) fn value(&self) -> serde_json::Value {
+        let requests: Vec<serde_json::Value> = self.entries.iter().map(Entry::json).collect();
+        serde_json::json!({
             "environment": self.environment,
             "folder": self.folder,
             "total": self.entries.len(),
@@ -112,8 +91,7 @@ impl SuiteReport {
             "unresolved": self.unresolved(),
             "duration_ms": self.duration_ms,
             "requests": requests,
-        });
-        serde_json::to_string_pretty(&out).unwrap_or_default()
+        })
     }
 
     /// JUnit XML: one `<testsuite>` for the folder, one `<testcase>` per

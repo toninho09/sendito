@@ -5,7 +5,7 @@ expression: screen
 ╭─ Import ─────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
 │  Paste curl or a collection, or type a path: Postman, Insomnia, OpenAPI, .http or Bruno.         │
-│  Paths start where you started Sendito, then the collection. Tab completes; F5 imports.          │
+│  Paths start where you started Sendito, then the collection. Tab completes; Ctrl+S imports.      │
 │                                                                                                  │
 │                                                                                                  │
 │  ▍  curl https://…   or   a collection, OpenAPI, .http, HAR file or Bruno directory              │
@@ -17,5 +17,5 @@ expression: screen
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-│   Import (F5 / Ctrl+S)    Cancel (Esc)                                                           │
+│   Import (Ctrl+S / F5)    Cancel (Esc)                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

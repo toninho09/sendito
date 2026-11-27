@@ -140,6 +140,40 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         cmd: AuthCmd,
     },
+    /// Serve the collection to an AI agent: an MCP server on stdin/stdout.
+    ///
+    /// The agent can list and read requests, send them, send a request given
+    /// as TOML, and create, move or delete request files. The agent sees the
+    /// names of secret variables, not their values, and a secret the server
+    /// echoes back is masked. This masking prevents accidents; it does not
+    /// stop an agent that wants a secret: a request the agent writes can send
+    /// it to any host. Use --allow-env or --no-send to limit what it can use.
+    Serve {
+        /// Collection directory (default: the nearest `.sendito/` above the
+        /// current directory).
+        path: Option<PathBuf>,
+        /// The environment when a call names none.
+        #[arg(long, short)]
+        env: Option<String>,
+        /// The only environments the agent can see and send with (separated
+        /// by commas, or the flag given again). Default: every environment.
+        #[arg(long, value_delimiter = ',', value_name = "NAMES")]
+        allow_env: Vec<String>,
+        /// Offer only the tools that do not change files. The tools that
+        /// send requests stay (see --no-send).
+        #[arg(long)]
+        read_only: bool,
+        /// Offer no tool that sends a request (run_request, run_folder,
+        /// send_request).
+        #[arg(long)]
+        no_send: bool,
+        /// Do not record the sends in the history.
+        #[arg(long)]
+        no_history: bool,
+        /// Do not read or write the cookie jar.
+        #[arg(long)]
+        no_cookies: bool,
+    },
     /// Sign an HTTP MCP server in (OAuth) or out.
     Mcp {
         #[command(subcommand)]

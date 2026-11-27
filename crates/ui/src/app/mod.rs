@@ -330,11 +330,14 @@ pub enum AppMsg {
     },
 }
 
-/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
-/// guarded by a cross-process lock).
+/// How long a note or a confirmation stays in the footer.
+const NOTE_TTL: Duration = Duration::from_secs(10);
+
 /// The last row of the cookie jar picker.
 const CLEAR_COOKIES: &str = "Clear all cookies";
 
+/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
+/// guarded by a cross-process lock).
 pub enum CookiesOutcome {
     List(Vec<String>),
     Done(&'static str),
@@ -448,6 +451,9 @@ pub struct App {
     /// Inline completion popup; not an overlay: it does not dim or block.
     pub complete: Option<crate::complete::Completion>,
     pub status: Option<(String, StatusKind, Instant)>,
+    /// How long the jq bar waits after the last key before the filter runs
+    /// (`crate::tab::JQ_DEBOUNCE`; zero runs it at each key).
+    pub jq_debounce: Duration,
     /// Home directory, shown as `~` in paths.
     pub home: Option<PathBuf>,
     /// Where the last frame put the terminal cursor (None: hidden).
@@ -477,7 +483,6 @@ pub struct App {
     cookies_job: Option<(u64, tokio::task::JoinHandle<()>)>,
     cookies_job_seq: u64,
     pub filter: TextEditor,
-    pub osc52: Vec<String>,
     /// A program to run outside the UI (`:edit`, `:pager`); the event loop
     /// takes it.
     pub external: Option<crate::external::External>,
@@ -608,6 +613,7 @@ impl App {
             pending: Vec::new(),
             overlay: None,
             status: None,
+            jq_debounce: crate::tab::JQ_DEBOUNCE,
             home: std::env::var_os("HOME").map(PathBuf::from),
             last_cursor: None,
             rt,
@@ -634,7 +640,6 @@ impl App {
             cookies_job: None,
             cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
-            osc52: Vec::new(),
             external: None,
             size: (80, 24),
             parked_env: None,
@@ -806,12 +811,16 @@ impl App {
         if self.session_dirty && self.last_session_save.elapsed() > Duration::from_secs(2) {
             self.save_session();
         }
-        if let Some((_, kind, at)) = &self.status {
-            let ttl = if *kind == StatusKind::Error { 12 } else { 6 };
-            if at.elapsed() > Duration::from_secs(ttl) {
-                self.status = None;
-            }
+        // A note or a confirmation lasts `NOTE_TTL` (or until the next key);
+        // a warning or an error stays until a new message replaces it.
+        let expired = matches!(
+            &self.status,
+            Some((_, StatusKind::Info | StatusKind::Ok, at)) if at.elapsed() > NOTE_TTL
+        );
+        if expired {
+            self.status = None;
         }
+        let ran = self.run_due_queries() || expired;
         if self.reload_lua_catalog() {
             return true;
         }
@@ -830,10 +839,10 @@ impl App {
         }
         // The keymap editor ends a recording after a pause.
         if let Some(Overlay::Keymap(e)) = &mut self.overlay {
-            return e.capture_due();
+            return e.capture_due() || ran;
         }
         if self.overlay.is_some() {
-            return false;
+            return ran;
         }
         let due: Vec<usize> = self
             .tabs
@@ -871,7 +880,29 @@ impl App {
             }
             changed = true;
         }
-        changed
+        changed || ran
+    }
+
+    /// Runs the jq bar text whose typing pause ended. Returns whether one ran.
+    fn run_due_queries(&mut self) -> bool {
+        let now = Instant::now();
+        let mut ran = false;
+        for tab in &mut self.tabs {
+            if let Some(r) = tab.response.as_mut() {
+                ran |= r.run_due_query(now);
+            }
+        }
+        ran
+    }
+
+    /// Whether a jq bar text waits for its typing pause to end.
+    pub fn query_due(&self) -> bool {
+        self.tabs.iter().any(|t| {
+            t.response
+                .as_ref()
+                .and_then(|r| r.query.as_ref())
+                .is_some_and(|q| q.due.is_some())
+        })
     }
 
     /// Reloads the Lua catalog of the names scope when a catalog file was

@@ -107,6 +107,13 @@ allows `accept` as a transport header.
   environment change, on `:mcp restart` or at exit: a server whose
   configuration changed keeps its old session until then, unless the change
   alters its command, URL or headers.
+* `sendito serve` speaks MCP on stdio only: there is no Streamable HTTP
+  listener. It sends no `notifications/progress` while a call runs, and a
+  WebSocket, SSE or MQTT request runs to its own end (`deadline_ms`,
+  `max_events`, the peer's close) or to a cancel: the agent cannot send frames
+  into a session. It speaks the protocol versions with the `initialize`
+  handshake (up to `2025-11-25`); the stateless `2026-07-28` revision, which
+  removed the handshake, is not supported.
 * An MCP `arguments` value that is not a JSON object is kept as file text and only
   rejected when the call is sent (so a half-typed object can be saved and
   reopened); the editor shows `✓ JSON` / `✗ JSON` while typing.

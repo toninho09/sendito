@@ -755,7 +755,6 @@ impl App {
             }
             (Overlay::Report(r), OverlayHit::Button(0)) => {
                 self.clipboard.set(r.copy_text.clone(), false);
-                self.osc52.push(r.copy_text.clone());
                 r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
             }

@@ -142,6 +142,8 @@ impl Harness {
             sendito_store::session::load(&sendito_store::session::session_path(dir.path()));
         let mut app = App::new(project, session, rt.handle().clone());
         app.home = Some(dir.path().to_path_buf());
+        // The jq bar filters at each key: the tests do not wait.
+        app.jq_debounce = Duration::ZERO;
         let term = Terminal::new(TestBackend::new(w, h)).must();
         let mut h = Harness { app, term, dir, rt };
         h.draw();
@@ -163,6 +165,7 @@ impl Harness {
             sendito_store::session::load(&sendito_store::session::session_path(self.dir.path()));
         self.app = App::new(project, session, self.rt.handle().clone());
         self.app.home = Some(self.dir.path().to_path_buf());
+        self.app.jq_debounce = Duration::ZERO;
         self.draw();
     }
 

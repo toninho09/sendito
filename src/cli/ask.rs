@@ -13,14 +13,16 @@ use sendito_core::vars::{Rendered, Scope, VarValue};
 pub(crate) type Answers = BTreeMap<String, VarValue>;
 
 /// Gives `scope` the values of the `$prompt` and `$select` calls of `req`.
-/// A label with no flag asks on the terminal and keeps the answer in
-/// `answers`. The error names the labels that have no value (no flag and no
-/// terminal), or a value that is not an option of its `$select`.
+/// A label with no flag asks on the terminal (only when `interactive`) and
+/// keeps the answer in `answers`. The error names the labels that have no
+/// value (no flag and no terminal), or a value that is not an option of its
+/// `$select`.
 pub(crate) fn answer_prompts(
     req: &Request,
     scope: &Scope,
     flags: &[(String, String)],
     answers: &mut Answers,
+    interactive: bool,
 ) -> Result<(), String> {
     let mut missing = Vec::new();
     for (text, p) in sendito_core::resolve::pre_send_calls(req, scope) {
@@ -33,7 +35,10 @@ pub(crate) fn answer_prompts(
             let given = flags.iter().rev().find(|(l, _)| l == label);
             let value = match given {
                 Some((_, v)) => Some(v.clone()),
-                None if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() => {
+                None if interactive
+                    && std::io::stdin().is_terminal()
+                    && std::io::stderr().is_terminal() =>
+                {
                     Some(ask(label, secret, options).map_err(|e| format!("{label}: {e}"))?)
                 }
                 None => None,

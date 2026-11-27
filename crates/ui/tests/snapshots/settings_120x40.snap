@@ -9,7 +9,7 @@ expression: screen
 │  Appearance                                                            │
 │    Theme                                  ███████  ‹ auto › (1 of 7)   │
 │    Icons                                                 ‹ unicode ›   │
-│    Key hints                                               ‹ short ›   │
+│    Key hints                                                ‹ full ›   │
 │    Hide plain secrets                                        ‹ Off ›   │
 │  Editing                                                               │
 │    Vim mode                                                  ‹ Off ›   │

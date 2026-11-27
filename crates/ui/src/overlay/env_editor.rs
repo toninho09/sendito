@@ -174,7 +174,7 @@ impl EnvEditor {
                 (SECRET | KEYCHAIN, None) => "type the value to store it",
                 (SECRET_KEY, _) => "the entry name in secrets.toml",
                 (KEYCHAIN_KEY, _) => "the account name in the keychain",
-                (FILE, _) => "path/to/file · F2 browses",
+                (FILE, _) => "path/to/file",
                 (DOTENV, Some(false)) => "NOT SET in .env (empty = the variable name)",
                 (DOTENV, _) => "the .env key (empty = the variable name)",
                 _ => "",

@@ -2,6 +2,51 @@
 
 ## 0.4.0 — unreleased
 
+### MCP server for agents
+
+* `sendito serve [PATH]` serves a collection to an AI agent as an MCP server
+  on stdin and stdout: `claude mcp add sendito -- sendito serve <collection>`.
+* Tools: `list_requests`, `read_request`, `list_environments`,
+  `preview_request` (an HTTP request as a curl command, not sent),
+  `import_curl` (a curl command as request TOML), `run_request`,
+  `run_folder`, `send_request` (a request written as TOML), `write_request`,
+  `create_folder`, `move` and `delete`. `--read-only` offers only the tools
+  that do not change files; `--no-send` offers no tool that sends.
+* Each tool has a `title` and an `outputSchema`. `list_requests` shows the
+  descriptions and takes a `depth`. `run_folder` sends
+  `notifications/progress` when the call gives a `progressToken`, and with
+  `failures` returns the response of each request that does not pass.
+* A tool sees the collection as the tree does: a `.toml` file that is not a
+  request and a directory without requests cannot be read, changed or
+  deleted. `move` changes nothing when the new path is taken.
+* A sent request reads only the files of the collection: a body file, a
+  multipart file, a JWT key or a `.proto` file outside it (or under a hidden
+  directory) makes the send an error.
+* A call with the id of a call in flight gets an error.
+* The tree scan reads the description of each request with its badge, so
+  `list_requests` does not open each file again. The scan also reads a
+  `method` written after a description that has a line starting with `[`:
+  before, the badge showed `GET`.
+* `--allow-env <names>` limits the environments the agent can see and send
+  with; a call that names another environment gets an error.
+* A send returns the outcome, the assertions and the response of every kind:
+  the HTTP status, headers and body, or the gRPC, WebSocket, SSE, MQTT and MCP
+  messages, cut at `max_bytes` (64 KB by default).
+* The agent sees variable names, not secret values; a secret the server
+  echoes back is masked, and hidden files (`.sendito/`, `.env`) are out of
+  reach. The masking prevents accidents, not an agent that wants a secret:
+  the documentation says so and points to `--allow-env` and `--no-send`.
+* The resource `sendito://format` gives the agent `FORMAT.md`.
+* `notifications/cancelled` stops a send in flight.
+* A config change is read before the next tool call.
+* The final URL of an HTTP response is masked like the headers when a secret
+  is echoed in it (also in the interface).
+* The MCP client and server recognize protocol version `2025-11-25`.
+* `make test T=<file>` runs one integration test file.
+* A guide ("Let an AI agent use your collection") shows the setup for Claude
+  Code, Claude Desktop and Cursor; the troubleshooting page covers a server
+  that does not start and a secret that does not load.
+
 ### Template functions
 
 * A placeholder can call a function: `{{ $uuidBytes(user_id) }}` sends the 16
@@ -195,6 +240,41 @@
   fish, elvish or PowerShell.
 * `sendito man` prints the manual page (roff).
 
+### Footer key hints
+
+* `[ui] hints` is `full` by default: the footer shows as many hints as fit,
+  the most used first. `short` keeps the three most used.
+* A warning or an error keeps the hints that fit beside it, not only
+  `^W menu · F1`. The message gets at most half of the free room.
+* A run tab shows its own keys: run again, `↑↓` choose row, `Enter` show
+  response. Before, it showed save and edit, which do nothing there.
+* A folder settings tab and the start screen no longer show send. The start
+  screen shows new request.
+* New hints: `Tab` next pane or field, stop watch on a watched tab, run folder
+  and folder settings in the tree, and next match, fold all, copy path,
+  jq here and pager in the response body.
+* The hints show the keys of the keymap: a key changed in the keymap editor
+  shows in the footer. In vim mode, copy shows `y y`.
+* On the response tab bar, `←→` switch the tab and `Enter`/`↓` open it.
+  Before, the viewer took these keys (scroll and fold).
+* A note or a confirmation stays 10 s, or until the next key. A warning or an
+  error stays until a new message replaces it. Before, a warning went after
+  6 s and an error after 12 s.
+* The dialog keys are keymap actions in a new "Dialogs" group:
+  `dialog_confirm` (`Ctrl+S`, `F5`, `Ctrl+Enter`), `dialog_new` (`Ctrl+N`),
+  `dialog_delete` (`Ctrl+D`), `dialog_prev_env` / `dialog_next_env`
+  (`Ctrl+PageUp` / `Ctrl+PageDown`), `dialog_browse` (`F2`), `dialog_test`
+  (`Ctrl+T`) and `dialog_sign_in` (`Ctrl+L`). They apply in the environment,
+  MCP server, OAuth identity and import dialogs and in input dialogs. The
+  buttons, help lines and hints show the keys you set. The keymap editor keeps
+  fixed keys. `F5` and `Ctrl+Enter` now also save the environment and record
+  editors, and `Ctrl+Enter` also confirms an input dialog.
+* A key sequence (such as `Ctrl+W s`) for a dialog action gets a warning in
+  the keymap editor and when the config loads: a dialog reads one key at a
+  time.
+* F2 on the MCP server field, the MCP target and the OAuth identity field is
+  the `pick_value` keymap action, so it can be changed.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site
@@ -258,6 +338,23 @@
 * "Save changes to" in Settings is kept in `session.toml` (per user and
   collection), so the editors open on the same file after a start; it starts
   at `global`.
+
+### jq bar
+
+* The jq bar runs the filter 300 ms after the last key, not at each key.
+* Ctrl+R in the jq bar shows the body without the filter while you type the
+  expression. Ctrl+R again, Enter or Esc turns the filter on.
+* The jq bar keys are in the keymap: `jq_complete` (Tab), `jq_history_prev`
+  (Up), `jq_history_next` (Down) and `jq_bypass` (Ctrl+R). F1, `KEYMAP.md`
+  and the keymap editor list them, and `[keymap]` changes them.
+
+### Copy
+
+* `y` and the other copies also write the local clipboard (`pbcopy` on
+  macOS, `wl-copy` or `xclip` on Linux). The copy now works in terminals that
+  ignore OSC 52, such as iTerm2 with its default settings: before, the paste
+  gave the old clipboard.
+* A copy sends its text to the terminal once, not twice.
 
 ### Forms and dialogs
 

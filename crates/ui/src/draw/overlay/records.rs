@@ -4,6 +4,7 @@
 
 use super::super::table::{TableHit, draw_table};
 use super::*;
+use crate::keymap::Action;
 use crate::records::{Input, Pane, RecordEditor, RecordKind};
 
 /// The width of the entry list, its separator included.
@@ -65,7 +66,10 @@ pub(super) fn draw_records(
         buf,
         inner.x,
         inner.y,
-        &truncate(&format!("Ctrl+S saves to {file}"), inner.width as usize),
+        &truncate(
+            &format!("{} saves to {file}", app.dialog_key(Action::DialogConfirm)),
+            inner.width as usize,
+        ),
         inner.width,
         theme.dialog_dim(),
     );
@@ -96,7 +100,7 @@ pub(super) fn draw_records(
     );
     *cursor = draw_form(app, buf, frame, is_def, e, form);
     // The help line: a note, the focused field's help, or what the list does.
-    let (help, st) = help_line(e, theme);
+    let (help, st) = help_line(app, e, theme);
     put(
         buf,
         inner.x,
@@ -106,33 +110,37 @@ pub(super) fn draw_records(
         st,
     );
     dialog::status(buf, inner, e.error.as_deref(), e.dirty, &app.icons, theme);
+    let labels = crate::records::buttons(e.kind, |a| app.dialog_key(a));
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     buttons(
         app,
         buf,
         inner,
-        crate::records::buttons(e.kind),
+        &labels,
         None,
         &|i| OverlayHit::RecButton(i),
         theme,
     );
 }
 
-fn help_line(e: &mut RecordEditor, theme: &Theme) -> (String, Style) {
+fn help_line(app: &App, e: &mut RecordEditor, theme: &Theme) -> (String, Style) {
     if let Some(n) = &e.note {
         return (n.clone(), theme.on_overlay(theme.ok));
     }
     if e.pane == Pane::List {
+        let new = app.dialog_key(Action::DialogNew);
         let text = match (e.kind, e.records.is_empty()) {
-            (RecordKind::Mcp, true) => "No servers yet. Ctrl+N adds one.",
-            (RecordKind::OAuth, true) => "No identities yet. Ctrl+N adds one.",
-            (RecordKind::Mcp, false) => {
-                "Enter edits the selected server. Ctrl+T lists its tools to test it."
-            }
+            (RecordKind::Mcp, true) => format!("No servers yet. {new} adds one."),
+            (RecordKind::OAuth, true) => format!("No identities yet. {new} adds one."),
+            (RecordKind::Mcp, false) => format!(
+                "Enter edits the selected server. {} lists its tools to test it.",
+                app.dialog_key(Action::DialogTest)
+            ),
             (RecordKind::OAuth, false) => {
-                "Enter edits the selected identity. A request's OAuth auth names it."
+                "Enter edits the selected identity. A request's OAuth auth names it.".into()
             }
         };
-        return (text.into(), theme.on_overlay(theme.info));
+        return (text, theme.on_overlay(theme.info));
     }
     match e.focused() {
         Some(f) => match &f.input {
@@ -202,7 +210,7 @@ fn draw_list(app: &mut App, buf: &mut Buffer, frame: Frame<'_>, e: &RecordEditor
                     buf,
                     r.x + 2,
                     y,
-                    "+ New (Ctrl+N)",
+                    &format!("+ New ({})", app.dialog_key(Action::DialogNew)),
                     r.width.saturating_sub(2),
                     base.patch(theme.fg(theme.accent)),
                 );
@@ -235,11 +243,13 @@ fn draw_form(
     let theme = frame.theme;
     let vis = e.visible();
     if vis.is_empty() {
-        let text = match e.kind {
-            RecordKind::Mcp => "Select a server, or press Ctrl+N to add one.",
-            RecordKind::OAuth => "Select an identity, or press Ctrl+N to add one.",
+        let what = match e.kind {
+            RecordKind::Mcp => "a server",
+            RecordKind::OAuth => "an identity",
         };
-        put(buf, area.x, area.y, text, area.width, theme.dialog_dim());
+        let new = app.dialog_key(Action::DialogNew);
+        let text = format!("Select {what}, or press {new} to add one.");
+        put(buf, area.x, area.y, &text, area.width, theme.dialog_dim());
         return None;
     }
     let focus = (e.pane == Pane::Form).then_some(e.field);

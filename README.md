@@ -64,6 +64,9 @@ plain TOML files you can version in git.
 * **Saved example responses**: `:saveexample` keeps a response next to its
   request; `:examples` lists them.
   → [Saved examples](docs/FEATURES.md#saved-examples)
+* **AI agents**: `sendito serve` makes a collection an MCP server, so an agent
+  can list, read, send and write requests. Secret values are not shown to it.
+  → [Agents](docs/FEATURES.md#agents)
 * **History**, **Postman / Bruno / Insomnia / OpenAPI / `.http` import**,
   **curl import/export**, `.http` export, session restore, seven themes plus
   your own, optional Nerd Font icons, and a key map you can change.

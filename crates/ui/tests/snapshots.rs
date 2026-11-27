@@ -732,8 +732,8 @@ fn footer_and_ctrl_w_menu() {
         h.app.set_status("connection refused", StatusKind::Error);
         snap_in(Area::Footer, "footer_message_error", h);
         h.app.status = None;
-        h.app.project.config.ui.hints = "full".into();
-        snap_in(Area::Footer, "footer_hints_full", h);
+        h.app.project.config.ui.hints = "short".into();
+        snap_in(Area::Footer, "footer_hints_short", h);
         h.app.project.config.ui.hints = "off".into();
         snap_in(Area::Footer, "footer_hints_off", h);
     });
@@ -744,7 +744,7 @@ fn footer_and_ctrl_w_menu() {
 #[test]
 fn run_tab() {
     use sendito_core::script::AssertResult;
-    use sendito_pipeline::suite::{Entry, Event};
+    use sendito_pipeline::suite::{Entry, Event, Sent};
     each_small(|h| {
         h.app.run_command("run Users");
         // Stop the run before it sends: the rows are fabricated below.
@@ -790,10 +790,11 @@ fn run_tab() {
             };
             h.app.on_msg(AppMsg::Run {
                 tab: id,
-                event: Box::new(Event::Finished {
+                event: Box::new(Event::Finished(Sent {
                     entry,
                     response: None,
-                }),
+                    output: Vec::new(),
+                })),
             });
         }
         h.key("up");

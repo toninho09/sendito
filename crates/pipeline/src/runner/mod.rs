@@ -236,6 +236,10 @@ pub struct RunCtx {
     /// Mask secret values the server echoes back (the TUI); `sendito run`
     /// writes the body unchanged.
     pub mask_echoed_secrets: bool,
+    /// A file that a request reads (a body, a multipart part, a JWT key, a
+    /// `.proto` file) must be in the collection and not hidden (`sendito
+    /// serve`). See [`confined`].
+    pub confine_files: bool,
     /// `[http] cookie_jar` config default; the request's `[options] cookies`
     /// overrides it.
     pub cookie_jar: bool,
@@ -269,6 +273,7 @@ impl Default for RunCtx {
             sse_timeout_ms: c.sse.timeout_ms,
             mqtt_timeout_ms: c.mqtt.timeout_ms,
             mask_echoed_secrets: false,
+            confine_files: false,
             cookie_jar: c.http.cookie_jar,
             oauth: None,
             responses: ResponseCache::default(),
@@ -301,6 +306,38 @@ impl RunCtx {
             ..Self::default()
         }
     }
+
+    /// With [`RunCtx::confine_files`], refuses each path that [`confined`]
+    /// refuses.
+    pub fn check_files<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Result<(), String> {
+        if self.confine_files {
+            paths.into_iter().try_for_each(|p| confined(&self.root, p))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// `path` is a file or a directory in the collection at `root`, and no part
+/// of it below `root` starts with '.' (`.sendito/` holds the secrets). The
+/// check follows symbolic links, so a link cannot lead out of the collection.
+pub fn confined(root: &Path, path: &Path) -> Result<(), String> {
+    let refused = || {
+        format!(
+            "{}: sendito serve reads only the files of the collection (not hidden ones), and this is not one",
+            path.display()
+        )
+    };
+    let root = std::fs::canonicalize(root).map_err(|_| refused())?;
+    let full = std::fs::canonicalize(path).map_err(|_| refused())?;
+    let rel = full.strip_prefix(&root).map_err(|_| refused())?;
+    if rel
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err(refused());
+    }
+    Ok(())
 }
 
 /// Commands to a running request: gRPC calls and WebSocket sessions share

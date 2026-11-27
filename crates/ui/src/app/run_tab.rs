@@ -143,7 +143,6 @@ impl App {
             .unwrap_or_default();
             let plan = suite::Plan {
                 project: &project,
-                rels: &rels,
                 scope,
                 scope_errors: &errors,
                 failed: &failed,
@@ -165,7 +164,7 @@ impl App {
                     event: Box::new(event),
                 });
             };
-            suite::run(plan, &opts, ask, on, &cancel).await;
+            suite::run(plan, &rels, &opts, ask, on, &cancel).await;
             let _ = tx.send(AppMsg::RunDone { tab: id });
         });
         t.running = Some(Running {
@@ -194,7 +193,9 @@ impl App {
                 "attempt {attempt}/{attempts} did not pass ({label}); next in {}",
                 crate::units::format_ms(interval_ms)
             )),
-            suite::Event::Finished { entry, response } => {
+            suite::Event::Finished(suite::Sent {
+                entry, response, ..
+            }) => {
                 let log = std::mem::take(&mut view.pending_log);
                 let resp = row_response(&entry, response, &log);
                 // The selection follows the new rows while it is on the last one.

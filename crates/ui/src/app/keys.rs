@@ -123,6 +123,7 @@ impl App {
                 vec![Ctx::Tree, Ctx::Global]
             }
             Focus::RespBody | Focus::RespTabs => vec![Ctx::Response, Ctx::Global],
+            Focus::RespQuery => vec![Ctx::Query, Ctx::Global],
             Focus::ReqBody if is_table => vec![Ctx::Table, Ctx::Global],
             _ => vec![Ctx::Global],
         }
@@ -184,15 +185,6 @@ impl App {
         if self.focus == Focus::RespQuery && !self.query_shown() {
             self.focus = Focus::RespBody;
         }
-        // The query bar keeps Tab (completion) and Up/Down (history).
-        if self.focus == Focus::RespQuery
-            && self.pending.is_empty()
-            && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
-            && key.modifiers.is_empty()
-        {
-            self.query_key(key);
-            return;
-        }
         // Tab inside a multi-line editor indents (unless in vim normal mode).
         if chord == Chord::new(KeyCode::Tab, KeyModifiers::NONE)
             && self.pending.is_empty()
@@ -206,6 +198,19 @@ impl App {
                 self.forward_to_widget(key);
                 return;
             }
+        }
+        // The response tab bar takes its own keys before the viewer bindings
+        // (scroll, fold and cursor) see them.
+        if self.focus == Focus::RespTabs
+            && self.pending.is_empty()
+            && key.modifiers.is_empty()
+            && matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Down
+            )
+        {
+            self.forward_to_widget(key);
+            return;
         }
         // Vim command mode.
         if self.vim
@@ -221,8 +226,8 @@ impl App {
         seq.push(chord);
         let ctxs = self.contexts();
         // Text widgets get plain keys first; only global bindings apply there.
-        let text_focus =
-            matches!(self.focus, Focus::Filter | Focus::RespQuery) || self.focused_text().is_some();
+        // The query bar has its own context before the global one.
+        let text_focus = self.focus == Focus::Filter || self.focused_text().is_some();
         let ctxs: Vec<Ctx> = if text_focus { vec![Ctx::Global] } else { ctxs };
         // In vim normal mode inside tables, `dd` deletes rows like lines.
         match self.keymap.lookup(&ctxs, self.vim, &seq) {
@@ -308,20 +313,6 @@ impl App {
         let Some(kind) = self.tab().map(|t| t.ed.kind) else {
             return;
         };
-        if kind == Kind::Mcp && key.code == KeyCode::F(2) {
-            // F2 on the server input lists the configured servers (a direct
-            // URL needs none); on the tool chip it discovers the tools.
-            if part == 1
-                && self
-                    .tab()
-                    .is_some_and(|t| t.ed.mcp_server.text().is_empty())
-            {
-                self.open_mcp_server_picker();
-            } else {
-                self.load_mcp_tools(true);
-            }
-            return;
-        }
         let vim = self.vim;
         // Part 1 is the endpoint input of every kind; the gRPC method and MCP
         // tool chips (part 0) are editable inline.
@@ -398,23 +389,6 @@ impl App {
             self.focus = Focus::ReqTabs;
             return;
         };
-        if key.code == KeyCode::F(2) {
-            match field {
-                Field::McpServer => {
-                    self.open_mcp_server_picker();
-                    return;
-                }
-                Field::McpTool => {
-                    self.load_mcp_tools(true);
-                    return;
-                }
-                Field::AuthOAuthName => {
-                    self.open_oauth_identity_picker();
-                    return;
-                }
-                _ => {}
-            }
-        }
         if field == Field::DocsPreview {
             self.docs_preview_key(key);
             return;
