@@ -146,15 +146,7 @@ impl App {
         };
         let mode = q.mode;
         match q.input.handle_key(&key, false, &mut self.clipboard) {
-            Outcome::Changed => {
-                q.history_pos = None;
-                match mode {
-                    QueryMode::Find => resp.run_query(),
-                    QueryMode::Jq if live => resp.schedule_query(self.jq_debounce),
-                    QueryMode::Jq => q.error = None,
-                }
-                self.complete_typed();
-            }
+            Outcome::Changed => self.query_changed(mode),
             Outcome::Submit => {
                 // Enter turns the bypass off and runs a waiting filter now.
                 let waits = q.due.is_some() || std::mem::take(&mut q.bypass);
@@ -166,6 +158,46 @@ impl App {
             Outcome::Leave => self.query_leave(),
             _ => {}
         }
+    }
+
+    /// Text pasted into the query bar (a terminal paste) goes in at the
+    /// cursor and counts as typed text.
+    pub(super) fn query_paste(&mut self, s: &str) {
+        let Some(q) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+            .and_then(|r| r.query.as_mut())
+        else {
+            return;
+        };
+        let mode = q.mode;
+        q.input.insert_str(s);
+        self.query_changed(mode);
+    }
+
+    /// The text of the query bar changed: a search applies at once, a jq
+    /// filter after a pause in the typing (on a large body it waits for
+    /// Enter).
+    fn query_changed(&mut self, mode: QueryMode) {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        q.history_pos = None;
+        match mode {
+            QueryMode::Find => resp.run_query(),
+            QueryMode::Jq if live => resp.schedule_query(self.jq_debounce),
+            QueryMode::Jq => q.error = None,
+        }
+        self.complete_typed();
     }
 
     /// Enter in the query bar: keep the result and go back to the view. An

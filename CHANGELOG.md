@@ -298,6 +298,12 @@
   (`CONNACK refused: BadUserNamePassword`) instead of the generic "connection
   refused".
 
+### jq bar
+
+* A terminal paste into the query bar (jq filter or search) goes in at the
+  cursor and counts as typed text; before, the paste was dropped. A newline
+  in the pasted text folds to a space.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site

@@ -67,6 +67,7 @@ impl App {
                 }
                 self.changed();
             }
+            Focus::RespQuery => self.query_paste(s),
             _ => {}
         }
     }

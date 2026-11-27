@@ -179,11 +179,13 @@ The wire rules are exact and spelled out in
   empty text closes the bar. In the jq bar, Tab completes an object key after
   `.` from the keys the body really has (one match goes in at once, more open
   a list with the type of each value), and Up/Down walk the expressions used
-  in the tab (the last 50, kept in memory only). Ctrl+R turns the jq filter
-  off while you type: the body shows the response as received, the bar shows
-  `filter off · Ctrl+R` and the text does not run. Ctrl+R again, Enter or Esc
-  turns the filter on. A body larger than 1 MB is filtered when Enter is
-  pressed, not after each pause. Tab, Up/Down and Ctrl+R of the jq bar are
+  in the tab (the last 50, kept in memory only). A terminal paste goes in at
+  the cursor and counts as typed text; a newline folds to a space. Ctrl+R
+  turns the jq filter off while you type: the body shows the response as
+  received, the bar shows `filter off · Ctrl+R` and the text does not run.
+  Ctrl+R again, Enter or Esc turns the filter on. A body larger than 1 MB is
+  filtered when Enter is pressed, not after each pause. Tab, Up/Down and
+  Ctrl+R of the jq bar are
   keymap actions (`jq_complete`, `jq_history_prev`, `jq_history_next`,
   `jq_bypass`): F1 lists them and `[keymap]` changes them.
 * **Timing**: DNS, TCP connect, TLS handshake, TTFB and download, with the

@@ -906,6 +906,47 @@ fn flow_response_jq_filter() {
     assert!(sc.contains("\"method\""), "{sc}");
 }
 
+/// A terminal paste into the query bar is text: the filter (or the search)
+/// follows it, it goes in at the cursor and a newline folds to a space.
+#[test]
+fn flow_response_jq_paste() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    h.key("ctrl+w j");
+    h.key("j");
+    h.paste(".method");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
+        assert!(sc.contains("1 result"), "{sc}");
+        assert!(sc.contains("\"POST\""), "{sc}");
+    }
+    // At the cursor: Ctrl+A selects the text, the paste replaces it. The
+    // trailing newline folds to a space and the filter still runs.
+    h.key("ctrl+a");
+    h.paste(".method | ascii_downcase\n");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method | ascii_downcase"), "{sc}");
+        assert!(sc.contains("1 result"), "{sc}");
+        assert!(sc.contains("\"post\""), "{sc}");
+    }
+    // Esc: nothing was kept with Enter, so the bar closes.
+    h.key("esc");
+    assert!(!h.screen().contains("jq ▸"));
+    // The find bar takes a paste too.
+    h.key("/");
+    h.paste("server-session-1");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("find ▸ server-session-1"), "{sc}");
+        assert!(sc.contains("match 1/1"), "{sc}");
+    }
+}
+
 #[test]
 fn flow_response_jq_complete_and_path() {
     let s = servers();
