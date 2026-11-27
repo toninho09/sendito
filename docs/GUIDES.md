@@ -12,6 +12,7 @@ same files.
 * [Run your requests in CI](#run-your-requests-in-ci)
 * [Move from Postman, Insomnia or Bruno](#move-from-postman-insomnia-or-bruno)
 * [Call a gRPC service](#call-a-grpc-service)
+* [Let an AI agent use your collection](#let-an-ai-agent-use-your-collection)
 
 ---
 
@@ -368,3 +369,113 @@ import_paths = ["protos"]                       # where the imports start
   `jsonpath` reads the last message.
 
 The complete format is in [gRPC request](../FORMAT.md#grpc-request).
+
+---
+
+## Let an AI agent use your collection
+
+`sendito serve` makes a collection an MCP server. An AI agent (Claude Code,
+Claude Desktop, Cursor or another MCP client) starts it and can then list,
+read, send and write your requests. You need a collection: run `sendito init`
+first if the directory has no `.sendito/`.
+
+### Add the server to the agent
+
+**Claude Code**, for the collection in the project that you work in:
+
+```sh
+claude mcp add --scope project sendito -- sendito serve --env local
+```
+
+Claude Code starts the server in the directory of the project. Without a
+path, Sendito uses the nearest `.sendito/` above that directory. The
+`project` scope writes the server to `.mcp.json` at the root of the project:
+commit that file and your team gets the same server. Claude Code asks each
+person to approve the server the first time. Without `--scope`, the server is
+only for you, in this project.
+
+**Claude Code**, for all your projects (`user` scope): give the path, because
+each project starts the server in a different directory:
+
+```sh
+claude mcp add --scope user sendito -- sendito serve /path/to/collection --env local
+```
+
+**Claude Desktop** (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`)
+and **Cursor** (`~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project) read
+the same JSON. Give the path here: Claude Desktop does not open a project, so
+its directory is not the collection:
+
+```json
+{
+  "mcpServers": {
+    "sendito": {
+      "command": "/usr/local/bin/sendito",
+      "args": ["serve", "/path/to/collection", "--env", "local"]
+    }
+  }
+}
+```
+
+Use the full path of the binary (`which sendito` prints it): an app that you
+start from the Dock or the menu does not get the `PATH` of your shell. Start
+the agent again after you change the file.
+
+For a first try, add `--read-only`: the agent can read and send, but it cannot
+create, move or delete files.
+
+`--read-only` does not stop sends: the agent can still send a request with
+any environment. Add `--no-send` to remove the tools that send. To keep the
+agent away from production, give the environments that it can use:
+
+```sh
+claude mcp add --scope project sendito -- sendito serve --env local --allow-env local,staging
+```
+
+The agent then sees only `local` and `staging`, and a call with `prod` gets an
+error. A call without an environment is still allowed.
+
+### Ask the agent
+
+The agent chooses the tools. For example:
+
+* "List the requests in the Users folder and send `Users/list` with the
+  staging environment."
+* "Send `Orders/create` and tell me why the assertion fails."
+* "Run the whole collection and summarize the failures."
+* "Make a request `Users/delete.toml` like `Users/get.toml`, but with the
+  DELETE method, and send it."
+
+To write TOML, the agent reads the resource `sendito://format` (this
+repository's [FORMAT.md](../FORMAT.md)). A request with `$prompt` or `$select`
+needs a value for each label: the agent gives it, or the result names the
+label that has no value.
+
+### Secrets
+
+The agent sees the names of the variables, not the value of a secret. It
+writes `{{token}}` in a request, and Sendito puts the value in when it sends.
+A secret that the server sends back is masked in the response the agent
+reads. The agent cannot read `.sendito/` or `.env` through a tool, and a
+request that it sends reads only the files of the collection.
+
+The masking prevents accidents. It does not stop an agent that wants a
+secret: a request that the agent writes can send `{{token}}` to any host, or
+encode it so that the echo is not masked. Give the agent only the
+environments whose secrets it can use (`--allow-env`), or remove the tools
+that send (`--no-send`).
+
+Sendito loads the secrets as it does in the app: from `secrets.toml`, the
+keychain, a file or a `.env` file. A `{{$processEnv.NAME}}` value comes from
+the environment of the server process, which the agent starts. Give the
+variable in the agent's configuration: `claude mcp add -e NAME=value …`, or an
+`"env": {"NAME": "value"}` object next to `"args"` in the JSON.
+
+### What stays the same
+
+The agent's sends go to the history and use the cookie jar, so you see them in
+the app. `--no-history` and `--no-cookies` turn that off. When you change
+`.sendito/config.toml`, the next tool call reads it; you do not need to
+start the agent again.
+
+The tools and their arguments are in [CLI.md](CLI.md#sendito-serve-path).

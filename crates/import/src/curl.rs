@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use sendito_core::model::*;
-use sendito_core::resolve::{ResolvedBody, resolve_http};
+use sendito_core::resolve::ResolvedBody;
 use sendito_core::vars::Scope;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -535,49 +535,11 @@ pub fn shell_quote(s: &str) -> String {
 /// With `include_secrets` false, variables whose value is secret stay as
 /// `{{placeholders}}`; everything else is substituted.
 pub fn export(req: &HttpRequest, scope: &Scope, include_secrets: bool, base_dir: &Path) -> String {
-    let (template, empty);
-    let (src, sc): (&HttpRequest, &Scope) = if include_secrets {
-        (req, scope)
-    } else {
-        template = match sendito_core::resolve::mask_request(&Request::Http(req.clone()), scope) {
-            Request::Http(h) => h,
-            _ => req.clone(),
-        };
-        empty = Scope::new();
-        (&template, &empty)
+    let p = match crate::prepare(req, scope, include_secrets, base_dir) {
+        Ok(p) => p,
+        Err(message) => return format!("# cannot export: {message}"),
     };
-    let mut no_auth = src.clone();
-    no_auth.auth = match &src.auth {
-        Auth::Basic { .. } => Auth::None,
-        Auth::OAuth { .. } => Auth::None,
-        other => other.clone(),
-    };
-    let mut r = resolve_http(&no_auth, sc, base_dir);
-    crate::preserve_export_templates(&no_auth, sc, &mut r);
-    if let ResolvedBody::Invalid(message) = &r.body {
-        return format!("# cannot export: {message}");
-    }
-    let own_authorization = r
-        .headers
-        .iter()
-        .any(|(n, _)| n.eq_ignore_ascii_case("authorization"));
-    if !own_authorization {
-        match &src.auth {
-            Auth::OAuth { name } => r.headers.push((
-                "Authorization".into(),
-                format!("Bearer {}", crate::oauth_placeholder(&sc.render(name).text)),
-            )),
-            // Signed when Sendito sends: a JWT has no value until then.
-            Auth::Jwt { .. } => r.headers.push((
-                "Authorization".into(),
-                format!("Bearer {}", crate::JWT_PLACEHOLDER),
-            )),
-            Auth::AwsSigV4 { session_token, .. } if !session_token.is_empty() => r
-                .headers
-                .push(("X-Amz-Security-Token".into(), sc.render(session_token).text)),
-            _ => {}
-        }
-    }
+    let (src, sc, r, own_authorization) = (&p.src, &p.scope, &p.resolved, p.own_authorization);
     let mut args: Vec<String> = vec!["curl".into()];
     let has_body = !matches!(r.body, ResolvedBody::None);
     match r.method.as_str() {

@@ -27,7 +27,7 @@ the file, so you can jump straight to it.
 | `sendito-grpc` | `crates/grpc/` | Dynamic gRPC calls and schema loading | `crates/grpc/src/lib.rs::start_call` |
 | `sendito-ws` | `crates/ws/` | WebSocket handshake (`lib.rs`), proxy tunnel (`proxy.rs`), frames and close (`session.rs`) | `crates/ws/src/lib.rs::open` |
 | `sendito-mqtt` | `crates/mqtt/` | MQTT v3.1.1 and v5 sessions, subscriptions, publishes, Last Will | `crates/mqtt/src/lib.rs::open` |
-| `sendito-mcp` | `crates/mcp/` | JSON-RPC client, transports, MCP OAuth | `crates/mcp/src/lib.rs::call_tool` |
+| `sendito-mcp` | `crates/mcp/` | JSON-RPC client, transports, kept sessions, MCP OAuth | `crates/mcp/src/lib.rs::perform` |
 | `sendito-store` | `crates/store/` | Everything on disk: collection, config, env, history, cookies, session, themes | `crates/store/src/lib.rs` |
 | `sendito-import` | `crates/import/` | Postman, Insomnia, Bruno, curl, `.http` | `crates/import/src/lib.rs` |
 | `sendito-pipeline` | `crates/pipeline/` | The send pipeline the TUI and `sendito run` share (`runner/`: one module per protocol plus project, scope, OAuth and history), the response document model, and the protocol types the TUI reads (`http`, `grpc`, `ws`, `mcp` re-exports) | `crates/pipeline/src/runner/http.rs::exec_http` |
@@ -65,17 +65,22 @@ here.
 | `{{placeholder}}` parsing, name rules, leading `$` | `crates/core/src/template.rs` | Anything not matching is literal text |
 | Variable layers and precedence, recursive expansion, masking, secret taint | `crates/core/src/vars.rs` | `Scope`, `Render`, `VarValue`, `scrub_bytes` |
 | Dynamic values (`$uuid`, `$timestamp`, `$randomInt`, …) and `$processEnv.NAME` | `crates/core/src/vars.rs::uuid_v4`, the `$` table and `crates/core/src/vars.rs::is_builtin` | Generated once per send; `$processEnv` values are secrets |
+| Template functions (`{{ $uuidBytes(id) }}`, `$sha256`, …): the call parser and the function table | `crates/core/src/funcs.rs::FUNCS`, evaluated by `crates/core/src/vars.rs` | Add a function: one function and one row in `FUNCS`, one row in the FORMAT.md "Functions" table (a test checks it) |
+| Values the send gets first (`$prompt`, `$select`, `$response`) | `crates/core/src/funcs.rs::pre_send`, `crates/core/src/resolve.rs::pre_send_calls`, `crates/core/src/vars.rs::Scope::keep` | `$prompt`/`$select`: `crates/ui/src/app/ask.rs`, `src/cli/ask.rs`; `$response`: `crates/pipeline/src/runner/deps.rs::deps_phase` (run by `crates/pipeline/src/runner/mod.rs::prepare`), `ResponseCache` |
 | Request → wire conversion for all four kinds | `crates/core/src/resolve.rs` | `resolve_http`, `resolve_grpc`, `resolve_ws`, `resolve_mcp` |
 | Query/form percent-encoding whitelists | `crates/core/src/resolve.rs::query_encode`, `form_urlencode` | The whitelist is a documented decision — see FORMAT.md |
 | URL normalization (no scheme → `http://`), query append before fragment | `crates/core/src/resolve.rs::normalize_url`, `append_query` | |
 | Unresolved variables, masked copy of a request | `crates/core/src/resolve.rs::unresolved_vars`, `mask_request` | |
 | Declarative scripts: pre, extract, assert | `crates/core/src/script.rs` | No code execution |
-| Lua scripts: `[scripts.lua] pre` and `post`, sandbox and API | `crates/core/src/lua_script.rs` | Run by `crates/pipeline/src/runner/mod.rs::pre_phase` and `response_phase` (extracts, assertions, post scripts) in every runner |
+| Lua scripts: `[scripts.lua] pre` and `post`, sandbox and API | `crates/core/src/lua_script.rs` | Run by `crates/pipeline/src/runner/mod.rs::prepare` (its `pre_phase`) and `response_phase` (extracts, assertions, post scripts) in every runner |
+| Lua function catalog: `.sendito/lua/*.lua` and the global `lua/`, `{{ $lua.name(x) }}` | `crates/store/src/lua_lib.rs` reads the files (directories in `Envs::lua_dirs`, set by `crates/pipeline/src/runner/project.rs::apply_config`); `crates/core/src/lua_script.rs::LuaCatalog` loads them and `call_catalog` runs a template call in one Lua state per send | The scope gets the catalog in `crates/pipeline/src/runner/scope.rs::catalog`; the UI reloads it in `crates/ui/src/app/mod.rs::reload_lua_catalog` |
+| Why a call does not resolve (`{{ $f(x) }} (reason)`) | `crates/core/src/vars.rs::call_error`, listed by `crates/pipeline/src/runner/scope.rs::unresolved_list` | The UI asks in `crates/ui/src/app/send.rs::not_resolved`; the names-only scope (`set_names_only`) does not run secret or Lua calls |
 | Script sources (`jsonpath`, `header`, `status`, `time`, `size`, `hash`, `xpath`, `regex`, `cookie`) | `crates/core/src/script.rs::read`, `crates/core/src/xpath.rs` | Each runner fills `ResponseView`, with `timing` |
 | Folder inheritance (auth, headers, variables, scripts) | `crates/core/src/inherit.rs::apply` | `var_layers`; applied once per send by `crates/pipeline/src/runner/scope.rs::with_folders` |
 | Completion shape of a message or tool input | `crates/core/src/complete.rs` | Shared by gRPC and MCP editors |
 | A sample value from a JSON Schema (MCP argument template, OpenAPI bodies) | `crates/core/src/json_schema.rs` | `sample`, `object_template` |
 | Sent pipeline (scope → pre → resolve → send → extract/assert → history) | `crates/pipeline/src/runner/` | Used identically by the TUI and `sendito run` |
+| Why a send failed and what to change (`Hint`, `Context`; the one place that reads an error text) | `crates/pipeline/src/diagnose.rs` | Each runner calls a classifier where it turns an error into text (`runner/http.rs::http_hint`, the `fail` closures, the `Done` updates); `Suite` entries and the JSON report carry `hint`; the TUI shows `short` in the status line and `fix` in the pane (`crates/ui/src/app/ingest.rs`, `text.rs::short_error` / `explain_error`) |
 
 ## HTTP
 
@@ -144,7 +149,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 |---|---|---|
 | Saved request and resolution | `crates/core/src/model.rs::SseRequest`, `crates/core/src/resolve.rs::resolve_sse` | `crates/store/src/request_file.rs`; `tests/sse.rs` |
 | Authenticated live session | `crates/pipeline/src/runner/sse.rs::exec_sse` | Shared HTTP auth in `crates/pipeline/src/runner/http.rs`; `tests/sse_pipeline.rs` |
-| Headless output and report | `src/cli/sse.rs::run_sse` | `src/cli/run.rs`; `tests/sse.rs` |
+| Headless output and report | `src/cli/sse.rs::run_sse` → `crates/pipeline/src/suite.rs::run_sse` | `src/cli/run.rs`; `tests/sse.rs` |
 | Live UI response | `crates/ui/src/app/sse.rs::App::on_sse` | `crates/ui/src/tab/response.rs`; `crates/ui/tests/sse.rs` |
 | Echo routes | `crates/testkit/src/sse_echo.rs` | `crates/testkit/src/http_echo.rs`; `tests/corpus/sse.rs` |
 | Screens and recordings | `crates/ui/tests/common/sse.rs` | `crates/ui/tests/snapshots.rs`, `crates/ui/tests/media.rs` |
@@ -157,7 +162,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 | Saved request and resolution | `crates/core/src/model.rs::MqttRequest`, `crates/core/src/resolve.rs::resolve_mqtt` | `crates/core/src/resolve.rs::mqtt_target`; `crates/store/src/request_file.rs`; `tests/mqtt.rs` |
 | Folder headers note | `crates/core/src/inherit.rs::ignored_headers_note` | `src/cli/run.rs`, `crates/ui/src/app/send.rs` |
 | Live session | `crates/pipeline/src/runner/mqtt.rs::exec_mqtt` | `MqttControl`, `MqttUpdate`; `tests/mqtt_pipeline.rs` |
-| Headless output and report | `src/cli/mqtt.rs::run_mqtt` | `src/cli/run.rs`; `tests/mqtt.rs` |
+| Headless output and report | `src/cli/mqtt.rs::run_mqtt` → `crates/pipeline/src/suite.rs::run_mqtt` | `src/cli/run.rs`; `tests/mqtt.rs` |
 | Editor | `crates/ui/src/tab/editors.rs::Editors` (`Kind::Mqtt`, `MQTT_TABS`) | `crates/ui/src/tab/fields.rs` |
 | Live UI response and live publish | `crates/ui/src/app/mqtt.rs::App::on_mqtt` | `crates/ui/src/app/mqtt.rs::App::mqtt_publish_selected`; `crates/ui/src/tab/response.rs::MqttMsg`; `crates/ui/tests/mqtt.rs` |
 | Test broker (TCP and TLS) | `crates/testkit/src/mqtt_broker.rs::MqttBroker` | `tests/corpus/mqtt.rs` |
@@ -171,6 +176,7 @@ Tests: `crates/grpc/tests/calls.rs`, corpus cases under
 | Message document (strings and `{"binary": …}`) | `crates/ws/src/lib.rs::parse_messages` | Validated in the editor, tolerated as half-typed |
 | Proxy tunnelling (`CONNECT`, `https://` proxy over TLS) | `crates/ws/src/proxy.rs::WsProxy` | Reuses `sendito_http::ProxySpec` and `tls_config` |
 | UI session control (`Ctrl+W d`, `Ctrl+W x`) | `crates/pipeline/src/runner/::{WsControl, WsUpdate}` | Response summary via `ws_summary` |
+| GraphQL subscriptions (`[graphql]`: `graphql-transport-ws`, legacy `graphql-ws`) | `crates/pipeline/src/runner/graphql_ws.rs::GraphqlWs`, driven by `crates/pipeline/src/runner/ws.rs::exec_ws` | Model `crates/core/src/model.rs::WsGraphql`; editor mode `Field::WsMode`; schema via `crates/pipeline/src/runner/ws.rs::ws_graphql_http`; echo route `/graphql` in `crates/testkit/src/ws_echo.rs`; `tests/integration.rs::cli_ws_graphql_subscription_runs_to_complete` |
 
 Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 `tests/corpus/collection/ws/`, `tests/integration.rs` (cookie jar).
@@ -179,12 +185,13 @@ Tests: unit tests in `crates/ws/src/lib.rs`, corpus cases under
 
 | What | Entry point | Supporting |
 |---|---|---|
-| Session lifecycle (spawn/connect, initialize, work, drop) | `crates/mcp/src/lib.rs::call_tool`, `list_tools` | One timeout covers the whole call |
+| Session lifecycle (spawn/connect, initialize, work, drop) | `crates/mcp/src/lib.rs::perform`, `list_catalog`, `list_tools` | One timeout covers the whole call; `Op` is a tool call, a resource read or a prompt get |
+| Kept sessions (one per key, idle reap, one retry on a broken session) | `crates/mcp/src/pool.rs::Pool` | `crates/pipeline/src/runner/mcp.rs::McpRunInfo` (`pool`); the app's `mcp_pool` (`crates/ui/src/app/mod.rs`, reaped in `tick`); `crates/pipeline/src/suite.rs::run` |
 | Transport selection | `crates/mcp/src/lib.rs::Transport` | `crates/pipeline/src/runner/mcp.rs::mcp_transport` |
 | stdio transport (NDJSON, stderr to the log) | `crates/mcp/src/stdio.rs` | Child killed on drop |
 | Streamable HTTP transport (JSON and SSE bodies) | `crates/mcp/src/http.rs` | Session-id and protocol-version headers |
 | JSON-RPC messages, protocol constants | `crates/mcp/src/protocol.rs` | `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS` |
-| Tool discovery and argument template | `crates/mcp/src/lib.rs::Tool` | `:mcptools`, F2 in the UI |
+| Discovery (tools, resources, templates, prompts) and argument template | `crates/mcp/src/lib.rs::Catalog` | `:mcptools`, F2 in the UI; picker rows in `crates/ui/src/app/ingest.rs::mcp_items` |
 | Servers editor (`Ctrl+W S`, `:mcpedit`): list and form | `crates/ui/src/records.rs::RecordEditor` (`open_mcp_editor`, `open_mcp_server_editor`, `save_records`) | Fields per kind in `crates/ui/src/records.rs::Record`; drawing in `crates/ui/src/draw/overlay/records.rs` |
 | Connection test (`Ctrl+T` in the servers editor) | `crates/ui/src/app/mcp.rs::start_mcp_test` | Answer in `AppMsg::McpTest` (`crates/ui/src/app/ingest.rs`) |
 
@@ -202,9 +209,10 @@ Every file here is documented in
 | Collection discovery (nearest `.sendito/`), `sendito init`, gitignore entries | `crates/store/src/init.rs` | |
 | Layered config (defaults < global < project) | `crates/store/src/config.rs::Config` | `UiConfig`, `HttpConfig`, `GrpcConfig`, `WsConfig`, `OAuthIdentity`, `HistoryConfig` |
 | Environments, four secret sources, keychain, secret files | `crates/store/src/env.rs` | `EnvFile`, `VarSource`, `Envs`, `OsKeychain`, `MemoryKeychain` |
-| History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear` |
+| History (`history.jsonl`, masked, trimmed) | `crates/store/src/history.rs::append` | `load`, `clear`; HTTP responses in `history/`: `append_with_response`, `load_response` (written by `crates/pipeline/src/runner/record.rs::write_history`, shown by `crates/ui/src/app/history.rs`) |
 | Session restore (`session.toml`) | `crates/store/src/session.rs` | Open tabs, drafts, pinned tabs, layout, environment, favorites |
 | Cookie jar (RFC 6265, PSL, `0600`, cross-process lock) | `crates/store/src/cookies.rs` | `request`, `store_response`, `describe`, `delete`, `clear` |
+| Debug log (`--debug`, `:debug`): start, stop, one line per entry, panic hook | `crates/store/src/debug_log.rs` | `start`, `stop`, `log`, `install_panic_hook`; send lines from `crates/pipeline/src/runner/record.rs::log_send`, status lines from `crates/ui/src/app/mod.rs::set_status`, CLI lines from `src/cli/mod.rs::say` |
 | Durable writes and cross-process locks | `crates/store/src/fsio.rs` | `write_atomic`, `write_private`, `with_lock`, `with_dir_lock` |
 | User themes on disk (`themes/*.toml`, `extends`) | `crates/store/src/themes.rs` | Contrast and `extends` problems are reported, not fatal |
 
@@ -224,6 +232,7 @@ Tests: corpus cookie cases, `tests/integration.rs` (secret hygiene),
 | `.http` export | `crates/import/src/http_file.rs::export` | Boundary escalation, `< path` file bodies |
 | `.http` import | `crates/import/src/http_file.rs::import`, `import_path` | `http-client.env.json` environments |
 | OpenAPI 3.x and Swagger 2.0 import | `crates/import/src/openapi.rs::import` | YAML read by `crates/import/src/lib.rs::import_path`; bodies from `crates/core/src/json_schema.rs::sample` |
+| HAR import | `crates/import/src/har.rs::import` | Read by `crates/import/src/lib.rs::import_json` (`log.entries`) |
 | Import/report dialogs in the UI | `crates/ui/src/overlay/mod.rs::{Import, Report}` | `crates/ui/src/app/import_export.rs` opens them |
 
 Tests: `tests/integration.rs` (32-request Postman fixture, curl → request →
@@ -248,14 +257,17 @@ the module for the surface you are changing.
 | History panel | `crates/ui/src/app/history.rs` |
 | Tree operations (new, rename, duplicate, delete, move) | `crates/ui/src/app/tree_ops.rs` |
 | Folder settings: the cache, the folder tab (open, save, restore), what a tab inherits | `crates/ui/src/app/folders.rs` |
+| Run tab: `R` in the tree, `:run [folder] [--data file]`, the rows and the selected response | `crates/ui/src/app/run_tab.rs`, `crates/ui/src/tab/run.rs::RunView`, `crates/ui/src/draw/run_tab.rs`; the engine in `crates/pipeline/src/suite.rs`; `crates/ui/tests/flows.rs::flow_run_tab_runs_a_folder_once_per_row` |
 | Pickers, palette, help, `:command` execution | `crates/ui/src/app/commands.rs` |
 | Response query bar (find, filter, jq) | `crates/ui/src/app/query.rs` |
 | Import, export, body actions | `crates/ui/src/app/import_export.rs` |
+| External editor and pager (`:edit`, `:pager`) | `crates/ui/src/app/external.rs` asks; `crates/ui/src/lib.rs::run_external` runs `crates/ui/src/external.rs::run` between two frames |
 | Settings and themes | `crates/ui/src/app/settings.rs`; the dialog's state (filter, in-place edit) in `crates/ui/src/overlay/settings.rs::SettingsView` |
 | Name prompt preview (the file a name creates, a name taken) | `crates/ui/src/app/dialogs.rs::prompt_preview` |
 | Import dialog preview and path completion | `crates/ui/src/app/import_export.rs` (`import_preview`, `complete_import_path`) |
 | Hint row | `crates/ui/src/app/hints.rs` |
-| Report, timing, header and help text | `crates/ui/src/app/text.rs` |
+| Report, timing and header text | `crates/ui/src/app/text.rs` |
+| Help (F1): the groups and sections, the key and function tables, `{key:action}` in the prose, the `{options}` line that becomes the Options table | `crates/ui/src/app/help.rs::help_sections` (the `{options}` marker: `options_table`; `:help <word>` finds a section by name, then by text: `find_section`); the guide and tutorial texts in `crates/ui/src/help/` (a new tutorial is a `.txt` file and a row of `TUTORIAL_TEXTS`); the sidebar in `crates/ui/src/draw/overlay/palette.rs::draw_help` |
 | Overlay keys, dialog accept actions | `crates/ui/src/app/overlay_keys.rs`, `crates/ui/src/app/dialogs.rs` |
 | Mouse hits, wheel, drag, clicks | `crates/ui/src/app/mouse.rs` |
 | Session bootstrap, `RunOptions`, scripted input for benches | `crates/ui/src/lib.rs` |
@@ -265,13 +277,13 @@ the module for the surface you are changing.
 | Response viewer: pretty JSON, XML, HTML, YAML and CSV with folding, raw, hex, search, wrapping | `crates/ui/src/viewer.rs` (widget, colors per format in `pretty_spans`), `crates/pipeline/src/doc.rs` (document model) |
 | Completion popup logic (schema keys, methods, servers, tools) | `crates/ui/src/complete.rs` |
 | Actions, bindings, contexts; the single source for help and KEYMAP.md | `crates/ui/src/keymap.rs` |
-| Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs` |
+| Color tokens, built-in themes, `NO_COLOR` | `crates/widgets/src/theme.rs`; the color tables of the built-in themes in `crates/widgets/src/theme/palettes.rs` |
 | Markdown preview of a description (Docs tab) | `crates/widgets/src/markdown.rs` |
 | Theme registry: user theme files, `extends`, notes | `crates/ui/src/theme.rs::Registry` |
 | Icon sets (`unicode`, `nerd`) | `crates/widgets/src/icons.rs` |
 | Sidebar tree state: flatten, expand, filter, select | `crates/ui/src/tree.rs` |
 | Durations as the interface shows and reads them (`30 s`, `500 ms`) | `crates/ui/src/units.rs` |
-| Field labels, help lines, credential fields | `crates/ui/src/tab/fields.rs` (`Field::label`, `Field::help`, `Field::is_secret`) |
+| Field labels, help lines, credential fields | `crates/ui/src/tab/fields.rs` (`Field::label`, `Field::help`, `Field::is_secret`); the help (F1) prints the help lines of the Options fields |
 | Overlays: palette, help, settings, confirm, prompt, picker, env editor, import, report | `crates/ui/src/overlay/` (`palette.rs`, `settings.rs`, `env_editor.rs`; `mcp_editor.rs` holds the MCP kinds and the stdio command-line parsing) |
 | Record editors (list and form): MCP servers (`Ctrl+W S`), OAuth identities (`:oauth`) | `crates/ui/src/records.rs` |
 | Key bindings editor (`:keymap`): grouped actions, key recording, clash warnings | `crates/ui/src/keymap_editor.rs` (drawing in `crates/ui/src/draw/overlay/keymap.rs`) |
@@ -303,6 +315,9 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | A new key binding | `crates/ui/src/keymap.rs` (table) → `make keymap` → `KEYMAP.md` + the in-app help |
 | A new `:command` | `crates/ui/src/overlay/palette.rs::COMMANDS` → dispatch in `crates/ui/src/app/commands.rs::run_command` → `KEYMAP.md` via `make keymap` |
+| A template function, a call of the send or a name for scripts | `crates/core/src/funcs.rs` (`FUNCS`: `params`, `doc`; `PRE_SEND`) or `crates/core/src/lua_script.rs::API` → the matching table of `FORMAT.md` (a test checks it) → the in-app help (F1) reads the same tables |
+| A script source or an assertion operator | `crates/core/src/model.rs` (`Source`, `AssertOp`: `as_str`, `symbol`, `doc`) → `crates/ui/src/tab/fields.rs` (`SOURCES`, `OPS`, a test checks them against the model) → the table of `FORMAT.md` → the in-app help (F1) reads the model |
+| A field of the Options tab | `crates/ui/src/tab/fields.rs` (`Field`, its `label` and `help`) → `crates/ui/src/tab/editors.rs::fields` (the Options tab of its kind) → the in-app help (F1) builds its table from both |
 | A new setting | `crates/store/src/config.rs` (field) → `crates/ui/src/overlay/settings.rs::SettingId` (`key`, `typed`, `opens`, `heading`) and `SETTINGS` → `crates/ui/src/app/settings.rs` (`setting_value`, `change_setting` or `set_typed_setting`, `setting_note`) → [FEATURES.md](FEATURES.md#settings) |
 | A new dialog | `crates/ui/src/overlay/mod.rs::Overlay` → `crates/ui/src/draw/overlay/` (build a `draw::dialog::shell` + `draw::dialog::buttons`) → hits in `crates/ui/src/app/mouse.rs` → snapshots |
 
@@ -315,28 +330,35 @@ Every clickable region is registered in `app.hits` while drawing.
 |---|---|
 | `sendito [PATH]` / `--print-keymap` | `src/main.rs::main` → `crates/ui/src/lib.rs::run` |
 | `sendito init` | `crates/store/src/init.rs` |
-| `sendito run <request>` | `src/cli/run.rs::run_one` → `crates/pipeline/src/runner/` |
-| `sendito run <folder>` (tree order, variables carried forward, JSON report) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) |
+| `sendito run <request>` | `src/cli/run.rs::run` → `crates/pipeline/src/runner/` |
+| `sendito run <folder>` (tree order, variables carried forward) | `src/cli/run.rs::run_suite` (`RunFlags` in `src/cli/args.rs`) → `crates/pipeline/src/suite.rs::run` |
+| Folder run engine (retry, repeat, delay, fail-fast, data rows, cancel), shared with the TUI | `crates/pipeline/src/suite.rs` (`Entry`, `Event`, `Cancel`, `load_data`) | `tests/integration.rs::cli_data_runs_the_folder_once_per_row` |
+| Folder run reports (JSON, JUnit, TAP, HTML) | `src/cli/report.rs::SuiteReport` |
 | `sendito curl` / `sendito http` | `crates/import/src/curl.rs::export`, `crates/import/src/http_file.rs::export` |
+| `sendito har` | `src/cli/convert.rs::har` → `crates/import/src/har.rs::export` |
+| `sendito code` / `:code` | `crates/import/src/codegen.rs::export` (shared start: `crates/import/src/lib.rs::prepare`) |
 | `sendito auth login/logout` | `src/cli/auth.rs::http_auth` → `crates/mcp/src/oauth/flow.rs::login_http` |
+| `sendito serve` (MCP server for agents: NDJSON loop, `initialize`, resources) | `src/cli/serve/mod.rs::serve` → tools in `src/cli/serve/tools.rs::call` → `crates/pipeline/src/suite.rs::run`, `run_request`; the files a sent request may read: `crates/pipeline/src/runner/mod.rs::confined` |
 | `sendito mcp login/logout` | `src/cli/auth.rs::mcp` → `crates/pipeline/src/runner/oauth.rs::mcp_login` → `crates/mcp/src/oauth/flow.rs::login` |
 | `sendito theme list/print` | `src/cli/theme.rs::theme`, `crates/ui/src/theme.rs`, `crates/store/src/themes.rs` |
 | `sendito import` | `crates/import/src/lib.rs::import_path` |
+| `sendito completions` / `sendito man` | `src/cli/meta.rs::completions`, `src/cli/meta.rs::man` |
 
 Tests: `tests/integration.rs`, `tests/mcp_cli.rs`, `tests/proxy.rs` (runs the
-binary in a child process), `tests/corpus.rs`.
+binary in a child process), `tests/serve.rs`, `tests/corpus.rs`.
 
 ## Test and tooling map
 
 | Layer | Where | Command |
 |---|---|---|
-| Unit tests | beside the code in every crate | `make test`; `P=<package>` and `F=<name>` narrow it |
+| Unit tests | beside the code in every crate | `make test`; `P=<package>`, `T=<tests file>` and `F=<name>` narrow it |
 | Wire corpus (exact bytes; 57 HTTP, 15 gRPC, 12 WS, 13 SSE, 13 MQTT, 5 MCP) | `tests/corpus.rs`, `tests/corpus/collection/`, `tests/corpus/expected/` | `make corpus` |
 | Corpus golden rewrite | same, `UPDATE_CORPUS=1` | `make corpus-update` |
 | Import, format stability, secret hygiene | `tests/integration.rs`, `tests/fixtures/` | `make test` |
 | TLS and mutual TLS | `tests/tls.rs` | `make test` |
 | Proxy routing | `tests/proxy.rs` | `make test` |
 | MCP over the CLI | `tests/mcp_cli.rs` | `make test` |
+| MCP server for agents (`sendito serve`, driven by the Sendito MCP client) | `tests/serve.rs` | `make test T=serve` |
 | gRPC calls | `crates/grpc/tests/calls.rs` | `make test` |
 | MCP client and OAuth | `crates/mcp/tests/`, `crates/testkit/src/mcp_auth.rs` | `make test` |
 | UI flows (scripted keys and mouse) | `crates/ui/tests/flows.rs`, harness in `crates/ui/tests/common/mod.rs` | `make test` |
@@ -365,6 +387,7 @@ type:
 | A secret or masking rule | `crates/core/src/vars.rs` (`scrub_bytes`, taint) → every caller's scrub list → `tests/integration.rs` |
 | A UI surface | `crates/ui/src/app/` + the matching `draw/` module → snapshots → [reports/ux-critic.md](reports/ux-critic.md) decisions |
 | A key, command or setting | see [Adding a key, command or setting](#adding-a-key-command-or-setting) |
+| A `sendito serve` tool | `src/cli/serve/tools.rs` (`defs` and `call`) → `tests/serve.rs` → the tool table in [CLI.md](CLI.md#sendito-serve-path) |
 
 ## Documentation coverage
 

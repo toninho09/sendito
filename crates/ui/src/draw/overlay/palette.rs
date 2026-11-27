@@ -111,22 +111,14 @@ pub(super) fn draw_palette(
         let (item, label, detail) = &p.items[*idx];
         let sel = p.armed && row + p.scroll == p.sel;
         let rr = Rect::new(inner.x, y, inner.width, 1);
-        let plain = frame.text;
-        let base = row_style(
-            if sel {
-                RowState::Selected
-            } else if hovered(app, rr) {
-                RowState::Hover
-            } else {
-                RowState::Plain
-            },
-            plain,
-            frame.theme,
-        );
-        fill(buf, rr, base);
-        if sel {
-            selection_bar(buf, rr, base, frame.theme);
-        }
+        let state = if sel {
+            RowState::Selected
+        } else if hovered(app, rr) {
+            RowState::Hover
+        } else {
+            RowState::Plain
+        };
+        let base = fill_row(buf, rr, state, frame.text, frame.theme);
         let mut x = inner.x + 2;
         let dw = detail.width() as u16 + 1;
         // The label gives way to the key: it is cut with an ellipsis.
@@ -199,38 +191,78 @@ pub(super) fn draw_help(
     buf: &mut Buffer,
     frame: Frame<'_>,
     is_def: &impl Fn(&str) -> bool,
-    viewer: &mut Viewer,
-    filter: &mut TextEditor,
+    h: &mut Help,
     cursor: &mut Option<(u16, u16)>,
 ) {
-    // Wide screens read the keys in two columns, like a newspaper.
-    let two_cols = frame.area.width >= 180;
-    let mw = if two_cols {
-        frame.area.width.saturating_sub(8).min(200)
-    } else {
-        110
-    };
+    let theme = frame.theme;
+    // The sidebar fits the longest name; the text fits the longest function
+    // row. One width for every section, so Tab does not resize the dialog.
+    let side_w = h
+        .sections
+        .iter()
+        .map(|s| (s.name.width() + 4).max(s.group.width() + 2))
+        .max()
+        .unwrap_or(0) as u16;
+    let mw = frame.area.width.saturating_sub(8).min(side_w + 1 + 132);
     let (r, inner) = shell(
         app,
         buf,
         frame.body,
         mw,
         frame.area.height.saturating_sub(2),
-        "Help — keys and actions (Esc closes)",
-        frame.theme,
+        "Help (Tab: next section, Esc closes)",
+        theme,
     );
-    let ir = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), 1);
-    put(buf, ir.x, ir.y, "Search ", 7, frame.theme.dialog_dim());
+    // The sidebar: a heading row where the group changes, then one row per
+    // section. The open row stays in view.
+    let mut side: Vec<(Option<usize>, &str)> = Vec::new();
+    for (i, s) in h.sections.iter().enumerate() {
+        if i == 0 || h.sections[i - 1].group != s.group {
+            side.push((None, s.group));
+        }
+        side.push((Some(i), s.group));
+    }
+    let rows = inner.height as usize;
+    let open = side.iter().position(|r| r.0 == Some(h.sel)).unwrap_or(0);
+    let first = (open + 1).saturating_sub(rows);
+    for (n, &(row, group)) in side.iter().enumerate().skip(first).take(rows) {
+        let rr = Rect::new(inner.x, inner.y + (n - first) as u16, side_w, 1);
+        let Some(i) = row else {
+            // A heading names the group of the rows under it.
+            let style = theme.dialog_dim().add_modifier(Modifier::BOLD);
+            put(buf, rr.x + 1, rr.y, group, side_w.saturating_sub(2), style);
+            continue;
+        };
+        let state = if i == h.sel {
+            RowState::Selected
+        } else if hovered(app, rr) {
+            RowState::Hover
+        } else {
+            RowState::Plain
+        };
+        let base = fill_row(buf, rr, state, frame.text, theme);
+        let name = h.sections[i].name;
+        put(buf, rr.x + 3, rr.y, name, side_w.saturating_sub(4), base);
+        app.hits.push((rr, Hit::Overlay(OverlayHit::Choice(i))));
+    }
+    let rx = inner.x + side_w;
+    for y in inner.y..inner.y + inner.height {
+        put(buf, rx, y, "│", 1, theme.on_overlay(theme.border));
+    }
+    // The text: the search row, then the open section.
+    let tx = rx + 2;
+    let tw = (inner.x + inner.width).saturating_sub(tx + 1);
+    put(buf, tx, inner.y, "Search ", 7, theme.dialog_dim());
     let er = input_box(
         buf,
-        Rect::new(ir.x + 7, ir.y, ir.width.saturating_sub(7), 1),
+        Rect::new(tx + 7, inner.y, tw.saturating_sub(7), 1),
         true,
-        frame.theme,
+        theme,
     );
     app.hits.push((er, Hit::Overlay(OverlayHit::Input)));
-    *cursor = filter.render(er, buf, frame.theme, true, is_def);
-    // Scroll position, so it is clear that more keys follow.
-    let pos = format!(" {} · ↑↓ PgUp PgDn ", viewer.status());
+    *cursor = h.filter.render(er, buf, theme, true, is_def);
+    // Scroll position, so it is clear that more lines follow.
+    let pos = format!(" {} · ↑↓ PgUp PgDn ", h.viewer.status());
     let pw = pos.width() as u16;
     if er.width > pw + 20 {
         put(
@@ -239,69 +271,21 @@ pub(super) fn draw_help(
             er.y,
             &pos,
             pw,
-            frame.theme.bar().patch(frame.theme.dim()),
+            theme.bar().patch(theme.dim()),
         );
     }
-    let vr = Rect::new(
-        inner.x + 1,
-        inner.y + 2,
-        inner.width.saturating_sub(2),
-        inner.height.saturating_sub(2),
-    );
-    viewer.syntax = crate::viewer::Syntax::Help;
-    let shown = if two_cols {
-        let (left, right) = help_columns(buf, vr, viewer, frame.theme);
-        app.hits.push((left, Hit::Overlay(OverlayHit::Item(0))));
-        app.hits
-            .push((right, Hit::Overlay(OverlayHit::Item(left.height as usize))));
-        left.height as usize * 2
-    } else {
-        viewer.render(vr, buf, frame.theme, true);
-        app.hits.push((vr, Hit::Overlay(OverlayHit::Item(0))));
-        vr.height as usize
-    };
-    set_bg_unset(buf, vr, frame.theme);
+    let vr = Rect::new(tx, inner.y + 2, tw, inner.height.saturating_sub(2));
+    h.viewer.syntax = crate::viewer::Syntax::Help;
+    h.viewer.render(vr, buf, theme, true);
+    app.hits.push((vr, Hit::Overlay(OverlayHit::Item(0))));
+    set_bg_unset(buf, vr, theme);
     scrollbar(
         buf,
         r,
-        viewer.scroll,
-        viewer.row_count(),
-        shown,
+        h.viewer.scroll,
+        h.viewer.row_count(),
+        vr.height as usize,
         true,
-        frame.theme,
+        theme,
     );
-}
-
-/// Renders `viewer` as one column twice the height of `area` and lays its
-/// halves side by side, so scrolling, paging and search work unchanged.
-/// Returns the left and right column.
-pub(super) fn help_columns(
-    buf: &mut Buffer,
-    area: Rect,
-    viewer: &mut crate::viewer::Viewer,
-    theme: &Theme,
-) -> (Rect, Rect) {
-    let gap: u16 = 3;
-    let col_w = area.width.saturating_sub(gap) / 2;
-    let left = Rect::new(area.x, area.y, col_w, area.height);
-    let right = Rect::new(area.x + col_w + gap, area.y, col_w, area.height);
-    let mut tall = Buffer::empty(Rect::new(0, 0, col_w, area.height.saturating_mul(2)));
-    viewer.render(*tall.area(), &mut tall, theme, true);
-    for y in 0..area.height {
-        for x in 0..col_w {
-            for (dst, sy) in [(left, y), (right, y + area.height)] {
-                if let (Some(src), Some(cell)) =
-                    (tall.cell((x, sy)), buf.cell_mut((dst.x + x, dst.y + y)))
-                {
-                    *cell = src.clone();
-                }
-            }
-        }
-    }
-    // The gap between the columns: a faint rule.
-    let rx = area.x + col_w + gap / 2;
-    for y in area.y..area.y + area.height {
-        put(buf, rx, y, "│", 1, theme.on_overlay(theme.border));
-    }
-    (left, right)
 }

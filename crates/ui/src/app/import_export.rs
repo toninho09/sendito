@@ -5,7 +5,7 @@ use super::*;
 impl App {
     pub fn open_import(&mut self, prefill: &str) {
         let mut input = TextEditor::multi(prefill).with_placeholder(
-            "curl https://…   or   a collection, OpenAPI, .http file or Bruno directory",
+            "curl https://…   or   a collection, OpenAPI, .http, HAR file or Bruno directory",
         );
         input.move_to_end();
         self.overlay = Some(Overlay::Import(Import::new(input)));
@@ -329,6 +329,48 @@ impl App {
         (scope, warning)
     }
 
+    /// Copies an export to the terminal clipboard and shows it with its
+    /// notes. `what` names the export in the status line (`curl command`).
+    fn copy_export(&mut self, title: &str, what: &str, text: String, notes: String, warning: &str) {
+        self.clipboard.set(text.clone(), false);
+        self.overlay = Some(Overlay::Report(Report {
+            title: title.into(),
+            viewer: Viewer::new(Doc::text(&format!(
+                "{text}\n\n── notes (not part of the {what}) ──\n{warning}{notes}\n"
+            ))),
+            copy_text: text,
+            copied: true,
+            close_status: Some(format!("the {what} was sent to the terminal clipboard")),
+        }));
+        if warning.is_empty() {
+            self.set_status(
+                format!("{what} sent to the terminal clipboard"),
+                StatusKind::Ok,
+            );
+        } else {
+            self.set_status(
+                format!("{what} sent to the terminal clipboard; some secrets did not load"),
+                StatusKind::Warn,
+            );
+        }
+    }
+
+    /// The clipboard note of an export; `bang` is the command that includes
+    /// the secret values (`:curl!`).
+    fn clipboard_note(include_secrets: bool, bang: &str) -> String {
+        if include_secrets {
+            "Sent to the clipboard through the terminal (OSC 52). Some terminals block it: if pasting \
+             gives nothing, select the text above. It CONTAINS SECRET VALUES."
+                .into()
+        } else {
+            format!(
+                "Copied to the clipboard through the terminal (OSC 52). Some terminals block it: if pasting \
+                 gives nothing, select the text above. Secret variables stay \
+                 {{{{placeholders}}}}; {bang} includes their values."
+            )
+        }
+    }
+
     pub fn export_curl(&mut self, include_secrets: bool) {
         let sse = self.tab().is_some_and(|t| t.ed.kind == Kind::Sse);
         let Some((_, h, scope, warning)) = self.export_input(include_secrets, "curl") else {
@@ -338,16 +380,6 @@ impl App {
         if sse {
             cmd = cmd.replacen("curl", "curl -N", 1);
         }
-        self.clipboard.set(cmd.clone(), false);
-        self.osc52.push(cmd.clone());
-        let note = if include_secrets {
-            "Sent to the clipboard through the terminal (OSC 52). Some terminals block it: if pasting \
-             gives nothing, select the command above. It CONTAINS SECRET VALUES."
-        } else {
-            "Copied to the clipboard through the terminal (OSC 52). Some terminals block it: if pasting \
-             gives nothing, select the command above. Secret variables stay \
-             {{placeholders}}; :curl! includes their values."
-        };
         // Options that come from the request's settings, explained.
         let mut flags = Vec::new();
         if cmd.contains("\n  -L") || cmd.ends_with(" -L") {
@@ -364,26 +396,8 @@ impl App {
         } else {
             format!("{}\n\n", flags.join("; "))
         };
-        self.overlay = Some(Overlay::Report(Report {
-            title: "Copy as curl".into(),
-            viewer: Viewer::new(Doc::text(&format!(
-                "{cmd}\n\n── notes (not part of the command) ──\n{warning}{flags}{note}\n"
-            ))),
-            copy_text: cmd,
-            copied: true,
-            close_status: Some("the curl command was sent to the terminal clipboard".into()),
-        }));
-        if warning.is_empty() {
-            self.set_status(
-                "curl command sent to the terminal clipboard",
-                StatusKind::Ok,
-            );
-        } else {
-            self.set_status(
-                "curl command sent to the terminal clipboard; some secrets did not load",
-                StatusKind::Warn,
-            );
-        }
+        let notes = flags + &Self::clipboard_note(include_secrets, ":curl!");
+        self.copy_export("Copy as curl", "curl command", cmd, notes, &warning);
     }
 
     /// Copies the active request as an .http file (JetBrains HTTP client /
@@ -399,30 +413,34 @@ impl App {
             include_secrets,
             &self.project.root,
         );
-        self.clipboard.set(file.clone(), false);
-        self.osc52.push(file.clone());
-        let note = if include_secrets {
-            "Sent to the terminal clipboard (OSC 52); some terminals block it. It CONTAINS SECRET VALUES."
-        } else {
-            "Copied to the terminal clipboard (OSC 52); some terminals block it. Secret variables stay \u{7b}\u{7b}placeholders\u{7d}\u{7d}; :httpfile! includes their values."
-        };
-        self.overlay = Some(Overlay::Report(Report {
-            title: "Copy as .http".into(),
-            viewer: Viewer::new(Doc::text(&format!(
-                "{file}\n\n── notes (not part of the file) ──\n{warning}{note}\n"
-            ))),
-            copy_text: file,
-            copied: true,
-            close_status: Some("the .http file was sent to the terminal clipboard".into()),
-        }));
-        if warning.is_empty() {
-            self.set_status(".http file sent to the terminal clipboard", StatusKind::Ok);
-        } else {
-            self.set_status(
-                ".http file sent to the terminal clipboard; some secrets did not load",
-                StatusKind::Warn,
+        let notes = Self::clipboard_note(include_secrets, ":httpfile!");
+        self.copy_export("Copy as .http", ".http file", file, notes, &warning);
+    }
+
+    /// `:code <lang>`: copies code that sends the active HTTP request with
+    /// another tool.
+    pub(super) fn export_code(&mut self, arg: &str, include_secrets: bool) {
+        use sendito_import::codegen::Lang;
+        let Some(lang) = Lang::parse(arg) else {
+            return self.set_status(
+                format!("usage: :code <language>  ({})", Lang::names()),
+                StatusKind::Error,
             );
+        };
+        if self.tab().is_some_and(|t| t.ed.kind == Kind::Sse) {
+            return self.set_status("code export is for HTTP requests", StatusKind::Warn);
         }
+        let Some((_, h, scope, warning)) = self.export_input(include_secrets, "code") else {
+            return;
+        };
+        let code =
+            sendito_import::codegen::export(lang, &h, &scope, include_secrets, &self.project.root);
+        let notes = format!(
+            "The tool can add headers of its own, such as a User-Agent.\n\n{}",
+            Self::clipboard_note(include_secrets, &format!(":code! {}", lang.as_str()))
+        );
+        let title = format!("Copy as {} code", lang.as_str());
+        self.copy_export(&title, "code", code, notes, &warning);
     }
 
     pub(super) fn format_body(&mut self) {
@@ -449,16 +467,17 @@ impl App {
         }
     }
 
-    pub(super) fn copy_body(&mut self) {
-        let Some(t) = self.tab() else { return };
-        let Some(r) = &t.response else { return };
+    /// The text of the response tab on screen, in its view (pretty or raw).
+    pub(super) fn shown_response_text(&self) -> Option<String> {
+        let t = self.tab()?;
+        let r = t.response.as_ref()?;
         let v = match t.resp_tab {
             0 => &r.body,
             1 => &r.headers,
             2 => &r.timing,
             _ => &r.messages,
         };
-        let text = match v.mode {
+        Some(match v.mode {
             ViewMode::Pretty if v.doc.pretty.is_some() => v
                 .doc
                 .pretty
@@ -466,6 +485,12 @@ impl App {
                 .map(|p| p.text.clone())
                 .unwrap_or_default(),
             _ => v.doc.raw.text.clone(),
+        })
+    }
+
+    pub(super) fn copy_body(&mut self) {
+        let Some(text) = self.shown_response_text() else {
+            return;
         };
         if text.len() > 1_000_000 {
             self.set_status(
@@ -478,8 +503,7 @@ impl App {
             return;
         }
         let n = text.len();
-        self.clipboard.set(text.clone(), false);
-        self.osc52.push(text);
+        self.clipboard.set(text, false);
         self.set_status(
             format!("copied {} to the clipboard", human_size(n as u64)),
             StatusKind::Ok,
@@ -541,7 +565,6 @@ impl App {
             return;
         };
         self.clipboard.set(path.clone(), false);
-        self.osc52.push(path.clone());
         self.set_status(format!("copied {path}"), StatusKind::Ok);
     }
 

@@ -25,10 +25,12 @@ pub enum SseUpdate {
         error: Option<String>,
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
-async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
+pub(super) async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(end) => tokio::time::sleep_until(end).await,
         None => std::future::pending().await,
@@ -58,7 +60,7 @@ pub async fn exec_sse(
         req,
         results: mut scripts,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut request = req.http_request();
     request.common.scripts.pre.clear();
@@ -66,6 +68,13 @@ pub async fn exec_sse(
     let mut opening_ctx = ctx.clone();
     opening_ctx.history = None;
     opening_ctx.send.default_timeout = Duration::from_millis(ctx.sse_timeout_ms);
+    // A stream that stops has no timeout of its own: the opening has one.
+    let cx = diagnose::Context {
+        default_timeout_ms: ctx.sse_timeout_ms,
+        timeout_key: "[sse] timeout_ms",
+        verify_tls: Some(request.options.verify_tls),
+        ..diagnose::Context::of(ctx)
+    };
     let run = if pre_error.is_some() {
         None
     } else {
@@ -89,11 +98,13 @@ pub async fn exec_sse(
     let mut status = 0;
     let mut secrets = scope.secret_values();
     let mut error = None;
+    let mut hint = None;
     let reason;
     if let Some(mut run) = run {
         secrets.extend(run.secrets);
         match run.outcome.response {
             Err(e) => {
+                hint = http::http_hint(&e, &run.outcome.resolved, &cx);
                 error = Some(e);
                 reason = "error";
             }
@@ -172,7 +183,14 @@ pub async fn exec_sse(
                                 }
                                 Ok(None) => break "server closed",
                                 Err(e) => {
-                                    error = Some(e.to_string());
+                                    let e = e.to_string();
+                                    // The opening timeout does not cover the stream.
+                                    let stream_cx = diagnose::Context {
+                                        default_timeout_ms: 0,
+                                        ..cx
+                                    };
+                                    hint = diagnose::transport(&e, &stream_cx);
+                                    error = Some(e);
                                     break "error";
                                 }
                             }
@@ -218,7 +236,7 @@ pub async fn exec_sse(
         size,
         error.clone(),
     );
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates
         .send(SseUpdate::Done {
             events,
@@ -227,6 +245,7 @@ pub async fn exec_sse(
             error,
             scripts,
             scope_errors,
+            hint,
         })
         .await;
 }

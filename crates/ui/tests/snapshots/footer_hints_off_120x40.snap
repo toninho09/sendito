@@ -2,4 +2,4 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- demo                                                                                             ^W menu · F1 all keys
+ demo                                                                                                 ^W menu · F1 help

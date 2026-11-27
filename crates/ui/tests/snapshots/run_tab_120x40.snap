@@ -1,0 +1,39 @@
+---
+source: crates/ui/tests/snapshots.rs
+expression: screen
+---
+╭─ Requests ─────────────────────────────────────────────────────────────────────────────╮
+│   Request                                   Status                        Time  Asserts│
+│ ✓ Users/list users.toml                     200 OK                       10 ms      1/1│
+│▌✗ Users/get user.toml                       404 Not Found                11 ms      0/1│
+│ ✓ Users/create user.toml                    201 Created                  12 ms         │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Body  Headers  Timing  Results ──────────────────────────────── 404 Not Found  11 ms ─╮
+│ FAIL  Users/get user.toml                                                              │
+│                                                                                        │
+│ 404 Not Found                                                                          │
+│ ✗ status == 200  (actual: 404)                                                         │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+│                                                                                        │
+╰─ Raw  Hex ───────────────────────────────────────────────────────────── Ln 1/5 · wrap ─╯

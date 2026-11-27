@@ -34,12 +34,13 @@ impl VimMode {
     }
 }
 
-/// Shared clipboard: internal register plus pending OSC 52 writes.
+/// Shared clipboard: internal register plus the text the UI sends to the
+/// system clipboard (OSC 52 and the local clipboard program).
 #[derive(Debug, Default, Clone)]
 pub struct Clipboard {
     pub text: String,
     pub linewise: bool,
-    /// Text to send to the terminal clipboard (OSC 52) on the next flush.
+    /// Text to send to the system clipboard on the next flush.
     pub pending: Option<String>,
 }
 

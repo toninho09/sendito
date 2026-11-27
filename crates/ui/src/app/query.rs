@@ -61,13 +61,36 @@ impl App {
         })
     }
 
-    /// A key typed in the query bar: the text applies at each change (a jq
-    /// filter on a large body waits for Enter).
-    pub(super) fn query_key(&mut self, key: KeyEvent) {
+    /// Whether the active tab shows the jq bar (open, focused or not).
+    pub(crate) fn jq_bar_open(&self) -> bool {
+        self.tab()
+            .and_then(|t| t.response.as_ref())
+            .and_then(|r| r.query.as_ref())
+            .is_some_and(|q| q.mode == QueryMode::Jq)
+    }
+
+    /// A key of the `Query` keymap context. The keys do nothing in the find
+    /// bar.
+    pub(super) fn query_action(&mut self, a: Action) {
+        if self.focus != Focus::RespQuery || !self.jq_bar_open() {
+            return;
+        }
+        match a {
+            Action::JqComplete => self.jq_complete(),
+            Action::JqHistoryPrev => self.jq_history(true),
+            Action::JqHistoryNext => self.jq_history(false),
+            Action::JqBypass => self.jq_bypass(),
+            _ => {}
+        }
+    }
+
+    /// Puts the previous (`back`) or next jq expression of the tab in the
+    /// bar; past the last one the bar is empty.
+    fn jq_history(&mut self, back: bool) {
         let Some(t) = self.tabs.get_mut(self.active) else {
             return;
         };
-        let history = t.jq_history.clone();
+        let history = &t.jq_history;
         let Some(resp) = t.response.as_mut() else {
             return;
         };
@@ -75,41 +98,59 @@ impl App {
         let Some(q) = resp.query.as_mut() else {
             return;
         };
+        let pos = match (back, q.history_pos) {
+            _ if history.is_empty() => return,
+            (true, None) => Some(history.len() - 1),
+            (true, Some(i)) => Some(i.saturating_sub(1)),
+            (false, Some(i)) if i + 1 < history.len() => Some(i + 1),
+            _ => None,
+        };
+        q.history_pos = pos;
+        q.input.set_text(pos.map_or("", |i| history[i].as_str()));
+        q.input.move_to_end();
+        if live {
+            resp.run_query();
+        }
+    }
+
+    /// Turns the jq filter off while the text is typed (the body shows the
+    /// response as received), or on again.
+    fn jq_bypass(&mut self) {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        if let Some(q) = resp.query.as_mut() {
+            q.bypass = !q.bypass;
+            resp.run_query();
+        }
+    }
+
+    /// A key typed in the query bar: a search applies at each change, a jq
+    /// filter after a pause in the typing (on a large body it waits for
+    /// Enter). The keys of the `Query` context go to `query_action`.
+    pub(super) fn query_key(&mut self, key: KeyEvent) {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
         let mode = q.mode;
-        if key.code == KeyCode::Tab {
-            if mode == QueryMode::Jq {
-                self.jq_complete();
-            }
-            return;
-        }
-        if mode == QueryMode::Jq && matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            let pos = match (key.code, q.history_pos) {
-                (_, _) if history.is_empty() => return,
-                (KeyCode::Up, None) => Some(history.len() - 1),
-                (KeyCode::Up, Some(i)) => Some(i.saturating_sub(1)),
-                (_, Some(i)) if i + 1 < history.len() => Some(i + 1),
-                _ => None,
-            };
-            q.history_pos = pos;
-            q.input.set_text(pos.map_or("", |i| history[i].as_str()));
-            q.input.move_to_end();
-            if live {
-                resp.run_query();
-            }
-            return;
-        }
         match q.input.handle_key(&key, false, &mut self.clipboard) {
-            Outcome::Changed => {
-                q.history_pos = None;
-                if live || mode == QueryMode::Find {
-                    resp.run_query();
-                } else {
-                    q.error = None;
-                }
-                self.complete_typed();
-            }
+            Outcome::Changed => self.query_changed(mode),
             Outcome::Submit => {
-                if !live || mode == QueryMode::Find {
+                // Enter turns the bypass off and runs a waiting filter now.
+                let waits = q.due.is_some() || std::mem::take(&mut q.bypass);
+                if !live || mode == QueryMode::Find || waits {
                     resp.run_query();
                 }
                 self.query_submit();
@@ -117,6 +158,46 @@ impl App {
             Outcome::Leave => self.query_leave(),
             _ => {}
         }
+    }
+
+    /// Text pasted into the query bar (a terminal paste) goes in at the
+    /// cursor and counts as typed text.
+    pub(super) fn query_paste(&mut self, s: &str) {
+        let Some(q) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+            .and_then(|r| r.query.as_mut())
+        else {
+            return;
+        };
+        let mode = q.mode;
+        q.input.insert_str(s);
+        self.query_changed(mode);
+    }
+
+    /// The text of the query bar changed: a search applies at once, a jq
+    /// filter after a pause in the typing (on a large body it waits for
+    /// Enter).
+    fn query_changed(&mut self, mode: QueryMode) {
+        let Some(resp) = self
+            .tabs
+            .get_mut(self.active)
+            .and_then(|t| t.response.as_mut())
+        else {
+            return;
+        };
+        let live = resp.live_jq();
+        let Some(q) = resp.query.as_mut() else {
+            return;
+        };
+        q.history_pos = None;
+        match mode {
+            QueryMode::Find => resp.run_query(),
+            QueryMode::Jq if live => resp.schedule_query(self.jq_debounce),
+            QueryMode::Jq => q.error = None,
+        }
+        self.complete_typed();
     }
 
     /// Enter in the query bar: keep the result and go back to the view. An
@@ -252,8 +333,11 @@ impl App {
             return;
         };
         q.history_pos = None;
+        // The body may show the raw body (bypass) or an older text (a filter
+        // that waits): both go back to the kept text.
+        let stale = q.due.is_some() || std::mem::take(&mut q.bypass);
         let committed = q.committed.clone();
-        if q.input.text() != committed || q.error.is_some() {
+        if q.input.text() != committed || q.error.is_some() || stale {
             q.input.set_text(&committed);
             q.input.move_to_end();
             resp.run_query();

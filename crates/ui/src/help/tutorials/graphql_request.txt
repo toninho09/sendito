@@ -1,0 +1,22 @@
+Send a GraphQL query or mutation, or run one subscription.
+
+── Query or mutation ──
+  1.  Press {key:new_request} and type the URL of the GraphQL server.
+  2.  Open the Body tab. Choose the type GraphQL with Left or Right.
+  3.  The tab has a Section choice with three values: Query, Variables and Operation name. Press Left or Right on it to change the section.
+  4.  In Query, write the query. Press {key:complete} to see the fields of the type at the cursor.
+  5.  In Variables, write the variables as a JSON object, for example {"id": "42"}. Operation name is optional: it tells which operation Sendito runs.
+  6.  Press {key:send}. Sendito sends one JSON object with query, variables and operationName, as application/json.
+The request uses its Auth tab, the cookie jar, the TLS settings and the proxy.
+
+── The schema ──
+  •  The completion reads the schema of the server. Sendito loads it in the background the first time that you press {key:complete}.
+  •  When the load fails, the command :graphqlschema loads it again.
+
+── Subscription over WebSocket ──
+  1.  Press {key:new_ws_request} and type the WebSocket URL of the server (wss://).
+  2.  In the Messages tab, set the Send choice to GraphQL.
+  3.  Write the subscription in the Query section.
+  4.  Set the Protocol choice: graphql-transport-ws for current servers, graphql-ws for the old subscriptions-transport-ws.
+  5.  To send a token, open the Options tab and write the Init payload, for example {"token": "{{token}}"}. Sendito sends it when the connection opens.
+  6.  Press {key:send}. The events show while they arrive. Press {key:cancel} to stop.

@@ -72,19 +72,8 @@ mod tests {
     fn context() -> RunCtx {
         RunCtx {
             root: std::env::temp_dir(),
-            send: SendOptions::default(),
-            history: None,
-            name: String::new(),
-            path: None,
-            env: None,
-            schemas: SchemaCache::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
-            cookie_jar: false,
-            oauth: None,
+            ..Default::default()
         }
     }
 

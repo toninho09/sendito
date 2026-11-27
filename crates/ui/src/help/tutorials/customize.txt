@@ -1,0 +1,27 @@
+Change how Sendito looks, which keys it uses and which programs it opens.
+
+── Settings ──
+  1.  Press {key:settings}.
+  2.  Choose a setting with Up and Down. Change it with Left, Right or Space.
+  3.  Choose where to save: Global (all collections) or Project (this collection).
+The change applies at once.
+
+── Vim mode ──
+  1.  In Settings, set Vim mode to on.
+  2.  In a text field, press i to type and Esc to go back to normal mode.
+  3.  Press ":" in normal mode for the command palette.
+This help then shows the vim keys.
+
+── Theme ──
+  •  Type :theme in the command palette. Choose a theme: the screen shows it before you choose.
+  •  An environment can have its own theme. Set it in the environment editor.
+
+── Keys ──
+  1.  Type :keymap in the command palette.
+  2.  Select an action and press Enter. Press the new keys.
+  3.  Press Ctrl+S to save.
+The footer, the Ctrl+W menu and this help show your new keys.
+
+── Use your own programs ──
+  •  Press {key:external_edit} to edit the focused text in your editor: a body, a script, a message. Sendito opens $VISUAL, then $EDITOR, then vi. When the editor closes, the new text replaces the old one. A field of one line stays in Sendito.
+  •  In the response pane, press {key:open_pager} to read the text in your pager: $PAGER, then less. The secrets stay masked and the jq filter stays on.

@@ -6,6 +6,9 @@ impl App {
     // ----- actions ------------------------------------------------------
 
     pub fn dispatch(&mut self, a: Action) {
+        if self.run_action(a) {
+            return;
+        }
         match a {
             Action::Send => {
                 if self.focus == Focus::Sidebar && self.sidebar_mode == SidebarMode::History {
@@ -24,6 +27,7 @@ impl App {
             Action::NewSseRequest => self.new_tab(Request::new_sse()),
             Action::NewMqttRequest => self.new_tab(Request::new_mqtt()),
             Action::NewWsRequest => self.new_tab(Request::new_ws()),
+            Action::NewMcpRequest => self.new_tab(Request::new_mcp()),
             Action::CloseTab => self.close_tab(false),
             Action::NextTab => self.switch_tab(1),
             Action::PrevTab => self.switch_tab(-1),
@@ -55,6 +59,10 @@ impl App {
             }
             Action::Palette => self.open_palette(""),
             Action::Complete => self.refresh_complete(),
+            Action::JqComplete
+            | Action::JqHistoryPrev
+            | Action::JqHistoryNext
+            | Action::JqBypass => self.query_action(a),
             Action::Help => self.open_help(),
             Action::Settings => self.open_settings(SettingId::Theme),
             Action::SelectEnv => self.open_env_picker(),
@@ -73,6 +81,7 @@ impl App {
             Action::Import => self.open_import(""),
             Action::ExportCurl => self.export_curl(false),
             Action::FormatBody => self.format_body(),
+            Action::ExternalEdit => self.edit_externally(),
             Action::MoveToSecret => self.prompt_move_to_secret(),
             Action::RevealSecrets => self.reveal_secrets = !self.reveal_secrets,
             Action::Zoom => self.zoom = !self.zoom,
@@ -95,6 +104,7 @@ impl App {
             Action::TreeNewFolder => self.prompt_new_folder(),
             Action::TreeRename => self.prompt_rename(),
             Action::TreeFolderSettings => self.tree_folder_settings(),
+            Action::TreeRunFolder => self.tree_run_folder(),
             Action::TreeDuplicate => self.tree_duplicate(),
             Action::TreeDelete => self.tree_delete(),
             Action::TreeMove => self.tree_move(),
@@ -133,6 +143,7 @@ impl App {
             Action::ToggleWrap => self.with_viewer(Viewer::toggle_wrap),
             Action::CopyBody => self.copy_body(),
             Action::SaveBody => self.prompt_save_body(),
+            Action::OpenPager => self.open_pager(),
             Action::NextCell => {
                 if let Some(t) = self.focused_table() {
                     t.next_cell();
@@ -156,6 +167,16 @@ impl App {
             | Action::Copy
             | Action::Cut
             | Action::Paste => {}
+            Action::PickValue => self.pick_value(),
+            // The dialogs read their own keys (`dialog_action`).
+            Action::DialogConfirm
+            | Action::DialogNew
+            | Action::DialogDelete
+            | Action::DialogPrevEnv
+            | Action::DialogNextEnv
+            | Action::DialogBrowse
+            | Action::DialogTest
+            | Action::DialogSignIn => {}
         }
     }
 
@@ -268,6 +289,23 @@ impl App {
             ]);
         }
         v
+    }
+
+    /// `pick_value`: the list of values for the focused field. On the MCP
+    /// server input it lists the configured servers (a direct URL needs
+    /// none); elsewhere in the MCP bar it discovers the server's targets.
+    fn pick_value(&mut self) {
+        let Some(t) = self.tab() else { return };
+        let mcp = t.ed.kind == Kind::Mcp;
+        let no_server = t.ed.mcp_server.text().is_empty();
+        match (self.focus, t.current_field()) {
+            (Focus::Bar(1), _) if mcp && no_server => self.open_mcp_server_picker(),
+            (Focus::Bar(_), _) if mcp => self.load_mcp_tools(true),
+            (Focus::ReqBody, Some(Field::McpServer)) => self.open_mcp_server_picker(),
+            (Focus::ReqBody, Some(Field::McpTool)) => self.load_mcp_tools(true),
+            (Focus::ReqBody, Some(Field::AuthOAuthName)) => self.open_oauth_identity_picker(),
+            _ => {}
+        }
     }
 
     pub fn focus_cycle(&mut self, dir: isize) {

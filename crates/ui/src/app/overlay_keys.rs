@@ -15,19 +15,34 @@ impl App {
         }
     }
 
+    /// The dialog action of a key press (the `Dialogs` keymap context).
+    pub(crate) fn dialog_action(&self, key: &KeyEvent) -> Option<Action> {
+        match self
+            .keymap
+            .lookup(&[Ctx::Dialog], self.vim, &[Chord::from_event(key)])
+        {
+            Lookup::Action(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The first key of a dialog action, for buttons and messages.
+    pub(crate) fn dialog_key(&self, a: Action) -> String {
+        self.keymap.hint_in(Ctx::Dialog, a, self.vim)
+    }
+
     /// Returns whether the overlay stays open.
     pub(super) fn overlay_key_inner(&mut self, ov: &mut Overlay, key: KeyEvent) -> bool {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match ov {
             Overlay::Report(r) => self.report_key(r, key),
-            Overlay::Help { viewer, filter } => self.help_key(viewer, filter, key),
+            Overlay::Help(h) => self.help_key(h, key),
             Overlay::Settings(v) => self.settings_key(v, key),
             Overlay::Confirm(c) => self.confirm_key(c, key),
             Overlay::Picker(p) => self.picker_key(p, key),
             Overlay::Palette(p) => self.palette_key(p, key),
-            Overlay::Prompt(p) => self.prompt_key(p, key, ctrl),
-            Overlay::Import(i) => self.import_key(i, key, ctrl),
-            Overlay::Env(e) => self.env_key(e, key, ctrl),
+            Overlay::Prompt(p) => self.prompt_key(p, key),
+            Overlay::Import(i) => self.import_key(i, key),
+            Overlay::Env(e) => self.env_key(e, key),
             Overlay::Records(e) => self.records_key(e, key),
             Overlay::Keymap(e) => self.keymap_key(e, key),
         }
@@ -43,7 +58,6 @@ impl App {
             }
             KeyCode::Char('y') => {
                 self.clipboard.set(r.copy_text.clone(), false);
-                self.osc52.push(r.copy_text.clone());
                 r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
                 true
@@ -68,38 +82,40 @@ impl App {
         }
     }
 
-    pub(super) fn help_key(
-        &mut self,
-        viewer: &mut Viewer,
-        filter: &mut TextEditor,
-        key: KeyEvent,
-    ) -> bool {
+    pub(super) fn help_key(&mut self, h: &mut Help, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Esc => false,
+            // The other section keeps the search.
+            KeyCode::Tab | KeyCode::BackTab => {
+                let back =
+                    key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+                h.step(if back { -1 } else { 1 });
+                true
+            }
             KeyCode::Up => {
-                viewer.move_cursor(-1);
+                h.viewer.move_cursor(-1);
                 true
             }
             KeyCode::Down => {
-                viewer.move_cursor(1);
+                h.viewer.move_cursor(1);
                 true
             }
             KeyCode::PageUp => {
-                viewer.page(-1);
+                h.viewer.page(-1);
                 true
             }
             KeyCode::PageDown => {
-                viewer.page(1);
+                h.viewer.page(1);
                 true
             }
             KeyCode::F(1) => false,
             _ => {
-                if filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
-                    let q = filter.text();
-                    viewer.search(&q);
+                if h.filter.handle_key(&key, false, &mut self.clipboard) == Outcome::Changed {
+                    let q = h.filter.text();
+                    h.viewer.search(&q);
                 }
                 if key.code == KeyCode::Enter {
-                    viewer.next_match(1);
+                    h.viewer.next_match(1);
                 }
                 true
             }
@@ -158,6 +174,10 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Left if id.typed() => {
                 v.start_edit(self.setting_raw(id));
+                true
+            }
+            KeyCode::Enter | KeyCode::Char(' ') if id.lists() => {
+                self.open_setting_list(id);
                 true
             }
             KeyCode::Left => {
@@ -228,15 +248,27 @@ impl App {
     }
 
     pub(super) fn picker_key(&mut self, p: &mut Picker, key: KeyEvent) -> bool {
-        {
+        let keep = {
             let vis = p.visible();
             match key.code {
-                // The env editor waits behind its file picker.
                 KeyCode::Esc => {
-                    if matches!(p.action, PickAction::EnvFile { .. })
-                        && let Some(ed) = self.parked_env.take()
-                    {
-                        self.overlay = Some(Overlay::Env(ed));
+                    match p.action {
+                        // The env editor waits behind its file picker.
+                        PickAction::EnvFile { .. } => {
+                            if let Some(ed) = self.parked_env.take() {
+                                self.overlay = Some(Overlay::Env(ed));
+                            }
+                        }
+                        // The preview goes; the theme in use comes back.
+                        PickAction::EnvTheme => self.close_env_theme_picker(None),
+                        PickAction::Theme { settings } => {
+                            let in_use = self.theme_name.clone();
+                            self.show_theme(&in_use);
+                            if settings {
+                                self.open_settings(SettingId::Theme);
+                            }
+                        }
+                        _ => {}
                     }
                     false
                 }
@@ -272,7 +304,11 @@ impl App {
                     true
                 }
             }
+        };
+        if keep && let Some(name) = p.theme_preview(&self.project.config.ui.theme) {
+            self.show_theme(&name);
         }
+        keep
     }
 
     /// Puts `:<base> ` in the palette input so the argument can be typed.
@@ -307,11 +343,20 @@ impl App {
                     let t = text.trim();
                     if t.starts_with(':')
                         && let Some(i) = vis.get(p.sel)
-                        && let PaletteItem::Env(e) = &p.items[*i].0
                     {
-                        let e = e.clone();
-                        self.set_env(e);
-                        return false;
+                        match &p.items[*i].0 {
+                            PaletteItem::Env(e) => {
+                                let e = e.clone();
+                                self.set_env(e);
+                                return false;
+                            }
+                            PaletteItem::Theme(n) => {
+                                let n = n.clone();
+                                self.theme_command(&n);
+                                return false;
+                            }
+                            _ => {}
+                        }
                     }
                     if t.starts_with(':') {
                         // A full command with arguments runs as typed; otherwise the selection.
@@ -346,6 +391,7 @@ impl App {
                                 self.open_request(&rel);
                             }
                             PaletteItem::Env(e) => self.set_env(e),
+                            PaletteItem::Theme(n) => self.theme_command(&n),
                             PaletteItem::Setting(id) => self.open_settings(id),
                             PaletteItem::Command(c, _) => {
                                 // A command that needs an argument waits for it.
@@ -375,7 +421,7 @@ impl App {
         }
     }
 
-    pub(super) fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn prompt_key(&mut self, p: &mut Prompt, key: KeyEvent) -> bool {
         {
             // The open option list of a choice row takes the keys first.
             if let Some(hl) = p.open {
@@ -399,10 +445,9 @@ impl App {
                 }
                 return true;
             }
-            // Ctrl+S / F5 confirm from any row (Enter on a choice row opens its list).
-            let confirm_any =
-                matches!(key.code, KeyCode::F(5)) || (ctrl && key.code == KeyCode::Char('s'));
-            if confirm_any {
+            // `dialog_confirm` confirms from any row (Enter on a choice row
+            // opens its list).
+            if self.dialog_action(&key) == Some(Action::DialogConfirm) {
                 return match self.prompt_ok(p) {
                     Ok(()) => false,
                     Err(e) => {
@@ -462,10 +507,9 @@ impl App {
         }
     }
 
-    pub(super) fn import_key(&mut self, i: &mut Import, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn import_key(&mut self, i: &mut Import, key: KeyEvent) -> bool {
         {
-            let submit = matches!(key.code, KeyCode::F(5))
-                || (ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Enter));
+            let submit = self.dialog_action(&key) == Some(Action::DialogConfirm);
             if key.code == KeyCode::Esc {
                 return false;
             }
@@ -492,7 +536,7 @@ impl App {
         }
     }
 
-    pub(super) fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent, ctrl: bool) -> bool {
+    pub(super) fn env_key(&mut self, e: &mut EnvEditor, key: KeyEvent) -> bool {
         {
             if key.code == KeyCode::Esc {
                 if e.dirty {
@@ -510,17 +554,21 @@ impl App {
                 }
                 return false;
             }
-            if ctrl && key.code == KeyCode::Char('s') {
+            let act = self.dialog_action(&key);
+            let save = self.dialog_key(Action::DialogConfirm);
+            if act == Some(Action::DialogConfirm) {
                 let mut ed = std::mem::take(e);
                 self.save_env_editor(&mut ed);
                 *e = ed;
                 return true;
             }
-            if ctrl && key.code == KeyCode::Char('n') {
+            if act == Some(Action::DialogNew) {
                 // Creating an environment loads it into the editor: unsaved
                 // edits would be lost, as when switching.
                 if e.dirty {
-                    e.error = Some("save (Ctrl+S) or discard changes before creating one".into());
+                    e.error = Some(format!(
+                        "save ({save}) or discard changes before creating one"
+                    ));
                     return true;
                 }
                 let ed = std::mem::take(e);
@@ -528,12 +576,16 @@ impl App {
                 self.prompt_new_env();
                 return false;
             }
-            if ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            if matches!(act, Some(Action::DialogPrevEnv | Action::DialogNextEnv)) {
                 if e.dirty {
-                    e.error = Some("save (Ctrl+S) or discard changes before switching".into());
+                    e.error = Some(format!("save ({save}) or discard changes before switching"));
                     return true;
                 }
-                let d: isize = if key.code == KeyCode::PageUp { -1 } else { 1 };
+                let d: isize = if act == Some(Action::DialogPrevEnv) {
+                    -1
+                } else {
+                    1
+                };
                 e.current = crate::list::cycle(e.current, d, e.envs.len());
                 let mut ed = std::mem::take(e);
                 self.load_env_into(&mut ed);
@@ -542,16 +594,35 @@ impl App {
             }
             let on_file =
                 e.table.sel_col == 2 && e.selected_type() == Some(crate::overlay::env_editor::FILE);
-            if key.code == KeyCode::F(2) && (e.on_dotenv || on_file) {
-                let ed = std::mem::take(e);
-                self.open_env_file_picker(ed);
-                return false;
+            if act == Some(Action::DialogBrowse) {
+                match e.focus {
+                    EnvFocus::Theme => {
+                        let ed = std::mem::take(e);
+                        self.open_env_theme_picker(ed);
+                        return false;
+                    }
+                    EnvFocus::Dotenv => {
+                        let ed = std::mem::take(e);
+                        self.open_env_file_picker(ed);
+                        return false;
+                    }
+                    EnvFocus::Table if on_file => {
+                        let ed = std::mem::take(e);
+                        self.open_env_file_picker(ed);
+                        return false;
+                    }
+                    EnvFocus::Table => {}
+                }
             }
-            if e.on_dotenv {
-                self.env_dotenv_key(e, key);
-                return true;
+            match e.focus {
+                EnvFocus::Theme => return self.env_theme_key(e, key),
+                EnvFocus::Dotenv => {
+                    self.env_dotenv_key(e, key);
+                    return true;
+                }
+                EnvFocus::Table => {}
             }
-            if ctrl && key.code == KeyCode::Char('d') {
+            if act == Some(Action::DialogDelete) {
                 if e.table.delete_row() {
                     e.dirty = true;
                 }
@@ -564,7 +635,7 @@ impl App {
             match e.table.handle_key(&key, false, &mut self.clipboard) {
                 // Up on the first row goes to the `.env` file line.
                 TableOutcome::ExitUp => {
-                    e.on_dotenv = true;
+                    e.focus = EnvFocus::Dotenv;
                     e.dotenv.move_to_end();
                 }
                 TableOutcome::Changed => {
@@ -599,7 +670,10 @@ impl App {
             e.dotenv.set_text(&done);
             e.dotenv.move_to_end();
         } else if matches!(key.code, KeyCode::Tab | KeyCode::Down | KeyCode::Enter) {
-            e.on_dotenv = false;
+            e.focus = EnvFocus::Table;
+            return;
+        } else if key.code == KeyCode::Up && e.has_theme() {
+            e.focus = EnvFocus::Theme;
             return;
         } else {
             e.dotenv.handle_key(&key, false, &mut self.clipboard);
@@ -608,5 +682,31 @@ impl App {
             e.dirty = true;
             self.refresh_env_rows(e);
         }
+    }
+
+    /// A key on the Theme line of the environment editor, a choice row as
+    /// in Settings: ← → change the theme, Space and Enter list the themes,
+    /// Tab and Down go to the `.env` file line.
+    fn env_theme_key(&mut self, e: &mut EnvEditor, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Tab | KeyCode::Down => {
+                e.focus = EnvFocus::Dotenv;
+                e.dotenv.move_to_end();
+            }
+            KeyCode::Left | KeyCode::Right => {
+                let d = if key.code == KeyCode::Left { -1 } else { 1 };
+                if e.step_theme(&self.themes.names(), d) {
+                    e.dirty = true;
+                    e.theme_status = self.env_theme_status(e);
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let ed = std::mem::take(e);
+                self.open_env_theme_picker(ed);
+                return false;
+            }
+            _ => {}
+        }
+        true
     }
 }

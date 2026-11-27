@@ -1,5 +1,7 @@
-//! Opens a WebSocket session.
+//! Opens a WebSocket session: the request's messages, or one GraphQL
+//! subscription (`graphql_ws`).
 
+use super::graphql_ws::{GraphqlWs, Step};
 use super::*;
 
 /// Commands from the UI to a running WebSocket session.
@@ -19,13 +21,15 @@ pub enum WsControl {
 #[derive(Debug, Clone)]
 pub enum WsUpdate {
     Started {
-        resolved: sendito_core::resolve::ResolvedWs,
+        resolved: Box<sendito_core::resolve::ResolvedWs>,
     },
     Event(sendito_ws::Event),
     Error(String),
     Done {
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -109,6 +113,31 @@ pub(super) fn http_equivalent(url: &str) -> String {
     }
 }
 
+/// The HTTP request that asks for the GraphQL schema of a GraphQL
+/// WebSocket request: a POST to the HTTP equivalent of its URL with its
+/// headers and auth.
+pub fn ws_graphql_http(w: &WebSocketRequest, scope: &Scope) -> HttpRequest {
+    // The URL without the API key query: the HTTP auth adds it again.
+    let plain = WebSocketRequest {
+        auth: Auth::None,
+        ..w.clone()
+    };
+    let url = http_equivalent(&sendito_core::resolve::resolve_ws(&plain, scope).url);
+    let g = w.graphql.clone().unwrap_or_default();
+    HttpRequest {
+        method: "POST".into(),
+        url,
+        headers: w.headers.clone(),
+        auth: w.auth.clone(),
+        body: Body::GraphQL {
+            query: g.query,
+            variables: g.variables,
+            operation_name: g.operation_name,
+        },
+        ..Default::default()
+    }
+}
+
 /// Runs a WebSocket session. Updates go to `updates`; `control` drives
 /// interactive input (like the gRPC streaming path).
 pub async fn exec_ws(
@@ -123,7 +152,7 @@ pub async fn exec_ws(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = sendito_core::resolve::resolve_ws(req, &scope);
     // `timeout_ms` unset falls back to `[websocket] timeout_ms`; 0 means no
@@ -134,6 +163,12 @@ pub async fn exec_ws(
     if resolved.timeout_ms == Some(0) {
         resolved.timeout_ms = None;
     }
+    let cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        verify_tls: Some(resolved.verify_tls),
+        timeout_key: "[websocket] timeout_ms",
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Ws(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Ws(w) => sendito_core::resolve::resolve_ws(&w, &Scope::new()).url,
@@ -153,10 +188,11 @@ pub async fn exec_ws(
             Some(msg.clone()),
         );
         append_history(ctx, &entry);
-        let _ = updates.send(WsUpdate::Error(msg));
+        let _ = updates.send(WsUpdate::Error(msg.clone()));
         let _ = updates.send(WsUpdate::Done {
             scripts: results,
             scope_errors: scope_errors.clone(),
+            hint: diagnose::transport(&msg, &cx),
         });
     };
     if let Some(e) = pre_error {
@@ -172,7 +208,7 @@ pub async fn exec_ws(
         );
     }
     // A JWT is signed now; the token is masked like the other secrets.
-    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+    match jwt_token(&ctx.root, ctx.confine_files, resolved.signed.as_ref()).await {
         Ok(Some(token)) => {
             scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
             resolved
@@ -189,10 +225,23 @@ pub async fn exec_ws(
         Ok(p) => p,
         Err(e) => return fail(e, results),
     };
+    // A GraphQL session offers its protocol first, then the request's
+    // subprotocols, and sends `connection_init` instead of the messages.
+    let mut subprotocols = resolved.subprotocols.clone();
+    let mut graphql = None;
+    if let Some(g) = &resolved.graphql {
+        match GraphqlWs::new(g) {
+            Ok(state) => graphql = Some(state),
+            Err(e) => return fail(e, results),
+        }
+        let name = g.protocol.as_str().to_string();
+        subprotocols.retain(|p| *p != name);
+        subprotocols.insert(0, name);
+    }
     let mut settings = sendito_ws::ConnSettings {
         url: resolved.url.clone(),
         headers: resolved.headers.clone(),
-        subprotocols: resolved.subprotocols.clone(),
+        subprotocols,
         verify_tls: resolved.verify_tls,
         handshake_timeout: resolved.timeout_ms.map(Duration::from_millis),
         deadline: resolved.deadline_ms.map(Duration::from_millis),
@@ -223,13 +272,21 @@ pub async fn exec_ws(
         Err(e) => return fail(e.to_string(), results),
     };
     // The opening messages go out right after the handshake, in order.
-    let frames = match sendito_ws::parse_messages(&resolved.messages) {
-        Ok(f) => f,
-        Err(e) => {
+    let frames = match (&graphql, sendito_ws::parse_messages(&resolved.messages)) {
+        (Some((_, init)), _) => vec![sendito_ws::Frame::Text(init.clone())],
+        (None, Ok(f)) => f,
+        (None, Err(e)) => {
             session.cancel();
             return fail(e, results);
         }
     };
+    let mut graphql = graphql.map(|(state, _)| state);
+    // The server must answer `connection_init` within the handshake timeout.
+    let ack_deadline = resolved
+        .timeout_ms
+        .filter(|_| graphql.is_some())
+        .map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
+    let mut graphql_error = None;
     let mut initial_error = None;
     for f in frames {
         let r = match f {
@@ -245,7 +302,9 @@ pub async fn exec_ws(
     // The UI shows this URL ("connecting to"): a key in the query is masked.
     let mut shown = resolved.clone();
     shown.url = sendito_core::vars::scrub(&shown.url, &secrets);
-    let _ = updates.send(WsUpdate::Started { resolved: shown });
+    let _ = updates.send(WsUpdate::Started {
+        resolved: Box::new(shown),
+    });
     let mut summary = WsSummary::new();
     let mut control_open = true;
     if let Some(e) = initial_error {
@@ -270,6 +329,25 @@ pub async fn exec_ws(
                 }
                 let done = matches!(ev, sendito_ws::Event::Finished { .. });
                 summary.add(&ev);
+                if let (Some(g), sendito_ws::Event::Received { kind: sendito_ws::FrameKind::Text, preview, .. }) =
+                    (graphql.as_mut(), &ev)
+                {
+                    for step in g.on_text(preview) {
+                        match step {
+                            Step::Send(text) => {
+                                if let Err(e) = session.send_text(text) {
+                                    let _ = updates.send(WsUpdate::Error(e.to_string()));
+                                }
+                            }
+                            Step::Close => session.close(),
+                            Step::Error(e) => {
+                                let e = sendito_core::vars::scrub(&e, &secrets);
+                                let _ = updates.send(WsUpdate::Error(e.clone()));
+                                graphql_error = Some(e);
+                            }
+                        }
+                    }
+                }
                 let ev = if ctx.mask_echoed_secrets { scrub_ws_event(ev, &secrets) } else { ev };
                 let _ = updates.send(WsUpdate::Event(ev));
                 if done { break; }
@@ -291,6 +369,14 @@ pub async fn exec_ws(
                             let _ = updates.send(WsUpdate::Error(e.to_string()));
                         }
                     }
+                    // A GraphQL subscription ends with `complete` (legacy:
+                    // `stop`), then the close handshake.
+                    Some(WsControl::EndStream | WsControl::Cancel) if graphql.is_some() => {
+                        if let Some(stop) = graphql.as_ref().and_then(GraphqlWs::stop_frame) {
+                            let _ = session.send_text(stop);
+                        }
+                        session.close();
+                    }
                     Some(WsControl::EndStream) => session.close(),
                     Some(WsControl::Cancel) => session.cancel(),
                     // The controller went away (headless runs). With a deadline
@@ -298,13 +384,25 @@ pub async fn exec_ws(
                     // every frame the server sends; without one there is nothing
                     // to wait for, and the close handshake ends it. `close()`
                     // is also bounded by `close_timeout`, so this never hangs.
+                    // A GraphQL subscription runs until the server completes it.
                     None => {
                         control_open = false;
-                        if resolved.deadline_ms.is_none() {
+                        if resolved.deadline_ms.is_none() && graphql.is_none() {
                             session.close();
                         }
                     }
                 }
+            }
+            _ = super::sse::wait_deadline(ack_deadline), if graphql.as_ref().is_some_and(|g| !g.acked()) => {
+                let e = format!(
+                    "the server sent no connection_ack within {} ms",
+                    resolved.timeout_ms.unwrap_or_default()
+                );
+                let _ = updates.send(WsUpdate::Error(e.clone()));
+                graphql_error = Some(e);
+                // Once: the session closes now.
+                graphql = None;
+                session.close();
             }
         }
     }
@@ -314,10 +412,14 @@ pub async fn exec_ws(
         code,
         reason,
         headers,
-        body,
+        mut body,
         total_ms,
         size,
     } = summary;
+    // The scripts of a GraphQL session read the last `next` payload.
+    if let Some(payload) = graphql.and_then(|g| g.payload) {
+        body = payload;
+    }
     // Cookie values the handshake set are secret, as on an HTTP response.
     cookie_secrets.extend(sendito_store::cookies::response_secrets(
         &set_cookie_headers(&headers),
@@ -334,7 +436,9 @@ pub async fn exec_ws(
         &mut results.asserts,
         &[&secrets[..], &cookie_secrets[..]].concat(),
     );
-    let err = if code == WS_CLEAN_CLOSE {
+    let err = if let Some(e) = graphql_error {
+        Some(e)
+    } else if code == WS_CLEAN_CLOSE {
         None
     } else if reason.is_empty() {
         Some(format!("close {code}"))
@@ -347,10 +451,11 @@ pub async fn exec_ws(
         ))
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates.send(WsUpdate::Done {
         scripts: results,
         scope_errors,
+        hint: None,
     });
 }
 

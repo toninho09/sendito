@@ -1,0 +1,17 @@
+### close: 1000 
+GET /graphql HTTP/1.1
+Host: 127.0.0.1:<port>
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: <sec-websocket-key>
+Sec-WebSocket-Protocol: graphql-transport-ws
+
+< text 51 {"type":"connection_init","payload":{"user":"ana"}}
+> text 25 {"type":"connection_ack"}
+< text 161 {"id":"1","type":"subscribe","payload":{"query":"subscription Ticks($who: String) { tick(who: $who) }","variables":{"who":"olá mundo"},"operationName":"Ticks"}}
+> text 54 {"id":"1","type":"next","payload":{"data":{"tick":1}}}
+> text 54 {"id":"1","type":"next","payload":{"data":{"tick":2}}}
+> text 28 {"id":"1","type":"complete"}
+< close 5 1000 
+> close 5 1000 

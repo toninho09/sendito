@@ -10,8 +10,8 @@ sendito <command> [args]             # headless
 ```
 
 `sendito PATH` opens the TUI for `PATH`. The first word is a subcommand only
-when it is one of `init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme` and
-`import`.
+when it is one of `init`, `run`, `curl`, `http`, `code`, `har`, `auth`,
+`serve`, `mcp`, `theme`, `import`, `completions` and `man`.
 
 `PATH` defaults to the nearest directory above the current one that contains
 `.sendito/`, else the current directory.
@@ -27,6 +27,32 @@ when it is one of `init`, `run`, `curl`, `http`, `auth`, `mcp`, `theme` and
 | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used when `[http] proxy = "env"`, and as the client's default discovery when `proxy` is unset (curl precedence) |
 
 Colors and themes are described in [THEMES.md](THEMES.md).
+
+## Debug log
+
+`--debug[=FILE]` works with every command and with the UI. It writes a log
+to `FILE`, else to `$XDG_STATE_HOME/sendito/sendito-<UTC time>.log`
+(default base `~/.local/state`). Write the file with `=`: `--debug=run.log`.
+Put the flag after the command name (`sendito run F --debug`): before a
+command, the arguments are those of the UI only.
+At the end the command prints `sendito: debug log: <file>` on stderr.
+
+| Line | Holds |
+|---|---|
+| `START` | Version, system and command line |
+| `SEND` / `ERROR` | One line per send: kind or method, target, status or error, time, size, file, environment. A send that stops before it goes out (a `pre` script error, a body file that cannot be read) also gets an `ERROR` line |
+| `ERROR` / `WARN` | Each `sendito:` error and `warning:` line on stderr (in the UI, each error and warning of the status bar, and each dialog that stops a send, such as "Undefined variables") |
+| `PANIC` | The panic message and its backtrace |
+| `EXIT` | The exit code |
+
+The log holds no bodies and no secret values. The file is readable by its
+owner only. In the UI, `:debug [file]` turns the log on and `:debug` turns
+it off.
+
+```sh
+sendito run Users --env local --debug=users.log
+sendito --debug              # the UI, log in the default file
+```
 
 ---
 
@@ -69,7 +95,13 @@ Sends a request without the UI, or runs every request in a folder.
 | `--no-history` | Do not append the request to history |
 | `--no-cookies` | Do not use the collection's cookie jar for this run |
 | `--fail-fast` | Stop at the first failed or errored request (folder runs only) |
-| `--report <text\|json>` | Folder report format; `text` (default) writes lines to stderr, `json` writes the summary to stdout |
+| `--report <format>` | Folder report on stdout: `text` (default: only the stderr lines), `json`, `junit`, `tap` or `html` |
+| `--report-file <format>=<path>` | Also write a folder report to a file (`json`, `junit`, `tap`, `html`); repeat it for several formats |
+| `--retry <n>` | Send a request again up to `n` times after an error or a failed assertion; replaces each request's `[options] retry` |
+| `--repeat <n>` | Run the folder `n` times in a row with one variable scope (folder runs only; default 1) |
+| `--delay <ms>` | Wait between two requests (folder runs only; default 0) |
+| `--data <file>` | Run once per row of a data file: CSV with the variable names in the first line, or a JSON array of objects (`.json`). Not with `--repeat` |
+| `--prompt <label>=<value>` | The value of a `$prompt` or `$select` with that label; repeat it for several labels. Without it, a terminal asks; with no terminal the request is not sent (exit 3) |
 
 One request: the response body goes to **stdout**, and the status, timing,
 assertion and test results go to **stderr**, with the Lua script output as
@@ -97,6 +129,48 @@ summary. **Variables a request extracts are carried forward** to the requests
 after it, so a login followed by its dependent calls runs as one command.
 
 Folder runs honour `[history]` the same way single requests do.
+
+**Retry, repeat and delay.** A request with `[options] retry`
+([FORMAT.md](../FORMAT.md#retry)) or a run with `--retry` sends a request
+again when it does not pass, after `retry_interval_ms`. A folder run prints a
+`RETRY` line for each attempt that did not pass, and the final line says
+`attempt 3/3`; the reports give `attempts`. A single request prints the
+response of the last attempt only, or of the first attempt that passes.
+`--repeat 3` runs the folder three times and names each round in the
+report (`Users/list.toml#2`); `--fail-fast` stops all rounds.
+
+**Data files.** `--data users.csv` runs the folder once per row. The first
+line of a CSV file gives the variable names; a `.json` file is an array of
+objects, and a value that is not a string becomes its JSON text. A row's
+values are variables above the folder variables and below the runtime values.
+Each row starts with a clean runtime and its own `$response` values, and does
+not read the history: a login in row 1 does not serve row 2. The report names
+each row (`Users/login.toml[2]`). `--data` also runs a single request once per
+row, with the folder output. It cannot be used with `--repeat` (exit 3).
+Ctrl+C stops a folder run: the request in flight ends, and the summary and
+the reports are written.
+
+### Report formats
+
+`--report` writes one report to stdout; `--report-file` writes one to a file
+and can repeat, so one run can give a JUnit file to the CI and an HTML page to
+people:
+
+```sh
+sendito run . --env ci --report-file junit=results.xml --report-file html=report.html
+```
+
+| Format | Content |
+|---|---|
+| `json` | The summary below |
+| `junit` | JUnit XML: one `<testsuite>` named after the folder, one `<testcase>` per request (`classname` is the request's folder, `name` its path), `<failure>` for a failed assertion or test, `<error>` for a request that failed or did not run |
+| `tap` | TAP version 13: one test point per request; a request that did not pass gets a YAML block with its outcome, status and problems |
+| `html` | One page with no script and no external file: a summary line and a table, with the problems below each request that did not pass |
+
+Assertion results in every format have their secrets masked. A file that
+cannot be written prints an error and makes the exit code `3`; the other
+reports are still written. A single request ignores `--report-file` and every
+`--report` except `json` for SSE and MQTT sessions, with a warning.
 
 ### SSE sessions
 
@@ -161,6 +235,7 @@ With `--report json` the summary is printed to stdout:
       "duration_ms": 87,
       "asserts": 2,
       "failed_asserts": 0,
+      "attempts": 1,
       "unresolved": false,
       "error": null
     }
@@ -168,10 +243,13 @@ With `--report json` the summary is printed to stdout:
 }
 ```
 
-`passed + failed + errors == total`. A request skipped because of unresolved
+`passed + failed + errors == total`. `attempts` is how many times the request
+was sent (`0` when it never ran). A request skipped because of unresolved
 variables counts in `errors` and also in `unresolved`. `kind` is `http`, `grpc`,
 `websocket`, `sse`, `mqtt` or `mcp`. The exact per-request fields depend on the protocol; a request that
 never ran has `status` and `duration_ms` set to `null` and an `error` message.
+`hint` is present when a setting causes the failure (or a `401` after an OAuth
+token): the sentence with the setting to change.
 
 ---
 
@@ -209,6 +287,47 @@ credentials the export uses
 `Authorization: Basic {{sendito_basic_credentials}}`, which must be set to
 base64(username:password). In the UI: `:httpfile` (`:httpfile!` includes
 secrets).
+
+---
+
+## `sendito har <request-or-folder>`
+
+Prints a HAR 1.2 document of one HTTP request, or of every HTTP request below
+a folder (`.` for the current folder), with the folder settings applied.
+
+| Flag | Meaning |
+|---|---|
+| `-e`, `--env <name>` | Environment to resolve variables with |
+| `--include-secrets` | Print secret values instead of `{{placeholders}}` |
+
+Each entry holds the request (method, URL, query, headers, body) and an empty
+response with status `0`; its `comment` is the request name, which `sendito
+import` reads back as the name. Basic auth becomes an `Authorization` header
+(`Basic {{sendito_basic_credentials}}` while a credential is a placeholder);
+Digest and AWS Signature V4 are left out with a note in the request
+`comment`. A request of another kind is left out with a note on stderr.
+
+---
+
+## `sendito code <request> --lang <language>`
+
+Prints code that sends an HTTP request with another tool.
+
+| Flag | Meaning |
+|---|---|
+| `-l`, `--lang <language>` | `python` (requests), `fetch` (Node.js 18 or later), `go` (net/http), `httpie` or `wget` |
+| `-e`, `--env <name>` | Environment to resolve variables with |
+| `--include-secrets` | Print secret values instead of `{{placeholders}}` |
+
+The code sends the method, URL, query, headers, body, timeout, redirect and
+TLS options of the request, with its folders applied. Basic auth uses the
+tool's own option; Digest auth too where the tool has one (`requests`,
+HTTPie, wget). A part of the request that the tool cannot express becomes a
+comment at the top: AWS Signature V4, Digest in `fetch` and Go, a multipart
+body in wget, TLS verification in `fetch`. The tool can add headers of its
+own (a `User-Agent`, for example), so its bytes on the wire can differ from
+Sendito's. SSE requests are refused. In the UI: `:code <language>`
+(`:code! <language>` includes secrets).
 
 ---
 
@@ -253,6 +372,76 @@ same, and a server that asks for a sign-in offers it.
 
 ---
 
+## `sendito serve [PATH]`
+
+Serves a collection to an AI agent (Claude Code, Cursor and other MCP
+clients) as an MCP server on stdin and stdout. The agent starts the process.
+`PATH` defaults to the collection that holds the current directory; a
+directory without `.sendito/` above it is an error (exit `3`).
+
+| Flag | Effect |
+|---|---|
+| `-e, --env <name>` | The environment when a tool call names none |
+| `--allow-env <names>` | The only environments the agent can see and send with, separated by commas (or the flag given again). `list_environments` shows only these, and a call that names another one gets an error. Each name must exist, and `--env` must be one of them (else exit `3`). Default: every environment |
+| `--read-only` | Offer only the tools that do not change files. The tools that send stay |
+| `--no-send` | Offer no tool that sends a request (`run_request`, `run_folder`, `send_request`) |
+| `--no-history` | Do not record the sends in the history |
+| `--no-cookies` | Do not read or write the cookie jar |
+
+```sh
+claude mcp add sendito -- sendito serve ~/api-collection --env local
+```
+
+The setup for Claude Desktop and Cursor, and examples, are in the guide
+[Let an AI agent use your collection](GUIDES.md#let-an-ai-agent-use-your-collection).
+
+The tools:
+
+| Tool | Does |
+|---|---|
+| `list_requests` | The requests (path, method or kind, description) and folders, of the collection or of one `folder`, down to `depth` levels |
+| `read_request` | The TOML of a request and of the `folder.toml` files that apply to it |
+| `list_environments` | The environments and their variables; a secret shows its name and source, never its value |
+| `preview_request` | An HTTP or SSE request (`path` or `toml`, `env`) as a curl command, with its folders applied and secrets as `{{placeholders}}`; nothing is sent |
+| `import_curl` | The request TOML of a curl `command`, with notes on the options that were ignored; nothing is saved |
+| `run_request` | Sends a saved request (`path`, `env`, `prompts`, `retry`, `max_bytes`) |
+| `run_folder` | Sends every request under `folder` in tree order (`env`, `prompts`, `retry`, `fail_fast`, `data`); the result is the [JSON report](#the-json-report). With `failures`, it also holds the response of each request that does not pass (cut at `max_bytes`) |
+| `send_request` | Sends a request given as TOML (`toml`); nothing is saved |
+| `write_request` | Creates or replaces a request file from TOML; missing folders are created |
+| `create_folder`, `move`, `delete` | Change the tree; `move` changes nothing when the new path is taken; `delete` removes a folder with its contents |
+
+Each tool has a `title` and an `outputSchema` for its `structuredContent`.
+A `run_folder` call with `_meta.progressToken` gets a
+`notifications/progress` after each request. A call whose `id` is the id of
+a call in flight gets the error `-32600`.
+
+`run_request` and `send_request` return the `outcome` (`pass`, `fail`,
+`error`), the `status`, the assertions and the response: `http` (status and
+headers) and `body` for HTTP, `messages` for gRPC, WebSocket, SSE, MQTT and MCP.
+The body and the messages are cut at `max_bytes` (default 65536) and
+`truncated` says so; a body that is not UTF-8 is base64 (`body_encoding`).
+Secret values the server echoes back are masked. This masking prevents
+accidents, not an agent that wants a secret: a request that the agent writes
+can encode a secret, or send it to any host. Use `--allow-env` and
+`--no-send` to limit what the agent can use. `prompts` gives the values of
+`$prompt` and `$select` (label → value); a label with no value makes the
+request an `error` that names it.
+
+The resource `sendito://format` is [FORMAT.md](../FORMAT.md), for the agent to
+read before it writes TOML. Paths are relative to the collection root; a path
+that leaves the collection or names a hidden file (`.sendito/`, `.env`) is
+refused. A tool sees the collection as the tree does: a `.toml` file that is
+not a request (`folder.toml`, `Cargo.toml`) and a directory without requests
+(`src/` of a code repository) cannot be read, replaced, moved or deleted, and
+a tool cannot create a request or a folder inside such a directory. A sent
+request reads only the files of the collection: a file body, a multipart
+file, a JWT key or a `.proto` file outside the collection, under a hidden
+directory, or behind a link that leads out, makes the send an `error`. A change to `.sendito/config.toml` or to the global config is read
+before the next tool call; environments are read at each call. Stdout carries
+only the protocol; warnings go to stderr. The server stops when stdin closes.
+
+---
+
 ## `sendito theme list` / `print`
 
 | Subcommand | Flags | Output |
@@ -270,8 +459,8 @@ same, and a server that asks for a sign-in offers it.
 
 Imports a Postman Collection v2.1 JSON, an Insomnia v4/v5 JSON export, a
 Bruno collection directory, an OpenAPI 3.x or Swagger 2.0 document (JSON, or
-YAML with a `.yaml`/`.yml` extension), or a `.http`/`.rest` file (with the
-environments of the `http-client.env.json` next to it).
+YAML with a `.yaml`/`.yml` extension), a `.http`/`.rest` file (with the
+environments of the `http-client.env.json` next to it), or a HAR file.
 
 | Flag | Meaning |
 |---|---|
@@ -284,6 +473,24 @@ A report of imported, changed and skipped items is printed. The same import is
 available in the UI (`Ctrl+W i` / `:import`). What is imported is listed in
 [FEATURES.md](FEATURES.md#import-and-export) and the gaps in
 [DEBT.md](DEBT.md).
+
+---
+
+## `sendito completions <shell>`
+
+Prints a completion script for `bash`, `zsh`, `fish`, `elvish` or
+`powershell` to stdout. Load it in the shell, for example:
+
+```sh
+sendito completions zsh > ~/.zfunc/_sendito      # zsh (fpath+=~/.zfunc)
+sendito completions bash > ~/.local/share/bash-completion/completions/sendito
+sendito completions fish > ~/.config/fish/completions/sendito.fish
+```
+
+## `sendito man`
+
+Prints the manual page (roff) to stdout. The command is not listed in
+`--help`. Install the page with `sendito man > ~/.local/share/man/man1/sendito.1`.
 
 ---
 
@@ -313,7 +520,7 @@ documented in [FORMAT.md](../FORMAT.md):
   `client_secret`, `scopes`;
 * `[grpc]` — `deadline_ms`;
 * `[mcp]`, `[mcp.servers.<name>]`, `[mcp.servers.<name>.auth]`;
-* `[history]` — `enabled`, `max_entries`;
+* `[history]` — `enabled`, `max_entries`, `max_body_kb`;
 * `[ui]` — `theme`, `icons`, `vim_mode`, `sidebar`, `sticky_folders`, `mouse`,
   `confirm_quit`, `watch_interval_s`;
 * `[keymap.all]`, `[keymap.conventional]`, `[keymap.vim]`.

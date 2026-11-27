@@ -29,6 +29,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `new_ws_request` | `Ctrl+W y` | `Ctrl+W y` | Open a new unsaved WebSocket request tab |
 | `new_sse_request` | `Ctrl+W E` | `Ctrl+W E` | Open a new unsaved SSE request tab |
 | `new_mqtt_request` | `Ctrl+W M` | `Ctrl+W M` | Open a new unsaved MQTT request tab |
+| `new_mcp_request` | `Ctrl+W a` | `Ctrl+W a` | Open a new unsaved MCP request tab |
 | `close_tab` | `Ctrl+W c` | `Ctrl+W c` | Close the current tab |
 | `next_tab` | `Ctrl+W n`, `Ctrl+PageDown` | `Ctrl+W n`, `Ctrl+PageDown` | Next open request tab |
 | `prev_tab` | `Ctrl+W p`, `Ctrl+PageUp` | `Ctrl+W p`, `Ctrl+PageUp` | Previous open request tab |
@@ -49,7 +50,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `subtab_5` | `Alt+5` | `Alt+5` | Jump to tab 5 of the focused pane |
 | `subtab_6` | `Alt+6` | `Alt+6` | Jump to tab 6 of the focused pane |
 | `palette` | `Ctrl+P` | `Ctrl+P` | Open the command palette |
-| `help` | `F1`, `Ctrl+W ?` | `F1`, `Ctrl+W ?` | Show all keys and actions |
+| `help` | `F1`, `Ctrl+W ?` | `F1`, `Ctrl+W ?` | Open the help: guide, tutorials, keys and functions |
 | `settings` | `Ctrl+W ,` | `Ctrl+W ,` | Open settings |
 | `select_env` | `F4`, `Ctrl+W v` | `F4`, `Ctrl+W v` | Choose the active environment |
 | `manage_envs` | `Ctrl+W V` | `Ctrl+W V` | Edit environments and their variables |
@@ -59,6 +60,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `import` | `Ctrl+W i` | `Ctrl+W i` | Import a collection or a curl command |
 | `export_curl` | `Ctrl+W u` | `Ctrl+W u` | Copy the request as curl (secrets stay {{placeholders}}) |
 | `format_body` | `Ctrl+W f` | `Ctrl+W f` | Pretty-print the JSON body / message |
+| `external_edit` | `Ctrl+W O` | `Ctrl+W O` | Edit the focused text in $VISUAL or $EDITOR |
 | `move_to_secret` | `Ctrl+W K` | `Ctrl+W K` | Move the plain value of the focused credential field into an environment secret |
 | `reveal_secrets` | `Ctrl+W *` | `Ctrl+W *` | Show or hide credentials typed as plain text (with Hide plain secrets on) |
 | `zoom` | `Ctrl+W z` | `Ctrl+W z` | Maximize or restore the focused pane |
@@ -67,6 +69,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `grow_request` | `Ctrl+W +` | `Ctrl+W +` | Give the request editor more height |
 | `shrink_request` | `Ctrl+W -` | `Ctrl+W -` | Give the response more height |
 | `complete` | `Ctrl+Space` | `Ctrl+Space` | Show completion suggestions at the cursor |
+| `pick_value` | `F2` | `F2` | Choose the value of the focused field from a list (MCP server, MCP target, OAuth identity) |
 
 ## Sidebar tree
 
@@ -79,6 +82,7 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `tree_new_folder` | `N` | `N` | New folder in the selected folder |
 | `tree_rename` | `r`, `F2` | `r`, `F2` | Rename the selected item |
 | `tree_folder_settings` | `s` | `s` | Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit) |
+| `tree_run_folder` | `R` | `R` | Run every request of the selected folder in a run tab |
 | `tree_duplicate` | `d` | `d` | Duplicate the selected item |
 | `tree_delete` | `Delete`, `x` | `Delete`, `x` | Delete the selected item (asks first) |
 | `tree_move` | `m` | `m` | Move the selected item to another folder |
@@ -139,6 +143,29 @@ sidebar elsewhere (`Ctrl+W b` toggles it everywhere).
 | `toggle_wrap` | `w` | `w` | Wrap long lines on/off |
 | `copy_body` | `y`, `Ctrl+C` | `y y`, `Ctrl+C` | Copy the response body to the clipboard |
 | `save_body` | `s` | `s` | Save the response body to a file |
+| `open_pager` | `o` | `o` | Show the response text in $PAGER |
+
+## Response query bar (jq)
+
+| Action | Conventional | Vim mode | Description |
+|---|---|---|---|
+| `jq_complete` | `Tab` | `Tab` | Complete the object key at the cursor in the jq bar |
+| `jq_history_prev` | `Up` | `Up` | Show the previous jq expression used in the tab |
+| `jq_history_next` | `Down` | `Down` | Show the next jq expression used in the tab |
+| `jq_bypass` | `Ctrl+R` | `Ctrl+R` | Show the body without the jq filter while you type (again: filter on) |
+
+## Dialogs (environments, MCP servers, identities, import, input)
+
+| Action | Conventional | Vim mode | Description |
+|---|---|---|---|
+| `dialog_confirm` | `Ctrl+S`, `F5`, `Ctrl+Enter` | `Ctrl+S`, `F5`, `Ctrl+Enter` | Save the dialog (environments, MCP servers, identities), import, or confirm an input dialog from any field |
+| `dialog_new` | `Ctrl+N` | `Ctrl+N` | New environment, MCP server or identity in its editor |
+| `dialog_delete` | `Ctrl+D` | `Ctrl+D` | Delete the table row or the list entry of an editor |
+| `dialog_prev_env` | `Ctrl+PageUp` | `Ctrl+PageUp` | Previous environment in the environment editor |
+| `dialog_next_env` | `Ctrl+PageDown` | `Ctrl+PageDown` | Next environment in the environment editor |
+| `dialog_browse` | `F2` | `F2` | Choose a theme or a file in the environment editor (Theme, .env file or a file value) |
+| `dialog_test` | `Ctrl+T` | `Ctrl+T` | Test the MCP server in the MCP server editor |
+| `dialog_sign_in` | `Ctrl+L` | `Ctrl+L` | Sign in with the identity in the OAuth identity editor |
 
 ## Fixed keys
 
@@ -156,19 +183,17 @@ These are handled by the widgets themselves and cannot be remapped.
 | Tab bars | Left / Right | Switch tab when a tab bar is focused |
 | Tab bars | Enter / Down | Go into the tab's content |
 | Method / pickers | Enter or Space | Open the picker; type to filter, Enter to choose, Esc to close |
-| Dialogs | Enter / Esc | Input dialogs: Enter confirms from any field (Ctrl+S too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly |
+| Dialogs | Enter / Esc | Input dialogs: Enter confirms from any field (dialog_confirm too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly |
 | History (sidebar) | Enter | Open a copy of the entry in a new tab |
 | History (sidebar) | Ctrl+Enter / F5 | Resend the entry (opens a copy and sends it) |
 | History (sidebar) | s | Save the entry to the tree |
 | History (sidebar) | F7 | Back to the tree |
-| Tables | Space (on a ‹choice› cell: multipart Kind, env Source) | Change the value |
-| Environment editor | Space (Source cell) | Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file |
-| Environment editor | Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown | Save / new environment / previous, next environment |
-| Environment editor | Enter / Ctrl+D / Esc | Next cell / delete the row / close |
-| Import dialog | F5 or Ctrl+S / Esc | Import the pasted curl command or collection / cancel |
+| Tables | Space (on a ‹choice› cell: multipart Kind, env Type) | Change the value |
+| Environment editor | Space (Type cell) | Change where the value lives: text, secret (.sendito/secrets.toml), keychain, file |
+| Environment editor | Enter / Esc | Next cell / close |
+| Import dialog | Tab / Esc | Complete the file path / cancel |
 | Settings | Up, Down / Left, Right or Space / Esc | Choose a setting / change its value / close |
 | Report dialogs | y / Up, Down, PageUp, PageDown / Esc | Copy / scroll / close |
-| MCP server / tool field | F2 | Choose a configured server / discover and choose a tool |
 | Command palette | :\<command> | Type a command (listed under Commands) or pick from the list |
 | Vim mode | i a I A o O | Enter insert mode |
 | Vim mode | Esc | Back to normal mode |
@@ -214,6 +239,7 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:cancel` | Cancel the running request |
 | `:watch [seconds]` | Repeat the active HTTP request on an interval |
 | `:end` | Finish sending on a client/bidi stream |
+| `:debug [file]` | Turn the debug log on or off (errors, warnings, one line per send) |
 | `:env <name>` | Switch environment (names listed as you type) |
 | `:envs` | Edit environments |
 | `:newenv` | Create an environment (asks for the name) |
@@ -229,12 +255,13 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:newsse` | New SSE request (Ctrl+W E) |
 | `:newmqtt` | New MQTT request (Ctrl+W M) |
 | `:newws` | New WebSocket request (Ctrl+W y) |
-| `:newmcp` | New MCP request |
+| `:newmcp` | New MCP request (Ctrl+W a) |
 | `:mcpservers` | Choose an MCP server |
 | `:mcpservers edit` | Edit the MCP servers in the config file chosen in Settings (Ctrl+W S) |
 | `:mcpadd <name>` | Add an MCP server to the config file chosen in Settings (asks for the URL or command) |
 | `:mcpedit [name]` | Edit an MCP server: URL or command, auth, headers, env, TLS, OAuth (the list without a name) |
-| `:mcptools` | Discover and choose an MCP tool |
+| `:mcptools` | Discover and choose an MCP tool, resource or prompt |
+| `:mcp restart` | Close the kept MCP server sessions; the next call opens a new one |
 | `:method` | Choose the HTTP method |
 | `:bodytype` | Choose the body type of the HTTP request |
 | `:authtype` | Choose the auth type of the request |
@@ -243,17 +270,22 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:saveexample [name]` | Save the response on screen as an example of the request |
 | `:examples` | List the request's saved examples and show one (:examples delete \<name> deletes) |
 | `:folder` | Edit the settings of the active request's folder (headers, auth, variables, scripts) |
-| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http file or a Bruno directory, or paste curl |
+| `:import [path]` | Import Postman, Insomnia, OpenAPI/Swagger, a .http or HAR file or a Bruno directory, or paste curl |
 | `:curl` | Copy the request as curl (secret variables stay {{placeholders}}) |
 | `:curl!` | Copy the request as curl including secret values |
 | `:httpfile` | Copy the request as an .http file |
 | `:httpfile!` | Copy the .http file including secret values |
+| `:code <language>` | Copy code that sends the request: python, fetch, go, httpie or wget |
+| `:code! <language>` | Copy the code including secret values |
 | `:cookies` | Manage the active environment's cookies: delete one or clear all (values masked) |
 | `:cookies clear` | Clear the active environment's cookies |
 | `:cookies delete <number>` | Delete one cookie from the active environment |
+| `:run [folder] [--data file]` | Run every request of a folder in a run tab (. is the collection root; the data file runs it once per row) |
 | `:history` | Show history |
 | `:clearhistory` | Delete all history entries |
 | `:format` | Pretty-print the JSON body |
+| `:edit` | Edit the focused text in $VISUAL or $EDITOR |
+| `:pager` | Show the response text in $PAGER |
 | `:jq [expr]` | Filter the response body with a jq expression |
 | `:template` | Fill the gRPC message with a template from the schema |
 | `:reload` | Reload the gRPC schema |
@@ -261,8 +293,8 @@ Typed in the command palette (`Ctrl+P`, or `:` in vim normal mode).
 | `:settings` | Open settings |
 | `:oauth` | Edit the HTTP OAuth identities (the file Settings saves to) |
 | `:keymap` | Edit your key bindings (the file Settings saves to) |
-| `:theme [name]` | Switch theme (lists them without a name); :theme reload reads your theme files again |
-| `:help` | Show keys |
+| `:theme [name]` | Switch theme (names listed as you type; without a name, a list with a live preview); :theme reload reads your theme files again |
+| `:help [section]` | Open the help, or the section whose name or text has the text |
 | `:report` | Show the last report (import, curl export) again |
 | `:savebody [path]` | Save the response body to a file |
 

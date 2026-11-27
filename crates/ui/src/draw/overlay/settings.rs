@@ -210,28 +210,8 @@ pub(super) fn draw_settings(
         }
         // The current theme's colors at a glance.
         if id == SettingId::Theme && !theme.mono {
-            let sw = [
-                theme.accent,
-                theme.ok,
-                theme.warn,
-                theme.err,
-                theme.info,
-                theme.patch,
-                theme.grpc,
-            ];
-            let mut sx = vx.saturating_sub(sw.len() as u16 + 2);
-            for c in sw {
-                sx = put(
-                    buf,
-                    sx,
-                    y,
-                    "█",
-                    1,
-                    Style::default()
-                        .fg(c)
-                        .bg(base.bg.unwrap_or(theme.overlay_bg)),
-                );
-            }
+            let sx = vx.saturating_sub(theme.swatch().len() as u16 + 2);
+            swatch(buf, sx, y, theme, base.bg.unwrap_or(theme.overlay_bg));
         }
         app.hits.push((rr, Hit::Overlay(OverlayHit::Item(i))));
         app.hits
@@ -313,7 +293,6 @@ pub(super) fn draw_settings(
             None => String::new(),
         };
         let values = match id {
-            Some(SettingId::Theme) => app.themes.names().join(" / "),
             Some(SettingId::Icons) => crate::icons::ICON_SETS.join(" / "),
             Some(SettingId::Sidebar) => "left / right".into(),
             Some(SettingId::Hints) => "full / short / off".into(),
@@ -335,6 +314,11 @@ pub(super) fn draw_settings(
         let opens = SETTINGS.get(*sel).is_some_and(|(id, _)| id.opens());
         let vline = if opens {
             format!("{label}: Enter opens the editor")
+        } else if id == Some(SettingId::Theme) {
+            format!(
+                "{label}: ← → change, Space lists all {} with a live preview",
+                app.themes.names().len()
+            )
         } else if values.is_empty() {
             format!("{label}: Enter edits it in place  (• = set in this file)")
         } else {

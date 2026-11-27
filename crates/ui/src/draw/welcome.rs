@@ -67,7 +67,7 @@ pub(super) fn draw_welcome(app: &mut App, buf: &mut Buffer, area: Rect, theme: &
             k(Action::Settings),
             "Settings: vim mode, theme, icons, sidebar side",
         ),
-        (k(Action::Help), "All keys"),
+        (k(Action::Help), "Help: guide, tutorials and keys"),
         (k(Action::Quit), "Quit"),
     ];
     // What the collection holds.

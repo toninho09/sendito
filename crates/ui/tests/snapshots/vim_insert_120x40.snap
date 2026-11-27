@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
- sendito   GET list users ×    +                                                               ● local ▾   F1  all keys
+ sendito   GET list users ×    +                                                                   ● local ▾   F1  help
 ╭ Requests  History ─────────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │▸ Orders/                   ││  GET    ▾  ▍{{base_url}}/users                                             ▶ Send  ^⏎  │
 │▾ Users/                    │╰────────────────────────────────────────────────────────────────────────────────────────╯
@@ -41,4 +41,4 @@ expression: screen
 │                            ││                                                                                        │
 │                            ││                                                                                        │
 ╰─── 6 requests · 2 folders ─╯╰────────────────────────────────────────────────────────────────────────────────────────╯
- INSERT   demo                                           ^⏎/F5 send · ^S save · Esc normal mode · ^W menu · F1 all keys
+ INSERT   demo                ^⏎/F5 send · ^S save · Esc normal mode · Tab next field · ^P commands · ^W menu · F1 help

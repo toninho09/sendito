@@ -13,9 +13,11 @@ use crate::viewer::{Doc, Viewer};
 mod editors;
 mod fields;
 mod response;
+mod run;
 pub use editors::*;
 pub use fields::*;
 pub use response::*;
+pub use run::*;
 
 /// Summary of the last response for the status line and response header.
 #[derive(Debug, Clone, Default)]
@@ -51,6 +53,9 @@ pub struct Watch {
     pub next: std::time::Instant,
     /// One `(ok, ms)` per send while watching, oldest first.
     pub samples: Vec<(bool, f64)>,
+    /// The `$prompt` / `$select` answers of the first send, by label: every
+    /// repeat uses them.
+    pub answers: std::collections::BTreeMap<String, sendito_core::vars::VarValue>,
 }
 
 /// How many watch samples are kept for the sparkline.
@@ -62,6 +67,7 @@ impl Watch {
             interval,
             next: std::time::Instant::now() + interval,
             samples: Vec::new(),
+            answers: Default::default(),
         }
     }
 
@@ -91,8 +97,9 @@ pub struct Tab {
     pub running: Option<Running>,
     pub watch: Option<Watch>,
     pub services: Option<Vec<ServiceInfo>>,
-    pub mcp_tools: Vec<sendito_pipeline::mcp::Tool>,
-    /// The server `mcp_tools` was loaded from; the list is stale for any other.
+    /// The tools, resources and prompts of `mcp_tools_server`.
+    pub mcp: sendito_pipeline::mcp::Catalog,
+    /// The server `mcp` was loaded from; the lists are stale for any other.
     pub mcp_tools_server: String,
     /// Why listing `mcp_tools_server`'s tools failed; completion does not
     /// retry a dead server by itself.
@@ -115,10 +122,16 @@ pub struct Tab {
     pub jq_history: Vec<String>,
     /// The tab is pinned: it stays before the tabs that are not pinned.
     pub pinned: bool,
+    /// A run tab: a folder run instead of a request. The session does not
+    /// keep it.
+    pub run: Option<RunView>,
 }
 
 /// The largest body (in bytes) that the jq filter runs on at each key press.
 pub const LIVE_JQ_MAX: usize = 1024 * 1024;
+
+/// How long the jq bar waits after the last key before the filter runs.
+pub const JQ_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// How many jq expressions a tab remembers.
 pub const JQ_HISTORY_MAX: usize = 50;
@@ -147,7 +160,7 @@ impl Tab {
             running: None,
             watch: None,
             services: None,
-            mcp_tools: Vec::new(),
+            mcp: Default::default(),
             mcp_tools_server: String::new(),
             mcp_tools_error: None,
             schema_error: None,
@@ -159,7 +172,16 @@ impl Tab {
             folder: None,
             jq_history: Vec::new(),
             pinned: false,
+            run: None,
         }
+    }
+
+    /// A tab that shows the folder run `view`.
+    pub fn new_run(id: u64, name: String, view: RunView) -> Self {
+        let req = Request::new_http();
+        let mut tab = Self::new(id, None, name, &req, Some(req.clone()));
+        tab.run = Some(view);
+        tab
     }
 
     /// A tab that edits the settings of the folder `rel`. `saved` is what
@@ -224,6 +246,9 @@ impl Tab {
         if self.folder.is_some() {
             return "DIR".into();
         }
+        if self.run.is_some() {
+            return "RUN".into();
+        }
         self.model.badge().to_string()
     }
 
@@ -250,6 +275,40 @@ mod tests {
             at: std::time::Duration::from_millis(5),
             wall: std::time::SystemTime::UNIX_EPOCH,
         }
+    }
+
+    #[test]
+    fn jq_bar_waits_for_a_pause_and_bypass_shows_the_raw_body() {
+        let mut r = Response::new();
+        r.set_body(Doc::from_bytes(
+            b"{\"a\":1,\"b\":2}".to_vec(),
+            Some("application/json"),
+        ));
+        r.query = Some(QueryBar::new(QueryMode::Jq, ".a", 0));
+        // The typed text waits for the delay.
+        let now = std::time::Instant::now();
+        r.schedule_query(JQ_DEBOUNCE);
+        assert!(r.jq.is_none());
+        assert!(!r.run_due_query(now));
+        assert!(r.run_due_query(now + JQ_DEBOUNCE * 2));
+        assert_eq!(r.jq.as_deref(), Some(".a"));
+        assert_eq!(r.body.doc.raw.text.trim(), "1");
+        assert!(r.query.as_ref().is_some_and(|q| q.due.is_none()));
+        // The bypass shows the body as received and does not schedule runs.
+        if let Some(q) = r.query.as_mut() {
+            q.bypass = true;
+        }
+        r.run_query();
+        assert!(r.jq.is_none());
+        assert!(r.body.doc.raw.text.contains("\"b\""));
+        r.schedule_query(JQ_DEBOUNCE);
+        assert!(r.query.as_ref().is_some_and(|q| q.due.is_none()));
+        // Off again: the text applies at once.
+        if let Some(q) = r.query.as_mut() {
+            q.bypass = false;
+        }
+        r.run_query();
+        assert_eq!(r.body.doc.raw.text.trim(), "1");
     }
 
     #[test]
@@ -441,6 +500,8 @@ mod tests {
                         .collect(),
                 },
                 description: "# Create\n\nMakes an *x*.".into(),
+                retry: 3,
+                retry_interval_ms: Some(250),
             },
         })
     }
@@ -565,7 +626,10 @@ mod tests {
         assert_eq!(blank.fields(4), vec![Field::DocsView, Field::Description]);
         assert!(blank.cycle(Field::DocsView, 1));
         assert_eq!(blank.fields(4), vec![Field::DocsView, Field::DocsPreview]);
-        assert_eq!(blank.fields(3), vec![Field::Timeout]);
+        assert_eq!(
+            blank.fields(3),
+            vec![Field::Timeout, Field::Retry, Field::RetryInterval]
+        );
         assert_eq!(
             e.fields(1),
             vec![

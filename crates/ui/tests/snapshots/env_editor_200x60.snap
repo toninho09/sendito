@@ -5,7 +5,8 @@ expression: screen
 ╭─ Environments ───────────────────────────────────────────────────────────────────────────────────────────────╮
 │  Collection variables  local (active)  staging                                                               │
 │                                                                                                              │
-│ .env file    .env (default)                                                                          no file │
+│ Theme        ‹ (base theme) › (1 of 34)   ███████                                           [ui] theme: auto │
+│ .env file    .env (default)                                                                 no file          │
 │                                                                                                              │
 │ Type says where a value lives (Space changes it). A secret or keychain value is typed here but stored        │
 │ outside this file. ✕ deletes a row (Ctrl+D). Ctrl+S saves; Esc asks before discarding unsaved changes.       │
@@ -15,7 +16,6 @@ expression: screen
 │ grpc                     │‹text›         │127.0.0.1:9                                                     │× │
 │ token                    │‹secret›       │set · type to replace it                                        │× │
 │ add variable             │               │                                                                   │
-│                                                                                                              │
 │                                                                                                              │
 │                                                                                                              │
 │                                                                                                              │

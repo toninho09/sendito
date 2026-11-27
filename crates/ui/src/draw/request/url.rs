@@ -8,6 +8,7 @@ use super::*;
 pub(super) fn draw_url_card(app: &App, buf: &mut Buffer, area: Rect, theme: &Theme) -> Rect {
     let tab = &app.tabs[app.active];
     let (kind, color) = match tab.ed.kind {
+        _ if tab.run.is_some() => ("RUN".to_string(), theme.accent),
         // The chip already names the method: the title names the protocol,
         // the border keeps the method's colour.
         Kind::Http => ("HTTP".to_string(), theme.method_color(&tab.ed.method)),
@@ -136,6 +137,10 @@ pub(in crate::draw) fn draw_url_strip(
         draw_folder_strip(app, buf, row, theme, &rel);
         return None;
     }
+    if app.tabs[app.active].run.is_some() {
+        super::super::run_tab::draw_run_strip(app, buf, row, theme);
+        return None;
+    }
     let names = app.tab_names();
     let is_def = move |n: &str| names.is_defined(n);
     let focus = app.focus;
@@ -151,7 +156,7 @@ pub(in crate::draw) fn draw_url_strip(
     let has_method = match &app.tabs[app.active].model {
         sendito_core::Request::Grpc(g) => !g.service.is_empty() && !g.method.is_empty(),
         sendito_core::Request::Ws(w) => !w.url.trim().is_empty(),
-        sendito_core::Request::Mcp(m) => !m.server.is_empty() && !m.tool.is_empty(),
+        sendito_core::Request::Mcp(m) => !m.server.is_empty() && !m.target().is_empty(),
         sendito_core::Request::Sse(_) => false,
         sendito_core::Request::Mqtt(m) => !m.url.trim().is_empty(),
         sendito_core::Request::Http(_) => true,

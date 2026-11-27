@@ -1,4 +1,4 @@
-//! Safe file writes and cross-process locks for the store.
+//! Safe file writes, cross-process locks and directory listings for the store.
 //!
 //! A write goes to a temporary file in the same directory, is flushed to disk,
 //! and is renamed over the target, so a crash leaves the old file or the new
@@ -119,13 +119,13 @@ pub(crate) fn with_dir_lock<T>(dir: &Path, f: impl FnOnce() -> Result<T>) -> Res
 }
 
 #[cfg(unix)]
-fn owner_only(options: &mut OpenOptions) {
+pub(crate) fn owner_only(options: &mut OpenOptions) {
     use std::os::unix::fs::OpenOptionsExt;
     options.mode(0o600);
 }
 
 #[cfg(not(unix))]
-fn owner_only(_: &mut OpenOptions) {}
+pub(crate) fn owner_only(_: &mut OpenOptions) {}
 
 /// Removes group and other access from an existing file.
 pub(crate) fn make_private(_path: &Path) {
@@ -139,6 +139,20 @@ pub(crate) fn make_private(_path: &Path) {
             let _ = fs::set_permissions(_path, fs::Permissions::from_mode(mode));
         }
     }
+}
+
+/// The files of `dir` with the extension `ext`, sorted by path; none when the
+/// directory does not exist.
+pub fn files_with_ext(dir: &Path, ext: &str) -> Vec<std::path::PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == ext) && p.is_file())
+        .collect();
+    paths.sort();
+    paths
 }
 
 #[cfg(test)]

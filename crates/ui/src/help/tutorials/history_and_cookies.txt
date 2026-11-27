@@ -1,0 +1,19 @@
+See the requests that you sent, send one again, and manage the cookies.
+
+── History ──
+  1.  Press {key:history}. The sidebar shows the history: the requests that you sent, in groups by day.
+  2.  Select an entry with Up and Down. The status of each entry shows in its color.
+  3.  Press Enter to open a copy of the entry in a new tab. The response pane shows the response that Sendito kept, with "history: <time>" in the border.
+  4.  Press Ctrl+Enter or F5 to send the entry again. Sendito opens a copy and sends it.
+  5.  Press s to save the entry in the tree.
+  6.  Press {key:history} to go back to the tree.
+The history keeps the secrets masked. The settings Record history, History
+entries kept and History response body set what the history keeps. The
+command :clearhistory deletes all the entries.
+
+── Cookies ──
+  •  The cookie jar keeps the cookies of the responses and sends them again, as a browser does. Each environment has its own jar.
+  •  The Cookie jar field of the Options tab turns it on or off for one request. The setting Cookie jar is the default.
+  •  Type :cookies to see the cookies of the active environment. The values are masked.
+  •  In the list, press Enter on a cookie to delete it. The last row clears all the cookies.
+  •  The commands :cookies clear and :cookies delete <number> do the same from the command palette.

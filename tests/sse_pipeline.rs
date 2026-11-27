@@ -8,19 +8,16 @@ mod tests {
     fn context(root: &std::path::Path) -> RunCtx {
         RunCtx {
             root: root.into(),
-            send: Default::default(),
-            history: Some((root.join("history.jsonl"), 100)),
+            history: Some(sendito_pipeline::runner::HistorySink {
+                path: root.join("history.jsonl"),
+                max_entries: 100,
+                max_body: 1024 * 1024,
+            }),
             name: "events".into(),
             path: Some("events.toml".into()),
-            env: None,
-            schemas: Default::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
             cookie_jar: true,
-            oauth: None,
+            ..Default::default()
         }
     }
     async fn collect(ctx: &RunCtx, req: &SseRequest) -> Vec<SseUpdate> {

@@ -1,5 +1,431 @@
 # Changelog
 
+## 0.4.0 — 2026-11-27
+
+### MCP server for agents
+
+* `sendito serve [PATH]` serves a collection to an AI agent as an MCP server
+  on stdin and stdout: `claude mcp add sendito -- sendito serve <collection>`.
+* Tools: `list_requests`, `read_request`, `list_environments`,
+  `preview_request` (an HTTP request as a curl command, not sent),
+  `import_curl` (a curl command as request TOML), `run_request`,
+  `run_folder`, `send_request` (a request written as TOML), `write_request`,
+  `create_folder`, `move` and `delete`. `--read-only` offers only the tools
+  that do not change files; `--no-send` offers no tool that sends.
+* Each tool has a `title` and an `outputSchema`. `list_requests` shows the
+  descriptions and takes a `depth`. `run_folder` sends
+  `notifications/progress` when the call gives a `progressToken`, and with
+  `failures` returns the response of each request that does not pass.
+* A tool sees the collection as the tree does: a `.toml` file that is not a
+  request and a directory without requests cannot be read, changed or
+  deleted. `move` changes nothing when the new path is taken.
+* A sent request reads only the files of the collection: a body file, a
+  multipart file, a JWT key or a `.proto` file outside it (or under a hidden
+  directory) makes the send an error.
+* A call with the id of a call in flight gets an error.
+* The tree scan reads the description of each request with its badge, so
+  `list_requests` does not open each file again. The scan also reads a
+  `method` written after a description that has a line starting with `[`:
+  before, the badge showed `GET`.
+* `--allow-env <names>` limits the environments the agent can see and send
+  with; a call that names another environment gets an error.
+* A send returns the outcome, the assertions and the response of every kind:
+  the HTTP status, headers and body, or the gRPC, WebSocket, SSE, MQTT and MCP
+  messages, cut at `max_bytes` (64 KB by default).
+* The agent sees variable names, not secret values; a secret the server
+  echoes back is masked, and hidden files (`.sendito/`, `.env`) are out of
+  reach. The masking prevents accidents, not an agent that wants a secret:
+  the documentation says so and points to `--allow-env` and `--no-send`.
+* The resource `sendito://format` gives the agent `FORMAT.md`.
+* `notifications/cancelled` stops a send in flight.
+* A config change is read before the next tool call.
+* The final URL of an HTTP response is masked like the headers when a secret
+  is echoed in it (also in the interface).
+* The MCP client and server recognize protocol version `2025-11-25`.
+* `make test T=<file>` runs one integration test file.
+* A guide ("Let an AI agent use your collection") shows the setup for Claude
+  Code, Claude Desktop and Cursor; the troubleshooting page covers a server
+  that does not start and a secret that does not load.
+
+### Template functions
+
+* A placeholder can call a function: `{{ $uuidBytes(user_id) }}` sends the 16
+  bytes of a UUID as base64, the JSON form of a protobuf `bytes` field. An
+  argument is a `'literal'`, a variable or another call
+  (`{{ $hexBytes($sha256(body)) }}`).
+* Functions:
+  * IDs and bytes: `$uuidBytes`, `$uuidFromBytes`, `$uuidV5`, `$uuidV7()`,
+    `$ulid()`, `$hexBytes`, `$bytesHex`.
+  * Encoding: `$base64`, `$base64Url`, `$base64Decode`, `$hex`, `$urlEncode`.
+  * Hashes and HMAC: `$md5`, `$sha1`, `$sha256`, `$sha512`, `$hmacSha256`,
+    `$hmacSha256Base64`.
+  * Time: `$timeAdd`, `$isoFromUnix`, `$unixFromIso`.
+  * Text and JSON: `$upper`, `$lower`, `$trim`, `$len`, `$jsonEscape`,
+    `$jsonString`, `$replace`, `$substr`, `$padLeft`, `$default`.
+  * Random: `$randomInt`, `$randomHex`, `$randomString`. A random call keeps
+    one value for the whole send, as `{{$uuid}}` does.
+* A bad value, an unknown function or a wrong number of arguments leaves the
+  placeholder unresolved; the value is a secret when an argument is a secret.
+* New wire corpus case `grpc/17-template-functions`.
+
+### Lua function catalog
+
+* The `*.lua` files in `.sendito/lua/` of the collection and in
+  `~/.config/sendito/lua/` define your Lua functions once. The collection's
+  file wins over a global one with the same name.
+* Every `pre` and `post` script can call them, also in folder scripts.
+* A template calls them as `{{ $lua.order_id('order', 42) }}`. The function
+  reads variables (`vars.get`, `vars.has`, `render`) but cannot set them. The
+  value is a secret when an argument or a value it read is a secret, and it
+  stays the same for the whole send.
+* A catalog file with an error, or one that changes a Sendito name such as
+  `hash`, is left out with a warning.
+* The corpus case `grpc/17-template-functions` calls a catalog function.
+* The calls of one send share one Lua state: the catalog loads once per send.
+* The editor reads the catalog again within 2 seconds after a file changes;
+  the status line says so, or names the file that failed.
+
+### Values asked at send time
+
+* `{{ $prompt('Label') }}`, `{{ $prompt('Label', 'secret') }}` and
+  `{{ $select('Label', 'a', 'b') }}` get their value when the request is
+  sent. Every call with the same label gets one value per send.
+* The TUI asks one question per label, one dialog after the other. It
+  suggests the last value of a label that is not a secret, kept in
+  `.sendito/session.toml`. A watch asks once.
+* `sendito run --prompt 'Label=value'` answers. Without the flag a terminal
+  asks; with no terminal the request is not sent (exit code 3) and the
+  message names the flag. A folder run asks each label once.
+
+### Values from another response
+
+* `{{ $response('Auth/login', '$.token') }}` gives a JSONPath of the body of
+  the last response of another saved HTTP request, in the same environment:
+  from this session, then from the history.
+* A third argument says when that request is sent first: `if_missing`
+  (default), `if_older:<seconds>`, `always` or `never`. The TUI and
+  `sendito run` send it with its own folders and scripts; the variables its
+  scripts set go to the runtime variables.
+* The value is a secret. A cycle, a request that is not HTTP, a failed
+  dependency or a JSONPath with no match stops the send with the reason.
+* The Results tab and `sendito run` (`log:`) say where each value came from.
+* New wire corpus case `http/59-response-dependency`.
+* `RunCtx` keeps the session's responses (`runner::ResponseCache`).
+
+### Unresolved functions
+
+* The confirmation before a send and the refusal of `sendito run` give the
+  reason of a function call that fails, for example
+  `{{ $uuidBytes('abc') }} ("abc" is not a UUID)`. A secret in the reason is
+  masked.
+* The editor and the first check of a send know the variable names, not the
+  secret values: they count a call with a secret argument, such as
+  `{{ $uuidBytes(user_id) }}`, and a Lua call as defined. After the values
+  load, the UI runs the calls and asks before it sends one that fails
+  ("Functions not resolved"), as `sendito run` refuses.
+* Tests read the Lua catalog from the global config folder only when the
+  project is opened with one, as for `config.toml`: the wire corpus does not
+  see your `~/.config/sendito/lua/`.
+
+### Run reports
+
+* `sendito run <folder> --report junit|tap|html` prints a JUnit XML, TAP or
+  HTML report to stdout, next to the existing `json`.
+* `--report-file <format>=<path>` writes a report to a file and can repeat:
+  `--report-file junit=results.xml --report-file html=report.html`.
+* A report file that cannot be written makes the exit code 3.
+
+### External editor and pager
+
+* `Ctrl+W O` or `:edit` opens the focused multi-line text (body, GraphQL
+  query, Lua script, message) in `$VISUAL`, `$EDITOR` or `vi`; the edited
+  text replaces it when the editor exits. The temporary file is owner-only
+  and is deleted after.
+* `o` in the response or `:pager` shows the response tab, as on screen, in
+  `$PAGER` or `less`.
+
+### History keeps the response
+
+* An HTTP history entry keeps its response in `.sendito/history/`: status,
+  headers and the first `[history] max_body_kb` of the body (default 1024 KB;
+  `0` keeps none; also in Settings). Echoed secrets and credential headers
+  are masked, also for `sendito run`.
+* Enter on a history entry shows that response, marked `history: <time>`;
+  after the request is saved, `:saveexample` saves it as an example.
+* A trim deletes the response files of the dropped entries; `:clearhistory`
+  deletes them all. `sendito init` adds `.sendito/history/` to `.gitignore`.
+
+### HAR import and export
+
+* `sendito import file.har` (and `:import`) reads a HAR file, such as "Save
+  all as HAR" from a browser: one folder per host, one request per entry, the
+  URL as recorded, and the recorded response as a saved example.
+* `sendito har <request|folder>` prints a HAR 1.2 document of the HTTP
+  requests, without responses. Secret variables stay `{{placeholders}}`.
+
+### Code export
+
+* `:code <language>` and `sendito code <request> --lang <language>` give code
+  that sends an HTTP request with Python `requests`, JavaScript `fetch`
+  (Node.js 18+), Go `net/http`, HTTPie or wget. Secret variables stay
+  `{{placeholders}}`; `:code!` and `--include-secrets` include them.
+* curl, `.http` and code exports share one start (`prepare` in the import
+  crate).
+
+### Retry, repeat and delay
+
+* `[options] retry` and `retry_interval_ms` (every request kind) make
+  `sendito run` send a request again after an error or a failed assertion.
+  The Options tab edits them.
+* `sendito run --retry N` replaces the file's value for the whole run.
+* `--repeat N` runs a folder N times with one variable scope; the reports
+  name each round (`Users/list.toml#2`).
+* `--delay <ms>` waits between two requests of a folder run.
+* The JSON report gives `attempts` for each request.
+* The echo test server has a `/flaky/<key>/<n>` route.
+
+### Data files
+
+* `sendito run --data <file>` runs a folder, or one request, once per row of a
+  CSV file or a JSON array of objects. A row's values are variables above the
+  folder variables and below the runtime values.
+* Each row starts with a clean runtime and its own `$response` values, and
+  does not read the history.
+* The reports name each row (`Users/login.toml[2]`). `--data` with `--repeat`
+  is refused (exit 3).
+* The folder run engine moved to `crates/pipeline/src/suite.rs`, so the TUI
+  uses the same one. Ctrl+C now stops a folder run and still writes the
+  summary and the reports.
+
+### Run tab
+
+* `R` on a folder in the tree, or `:run [folder] [--data file]`, runs every
+  request of the folder in a run tab, with the engine of `sendito run`.
+* One row per request (mark, path, status, time, assertions); the response
+  pane shows the selected row's response.
+* The run uses the active environment and its own runtime values. The send
+  key runs it again; the cancel key stops it. The session does not keep the
+  tab.
+
+### MCP resources, prompts and kept sessions
+
+* An MCP request has an `op`: `tool` (the default), `resource` (reads `uri`)
+  or `prompt` (gets `prompt` with `arguments`). The editor has an Operation
+  field; the Target field holds the tool, the URI or the prompt name.
+* F2 on the target (and `:mcptools`) lists the tools, resources, resource
+  templates and prompts of the server.
+* The interface keeps one session per server and environment, closed after
+  `[mcp] idle_timeout_s` (default 300 s), on an environment change or with
+  `:mcp restart`. A folder run of `sendito run` keeps one session per server
+  for the run.
+* New wire corpus cases `mcp/resource`, `mcp/prompt` and `mcp/session-reuse`.
+
+### GraphQL subscriptions over WebSocket
+
+* A WebSocket request with a `[graphql]` table runs one GraphQL operation over
+  `graphql-transport-ws` (the default) or the legacy `graphql-ws`: query,
+  variables, operation name and an optional `init_payload`. A file with
+  `[graphql]` and `messages` is refused.
+* The editor's Messages tab has a Send choice (Messages or GraphQL) and reuses
+  the GraphQL body editors and completion; `:graphqlschema` asks the HTTP
+  equivalent of the URL.
+* Scripts read the last result's payload. A GraphQL `error` fails the session
+  (`sendito run` exits 2).
+* The WebSocket test server has a `/graphql` route; new wire corpus cases
+  `ws/13-graphql-transport-ws` and `ws/14-graphql-legacy`.
+
+### Shell completions and man page
+
+* `sendito completions <shell>` prints a completion script for bash, zsh,
+  fish, elvish or PowerShell.
+* `sendito man` prints the manual page (roff).
+
+### Footer key hints
+
+* `[ui] hints` is `full` by default: the footer shows as many hints as fit,
+  the most used first. `short` keeps the three most used.
+* A warning or an error keeps the hints that fit beside it, not only
+  `^W menu · F1`. The message gets at most half of the free room.
+* A run tab shows its own keys: run again, `↑↓` choose row, `Enter` show
+  response. Before, it showed save and edit, which do nothing there.
+* A folder settings tab and the start screen no longer show send. The start
+  screen shows new request.
+* New hints: `Tab` next pane or field, stop watch on a watched tab, run folder
+  and folder settings in the tree, and next match, fold all, copy path,
+  jq here and pager in the response body.
+* The hints show the keys of the keymap: a key changed in the keymap editor
+  shows in the footer. In vim mode, copy shows `y y`.
+* On the response tab bar, `←→` switch the tab and `Enter`/`↓` open it.
+  Before, the viewer took these keys (scroll and fold).
+* A note or a confirmation stays 10 s, or until the next key. A warning or an
+  error stays until a new message replaces it. Before, a warning went after
+  6 s and an error after 12 s.
+* The dialog keys are keymap actions in a new "Dialogs" group:
+  `dialog_confirm` (`Ctrl+S`, `F5`, `Ctrl+Enter`), `dialog_new` (`Ctrl+N`),
+  `dialog_delete` (`Ctrl+D`), `dialog_prev_env` / `dialog_next_env`
+  (`Ctrl+PageUp` / `Ctrl+PageDown`), `dialog_browse` (`F2`), `dialog_test`
+  (`Ctrl+T`) and `dialog_sign_in` (`Ctrl+L`). They apply in the environment,
+  MCP server, OAuth identity and import dialogs and in input dialogs. The
+  buttons, help lines and hints show the keys you set. The keymap editor keeps
+  fixed keys. `F5` and `Ctrl+Enter` now also save the environment and record
+  editors, and `Ctrl+Enter` also confirms an input dialog.
+* A key sequence (such as `Ctrl+W s`) for a dialog action gets a warning in
+  the keymap editor and when the config loads: a dialog reads one key at a
+  time.
+* F2 on the MCP server field, the MCP target and the OAuth identity field is
+  the `pick_value` keymap action, so it can be changed.
+
+### Failure hints
+
+* When a setting causes a failure, Sendito names the cause and the fix. The
+  status line says a few words (`timeout too short`, `certificate not
+  trusted`, `broker refuses the credentials`); the response pane, or the Log
+  tab of gRPC, WebSocket, SSE and MQTT, has a `Fix:` line with the setting to
+  change and its value (the timeout in ms, the environment to check).
+* The causes: a timeout, a TLS failure (an untrusted certificate, a handshake,
+  the `[http.tls]` files), a refused connection, a host name that does not
+  resolve, a proxy, a closed connection, a missing file, an invalid URL or a
+  variable the URL keeps, the OAuth setup, a gRPC status (`DEADLINE_EXCEEDED`,
+  `UNIMPLEMENTED`, `UNAVAILABLE`, `UNAUTHENTICATED`), a WebSocket handshake
+  refusal, an MQTT CONNACK code, and an MCP server command, URL or credential
+  problem. A `407`, and a `401` or `403` after an OAuth token of `[oauth]`,
+  get their fix as a note in Messages.
+* `sendito run` prints a `hint:` line on stderr after the error; the reports
+  list it under the problems; the JSON report has a `hint` string.
+* A gRPC `NOT_FOUND` response suggests checking `service` and `method` when
+  the message identifies an unknown service or method.
+* The MQTT broker's CONNACK refusal keeps its code in the error text
+  (`CONNACK refused: BadUserNamePassword`) instead of the generic "connection
+  refused".
+
+### jq bar
+
+* A terminal paste into the query bar (jq filter or search) goes in at the
+  cursor and counts as typed text; before, the paste was dropped. A newline
+  in the pasted text folds to a space.
+
+### Functions in the help
+
+* The help (F1) has a sidebar of sections: "All keys" (the help of before),
+  one section per keymap context, the fixed keys, the symbols, the commands
+  and six sections of functions. `Tab` and `Shift+Tab` open the next and the
+  previous section; a click on a row opens it. The search stays and applies
+  to the open section. The help is in one column at any width: the two
+  columns at ≥ 180 columns are gone.
+* The function sections list the template functions
+  (`$base64(text)`, `$hmacSha256(key, text)`, ... with the names of the
+  arguments), the calls of the send (`$prompt`, `$select`, `$response` and
+  its policies), the names a Lua script has (`vars.set`, `render`,
+  `request:header`, ... with the phase they run in) and the Lua function
+  catalog (`{{ $lua.name(args) }}`), each with a line of introduction.
+  `FORMAT.md` stays the full reference.
+* The sections read the tables the send runs (`FUNCS`, `PRE_SEND`, `API`), so a
+  new function and its help line change one file.
+* Two more sections read the same tables: "Dynamic values" (`{{$uuid}}`,
+  `{{$timestamp}}`, `{{$timestampMs}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`
+  and `{{$processEnv.NAME}}`) and "Scripts tab" (the five sections of the tab,
+  the nine sources with what their `expr` selects, the eleven operators with
+  their symbol, their word in the request file and what they test).
+
+### Guide and tutorials in the help
+
+* F1 opens on "Start here": what Sendito does, the parts of the screen, the
+  start screen, how to move the focus, the keys to know first and where to
+  learn more (`FORMAT.md`, `docs/FEATURES.md`, `docs/CLI.md`, `KEYMAP.md`).
+  "How it works" explains the
+  collection, the request files, folder settings, variables and environments,
+  secrets, the steps of a send, the response tabs and the history.
+* Eighteen tutorials give the steps for the common tasks: the first request,
+  the body types (form, multipart, file, raw), a GraphQL request (query,
+  mutation and a subscription over WebSocket), save and organize, docs and
+  examples (the Docs tab and the saved examples), environments (with the
+  `.env` and `file` sources), secrets and auth, chain requests, read a
+  response, watch a request, history and cookies, import and export, a gRPC
+  call, WebSocket / SSE / MQTT streams, MCP tools, the request options
+  (timeout, redirects, TLS, proxy), run a folder and customize (with the
+  external editor and the pager).
+* The tutorial "Request options" holds a `{options}` line that becomes the
+  table of the Options tab: each field, the request kinds that have it and
+  the help line the UI shows under the field (`Field::help`). The table
+  comes from the editors, so a new field or help line changes the help.
+* The sidebar has four groups: Guide, Tutorials, Keys and Functions. A click
+  on a group name does nothing; `Tab` skips the group names.
+* The guide and the tutorials show the keys of the current mode and the keys
+  that you changed in `[keymap]`. A test fails when a text names an action or
+  a `:command` that does not exist.
+* Each key section starts with a line that tells where its keys work. The
+  fixed keys, the symbols and the commands have a line of introduction.
+* The footer, the top bar, the `Ctrl+W` menu and the start screen say
+  "F1 help" in place of "F1 all keys".
+* `:help <section>` opens the help at the first section whose name starts
+  with the text, else has it (`:help grpc`, `:help jq`), else at the section
+  whose text has the text as a whole word the most times (`:help xpath`
+  opens "Scripts tab", `:help proxy` opens "Request options"). When the
+  text of the open section has the text, the search box holds it. No match:
+  an error in the status line.
+* `Ctrl+W a` (`new_mcp_request`) opens a new MCP request tab, as `:newmcp`
+  does.
+* The fixed keys of the environment editor name the Type cell (they said
+  "Source"). `FORMAT.md` and the features list name the operator symbols
+  that the Scripts tab shows (`==` for `eq`, ...).
+
+### More themes
+
+* 26 new built-in themes, 33 in all. 18 follow the palette of a popular
+  editor theme: `dracula`, `monokai`, `nord`, `gruvbox`, `one-dark`,
+  `catppuccin`, `tokyo-night`, `rose-pine`, `night-owl`, `kanagawa`,
+  `everforest`, `github-dark`, `solarized-dark`, `solarized-light`,
+  `gruvbox-light`, `catppuccin-latte`, `github-light` and `one-light`.
+* 8 solid-color themes have a strong background, a solid selection bar and
+  heavy focus borders: `turbo`, `phosphor`, `amber`, `bauhaus`, `crimson`,
+  `abyss`, `grove` and `grape`.
+* Every built-in theme with RGB colors keeps text at least 4.5:1 (WCAG AA);
+  where the original palette does not, the color is a little lighter or
+  darker. A test checks every built-in theme.
+* The theme list (`:theme`) has a live preview: the screen takes each theme as
+  you move to it, Enter keeps it and Esc (or a click outside) goes back to the
+  saved theme. Each name shows its kind (dark, light, solid selection, yours);
+  typing a kind filters by it. Each row ends with a swatch of that theme's
+  colors on its own background.
+* Settings: Space or Enter (or a click on the value) on the Theme row opens
+  the list, which returns to Settings when it closes; ← → still change the
+  theme. The explanation line says so instead of listing every name.
+* `:theme <text>` lists the themes whose name holds the text, and the palette
+  finds a theme by name without the `:` too ("Theme: dracula"). An unknown
+  name says "`:theme` lists them" instead of listing all 33.
+
+### A theme for each environment
+
+* An environment file takes a top-level `theme = "<name>"`: the app shows
+  that theme while the environment is active, so production, sandbox and
+  local look different. The top bar shows that environment as a solid chip
+  in its color.
+* An environment without `theme` shows `[ui] theme`. A name that no theme has
+  falls back to it with a warning. `collection.toml` cannot have a `theme`.
+* `:theme` and Settings save `[ui] theme` and show it until the environment
+  changes. Esc in the theme list goes back to the theme in use.
+* The environment editor has a Theme line above the `.env file` line. It is
+  a choice row, as the Theme row of Settings: `‹ crimson › (12 of 34)` and
+  the theme's colors, ← → change the theme, and Space, Enter or a click on
+  the value lists the themes. The screen shows the theme of the line while
+  the line has the focus. `Ctrl+S` saves it.
+
+### Debug log
+
+* `--debug[=FILE]` writes a debug log for the app and for every command
+  (`sendito --debug`, `sendito run F --debug=run.log`). The log holds the
+  start line (version, system, command line), the errors and warnings, each
+  panic with its backtrace, one line per send (kind, target, status or
+  error, time, size, file, environment) and the exit code.
+* `:debug [file]` turns the log on in the app; `:debug` again turns it off.
+  The status bar names the file.
+* The default file is `~/.local/state/sendito/sendito-<UTC time>.log`
+  (`$XDG_STATE_HOME/sendito/` when set). The file is readable by its owner
+  only. It holds no bodies and no secret values: a send line has the target
+  as history keeps it, with the secrets masked.
+* When the log is on, the command prints `sendito: debug log: <file>` on
+  stderr at the end.
+
 ## 0.3.0 — 2026-11-25
 
 ### Documentation site
@@ -63,6 +489,23 @@
 * "Save changes to" in Settings is kept in `session.toml` (per user and
   collection), so the editors open on the same file after a start; it starts
   at `global`.
+
+### jq bar
+
+* The jq bar runs the filter 300 ms after the last key, not at each key.
+* Ctrl+R in the jq bar shows the body without the filter while you type the
+  expression. Ctrl+R again, Enter or Esc turns the filter on.
+* The jq bar keys are in the keymap: `jq_complete` (Tab), `jq_history_prev`
+  (Up), `jq_history_next` (Down) and `jq_bypass` (Ctrl+R). F1, `KEYMAP.md`
+  and the keymap editor list them, and `[keymap]` changes them.
+
+### Copy
+
+* `y` and the other copies also write the local clipboard (`pbcopy` on
+  macOS, `wl-copy` or `xclip` on Linux). The copy now works in terminals that
+  ignore OSC 52, such as iTerm2 with its default settings: before, the paste
+  gave the old clipboard.
+* A copy sends its text to the terminal once, not twice.
 
 ### Forms and dialogs
 

@@ -121,6 +121,22 @@ pub struct RequestCommon {
     pub scripts: Scripts,
     /// Markdown notes for people; never sent on the wire.
     pub description: String,
+    /// `[options] retry`: how many times `sendito run` sends the request
+    /// again after an error or a failed assertion (0 = never).
+    pub retry: u32,
+    /// `[options] retry_interval_ms`: the wait before each retry; `None`
+    /// is [`DEFAULT_RETRY_INTERVAL_MS`].
+    pub retry_interval_ms: Option<u64>,
+}
+
+/// The wait before a retry when the request sets none.
+pub const DEFAULT_RETRY_INTERVAL_MS: u64 = 1000;
+
+impl RequestCommon {
+    /// The wait before each retry.
+    pub fn retry_interval(&self) -> u64 {
+        self.retry_interval_ms.unwrap_or(DEFAULT_RETRY_INTERVAL_MS)
+    }
 }
 
 /// A name/value row with an enable toggle (query params, headers, form fields, metadata).
@@ -839,6 +855,27 @@ impl Source {
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
+
+    /// What a rule reads and what its `expr` selects, for the help (F1).
+    pub fn doc(self) -> &'static str {
+        match self {
+            Source::Body => "the JSON body; expr is a JSONPath (several matches become an array)",
+            Source::Header => "a response header; expr is its name",
+            Source::Status => "the status code; expr is empty",
+            Source::Time => {
+                "a time in ms; expr is total (empty) and, for HTTP, ttfb, dns, connect, tls or download"
+            }
+            Source::Size => "a size in bytes; expr is total (empty), body or headers",
+            Source::Hash => "the hex digest of the body; expr is md5, sha1, sha256 or sha512",
+            Source::XPath => "the XML body; expr is an XPath 3.1 expression",
+            Source::Regex => {
+                "the raw body; expr is a regular expression and the value is its first group"
+            }
+            Source::Cookie => {
+                "a Set-Cookie cookie of the response; expr is its name; the value is a secret"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -916,6 +953,23 @@ impl AssertOp {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
 
+    /// What the operator tests, for the help (F1).
+    pub fn doc(self) -> &'static str {
+        match self {
+            AssertOp::Eq => "is equal to the expected value",
+            AssertOp::Ne => "is different from the expected value",
+            AssertOp::Contains => "has the expected text",
+            AssertOp::NotContains => "does not have the expected text",
+            AssertOp::Exists => "exists (the expected value is empty)",
+            AssertOp::NotExists => "does not exist",
+            AssertOp::Lt => "is less than the expected value",
+            AssertOp::Le => "is less than or equal to the expected value",
+            AssertOp::Gt => "is greater than the expected value",
+            AssertOp::Ge => "is greater than or equal to the expected value",
+            AssertOp::Matches => "agrees with the expected regular expression",
+        }
+    }
+
     /// Whether the operator compares against `value`.
     pub fn takes_value(self) -> bool {
         !matches!(self, AssertOp::Exists | AssertOp::NotExists)
@@ -977,8 +1031,50 @@ pub struct WebSocketRequest {
     pub messages: String,
     pub auth: Auth,
     pub options: WsOptions,
+    /// A GraphQL subscription: the session speaks the GraphQL protocol
+    /// instead of sending `messages`.
+    pub graphql: Option<WsGraphql>,
     /// The fields every request kind has.
     pub common: RequestCommon,
+}
+
+/// A GraphQL operation sent over a WebSocket (`[graphql]` of the request).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WsGraphql {
+    pub query: String,
+    /// JSON text of an object; empty sends no variables.
+    pub variables: String,
+    pub operation_name: String,
+    pub protocol: WsGraphqlProtocol,
+    /// JSON text of the `connection_init` payload; empty sends none.
+    pub init_payload: String,
+}
+
+/// The GraphQL over WebSocket protocol, which is also the subprotocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WsGraphqlProtocol {
+    /// `graphql-transport-ws` (the `graphql-ws` library).
+    #[default]
+    TransportWs,
+    /// `graphql-ws`, the legacy `subscriptions-transport-ws` protocol.
+    Legacy,
+}
+
+impl WsGraphqlProtocol {
+    pub const ALL: [WsGraphqlProtocol; 2] =
+        [WsGraphqlProtocol::TransportWs, WsGraphqlProtocol::Legacy];
+
+    /// The subprotocol name, as the request file writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WsGraphqlProtocol::TransportWs => "graphql-transport-ws",
+            WsGraphqlProtocol::Legacy => "graphql-ws",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
 }
 
 impl Default for WebSocketRequest {
@@ -990,6 +1086,7 @@ impl Default for WebSocketRequest {
             messages: "[]".into(),
             auth: Auth::Inherit,
             options: WsOptions::default(),
+            graphql: None,
             common: RequestCommon::default(),
         }
     }
@@ -1079,7 +1176,7 @@ impl SseRequest {
             },
             common: RequestCommon {
                 scripts: self.common.scripts.clone(),
-                description: String::new(),
+                ..Default::default()
             },
         }
     }
@@ -1234,7 +1331,14 @@ pub type MqttWill = MqttMessage;
 pub struct McpRequest {
     /// Server name, a key of `[mcp.servers]` in the collection config.
     pub server: String,
+    /// What the request asks: call a tool, read a resource or get a prompt.
+    pub op: McpOp,
+    /// The tool of `op = tool`.
     pub tool: String,
+    /// The resource URI of `op = resource`.
+    pub uri: String,
+    /// The prompt name of `op = prompt`.
+    pub prompt: String,
     /// Tool arguments as JSON text. An empty string omits the arguments property.
     pub arguments: String,
     pub timeout_ms: Option<u64>,
@@ -1246,10 +1350,62 @@ impl Default for McpRequest {
     fn default() -> Self {
         Self {
             server: String::new(),
+            op: McpOp::Tool,
             tool: String::new(),
+            uri: String::new(),
+            prompt: String::new(),
             arguments: "{}".into(),
             timeout_ms: None,
             common: RequestCommon::default(),
+        }
+    }
+}
+
+/// What an MCP request asks of the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum McpOp {
+    /// `tools/call`.
+    #[default]
+    Tool,
+    /// `resources/read`.
+    Resource,
+    /// `prompts/get`.
+    Prompt,
+}
+
+impl McpOp {
+    pub const ALL: [McpOp; 3] = [McpOp::Tool, McpOp::Resource, McpOp::Prompt];
+
+    /// The name in the request file (`op = "resource"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            McpOp::Tool => "tool",
+            McpOp::Resource => "resource",
+            McpOp::Prompt => "prompt",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|o| o.as_str() == s)
+    }
+}
+
+impl McpRequest {
+    /// The tool, URI or prompt name that `op` uses.
+    pub fn target(&self) -> &str {
+        match self.op {
+            McpOp::Tool => &self.tool,
+            McpOp::Resource => &self.uri,
+            McpOp::Prompt => &self.prompt,
+        }
+    }
+
+    /// Sets the field that `op` uses.
+    pub fn set_target(&mut self, text: String) {
+        match self.op {
+            McpOp::Tool => self.tool = text,
+            McpOp::Resource => self.uri = text,
+            McpOp::Prompt => self.prompt = text,
         }
     }
 }

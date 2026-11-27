@@ -29,6 +29,20 @@ pub fn holds_secret(src: usize) -> bool {
     matches!(src, SECRET | KEYCHAIN)
 }
 
+/// The first item of the environment's theme picker: no theme of its own.
+pub const BASE_THEME: &str = "(base theme)";
+
+/// Where the focus of the environment editor is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnvFocus {
+    #[default]
+    Table,
+    /// The Theme line (not on the collection variables).
+    Theme,
+    /// The `.env` file line.
+    Dotenv,
+}
+
 /// The columns of the table.
 const NAME: usize = 0;
 const TYPE: usize = 1;
@@ -43,8 +57,12 @@ pub struct EnvEditor {
     pub error: Option<String>,
     /// The path of the `.env` file (the file's top-level `dotenv` key).
     pub dotenv: TextEditor,
-    /// The focus is on the `.env` file line, not on the table.
-    pub on_dotenv: bool,
+    /// The theme of the environment (the file's top-level `theme` key);
+    /// `None` is the `[ui] theme`.
+    pub theme: Option<String>,
+    /// What the Theme line says about the theme, as `dotenv_status`.
+    pub theme_status: (String, Option<bool>),
+    pub focus: EnvFocus,
     /// What the `.env` file line says about the file, and whether that is
     /// a problem (`Some(true)`: not found or does not parse; `None`: no
     /// file is needed).
@@ -60,7 +78,9 @@ impl Default for EnvEditor {
             dirty: false,
             error: None,
             dotenv: Self::dotenv_input(""),
-            on_dotenv: false,
+            theme: None,
+            theme_status: (String::new(), None),
+            focus: EnvFocus::Table,
             dotenv_status: (String::new(), None),
         }
     }
@@ -124,6 +144,36 @@ impl EnvEditor {
         Some(self.dotenv.text().trim().to_string()).filter(|s| !s.is_empty())
     }
 
+    /// The theme to save; `None` for the `[ui] theme` and on the collection
+    /// variables, which have no theme.
+    pub fn theme_value(&self) -> Option<String> {
+        self.theme.clone().filter(|_| self.has_theme())
+    }
+
+    /// Steps the theme by `d` through `names`, after "(base theme)". A name
+    /// that is not in `names` steps from "(base theme)". Returns whether the
+    /// theme changed.
+    pub fn step_theme(&mut self, names: &[String], d: isize) -> bool {
+        let at = self
+            .theme
+            .as_ref()
+            .and_then(|t| names.iter().position(|n| n.eq_ignore_ascii_case(t)))
+            .map_or(0, |i| i + 1);
+        let next = crate::list::cycle(at, d, names.len() + 1);
+        let theme = next.checked_sub(1).map(|i| names[i].clone());
+        let changed = theme != self.theme;
+        self.theme = theme;
+        changed
+    }
+
+    /// Whether the edited environment has a Theme line: the collection
+    /// variables have none.
+    pub fn has_theme(&self) -> bool {
+        self.envs
+            .get(self.current)
+            .is_some_and(|n| n != sendito_store::env::COLLECTION_ENV)
+    }
+
     /// Loads `env`; `is_set` tells whether a secret, file or `.env` key
     /// has a value (`None` when unknown, e.g. the keychain).
     pub fn load(
@@ -154,7 +204,8 @@ impl EnvEditor {
         }
         self.table = t;
         self.dotenv = Self::dotenv_input(env.dotenv.as_deref().unwrap_or_default());
-        self.on_dotenv = false;
+        self.theme = env.theme.clone();
+        self.focus = EnvFocus::Table;
         self.refresh(is_set);
         self.dirty = false;
         self.error = None;
@@ -174,7 +225,7 @@ impl EnvEditor {
                 (SECRET | KEYCHAIN, None) => "type the value to store it",
                 (SECRET_KEY, _) => "the entry name in secrets.toml",
                 (KEYCHAIN_KEY, _) => "the account name in the keychain",
-                (FILE, _) => "path/to/file · F2 browses",
+                (FILE, _) => "path/to/file",
                 (DOTENV, Some(false)) => "NOT SET in .env (empty = the variable name)",
                 (DOTENV, _) => "the .env key (empty = the variable name)",
                 _ => "",
@@ -195,6 +246,7 @@ impl EnvEditor {
         use sendito_store::env::EnvFile;
         let mut env = EnvFile::new(name);
         env.dotenv = self.dotenv_value();
+        env.theme = self.theme_value();
         let mut secrets = Vec::new();
         for r in self.table.values() {
             let Some(var) = row_var(r) else {

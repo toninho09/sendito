@@ -1,5 +1,0 @@
----
-source: crates/ui/tests/snapshots.rs
-expression: screen
----
- demo                                                        ^⏎/F5 send · ^S save · ^P commands · ^W menu · F1 all keys

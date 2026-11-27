@@ -1,0 +1,23 @@
+Use a value from one response in the next request, for example the token
+of a login.
+
+── Way 1: extract the value ──
+  1.  Open the login request and its Scripts tab.
+  2.  Choose the section "After response: extract".
+  3.  Add a row: Variable token, From JSONPath, JSONPath $.access_token. Turn Secret on.
+  4.  Send the login request. The variable token now has the value.
+  5.  In the next request, write {{token}}, for example in the Bearer token field of the Auth tab.
+The value stays for the session. Send the login again to get a new token.
+
+── Way 2: call the response from the field ──
+  1.  In the field of the next request, write:
+        {{ $response('Auth/login', '$.access_token') }}
+  2.  'Auth/login' is the path of the login request in the collection, with no .toml.
+  3.  Press {key:send}. When no login response is kept, Sendito sends the login first.
+A third argument sets when the login is sent again, for example
+'if_older:300' (older than 300 seconds). See "Send-time values".
+
+── Way 3: a Lua script ──
+In the Scripts tab, choose "After response: Lua script" and write:
+        vars.set_secret("token", response:json().access_token)
+See "Lua scripts" for all the names that a script can use.

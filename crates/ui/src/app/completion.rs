@@ -53,6 +53,8 @@ impl App {
                     .map(|mi| mi.input_fields.clone())
             }
             Kind::Ws | Kind::Folder => None,
+            // Argument keys come from a tool's input schema only.
+            Kind::Mcp if t.ed.mcp_op != McpOp::Tool => None,
             Kind::Mcp => {
                 let tools = self.mcp_tools(t);
                 tools
@@ -67,7 +69,7 @@ impl App {
     /// The tool list of a tab, when it belongs to the server it was loaded from.
     pub(super) fn mcp_tools(&self, t: &Tab) -> Vec<sendito_pipeline::mcp::Tool> {
         if t.mcp_tools_server == t.ed.mcp_server.text() {
-            t.mcp_tools.clone()
+            t.mcp.tools.clone()
         } else {
             Vec::new()
         }
@@ -106,23 +108,18 @@ impl App {
                     })
                     .collect(),
             ),
+            // The targets of the tab's operation: tools, resources (with the
+            // templates) or prompts.
             CompleteKind::McpTool => {
-                let tools = self.mcp_tools(t);
-                if tools.is_empty() {
-                    None
-                } else {
-                    Some(
-                        tools
-                            .iter()
-                            .map(|tool| {
-                                (
-                                    tool.name.clone(),
-                                    tool.description.clone().unwrap_or_default(),
-                                )
-                            })
-                            .collect(),
-                    )
+                if self.mcp_tools(t).is_empty() {
+                    return None;
                 }
+                let items: Vec<(String, String)> = super::ingest::mcp_items(&t.mcp)
+                    .into_iter()
+                    .filter(|(op, _, _)| *op == t.ed.mcp_op)
+                    .map(|(_, target, detail)| (target, detail))
+                    .collect();
+                (!items.is_empty()).then_some(items)
             }
             CompleteKind::Fields
             | CompleteKind::JqKey

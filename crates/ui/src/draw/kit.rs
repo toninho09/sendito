@@ -20,6 +20,13 @@ use crate::theme::Theme;
 /// Styled text pieces drawn one after the other.
 pub(super) type Spans = Vec<(String, Style)>;
 
+/// A block in each color of `t.swatch()` on `bg`. Returns the x after it.
+pub(super) fn swatch(buf: &mut Buffer, x: u16, y: u16, t: &Theme, bg: Color) -> u16 {
+    t.swatch().into_iter().fold(x, |x, c| {
+        put(buf, x, y, "█", 1, Style::default().fg(c).bg(bg))
+    })
+}
+
 pub(super) fn put(buf: &mut Buffer, x: u16, y: u16, s: &str, max: u16, st: Style) -> u16 {
     if max == 0 {
         return x;
@@ -630,7 +637,7 @@ pub(super) fn row_style(state: RowState, plain: Style, theme: &Theme) -> Style {
 }
 
 /// The accent bar that marks the selected row.
-pub(super) fn selection_bar(buf: &mut Buffer, r: Rect, base: Style, theme: &Theme) {
+fn selection_bar(buf: &mut Buffer, r: Rect, base: Style, theme: &Theme) {
     put(
         buf,
         r.x,
@@ -639,6 +646,23 @@ pub(super) fn selection_bar(buf: &mut Buffer, r: Rect, base: Style, theme: &Them
         1,
         base.patch(theme.fg(theme.on_selection(theme.accent))),
     );
+}
+
+/// Fills the list row `r` in the style of `state`. A selected row also gets
+/// the accent bar. Returns the row style for the text of the row.
+pub(super) fn fill_row(
+    buf: &mut Buffer,
+    r: Rect,
+    state: RowState,
+    plain: Style,
+    theme: &Theme,
+) -> Style {
+    let base = row_style(state, plain, theme);
+    fill(buf, r, base);
+    if matches!(state, RowState::Selected | RowState::SelectedQuiet) {
+        selection_bar(buf, r, base, theme);
+    }
+    base
 }
 
 /// "↑ 3 more" / "↓ 3 more" in a dialog's border row.
@@ -766,6 +790,27 @@ mod tests {
             row_style(RowState::Plain, plain, &theme).bg,
             Some(theme.overlay_bg)
         );
+    }
+
+    #[test]
+    fn fill_row_marks_only_a_selected_row() {
+        let theme = Theme::dusk();
+        let plain = theme.overlay();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 4));
+        let states = [
+            RowState::Plain,
+            RowState::Hover,
+            RowState::Selected,
+            RowState::SelectedQuiet,
+        ];
+        for (y, state) in (0u16..).zip(states) {
+            let r = Rect::new(0, y, 4, 1);
+            let base = fill_row(&mut buf, r, state, plain, &theme);
+            assert_eq!(base, row_style(state, plain, &theme));
+            let bar = buf.cell((0, y)).map(|c| c.symbol() == "▌");
+            let selected = matches!(state, RowState::Selected | RowState::SelectedQuiet);
+            assert_eq!(bar, Some(selected), "{y}");
+        }
     }
 
     #[test]

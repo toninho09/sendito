@@ -5,8 +5,10 @@ use super::*;
 impl App {
     pub(super) fn graphql_source(&self, tab: &Tab) -> String {
         let (request, scope) = self.effective(tab);
-        let Request::Http(request) = request else {
-            return String::new();
+        let request = match request {
+            Request::Http(h) => h,
+            Request::Ws(w) if w.graphql.is_some() => runner::ws_graphql_http(&w, &scope),
+            _ => return String::new(),
         };
         let resolved = sendito_core::resolve::resolve_http(&request, &scope, &self.project.root);
         format!(
@@ -19,9 +21,9 @@ impl App {
     pub fn load_graphql_schema(&mut self, refresh: bool) {
         let Some(tab) = self.tab_mut() else { return };
         tab.refresh_model();
-        if tab.ed.kind != Kind::Http || tab.ed.body_kind != BodyKind::GraphQL {
+        if !matches!(tab.ed.kind, Kind::Http | Kind::Ws) || tab.ed.body_kind != BodyKind::GraphQL {
             self.set_status(
-                "GraphQL schema requires an HTTP GraphQL body",
+                "GraphQL schema requires a GraphQL body or a GraphQL WebSocket session",
                 StatusKind::Info,
             );
             return;
@@ -57,7 +59,11 @@ impl App {
                     let (mut scope, _, failed) =
                         runner::build_scope_checked(&envs, active.as_deref(), &runtime);
                     let chain = runner::folder_chain(&root, path.as_deref())?;
-                    let request = runner::with_folders(&request, &chain, &mut scope);
+                    let request = match runner::with_folders(&request, &chain, &mut scope) {
+                        // A GraphQL WebSocket session asks the HTTP equivalent of its URL.
+                        Request::Ws(w) => Request::Http(runner::ws_graphql_http(&w, &scope)),
+                        r => r,
+                    };
                     let mut check = request.clone();
                     if let Request::Http(http) = &mut check {
                         http.body = Body::None;

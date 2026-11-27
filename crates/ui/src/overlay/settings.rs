@@ -17,6 +17,7 @@ pub enum SettingId {
     StickyFolders,
     History,
     HistoryMax,
+    HistoryBody,
     WatchInterval,
     StreamKept,
     Hints,
@@ -27,6 +28,7 @@ pub enum SettingId {
     SseTimeout,
     MqttTimeout,
     McpTimeout,
+    McpIdle,
     McpServers,
     MaxBody,
     CookieJar,
@@ -56,6 +58,7 @@ impl SettingId {
             StickyFolders => ("ui", "sticky_folders"),
             History => ("history", "enabled"),
             HistoryMax => ("history", "max_entries"),
+            HistoryBody => ("history", "max_body_kb"),
             WatchInterval => ("ui", "watch_interval_s"),
             StreamKept => ("ui", "stream_messages_kept"),
             Hints => ("ui", "hints"),
@@ -66,6 +69,7 @@ impl SettingId {
             SseTimeout => ("sse", "timeout_ms"),
             MqttTimeout => ("mqtt", "timeout_ms"),
             McpTimeout => ("mcp", "timeout_ms"),
+            McpIdle => ("mcp", "idle_timeout_s"),
             MaxBody => ("http", "max_body_mb"),
             CookieJar => ("http", "cookie_jar"),
             Proxy => ("http", "proxy"),
@@ -84,6 +88,7 @@ impl SettingId {
         matches!(
             self,
             HistoryMax
+                | HistoryBody
                 | WatchInterval
                 | StreamKept
                 | HttpTimeout
@@ -92,6 +97,7 @@ impl SettingId {
                 | SseTimeout
                 | MqttTimeout
                 | McpTimeout
+                | McpIdle
                 | MaxBody
                 | Proxy
                 | TlsCa
@@ -110,6 +116,13 @@ impl SettingId {
         )
     }
 
+    /// A choice row with a list of its own: Enter, Space and a click on
+    /// the value open the list (`App::open_setting_list`); ← → still step
+    /// through the values.
+    pub fn lists(self) -> bool {
+        matches!(self, SettingId::Theme)
+    }
+
     /// The value is a duration in milliseconds, shown and typed as "30 s".
     pub fn duration(self) -> bool {
         use SettingId::*;
@@ -123,7 +136,7 @@ impl SettingId {
     pub fn min(self) -> Option<u64> {
         use SettingId::*;
         match self {
-            GrpcDeadline | WsTimeout | MqttTimeout => Some(0),
+            GrpcDeadline | WsTimeout | MqttTimeout | HistoryBody | McpIdle => Some(0),
             HistoryMax | WatchInterval | StreamKept | HttpTimeout | SseTimeout | McpTimeout
             | MaxBody => Some(1),
             _ => None,
@@ -229,6 +242,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::ConfirmQuit, "Confirm quit with unsaved changes"),
     (SettingId::History, "Record history"),
     (SettingId::HistoryMax, "History entries kept"),
+    (SettingId::HistoryBody, "History response body"),
     (SettingId::WatchInterval, "Watch interval"),
     (SettingId::StreamKept, "Stream messages kept"),
     (SettingId::HttpTimeout, "HTTP request timeout"),
@@ -237,6 +251,7 @@ pub const SETTINGS: &[(SettingId, &str)] = &[
     (SettingId::SseTimeout, "SSE opening timeout"),
     (SettingId::MqttTimeout, "MQTT timeout"),
     (SettingId::McpTimeout, "MCP call timeout"),
+    (SettingId::McpIdle, "MCP session idle time"),
     (SettingId::McpServers, "MCP servers"),
     (SettingId::MaxBody, "Largest response body"),
     (SettingId::CookieJar, "Cookie jar"),

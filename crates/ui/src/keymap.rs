@@ -15,6 +15,8 @@ pub enum Ctx {
     Editor,
     Table,
     Response,
+    Query,
+    Dialog,
 }
 
 impl Ctx {
@@ -25,6 +27,21 @@ impl Ctx {
             Ctx::Editor => "Text editing (conventional mode)",
             Ctx::Table => "Params / headers / form tables",
             Ctx::Response => "Response viewer",
+            Ctx::Query => "Response query bar (jq)",
+            Ctx::Dialog => "Dialogs (environments, MCP servers, identities, import, input)",
+        }
+    }
+
+    /// The short name of the context in the help sidebar.
+    pub fn name(self) -> &'static str {
+        match self {
+            Ctx::Global => "Global",
+            Ctx::Tree => "Sidebar tree",
+            Ctx::Editor => "Text editing",
+            Ctx::Table => "Tables",
+            Ctx::Response => "Response",
+            Ctx::Query => "Query (jq)",
+            Ctx::Dialog => "Dialogs",
         }
     }
 }
@@ -62,6 +79,7 @@ actions! {
     NewSseRequest => "new_sse_request", "Open a new unsaved SSE request tab";
     NewMqttRequest => "new_mqtt_request", "Open a new unsaved MQTT request tab";
     NewWsRequest => "new_ws_request", "Open a new unsaved WebSocket request tab";
+    NewMcpRequest => "new_mcp_request", "Open a new unsaved MCP request tab";
     CloseTab => "close_tab", "Close the current tab";
     NextTab => "next_tab", "Next open request tab";
     PrevTab => "prev_tab", "Previous open request tab";
@@ -81,7 +99,7 @@ actions! {
     SubTab5 => "subtab_5", "Jump to tab 5 of the focused pane";
     SubTab6 => "subtab_6", "Jump to tab 6 of the focused pane";
     Palette => "palette", "Open the command palette";
-    Help => "help", "Show all keys and actions";
+    Help => "help", "Open the help: guide, tutorials, keys and functions";
     Settings => "settings", "Open settings";
     SelectEnv => "select_env", "Choose the active environment";
     ManageEnvs => "manage_envs", "Edit environments and their variables";
@@ -91,6 +109,7 @@ actions! {
     Import => "import", "Import a collection or a curl command";
     ExportCurl => "export_curl", "Copy the request as curl (secrets stay {{placeholders}})";
     FormatBody => "format_body", "Pretty-print the JSON body / message";
+    ExternalEdit => "external_edit", "Edit the focused text in $VISUAL or $EDITOR";
     MoveToSecret => "move_to_secret", "Move the plain value of the focused credential field into an environment secret";
     RevealSecrets => "reveal_secrets", "Show or hide credentials typed as plain text (with Hide plain secrets on)";
     Zoom => "zoom", "Maximize or restore the focused pane";
@@ -105,6 +124,7 @@ actions! {
     TreeNewFolder => "tree_new_folder", "New folder in the selected folder";
     TreeRename => "tree_rename", "Rename the selected item";
     TreeFolderSettings => "tree_folder_settings", "Edit the settings of the selected folder (headers, auth, variables and scripts its requests inherit)";
+    TreeRunFolder => "tree_run_folder", "Run every request of the selected folder in a run tab";
     TreeDuplicate => "tree_duplicate", "Duplicate the selected item";
     TreeDelete => "tree_delete", "Delete the selected item (asks first)";
     TreeMove => "tree_move", "Move the selected item to another folder";
@@ -133,6 +153,7 @@ actions! {
     ToggleWrap => "toggle_wrap", "Wrap long lines on/off";
     CopyBody => "copy_body", "Copy the response body to the clipboard";
     SaveBody => "save_body", "Save the response body to a file";
+    OpenPager => "open_pager", "Show the response text in $PAGER";
     ScrollLeft => "scroll_left", "Scroll left";
     ScrollRight => "scroll_right", "Scroll right";
     NextCell => "next_cell", "Edit the next cell (name → value → next row)";
@@ -145,6 +166,19 @@ actions! {
     Cut => "cut", "Cut selection";
     Paste => "paste", "Paste";
     Complete => "complete", "Show completion suggestions at the cursor";
+    PickValue => "pick_value", "Choose the value of the focused field from a list (MCP server, MCP target, OAuth identity)";
+    JqComplete => "jq_complete", "Complete the object key at the cursor in the jq bar";
+    JqHistoryPrev => "jq_history_prev", "Show the previous jq expression used in the tab";
+    JqHistoryNext => "jq_history_next", "Show the next jq expression used in the tab";
+    JqBypass => "jq_bypass", "Show the body without the jq filter while you type (again: filter on)";
+    DialogConfirm => "dialog_confirm", "Save the dialog (environments, MCP servers, identities), import, or confirm an input dialog from any field";
+    DialogNew => "dialog_new", "New environment, MCP server or identity in its editor";
+    DialogDelete => "dialog_delete", "Delete the table row or the list entry of an editor";
+    DialogPrevEnv => "dialog_prev_env", "Previous environment in the environment editor";
+    DialogNextEnv => "dialog_next_env", "Next environment in the environment editor";
+    DialogBrowse => "dialog_browse", "Choose a theme or a file in the environment editor (Theme, .env file or a file value)";
+    DialogTest => "dialog_test", "Test the MCP server in the MCP server editor";
+    DialogSignIn => "dialog_sign_in", "Sign in with the identity in the OAuth identity editor";
 }
 
 /// One key press: a key and modifiers.
@@ -337,6 +371,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (NewWsRequest, Global, Both, &["ctrl+w y"]),
         (NewSseRequest, Global, Both, &["ctrl+w E"]),
         (NewMqttRequest, Global, Both, &["ctrl+w M"]),
+        (NewMcpRequest, Global, Both, &["ctrl+w a"]),
         (CloseTab, Global, Both, &["ctrl+w c"]),
         (NextTab, Global, Both, &["ctrl+w n", "ctrl+pagedown"]),
         (PrevTab, Global, Both, &["ctrl+w p", "ctrl+pageup"]),
@@ -367,6 +402,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Import, Global, Both, &["ctrl+w i"]),
         (ExportCurl, Global, Both, &["ctrl+w u"]),
         (FormatBody, Global, Both, &["ctrl+w f"]),
+        (ExternalEdit, Global, Both, &["ctrl+w O"]),
         (MoveToSecret, Global, Both, &["ctrl+w K"]),
         (RevealSecrets, Global, Both, &["ctrl+w *"]),
         (Zoom, Global, Both, &["ctrl+w z"]),
@@ -383,6 +419,7 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (TreeNewFolder, Tree, Both, &["N"]),
         (TreeRename, Tree, Both, &["r", "f2"]),
         (TreeFolderSettings, Tree, Both, &["s"]),
+        (TreeRunFolder, Tree, Both, &["R"]),
         (TreeDuplicate, Tree, Both, &["d"]),
         (TreeDelete, Tree, Both, &["delete", "x"]),
         (TreeMove, Tree, Both, &["m"]),
@@ -436,6 +473,11 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (CopyBody, Response, Conventional, &["y", "ctrl+c"]),
         (CopyBody, Response, Vim, &["y y", "ctrl+c"]),
         (SaveBody, Response, Both, &["s"]),
+        (OpenPager, Response, Both, &["o"]),
+        (JqComplete, Query, Both, &["tab"]),
+        (JqHistoryPrev, Query, Both, &["up"]),
+        (JqHistoryNext, Query, Both, &["down"]),
+        (JqBypass, Query, Both, &["ctrl+r"]),
         (NextCell, Table, Both, &["enter"]),
         (ToggleRow, Table, Both, &["ctrl+t"]),
         (DeleteRow, Table, Both, &["ctrl+d"]),
@@ -446,6 +488,15 @@ const DEFAULTS: &[(Action, Ctx, ModeSet, &[&str])] = {
         (Cut, Editor, Conventional, &["ctrl+x"]),
         (Paste, Editor, Conventional, &["ctrl+v"]),
         (Complete, Global, Both, &["ctrl+space"]),
+        (PickValue, Global, Both, &["f2"]),
+        (DialogConfirm, Dialog, Both, &["ctrl+s", "f5", "ctrl+enter"]),
+        (DialogNew, Dialog, Both, &["ctrl+n"]),
+        (DialogDelete, Dialog, Both, &["ctrl+d"]),
+        (DialogPrevEnv, Dialog, Both, &["ctrl+pageup"]),
+        (DialogNextEnv, Dialog, Both, &["ctrl+pagedown"]),
+        (DialogBrowse, Dialog, Both, &["f2"]),
+        (DialogTest, Dialog, Both, &["ctrl+t"]),
+        (DialogSignIn, Dialog, Both, &["ctrl+l"]),
     ]
 };
 
@@ -507,6 +558,15 @@ impl Keymap {
                         Err(e) => warnings.push(format!("keymap: {id}: {e}")),
                     }
                 }
+                let ctx = self
+                    .bindings
+                    .iter()
+                    .find(|b| b.action == action)
+                    .map(|b| b.ctx)
+                    .unwrap_or(Ctx::Global);
+                if let Some(w) = dialog_sequence(ctx, &keys) {
+                    warnings.push(format!("keymap: {id}: {w}"));
+                }
                 let mut found = false;
                 for b in self.bindings.iter_mut().filter(|b| b.action == action) {
                     if modes == ModeSet::Both || b.modes == modes || b.modes == ModeSet::Both {
@@ -518,12 +578,6 @@ impl Keymap {
                     }
                 }
                 if !found {
-                    let ctx = self
-                        .bindings
-                        .iter()
-                        .find(|b| b.action == action)
-                        .map(|b| b.ctx)
-                        .unwrap_or(Ctx::Global);
                     self.bindings.push(Binding {
                         action,
                         ctx,
@@ -583,6 +637,31 @@ impl Keymap {
             .unwrap_or_else(|| "(unbound)".into())
     }
 
+    /// Keys for an action in one context, formatted; the keys of any context
+    /// when it has none there. The hint row uses it: in the tree, favorite
+    /// is `f`, not the global `Ctrl+W F`.
+    pub fn keys_in(&self, ctx: Ctx, action: Action, vim: bool) -> Vec<String> {
+        let keys: Vec<String> = self
+            .bindings
+            .iter()
+            .filter(|b| b.ctx == ctx && b.action == action && Self::applies(b, vim))
+            .flat_map(|b| b.keys.iter().map(|k| k.to_string()))
+            .collect();
+        if keys.is_empty() {
+            self.keys_for(action, vim)
+        } else {
+            keys
+        }
+    }
+
+    /// The first key for an action in one context, for hints.
+    pub fn hint_in(&self, ctx: Ctx, action: Action, vim: bool) -> String {
+        self.keys_in(ctx, action, vim)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "(unbound)".into())
+    }
+
     /// The bindings of `ctxs` that complete `pending` with one more key, in
     /// table order: what the Ctrl+W menu lists. User overrides are included.
     pub fn continuations(
@@ -635,14 +714,23 @@ impl Keymap {
     }
 }
 
+/// Why a key of a `Dialogs` action never runs: a dialog reads one key at a
+/// time, so a sequence such as `Ctrl+W s` does not work there.
+pub fn dialog_sequence(ctx: Ctx, keys: &[KeySeq]) -> Option<String> {
+    let seq = keys.iter().find(|k| k.0.len() > 1)?;
+    (ctx == Ctx::Dialog)
+        .then(|| format!("{seq} never runs: a dialog reads one key at a time, not a sequence"))
+}
+
 /// Short key names for the footer and the Ctrl+W menu: `Ctrl+S` → `^S`,
-/// `Enter` → `⏎`, `Shift+Tab` → `⇧Tab`, `PageDown` → `PgDn`.
+/// `Enter` → `⏎`, `Shift+Tab` → `⇧Tab`, `PageDown` → `PgDn`, `Delete` → `Del`.
 pub fn short_keys(s: &str) -> String {
     s.replace("Ctrl+", "^")
         .replace("Shift+", "⇧")
         .replace("Enter", "⏎")
         .replace("PageDown", "PgDn")
         .replace("PageUp", "PgUp")
+        .replace("Delete", "Del")
 }
 
 /// The prefix key of the window menu, as the footer shows it.
@@ -691,6 +779,7 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         WatchToggle => (G::Request, "watch"),
         Save => (G::Request, "save"),
         FormatBody => (G::Request, "format body"),
+        ExternalEdit => (G::Request, "edit in $EDITOR"),
         MoveToSecret => (G::Request, "move to secret"),
         RevealSecrets => (G::Request, "show secrets"),
         ExportCurl => (G::Request, "copy as curl"),
@@ -699,6 +788,7 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         NewWsRequest => (G::Tabs, "new WebSocket"),
         NewSseRequest => (G::Tabs, "new SSE"),
         NewMqttRequest => (G::Tabs, "new MQTT"),
+        NewMcpRequest => (G::Tabs, "new MCP"),
         NextTab | PrevTab => (G::Tabs, "next / previous"),
         CloseTab => (G::Tabs, "close"),
         TogglePin => (G::Tabs, "pin"),
@@ -716,11 +806,14 @@ pub fn menu_entry(a: Action) -> (MenuGroup, &'static str) {
         History => (G::Open, "history"),
         Import => (G::Open, "import"),
         Settings => (G::App, "settings"),
-        Help => (G::App, "all keys"),
+        Help => (G::App, HELP_LABEL),
         Quit => (G::App, "quit"),
         other => (G::App, other.description()),
     }
 }
+
+/// The label of the help key in the footer, the top bar and the Ctrl+W menu.
+pub const HELP_LABEL: &str = "help";
 
 /// Keys handled directly by widgets (not remappable), documented in help and KEYMAP.md.
 pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
@@ -769,7 +862,7 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     (
         "Dialogs",
         "Enter / Esc",
-        "Input dialogs: Enter confirms from any field (Ctrl+S too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly",
+        "Input dialogs: Enter confirms from any field (dialog_confirm too); Tab moves between fields; on a choice row Left/Right change the value and Space opens its list. Question dialogs: Enter presses the focused button; the letter in a button (y, s, d) presses it directly",
     ),
     (
         "History (sidebar)",
@@ -785,28 +878,19 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
     ("History (sidebar)", "F7", "Back to the tree"),
     (
         "Tables",
-        "Space (on a ‹choice› cell: multipart Kind, env Source)",
+        "Space (on a ‹choice› cell: multipart Kind, env Type)",
         "Change the value",
     ),
     (
         "Environment editor",
-        "Space (Source cell)",
-        "Change where the value lives: plain, secrets (.sendito/secrets.toml), keychain, file",
+        "Space (Type cell)",
+        "Change where the value lives: text, secret (.sendito/secrets.toml), keychain, file",
     ),
-    (
-        "Environment editor",
-        "Ctrl+S / Ctrl+N / Ctrl+PageUp, Ctrl+PageDown",
-        "Save / new environment / previous, next environment",
-    ),
-    (
-        "Environment editor",
-        "Enter / Ctrl+D / Esc",
-        "Next cell / delete the row / close",
-    ),
+    ("Environment editor", "Enter / Esc", "Next cell / close"),
     (
         "Import dialog",
-        "F5 or Ctrl+S / Esc",
-        "Import the pasted curl command or collection / cancel",
+        "Tab / Esc",
+        "Complete the file path / cancel",
     ),
     (
         "Settings",
@@ -817,11 +901,6 @@ pub const FIXED_KEYS: &[(&str, &str, &str)] = &[
         "Report dialogs",
         "y / Up, Down, PageUp, PageDown / Esc",
         "Copy / scroll / close",
-    ),
-    (
-        "MCP server / tool field",
-        "F2",
-        "Choose a configured server / discover and choose a tool",
     ),
     (
         "Command palette",
@@ -969,6 +1048,7 @@ mod tests {
         assert_eq!(short_keys("Shift+Tab"), "⇧Tab");
         assert_eq!(short_keys("Ctrl+PageDown"), "^PgDn");
         assert_eq!(short_keys("F1"), "F1");
+        assert_eq!(short_keys("Delete/x"), "Del/x");
     }
 
     #[test]
@@ -1120,6 +1200,32 @@ mod tests {
         assert!(
             km.keys_for(Action::TreeDelete, false)
                 .contains(&"Delete".to_string())
+        );
+    }
+
+    /// A dialog reads one key at a time: a sequence for a `Dialogs` action
+    /// gets a warning, a sequence elsewhere does not. F2 in a field is the
+    /// `pick_value` action, and the tree keeps F2 for rename.
+    #[test]
+    fn dialog_sequence_warns_and_f2_picks() {
+        let c = |s: &str| KeySeq::parse(s).map(|k| k.0).unwrap_or_default();
+        let cfg = BTreeMap::from([(
+            "all".to_string(),
+            BTreeMap::from([
+                ("dialog_new".to_string(), KeySpec::One("ctrl+w n".into())),
+                ("save".to_string(), KeySpec::One("ctrl+w s".into())),
+            ]),
+        )]);
+        let (km, w) = Keymap::defaults().with_overrides(&cfg);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].starts_with("keymap: dialog_new:"), "{w:?}");
+        assert_eq!(
+            km.lookup(&[Ctx::Global], false, &c("f2")),
+            Lookup::Action(Action::PickValue)
+        );
+        assert_eq!(
+            km.lookup(&[Ctx::Tree, Ctx::Global], false, &c("f2")),
+            Lookup::Action(Action::TreeRename)
         );
     }
 

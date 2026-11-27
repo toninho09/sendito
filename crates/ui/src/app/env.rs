@@ -35,6 +35,8 @@ impl App {
 
     pub fn set_env(&mut self, env: Option<String>) {
         self.active_env = env;
+        // The kept MCP sessions belong to the old environment.
+        self.mcp_pool.clear();
         // A watch re-resolves variables at every send; a new environment makes
         // that a different request, so watches stop.
         let watched = self.tabs.iter_mut().filter_map(|t| t.watch.take()).count();
@@ -45,6 +47,9 @@ impl App {
         self.clear_transient_status();
         if watched > 0 {
             self.set_status("watch off (environment changed)", StatusKind::Info);
+        }
+        if let Some(w) = self.apply_env_theme() {
+            self.set_status(w, StatusKind::Warn);
         }
     }
 
@@ -81,6 +86,70 @@ impl App {
         env.vars = ed.to_env(&name).0.vars;
         ed.refresh(|v| self.project.envs.is_set(&env, v));
         ed.dotenv_status = self.dotenv_status(&env);
+        ed.theme_status = self.env_theme_status(ed);
+    }
+
+    /// What the Theme line says: the kind of the theme, or that no theme
+    /// has that name. `Some(true)` is a problem.
+    pub(super) fn env_theme_status(&self, ed: &EnvEditor) -> (String, Option<bool>) {
+        let Some(typed) = ed.theme_value() else {
+            return (
+                format!("[ui] theme: {}", self.project.config.ui.theme),
+                None,
+            );
+        };
+        match self
+            .themes
+            .names()
+            .into_iter()
+            .find(|n| n.eq_ignore_ascii_case(&typed))
+        {
+            Some(n) => (format!("✓ {}", self.themes.kind(&n)), Some(false)),
+            None => ("✗ no theme has this name".into(), Some(true)),
+        }
+    }
+
+    /// Space or Enter on the Theme line: the themes, after "(base theme)".
+    /// The editor waits behind the picker; moving the selection shows each
+    /// theme.
+    pub(super) fn open_env_theme_picker(&mut self, ed: EnvEditor) {
+        let typed = ed.theme_value().unwrap_or_default();
+        let mut items = vec![BASE_THEME.to_string()];
+        items.extend(self.themes.names());
+        let mut details = vec![format!("the [ui] theme, {}", self.project.config.ui.theme)];
+        details.extend(items[1..].iter().map(|n| self.themes.kind(n)));
+        let cur = items
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(&typed))
+            .unwrap_or(0);
+        self.parked_env = Some(ed);
+        self.overlay = Some(Overlay::Picker(Picker::new(
+            "Theme of the environment",
+            items,
+            details,
+            PickAction::EnvTheme,
+            Some(cur),
+        )));
+        self.preview_picked_theme();
+    }
+
+    /// Closes the environment's theme picker: `item` goes on the Theme line
+    /// (`None` is Esc and keeps the line). The theme in use comes back.
+    pub(super) fn close_env_theme_picker(&mut self, item: Option<&str>) {
+        let in_use = self.theme_name.clone();
+        self.show_theme(&in_use);
+        let Some(mut ed) = self.parked_env.take() else {
+            return;
+        };
+        if let Some(item) = item {
+            let theme = (item != BASE_THEME).then(|| item.to_string());
+            if ed.theme != theme {
+                ed.theme = theme;
+                ed.dirty = true;
+            }
+            ed.theme_status = self.env_theme_status(&ed);
+        }
+        self.overlay = Some(Overlay::Env(ed));
     }
 
     /// What the `.env` file line says: whether the file of `env` exists and
@@ -112,13 +181,16 @@ impl App {
             Ok(env) => {
                 ed.load(&env, |v| self.project.envs.is_set(&env, v));
                 ed.dotenv_status = self.dotenv_status(&env);
+                ed.theme_status = self.env_theme_status(ed);
             }
             Err(e) => {
                 // Never show (and so never save) another environment's rows.
                 ed.table = EnvEditor::table();
                 ed.dotenv = EnvEditor::dotenv_input("");
-                ed.on_dotenv = false;
+                ed.theme = None;
+                ed.focus = EnvFocus::Table;
                 ed.dotenv_status = (String::new(), None);
+                ed.theme_status = (String::new(), None);
                 ed.dirty = false;
                 ed.error = Some(e.to_string());
             }
@@ -163,12 +235,21 @@ impl App {
         }
         self.load_env_into(ed);
         self.refresh_names();
+        // The theme of the active environment may have changed.
+        let warning = if self.active_env.as_deref() == Some(name.as_str()) {
+            self.apply_env_theme()
+        } else {
+            None
+        };
         let label = if name == COLLECTION_ENV {
             "collection variables".to_string()
         } else {
             name
         };
-        self.set_status(format!("saved {label}"), StatusKind::Ok);
+        match warning {
+            Some(w) => self.set_status(format!("saved {label}; {w}"), StatusKind::Warn),
+            None => self.set_status(format!("saved {label}"), StatusKind::Ok),
+        }
         true
     }
 
@@ -176,7 +257,8 @@ impl App {
     /// or for the Value of the selected `file` row. The editor waits behind
     /// it and comes back with the chosen path, or unchanged on Esc.
     pub(super) fn open_env_file_picker(&mut self, ed: EnvEditor) {
-        let current = if ed.on_dotenv {
+        let dotenv = ed.focus == EnvFocus::Dotenv;
+        let current = if dotenv {
             ed.dotenv.text()
         } else {
             ed.table
@@ -197,7 +279,6 @@ impl App {
                 .map(|d| d.to_path_buf())
                 .unwrap_or(root)
         };
-        let dotenv = ed.on_dotenv;
         self.parked_env = Some(ed);
         self.show_file_picker(dir, dotenv);
     }
@@ -292,7 +373,11 @@ impl App {
         ed.table.select(first, 2);
         ed.dirty = true;
         self.set_status(
-            format!("type the value of {} and save (Ctrl+S)", names.join(", ")),
+            format!(
+                "type the value of {} and save ({})",
+                names.join(", "),
+                self.dialog_key(Action::DialogConfirm)
+            ),
             StatusKind::Info,
         );
     }

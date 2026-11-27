@@ -50,16 +50,27 @@ impl App {
                 error,
                 scripts,
                 scope_errors,
+                hint,
             } => {
                 t.running = None;
                 response.stream.closed_at = Some(duration);
                 response.summary.ok =
                     error.is_none() && reason != "cancelled" && scripts.failed_asserts() == 0;
-                response.summary.status = format!("{events} events · {reason}");
+                // A configuration problem: the cause in the status line, the
+                // fix in the log.
+                let short = match (&hint, &error) {
+                    (Some(h), Some(_)) => format!(" · {}", h.short),
+                    _ => String::new(),
+                };
+                response.summary.status = format!("{events} events · {reason}{short}");
                 response.summary.error = error.clone();
                 response.summary.time_ms = Some(duration.as_secs_f64() * 1000.0);
+                let fix = hint
+                    .filter(|_| error.is_some())
+                    .map(|h| format!("fix: {}\n", h.fix))
+                    .unwrap_or_default();
                 response.messages.doc.append_text(&format!(
-                    "{reason}\n{}\n{}",
+                    "{reason}\n{}\n{fix}{}",
                     error.unwrap_or_default(),
                     messages_text(&scripts, &scope_errors, &[])
                 ));

@@ -3,12 +3,14 @@
 pub mod collection;
 pub mod config;
 pub mod cookies;
+pub mod debug_log;
 pub mod env;
 pub mod examples;
 pub mod folder;
 mod fsio;
 pub mod history;
 pub mod init;
+pub mod lua_lib;
 pub mod request_file;
 pub mod session;
 pub mod themes;

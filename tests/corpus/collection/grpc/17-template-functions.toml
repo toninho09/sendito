@@ -1,0 +1,12 @@
+kind = "grpc"
+target = "{{grpc_target}}"
+service = "sendito.test.v1.Echo"
+method = "Unary"
+message = '''
+{
+  "data": "{{ $uuidBytes('1b4e28ba-2fa1-11d2-883f-0016d3cca427') }}",
+  "text": "{{ $sha256('abc') }}",
+  "i64": "{{ $unixFromIso($timeAdd('2024-01-01T00:00:00Z', '1d')) }}",
+  "name": "{{ $lua.order_id('order', 42) }}"
+}
+'''

@@ -1,0 +1,3 @@
+kind = "http"
+method = "GET"
+url = "{{base_url}}/echo?from={{ $response('http/01-get-minimal', '$.target', 'always') }}"

@@ -33,7 +33,8 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
     let env = app.active_env.clone();
     let env_name = env.clone().unwrap_or_else(|| "no env".into());
     let env_label = format!(" {} {env_name} ▾ ", icons.env);
-    let help_w = " F1 ".width() as u16 + " all keys ".width() as u16;
+    let help_label = format!(" {} ", crate::keymap::HELP_LABEL);
+    let help_w = " F1 ".width() as u16 + help_label.width() as u16;
     let right_w = env_label.width() as u16 + 1 + help_w;
     let tabs_end = maxx.saturating_sub(right_w + 1);
     // Tab labels; the active tab stays visible.
@@ -157,24 +158,26 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
     let ex = maxx - right_w;
     let ew = env_label.width() as u16;
     let env_rect = Rect::new(ex, area.y, ew, 1);
-    let est = if hovered(app, env_rect) {
-        theme.raised()
-    } else {
-        theme.bar()
-    };
     let dot_color = match &env {
         Some(e) => theme.env_color(e),
         None => theme.dim,
     };
+    // An environment with its own theme is a solid chip: it stands out.
+    let solid = env.is_some() && app.env_theme.is_some();
+    let est = if solid {
+        theme.chip(dot_color)
+    } else if hovered(app, env_rect) {
+        theme.raised()
+    } else {
+        theme.bar()
+    };
+    let icon_st = if solid {
+        est
+    } else {
+        est.patch(theme.fg(dot_color))
+    };
     let mut cx = put(buf, ex, area.y, " ", 1, est);
-    cx = put(
-        buf,
-        cx,
-        area.y,
-        icons.env,
-        1,
-        est.patch(theme.fg(dot_color)),
-    );
+    cx = put(buf, cx, area.y, icons.env, 1, icon_st);
     put(
         buf,
         cx,
@@ -194,7 +197,7 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
         buf,
         hx2,
         area.y,
-        " all keys ",
+        &help_label,
         maxx.saturating_sub(hx2),
         theme.bar().patch(theme.dim()),
     );
@@ -203,10 +206,12 @@ pub(super) fn draw_tabbar(app: &mut App, buf: &mut Buffer, area: Rect, theme: &T
 }
 
 /// The hints the footer shows for the `[ui] hints` level, before they are
-/// cut to the width. The main view ends with "menu" and "all keys", which
+/// cut to the width. The main view ends with "menu" and "help", which
 /// always stay; dialogs keep all their keys whatever the level.
 fn hints_for_level(mut hints: Vec<(String, String)>, level: &str) -> Vec<(String, String)> {
-    let main_view = hints.last().is_some_and(|(_, l)| l == "all keys");
+    let main_view = hints
+        .last()
+        .is_some_and(|(_, l)| l == crate::keymap::HELP_LABEL);
     if !main_view || hints.len() < 2 {
         return hints;
     }
@@ -253,12 +258,6 @@ pub(super) fn draw_footer(
     fill(buf, area, bar);
     let icons = app.icons;
     let maxx = area.x + area.width;
-    // Confirmations and notes expire; warnings and errors stay until replaced.
-    if let Some((_, StatusKind::Info | StatusKind::Ok, at)) = &app.status
-        && at.elapsed() > std::time::Duration::from_secs(10)
-    {
-        app.status = None;
-    }
     let message = app.status.clone();
     // The status segments: (text, style). The vim mode has its own color.
     let mut segs: Vec<(String, Style)> = Vec::new();
@@ -352,20 +351,23 @@ pub(super) fn draw_footer(
             .into_iter()
             .map(|(k, l)| (crate::keymap::short_keys(&k), l))
             .collect();
-    if let Some((_, kind, _)) = &message {
+    let free = area.width.saturating_sub(segs_w + 3);
+    // Room kept for the message: its width, at most half of the free room.
+    let mut reserve = 0;
+    if let Some((msg, kind, _)) = &message
+        && app.overlay.is_none()
+        && app.complete.is_none()
+    {
         // A note takes the place of the hints in the main view; a warning or
-        // an error keeps the last two beside it. Dialogs and the completion
-        // popup keep theirs.
-        let quiet = matches!(kind, StatusKind::Info | StatusKind::Ok)
-            && app.overlay.is_none()
-            && app.complete.is_none();
-        if quiet {
+        // an error keeps the hints that fit beside it. Dialogs and the
+        // completion popup keep all their hints.
+        if matches!(kind, StatusKind::Info | StatusKind::Ok) {
             hints.clear();
-        } else if app.overlay.is_none() && app.complete.is_none() {
-            hints = hints.split_off(hints.len().saturating_sub(2));
+        } else {
+            reserve = (msg.width() as u16 + 3).min(free / 2);
         }
     }
-    let hints = fit_hints(hints, area.width.saturating_sub(segs_w + 3));
+    let hints = fit_hints(hints, free.saturating_sub(reserve));
     let hints_w = hints.iter().map(|(k, l)| hint_w(k, l)).sum::<u16>()
         + (hints.len().saturating_sub(1) * HINT_SEP.width()) as u16;
     let hints_x = maxx.saturating_sub(hints_w + 1);

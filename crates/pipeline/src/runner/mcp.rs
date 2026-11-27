@@ -1,4 +1,4 @@
-//! Calls an MCP tool.
+//! Calls an MCP tool, reads a resource or gets a prompt.
 
 use super::*;
 
@@ -13,6 +13,8 @@ pub struct McpRunInfo {
     pub proxy: Option<sendito_http::ProxySpec>,
     /// `[http] tls` (custom CA, client certificate).
     pub tls: sendito_http::TlsMaterial,
+    /// Sessions kept between calls; `None` opens one session per call.
+    pub pool: Option<sendito_mcp::Pool>,
 }
 
 impl McpRunInfo {
@@ -24,6 +26,7 @@ impl McpRunInfo {
             collection: p.name.clone(),
             proxy: p.send_options().proxy,
             tls: p.tls.clone(),
+            pool: None,
         }
     }
 
@@ -144,6 +147,8 @@ pub enum McpUpdate {
         scope_errors: Vec<String>,
         /// The server needs an OAuth sign-in (`McpError::NeedsLogin`).
         needs_login: bool,
+        /// The configuration problem behind the error.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -173,7 +178,8 @@ pub(super) fn scrub_mcp_event(ev: sendito_mcp::Event, secrets: &[String]) -> sen
 }
 
 /// Runs one MCP call end to end. `0` is recorded as the status on success,
-/// `1` when the tool answers `isError`.
+/// `1` when the tool answers `isError`. With a pool in `info`, the call uses
+/// the kept session of the server.
 pub async fn exec_mcp(
     ctx: &RunCtx,
     req: &McpRequest,
@@ -186,18 +192,30 @@ pub async fn exec_mcp(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let resolved = resolve_mcp(req, &scope);
+    let cx = diagnose::Context {
+        timeout_ms: resolved.timeout_ms,
+        default_timeout_ms: info.timeout_ms,
+        timeout_key: "[mcp] timeout_ms",
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Mcp(req.clone());
     let target = match mask_request(&template, &scope) {
-        Request::Mcp(m) => format!("{}/{}", m.server, m.tool),
+        Request::Mcp(m) => format!("{}/{}", m.server, m.target()),
         _ => String::new(),
     };
     let secrets = scope.secret_values();
     let started = std::time::Instant::now();
     let fail = |msg: String, results: ScriptResults, needs_login: bool| {
         let msg = sendito_core::vars::scrub(&msg, &secrets);
+        // A URL server has no config entry to check; a login offer follows.
+        let hint = if needs_login {
+            None
+        } else {
+            diagnose::mcp(&msg, &cx, &resolved.server)
+        };
         let entry = history_entry(
             ctx,
             &template,
@@ -215,13 +233,19 @@ pub async fn exec_mcp(
             scripts: results,
             scope_errors: scope_errors.clone(),
             needs_login,
+            hint,
         });
     };
     if let Some(e) = pre_error {
         return fail(e, results, false);
     }
-    if resolved.server.is_empty() || resolved.tool.is_empty() {
-        return fail("choose a server and tool first".into(), results, false);
+    if resolved.server.is_empty() || resolved.target.is_empty() {
+        let what = match resolved.op {
+            McpOp::Tool => "a tool",
+            McpOp::Resource => "a resource URI",
+            McpOp::Prompt => "a prompt",
+        };
+        return fail(format!("choose a server and {what} first"), results, false);
     }
     let transport = match mcp_transport(info, &resolved.server, &scope) {
         Ok(t) => t,
@@ -232,7 +256,16 @@ pub async fn exec_mcp(
         timeout: Duration::from_millis(timeout.max(1)),
     };
     let (etx, mut erx) = mpsc::unbounded_channel();
-    let call = sendito_mcp::call_tool(&transport, &resolved.tool, &resolved.arguments, &opts, etx);
+    let op = match resolved.op {
+        McpOp::Tool => sendito_mcp::Op::Tool(resolved.target.clone()),
+        McpOp::Resource => sendito_mcp::Op::Resource(resolved.target.clone()),
+        McpOp::Prompt => sendito_mcp::Op::Prompt(resolved.target.clone()),
+    };
+    // One kept session per server, environment and transport (its rendered
+    // command, URL and headers).
+    let key = format!("{:?}\u{0}{}\u{0}{transport:?}", ctx.env, resolved.server);
+    let pool = info.pool.as_ref().map(|p| (p, key.as_str()));
+    let call = sendito_mcp::perform(&transport, &op, &resolved.arguments, &opts, etx, pool);
     let forward = async {
         while let Some(ev) = erx.recv().await {
             let scr = if ctx.mask_echoed_secrets {
@@ -266,7 +299,7 @@ pub async fn exec_mcp(
                 size,
                 None,
             );
-            write_history(ctx, &entry).await;
+            write_history(ctx, &entry, None).await;
             let body = if ctx.mask_echoed_secrets {
                 sendito_core::vars::scrub_bytes(&body, &secrets).unwrap_or(body)
             } else {
@@ -279,6 +312,7 @@ pub async fn exec_mcp(
                 scripts: results,
                 scope_errors,
                 needs_login: false,
+                hint: None,
             });
         }
         Err(e) => {

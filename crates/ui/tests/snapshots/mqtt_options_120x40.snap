@@ -10,8 +10,8 @@ expression: screen
 │ Timeout        default · 30 s (Settings)                                               │
 │ Deadline       5000                                                                    │
 │ Verify TLS     [✓] On  turn off for self-signed certificates                           │
-│                                                                                        │
-│                                                                                        │
+│ Retries        none                                                                    │
+│ Retry wait     default · 1 s                                                           │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

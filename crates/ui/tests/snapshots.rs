@@ -162,6 +162,7 @@ fn fake_response(h: &mut Harness, body: &str, status: u16) {
         body_size: body.len() as u64,
         scripts,
         scope_errors: vec![],
+        hint: None,
     };
     h.app.tabs[h.app.active].running = None;
     h.app.on_msg(AppMsg::Http {
@@ -525,6 +526,10 @@ fn overlays() {
         snap_in(Area::Dialog, "palette_commands", h);
         h.key("esc f1");
         snap_in(Area::Dialog, "help", h);
+        // Shift+Tab from the first section: the last ones are the functions.
+        // Six steps land on the first of them, "Template functions".
+        h.key("shift+tab shift+tab shift+tab shift+tab shift+tab shift+tab");
+        snap_in(Area::Dialog, "help_functions", h);
         h.key("esc ctrl+w ,");
         snap_in(Area::Dialog, "settings", h);
         h.key("esc f4");
@@ -632,6 +637,7 @@ fn vim_mode_and_history() {
                 duration_ms: 14,
                 size: 291,
                 error: None,
+                response: None,
             },
             sendito_store::history::HistoryEntry {
                 ts: "2026-11-21T10:14:02Z".into(),
@@ -646,6 +652,7 @@ fn vim_mode_and_history() {
                 duration_ms: 3,
                 size: 0,
                 error: Some("UNAVAILABLE".into()),
+                response: None,
             },
         ]);
         h.app.focus = Focus::Sidebar;
@@ -730,9 +737,76 @@ fn footer_and_ctrl_w_menu() {
         h.app.set_status("connection refused", StatusKind::Error);
         snap_in(Area::Footer, "footer_message_error", h);
         h.app.status = None;
-        h.app.project.config.ui.hints = "full".into();
-        snap_in(Area::Footer, "footer_hints_full", h);
+        h.app.project.config.ui.hints = "short".into();
+        snap_in(Area::Footer, "footer_hints_short", h);
         h.app.project.config.ui.hints = "off".into();
         snap_in(Area::Footer, "footer_hints_off", h);
+    });
+}
+
+/// The run tab with fabricated rows: the summary, the rows and the
+/// selected row's response.
+#[test]
+fn run_tab() {
+    use sendito_core::script::AssertResult;
+    use sendito_pipeline::suite::{Entry, Event, Sent};
+    each_small(|h| {
+        h.app.run_command("run Users");
+        // Stop the run before it sends: the rows are fabricated below.
+        h.app.dispatch(sendito_ui::keymap::Action::Cancel);
+        h.wait_idle(10);
+        let id = h.app.tabs[h.app.active].id;
+        if let Some(v) = h.app.tabs[h.app.active].run.as_mut() {
+            v.rows.clear();
+            v.shown = None;
+        }
+        h.app.tabs[h.app.active].response = None;
+        let a = |label: &str, pass, actual: &str| AssertResult {
+            label: label.into(),
+            pass,
+            actual: actual.into(),
+        };
+        let rows = [
+            (
+                "Users/list users.toml",
+                "pass",
+                "200 OK",
+                vec![a("status == 200", true, "200")],
+            ),
+            (
+                "Users/get user.toml",
+                "fail",
+                "404 Not Found",
+                vec![a("status == 200", false, "404")],
+            ),
+            ("Users/create user.toml", "pass", "201 Created", vec![]),
+        ];
+        for (i, (path, outcome, status, asserts)) in rows.into_iter().enumerate() {
+            let entry = Entry {
+                path: path.into(),
+                kind: Some("http"),
+                outcome,
+                status: Some(status.into()),
+                duration_ms: Some(10 + i as u128),
+                asserts,
+                unresolved: Some(false),
+                attempts: 1,
+                ..Default::default()
+            };
+            h.app.on_msg(AppMsg::Run {
+                tab: id,
+                event: Box::new(Event::Finished(Box::new(Sent {
+                    entry,
+                    response: None,
+                    output: Vec::new(),
+                }))),
+            });
+        }
+        h.key("up");
+        if let Some(v) = h.app.tabs[h.app.active].run.as_mut() {
+            v.took = Some(Duration::from_millis(412));
+        }
+        h.app.status = None;
+        snap_in(Area::Main, "run_tab", h);
     });
 }

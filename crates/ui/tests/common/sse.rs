@@ -62,6 +62,7 @@ pub fn demo(h: &mut Harness) {
         error: None,
         scripts: Default::default(),
         scope_errors: Vec::new(),
+        hint: None,
     });
     h.app.status = None;
     h.app.focus = sendito_ui::app::Focus::ReqBody;

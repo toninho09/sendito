@@ -27,7 +27,31 @@ pub fn names_scope(
         }
     }
     scope.push_layer(RUNTIME_LAYER, runtime.clone());
+    scope.set_catalog(catalog(envs).0);
+    scope.set_names_only();
     scope
+}
+
+/// The user's Lua functions from the directories of `envs`, with the
+/// messages of the files that did not load.
+pub fn catalog(envs: &Envs) -> (Arc<sendito_core::lua_script::LuaCatalog>, Vec<String>) {
+    let (files, mut errors) = sendito_store::lua_lib::load(&envs.lua_dirs);
+    let (catalog, more) = sendito_core::lua_script::LuaCatalog::new(files);
+    errors.extend(more);
+    (Arc::new(catalog), errors)
+}
+
+/// The unresolved names as `{{name}}`, joined with commas. A function call
+/// that fails gets the reason, for example `{{ $uuidBytes(id) }} ("x" is not
+/// a UUID)`.
+pub fn unresolved_list(un: &[String], scope: &Scope) -> String {
+    un.iter()
+        .map(|u| match scope.call_error(u) {
+            Some(why) => format!("{{{{{u}}}}} ({why})"),
+            None => format!("{{{{{u}}}}}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Builds the full scope with secret values. May block on the keychain.
@@ -75,6 +99,9 @@ pub fn build_scope_checked(
         }
     }
     scope.push_layer(RUNTIME_LAYER, runtime.clone());
+    let (lua, lua_errors) = catalog(envs);
+    scope.set_catalog(lua);
+    errors.extend(lua_errors);
     (scope, errors, failed)
 }
 
@@ -102,6 +129,8 @@ pub fn unresolved(req: &Request, names: &Scope) -> Vec<String> {
 /// defines it.
 pub fn unresolved_loaded(req: &Request, scope: &Scope, failed: &[String]) -> Vec<String> {
     let mut scope = without(scope, failed);
+    // The send resolves `$prompt`, `$select` and `$response` before it renders.
+    scope.set_pre_send_deferred();
     let req = dry_pre(req, &mut scope);
     unresolved(&req, &scope)
 }
@@ -147,6 +176,7 @@ pub fn unresolved_send(
 /// also inside another value. A runtime value above still wins.
 pub(super) fn without(scope: &Scope, names: &[String]) -> Scope {
     let mut out = Scope::new();
+    out.set_catalog(scope.catalog().clone());
     for l in scope.layers() {
         let vars = l
             .vars

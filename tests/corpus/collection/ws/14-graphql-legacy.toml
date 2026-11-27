@@ -1,0 +1,6 @@
+kind = "websocket"
+url = "{{ws_url}}/graphql"
+
+[graphql]
+query = "subscription { tick }"
+protocol = "graphql-ws"

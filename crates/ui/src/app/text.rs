@@ -1,4 +1,4 @@
-//! Text builders for reports, timing, headers, events and help. They do not use `App`.
+//! Text builders for reports, timing, headers and events. They do not use `App`.
 
 use super::*;
 
@@ -15,63 +15,19 @@ pub fn prompt_verb(a: &PromptAction) -> &'static str {
         PromptAction::CustomMethod => "use",
         PromptAction::McpServer { .. } => "add",
         PromptAction::MoveToSecret(_) => "move",
+        PromptAction::SendValue => "send",
     }
 }
 
 /// A short, plain reason for a transport error (the full text follows it).
 /// A few words for the status line.
 pub(super) fn short_error(e: &str) -> &'static str {
-    let l = e.to_lowercase();
-    if l.contains("connection refused") || l.contains("os error 111") || l.contains("os error 61") {
-        "connection refused"
-    } else if l.contains("dns error")
-        || l.contains("failed to lookup")
-        || l.contains("name or service not known")
-    {
-        "host name not found (DNS)"
-    } else if l.contains("timed out") || l.contains("timeout") {
-        "timed out"
-    } else if l.contains("certificate") || l.contains("tls") || l.contains("handshake") {
-        "TLS failure"
-    } else if l.contains("connection reset") || l.contains("broken pipe") {
-        "connection closed by the server"
-    } else if l.contains("no such file") || l.contains("os error 2") {
-        "file not found"
-    } else {
-        "request failed"
-    }
+    sendito_pipeline::diagnose::label(e)
 }
 
+/// The first line of a failure: what happened, in one sentence.
 pub(super) fn explain_error(e: &str) -> String {
-    let l = e.to_lowercase();
-    let host = l
-        .split("for url (")
-        .nth(1)
-        .and_then(|r| r.split(')').next())
-        .unwrap_or("");
-    let target = if host.is_empty() {
-        "the server".to_string()
-    } else {
-        host.to_string()
-    };
-    if l.contains("connection refused") || l.contains("os error 111") || l.contains("os error 61") {
-        format!("nothing is listening at {target} (connection refused).")
-    } else if l.contains("dns error")
-        || l.contains("failed to lookup")
-        || l.contains("name or service not known")
-    {
-        "the host name could not be resolved (DNS).".into()
-    } else if l.contains("timed out") || l.contains("timeout") {
-        "the server did not answer in time (timeout).".into()
-    } else if l.contains("certificate") || l.contains("tls") || l.contains("handshake") {
-        "the TLS connection failed (certificate or handshake); Options can turn off TLS verification.".into()
-    } else if l.contains("connection reset") || l.contains("broken pipe") {
-        "the server closed the connection.".into()
-    } else if l.contains("no such file") || l.contains("os error 2") {
-        "a file the request sends was not found.".into()
-    } else {
-        "see the details below.".into()
-    }
+    sendito_pipeline::diagnose::explain(e)
 }
 
 /// "1 assertion", "3 assertions".
@@ -582,49 +538,4 @@ pub(super) fn ws_timing_text(st: &crate::tab::StreamStats) -> String {
             st.sent, st.received
         ),
     )
-}
-
-pub(super) fn help_text(km: &Keymap, vim: bool) -> String {
-    let mut s = String::from("All keys, including any you changed in the config.\n");
-    s.push_str(&format!(
-        "Current mode: {} (switch in Settings, {}).\n",
-        if vim { "vim" } else { "conventional" },
-        km.hint(Action::Settings, vim)
-    ));
-    let mut cur = None;
-    for (ctx, a, conv, vimk) in km.rows() {
-        if cur != Some(ctx) {
-            cur = Some(ctx);
-            s.push_str(&format!("\n── {} ──\n", ctx.title()));
-        }
-        let keys = if vim { vimk } else { conv };
-        if keys.is_empty() {
-            continue;
-        }
-        s.push_str(&format!("  {:<28} {}\n", keys, a.description()));
-    }
-    // Fixed keys, one section per place they work in.
-    let mut place = "";
-    let kw = crate::keymap::FIXED_KEYS
-        .iter()
-        .map(|(_, k, _)| k.chars().count())
-        .max()
-        .unwrap_or(28)
-        .max(28);
-    for (w, k, d) in crate::keymap::FIXED_KEYS {
-        if *w != place {
-            place = w;
-            s.push_str(&format!("\n── Fixed keys · {w} ──\n"));
-        }
-        s.push_str(&format!("  {k:<kw$}  {d}\n"));
-    }
-    s.push_str("\n── Symbols ──\n");
-    for (sym, what) in crate::keymap::SYMBOLS {
-        s.push_str(&format!("  {sym:<28} {what}\n"));
-    }
-    s.push_str("\n── Commands (command palette) ──\n");
-    for (c, d) in crate::overlay::COMMANDS {
-        s.push_str(&format!("  {c:<28} {d}\n"));
-    }
-    s
 }

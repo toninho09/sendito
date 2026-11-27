@@ -57,12 +57,18 @@ pub struct Editors {
     pub grpc_verify: bool,
     pub deadline: TextEditor,
     pub max_events: TextEditor,
+    /// `[options] retry` and `retry_interval_ms`, used by `sendito run`.
+    pub retry: TextEditor,
+    pub retry_interval: TextEditor,
     pub schema_files: bool,
     pub proto_files: TextEditor,
     pub import_paths: TextEditor,
     pub mcp_server: TextEditor,
+    pub mcp_op: McpOp,
     pub mcp_tool: TextEditor,
     pub ws_subprotocols: TextEditor,
+    pub ws_gql_protocol: WsGraphqlProtocol,
+    pub ws_init_payload: TextEditor,
     /// A folder's variables (Kind::Folder only).
     pub vars: Table,
     pub aws_access: TextEditor,
@@ -114,6 +120,7 @@ pub fn folder_request(f: &FolderSettings) -> Request {
         common: RequestCommon {
             scripts: f.scripts.clone(),
             description: f.description.clone(),
+            ..Default::default()
         },
         ..Default::default()
     })
@@ -283,6 +290,19 @@ impl Editors {
             _ => None,
         }
     }
+    /// Switches a WebSocket tab between messages and a GraphQL subscription.
+    fn set_ws_graphql(&mut self, on: bool) {
+        self.body_kind = if on {
+            BodyKind::GraphQL
+        } else {
+            BodyKind::None
+        };
+        if on {
+            self.body_text.highlight = Highlight::None;
+            self.graphql_section = 0;
+        }
+    }
+
     pub fn from_request(req: &Request) -> Self {
         let mut e = Editors {
             kind: Kind::Http,
@@ -418,13 +438,21 @@ impl Editors {
             grpc_verify: true,
             deadline: TextEditor::single("").with_placeholder("none"),
             max_events: TextEditor::single("").with_placeholder("none"),
+            retry: TextEditor::single("").with_placeholder("none"),
+            retry_interval: TextEditor::single("").with_placeholder(&format!(
+                "default · {}",
+                crate::units::format_ms(sendito_core::model::DEFAULT_RETRY_INTERVAL_MS)
+            )),
             schema_files: false,
             proto_files: TextEditor::single("").with_placeholder("protos/service.proto"),
             import_paths: TextEditor::single("").with_placeholder("protos"),
+            mcp_op: McpOp::Tool,
             mcp_server: TextEditor::single("")
                 .with_placeholder("server name from [mcp.servers] or http(s):// URL"),
             mcp_tool: TextEditor::single("").with_placeholder("tool name"),
             ws_subprotocols: TextEditor::single("").with_placeholder("chat.v2, chat"),
+            ws_gql_protocol: WsGraphqlProtocol::TransportWs,
+            ws_init_payload: TextEditor::single("").with_placeholder("{\"token\": \"{{token}}\"}"),
             vars: Table::kv("Variable", "Value"),
             aws_access: TextEditor::single("").with_placeholder("{{aws_access_key_id}}"),
             aws_secret: TextEditor::single("").with_placeholder("{{aws_secret_access_key}}"),
@@ -593,6 +621,16 @@ impl Editors {
                 e.headers = kv_table("Header", "Value", &w.headers);
                 e.ws_subprotocols.set_text(&list_text(&w.subprotocols));
                 e.message.set_text(&w.messages);
+                // A GraphQL session uses the GraphQL body editors of HTTP.
+                if let Some(g) = &w.graphql {
+                    e.body_kind = BodyKind::GraphQL;
+                    e.body_text.set_text(&g.query);
+                    e.body_text.highlight = Highlight::None;
+                    e.graphql_variables.set_text(&g.variables);
+                    e.graphql_operation.set_text(&g.operation_name);
+                    e.ws_gql_protocol = g.protocol;
+                    e.ws_init_payload.set_text(&g.init_payload);
+                }
                 e.timeout
                     .set_text(&crate::units::ms_text(w.options.timeout_ms));
                 e.deadline
@@ -645,12 +683,19 @@ impl Editors {
             Request::Mcp(m) => {
                 e.kind = Kind::Mcp;
                 e.mcp_server.set_text(&m.server);
-                e.mcp_tool.set_text(&m.tool);
+                e.mcp_op = m.op;
+                e.mcp_tool.set_text(m.target());
                 e.message.set_text(&m.arguments);
                 e.timeout.set_text(&crate::units::ms_text(m.timeout_ms));
             }
         }
         e.description.set_text(req.description());
+        let common = req.common();
+        e.retry.set_text(&num_text(
+            (common.retry > 0).then_some(u64::from(common.retry)),
+        ));
+        e.retry_interval
+            .set_text(&crate::units::ms_text(common.retry_interval_ms));
         // A written description opens rendered, as a page to read.
         e.docs_preview = !req.description().is_empty();
         e
@@ -761,6 +806,10 @@ impl Editors {
         RequestCommon {
             scripts: self.scripts(),
             description: self.description.text(),
+            retry: parse_num(&self.retry.text())
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(0),
+            retry_interval_ms: crate::units::parse_ms(&self.retry_interval.text()),
         }
     }
 
@@ -922,7 +971,19 @@ impl Editors {
                 url: self.url.text(),
                 headers: kv_rows(&self.headers),
                 subprotocols: parse_list(&self.ws_subprotocols.text()),
-                messages: self.message.text(),
+                // A GraphQL session sends no messages: the file must not have both.
+                messages: if self.body_kind == BodyKind::GraphQL {
+                    "[]".into()
+                } else {
+                    self.message.text()
+                },
+                graphql: (self.body_kind == BodyKind::GraphQL).then(|| WsGraphql {
+                    query: self.body_text.text(),
+                    variables: self.graphql_variables.text(),
+                    operation_name: self.graphql_operation.text(),
+                    protocol: self.ws_gql_protocol,
+                    init_payload: self.ws_init_payload.text(),
+                }),
                 auth: self.auth(),
                 options: WsOptions {
                     timeout_ms: crate::units::parse_ms(&self.timeout.text()),
@@ -980,13 +1041,18 @@ impl Editors {
                     common: self.common(),
                 })
             }
-            Kind::Mcp => Request::Mcp(McpRequest {
-                server: self.mcp_server.text(),
-                tool: self.mcp_tool.text(),
-                arguments: self.message.text(),
-                timeout_ms: crate::units::parse_ms(&self.timeout.text()),
-                common: self.common(),
-            }),
+            Kind::Mcp => {
+                let mut m = McpRequest {
+                    server: self.mcp_server.text(),
+                    op: self.mcp_op,
+                    arguments: self.message.text(),
+                    timeout_ms: crate::units::parse_ms(&self.timeout.text()),
+                    common: self.common(),
+                    ..Default::default()
+                };
+                m.set_target(self.mcp_tool.text());
+                Request::Mcp(m)
+            }
             Kind::Folder => folder_request(&FolderSettings {
                 headers: kv_rows(&self.headers),
                 auth: self.auth(),
@@ -1062,6 +1128,8 @@ impl Editors {
                     Field::FollowRedirects,
                     Field::VerifyTls,
                     Field::Cookies,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Sse => match tab {
@@ -1076,6 +1144,8 @@ impl Editors {
                     Field::FollowRedirects,
                     Field::VerifyTls,
                     Field::Cookies,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Grpc => match tab {
@@ -1088,22 +1158,41 @@ impl Editors {
                     if self.schema_files {
                         v.extend([Field::ProtoFiles, Field::ImportPaths]);
                     }
-                    v.extend([Field::Tls, Field::GrpcVerify, Field::Deadline]);
+                    v.extend([
+                        Field::Tls,
+                        Field::GrpcVerify,
+                        Field::Deadline,
+                        Field::Retry,
+                        Field::RetryInterval,
+                    ]);
                 }
             },
             Kind::Ws => match tab {
                 0 => v.push(Field::Headers),
-                1 => v.push(Field::WsMessages),
+                // The editor comes first, so Enter on the tab reaches it; the
+                // Send choice stays at the bottom in both modes.
+                1 if self.body_kind == BodyKind::GraphQL => v.extend([
+                    Field::GraphqlSection,
+                    Field::BodyText,
+                    Field::WsGraphqlProtocol,
+                    Field::WsMode,
+                ]),
+                1 => v.extend([Field::WsMessages, Field::WsMode]),
                 2 => auth_fields(&mut v),
                 3 => v.extend([Field::ScriptSection, self.script_table()]),
-                _ => v.extend([
-                    Field::Timeout,
-                    Field::Deadline,
-                    Field::WsSubprotocols,
-                    Field::Tls,
-                    Field::GrpcVerify,
-                    Field::Cookies,
-                ]),
+                _ => {
+                    v.extend([Field::Timeout, Field::Deadline, Field::WsSubprotocols]);
+                    if self.body_kind == BodyKind::GraphQL {
+                        v.push(Field::WsInitPayload);
+                    }
+                    v.extend([
+                        Field::Tls,
+                        Field::GrpcVerify,
+                        Field::Cookies,
+                        Field::Retry,
+                        Field::RetryInterval,
+                    ]);
+                }
             },
             Kind::Mqtt => match tab {
                 0 => v.push(Field::MqttSubscriptions),
@@ -1128,13 +1217,15 @@ impl Editors {
                     Field::Timeout,
                     Field::Deadline,
                     Field::VerifyTls,
+                    Field::Retry,
+                    Field::RetryInterval,
                 ]),
             },
             Kind::Mcp => match tab {
-                0 => v.extend([Field::McpServer, Field::McpTool]),
+                0 => v.extend([Field::McpServer, Field::McpOp, Field::McpTool]),
                 1 => v.push(Field::Message),
                 2 => v.extend([Field::ScriptSection, self.script_table()]),
-                _ => v.push(Field::Timeout),
+                _ => v.extend([Field::Timeout, Field::Retry, Field::RetryInterval]),
             },
             Kind::Folder => match tab {
                 0 => v.push(Field::Headers),
@@ -1205,10 +1296,13 @@ impl Editors {
             Field::ImportPaths => &mut self.import_paths,
             Field::Deadline => &mut self.deadline,
             Field::MaxEvents => &mut self.max_events,
+            Field::Retry => &mut self.retry,
+            Field::RetryInterval => &mut self.retry_interval,
             Field::McpServer => &mut self.mcp_server,
             Field::McpTool => &mut self.mcp_tool,
             Field::WsSubprotocols => &mut self.ws_subprotocols,
             Field::WsMessages => &mut self.message,
+            Field::WsInitPayload => &mut self.ws_init_payload,
             Field::AwsAccessKey => &mut self.aws_access,
             Field::AwsSecretKey => &mut self.aws_secret,
             Field::AwsSessionToken => &mut self.aws_token,
@@ -1282,6 +1376,9 @@ impl Editors {
             Field::JwtAlgorithm => self.jwt_alg.as_str().into(),
             Field::MqttWillQos => self.will_qos.to_string(),
             Field::MqttProtocol => self.mqtt_protocol.as_str().into(),
+            Field::McpOp => self.mcp_op.as_str().into(),
+            Field::WsMode => WS_MODES[usize::from(self.body_kind == BodyKind::GraphQL)].into(),
+            Field::WsGraphqlProtocol => self.ws_gql_protocol.as_str().into(),
             Field::MqttWillRetain => onoff(self.will_retain),
             Field::MqttWillBase64 => onoff(self.will_base64),
             Field::MqttCleanSession => onoff(self.clean_session),
@@ -1316,6 +1413,12 @@ impl Editors {
             Field::Cookies => vec!["Config default".into(), "On".into(), "Off".into()],
             Field::MqttWillQos => QOS.iter().map(|q| q.to_string()).collect(),
             Field::MqttProtocol => MqttProtocol::ALL
+                .iter()
+                .map(|p| p.as_str().to_string())
+                .collect(),
+            Field::McpOp => McpOp::ALL.iter().map(|o| o.as_str().to_string()).collect(),
+            Field::WsMode => WS_MODES.iter().map(|m| m.to_string()).collect(),
+            Field::WsGraphqlProtocol => WsGraphqlProtocol::ALL
                 .iter()
                 .map(|p| p.as_str().to_string())
                 .collect(),
@@ -1380,6 +1483,23 @@ impl Editors {
                     .unwrap_or(0);
                 self.mqtt_protocol = all[step(i, all.len())];
             }
+            Field::McpOp => {
+                let all = McpOp::ALL;
+                let i = all.iter().position(|o| *o == self.mcp_op).unwrap_or(0);
+                self.mcp_op = all[step(i, all.len())];
+            }
+            Field::WsMode => {
+                let graphql = step(usize::from(self.body_kind == BodyKind::GraphQL), 2) == 1;
+                self.set_ws_graphql(graphql);
+            }
+            Field::WsGraphqlProtocol => {
+                let all = WsGraphqlProtocol::ALL;
+                let i = all
+                    .iter()
+                    .position(|p| *p == self.ws_gql_protocol)
+                    .unwrap_or(0);
+                self.ws_gql_protocol = all[step(i, all.len())];
+            }
             Field::MqttWillRetain => self.will_retain = !self.will_retain,
             Field::MqttWillBase64 => self.will_base64 = !self.will_base64,
             Field::MqttCleanSession => self.clean_session = !self.clean_session,
@@ -1428,6 +1548,17 @@ impl Editors {
             Field::MqttProtocol => {
                 if let Some(p) = MqttProtocol::ALL.get(index) {
                     self.mqtt_protocol = *p;
+                }
+            }
+            Field::McpOp => {
+                if let Some(o) = McpOp::ALL.get(index) {
+                    self.mcp_op = *o;
+                }
+            }
+            Field::WsMode => self.set_ws_graphql(index == 1),
+            Field::WsGraphqlProtocol => {
+                if let Some(p) = WsGraphqlProtocol::ALL.get(index) {
+                    self.ws_gql_protocol = *p;
                 }
             }
             _ => {}
@@ -1568,6 +1699,8 @@ impl Editors {
             &mut self.message,
             &mut self.deadline,
             &mut self.max_events,
+            &mut self.retry,
+            &mut self.retry_interval,
             &mut self.proto_files,
             &mut self.import_paths,
             &mut self.ws_subprotocols,

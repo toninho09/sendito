@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use percent_encoding::{AsciiSet, utf8_percent_encode};
 
+use crate::funcs;
 use crate::model::*;
 use crate::vars::{Rendered, Scope};
 
@@ -518,7 +519,9 @@ pub struct ResolvedGrpc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedMcp {
     pub server: String,
-    pub tool: String,
+    pub op: McpOp,
+    /// The tool, the resource URI or the prompt name, as `op` says.
+    pub target: String,
     /// Argument JSON text as written, variables rendered.
     pub arguments: String,
     pub timeout_ms: Option<u64>,
@@ -535,6 +538,8 @@ pub struct ResolvedWs {
     pub subprotocols: Vec<String>,
     /// Messages sent right after the handshake, as a JSON document as written.
     pub messages: String,
+    /// The GraphQL operation, its variables rendered; it replaces `messages`.
+    pub graphql: Option<WsGraphql>,
     pub timeout_ms: Option<u64>,
     pub deadline_ms: Option<u64>,
     pub cookies: Option<bool>,
@@ -553,7 +558,8 @@ pub fn resolve_mcp(req: &McpRequest, scope: &Scope) -> ResolvedMcp {
     };
     ResolvedMcp {
         server: ctx.r(req.server.trim()),
-        tool: ctx.r(req.tool.trim()),
+        op: req.op,
+        target: ctx.r(req.target().trim()),
         arguments: ctx.r(&req.arguments),
         timeout_ms: req.timeout_ms,
         unresolved: ctx.unresolved,
@@ -685,6 +691,13 @@ pub fn resolve_ws(req: &WebSocketRequest, scope: &Scope) -> ResolvedWs {
             .filter(|p| !p.is_empty())
             .collect(),
         messages: ctx.r(&req.messages),
+        graphql: req.graphql.as_ref().map(|g| WsGraphql {
+            query: ctx.r(&g.query),
+            variables: ctx.r(&g.variables),
+            operation_name: ctx.r(g.operation_name.trim()),
+            protocol: g.protocol,
+            init_payload: ctx.r(&g.init_payload),
+        }),
         timeout_ms: req.options.timeout_ms,
         deadline_ms: req.options.deadline_ms,
         cookies: req.options.cookies,
@@ -937,6 +950,27 @@ pub fn unresolved_vars(req: &Request, scope: &Scope) -> Vec<String> {
     }
 }
 
+/// The pre-send calls (`$prompt`, `$select`, `$response`) the request uses
+/// and `scope` has no value for, with the call text, in order: in its fields,
+/// in the values they reference and in its pre-request rows. A call that is
+/// not valid is left out: the send check reports it.
+pub fn pre_send_calls(req: &Request, scope: &Scope) -> Vec<(String, funcs::PreSend)> {
+    let mut s = scope.clone();
+    s.set_pre_send_deferred();
+    unresolved_vars(req, &s);
+    for row in &req.scripts().pre {
+        s.render(&row.value);
+    }
+    s.pre_send_pending()
+        .into_iter()
+        .filter_map(|text| {
+            let call = funcs::parse(&text)?;
+            let p = funcs::pre_send(&call)?.ok()?;
+            Some((text, p))
+        })
+        .collect()
+}
+
 fn mask_kv(v: &[KeyValue], s: &Scope) -> Vec<KeyValue> {
     v.iter()
         .map(|kv| KeyValue {
@@ -1119,15 +1153,21 @@ pub fn mask_request(req: &Request, s: &Scope) -> Request {
             subprotocols: w.subprotocols.iter().map(|p| s.render_masked(p)).collect(),
             messages: s.render_masked(&w.messages),
             auth: mask_auth(&w.auth, s),
+            graphql: w.graphql.as_ref().map(|g| WsGraphql {
+                query: s.render_masked(&g.query),
+                variables: s.render_masked(&g.variables),
+                operation_name: s.render_masked(&g.operation_name),
+                init_payload: s.render_masked(&g.init_payload),
+                protocol: g.protocol,
+            }),
             options: w.options.clone(),
             common: w.common.clone(),
         }),
         Request::Mcp(m) => Request::Mcp(McpRequest {
             server: s.render_masked(&m.server),
-            tool: m.tool.clone(),
+            uri: s.render_masked(&m.uri),
             arguments: s.render_masked(&m.arguments),
-            timeout_ms: m.timeout_ms,
-            common: m.common.clone(),
+            ..m.clone()
         }),
     }
 }
@@ -1592,5 +1632,38 @@ mod tests {
             ..Default::default()
         });
         assert!(!format!("{:?}", mask_request(&b, &s)).contains("abc"));
+    }
+
+    #[test]
+    fn pre_send_calls_are_found_in_fields_values_and_pre_rows() {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert(
+            "otp".to_string(),
+            crate::vars::VarValue::plain("{{ $prompt('OTP') }}"),
+        );
+        let s = Scope::new().with_layer("env", env);
+        let mut req = Request::Http(HttpRequest {
+            url: "https://h/{{ $select('Mode', 'a', 'b') }}?o={{otp}}".into(),
+            ..Default::default()
+        });
+        req.scripts_mut().pre.push(SetVar {
+            var: "id".into(),
+            value: "{{ $response('Auth/login', '$.id') }}".into(),
+        });
+        let calls: Vec<String> = pre_send_calls(&req, &s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                "$select('Mode', 'a', 'b')",
+                "$prompt('OTP')",
+                "$response('Auth/login', '$.id')"
+            ]
+        );
+        // A kept value is not asked again.
+        s.keep("$prompt('OTP')", Rendered::default());
+        assert_eq!(pre_send_calls(&req, &s).len(), 2);
     }
 }

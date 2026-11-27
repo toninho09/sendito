@@ -33,12 +33,15 @@ use crate::tree::{RowKind, TreeState};
 use crate::viewer::{Doc, ViewMode, Viewer};
 
 mod actions;
+mod ask;
 mod commands;
 mod completion;
 mod dialogs;
 mod env;
 mod examples;
+mod external;
 mod folders;
+mod help;
 mod hints;
 mod history;
 mod import_export;
@@ -49,6 +52,7 @@ mod mouse;
 mod mqtt;
 mod overlay_keys;
 mod query;
+mod run_tab;
 mod schema;
 mod send;
 mod settings;
@@ -193,6 +197,8 @@ pub enum OverlayHit {
     EnvDelete(usize),
     /// The `.env` file line of the environment editor.
     EnvDotenv,
+    /// The Theme line of the environment editor.
+    EnvTheme,
     /// An entry of a record editor's list; the last is the "new" row.
     RecList(usize),
     /// A form field of a record editor, by its index in `visible()`.
@@ -237,6 +243,15 @@ pub enum Drag {
 }
 
 pub enum AppMsg {
+    /// Progress of the folder run of a run tab.
+    Run {
+        tab: u64,
+        event: Box<sendito_pipeline::suite::Event>,
+    },
+    /// The folder run of a run tab ended.
+    RunDone {
+        tab: u64,
+    },
     Http {
         tab: u64,
         outcome: Box<HttpOutcome>,
@@ -288,7 +303,7 @@ pub enum AppMsg {
         /// Open the picker; a false value only fills the tab's tool list
         /// (completion pulls it in the background).
         open_picker: bool,
-        result: Result<Vec<sendito_pipeline::mcp::Tool>, String>,
+        result: Result<sendito_pipeline::mcp::Catalog, String>,
         /// The server needs an OAuth sign-in.
         needs_login: bool,
     },
@@ -310,16 +325,22 @@ pub enum AppMsg {
         /// The scope, its errors and the names whose value did not load.
         result: Box<(Scope, Vec<String>, Vec<String>)>,
         then: ScopeThen,
-        /// "Send anyway" was chosen in the "Secrets not loaded" dialog.
+        /// "Send anyway" was chosen in the "Secrets not loaded" or
+        /// "Functions not resolved" dialog.
         secrets_ok: bool,
+        /// The unresolved names the user accepted before the values loaded.
+        accepted: Vec<String>,
     },
 }
 
-/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
-/// guarded by a cross-process lock).
+/// How long a note or a confirmation stays in the footer.
+const NOTE_TTL: Duration = Duration::from_secs(10);
+
 /// The last row of the cookie jar picker.
 const CLEAR_COOKIES: &str = "Clear all cookies";
 
+/// Outcome of a `:cookies` command, produced off the UI thread (the jar is
+/// guarded by a cross-process lock).
 pub enum CookiesOutcome {
     List(Vec<String>),
     Done(&'static str),
@@ -399,6 +420,16 @@ pub struct Areas {
 pub struct App {
     pub project: Project,
     pub theme: Theme,
+    /// The name of the theme in use: `[ui] theme`, the active environment's
+    /// theme or the last one chosen. A theme picker's preview does not
+    /// change it, so Esc comes back to it.
+    pub theme_name: String,
+    /// The theme of the active environment (the file's `theme` key), when it
+    /// names a known theme. The top bar shows the environment as a solid chip.
+    pub env_theme: Option<String>,
+    /// The theme of the environment editor's Theme line, shown while that
+    /// line has the focus (`App::preview_env_theme`).
+    env_preview: Option<String>,
     /// Built-in and user themes.
     pub themes: crate::theme::Registry,
     pub icons: crate::icons::Icons,
@@ -433,6 +464,9 @@ pub struct App {
     /// Inline completion popup; not an overlay: it does not dim or block.
     pub complete: Option<crate::complete::Completion>,
     pub status: Option<(String, StatusKind, Instant)>,
+    /// How long the jq bar waits after the last key before the filter runs
+    /// (`crate::tab::JQ_DEBOUNCE`; zero runs it at each key).
+    pub jq_debounce: Duration,
     /// Home directory, shown as `~` in paths.
     pub home: Option<PathBuf>,
     /// Where the last frame put the terminal cursor (None: hidden).
@@ -462,12 +496,25 @@ pub struct App {
     cookies_job: Option<(u64, tokio::task::JoinHandle<()>)>,
     cookies_job_seq: u64,
     pub filter: TextEditor,
-    pub osc52: Vec<String>,
+    /// A program to run outside the UI (`:edit`, `:pager`); the event loop
+    /// takes it.
+    pub external: Option<crate::external::External>,
     pub size: (u16, u16),
     pub parked_env: Option<EnvEditor>,
     /// Set by "Send anyway" in the "Secrets not loaded" dialog, for the next
     /// send only.
     secrets_ok: bool,
+    /// The `$prompt` / `$select` questions of a send, while they are asked.
+    asks: Option<ask::Asks>,
+    /// The answers of the last questions, for the next send of that tab only.
+    answers: Option<(u64, ask::Answers)>,
+    /// The last value of each `$prompt` / `$select` label (not secrets),
+    /// saved in the session.
+    prompt_values: BTreeMap<String, String>,
+    /// The MCP server sessions kept between calls (`[mcp] idle_timeout_s`).
+    pub mcp_pool: sendito_pipeline::mcp::Pool,
+    /// The stamp of the Lua catalog files and when `tick` last read it.
+    lua_stamp: (u64, Instant),
     /// Credentials typed as plain text show as typed although Hide plain
     /// secrets is on (`Ctrl+W *`).
     pub reveal_secrets: bool,
@@ -544,9 +591,16 @@ impl App {
             .map(|(k, v)| (k.clone(), VarValue::plain(v.clone())))
             .collect();
         let names = runner::names_scope(&project.envs, active_env.as_deref(), &runtime);
+        let lua_stamp = (
+            sendito_store::lua_lib::stamp(&project.envs.lua_dirs),
+            Instant::now(),
+        );
         let (tx, rx) = mpsc::unbounded_channel();
         let icons = crate::icons::Icons::by_name(&project.config.ui.icons);
         let mut app = App {
+            theme_name: project.config.ui.theme.clone(),
+            env_theme: None,
+            env_preview: None,
             project,
             theme,
             themes,
@@ -575,6 +629,7 @@ impl App {
             pending: Vec::new(),
             overlay: None,
             status: None,
+            jq_debounce: crate::tab::JQ_DEBOUNCE,
             home: std::env::var_os("HOME").map(PathBuf::from),
             last_cursor: None,
             rt,
@@ -601,10 +656,15 @@ impl App {
             cookies_job: None,
             cookies_job_seq: 0,
             filter: TextEditor::single("").with_placeholder("filter…"),
-            osc52: Vec::new(),
+            external: None,
             size: (80, 24),
             parked_env: None,
             secrets_ok: false,
+            asks: None,
+            answers: None,
+            prompt_values: session.prompt_values.clone(),
+            lua_stamp,
+            mcp_pool: Default::default(),
             reveal_secrets: false,
             parked_records: None,
             parked_keymap: None,
@@ -614,6 +674,7 @@ impl App {
             cursor: None,
             complete: None,
         };
+        warnings.extend(app.apply_env_theme());
         app.load_folders();
         app.restore_tabs(&session);
         if app.tabs.is_empty() {
@@ -693,7 +754,13 @@ impl App {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, kind: StatusKind) {
-        self.status = Some((msg.into(), kind, Instant::now()));
+        let msg = msg.into();
+        match kind {
+            StatusKind::Warn => sendito_store::debug_log::log("WARN", &msg),
+            StatusKind::Error => sendito_store::debug_log::log("ERROR", &msg),
+            StatusKind::Info | StatusKind::Ok => {}
+        }
+        self.status = Some((msg, kind, Instant::now()));
     }
 
     pub fn tab(&self) -> Option<&Tab> {
@@ -709,12 +776,18 @@ impl App {
     }
 
     pub fn session(&self) -> Session {
+        // Run tabs are not kept: the active index counts the other tabs.
+        let active_tab = (self.tabs.iter().take(self.active + 1))
+            .filter(|t| t.run.is_none())
+            .count()
+            .saturating_sub(1);
         Session {
             active_env: self.active_env.clone(),
-            active_tab: self.active,
+            active_tab,
             tabs: self
                 .tabs
                 .iter()
+                .filter(|t| t.run.is_none())
                 .map(|t| SessionTab {
                     path: t.path.clone(),
                     name: t.name.clone(),
@@ -741,6 +814,7 @@ impl App {
                 .map(|(k, v)| (k.clone(), v.value.clone()))
                 .collect(),
             config_scope: self.config_scope,
+            prompt_values: self.prompt_values.clone(),
         }
     }
 
@@ -760,12 +834,21 @@ impl App {
         if self.session_dirty && self.last_session_save.elapsed() > Duration::from_secs(2) {
             self.save_session();
         }
-        if let Some((_, kind, at)) = &self.status {
-            let ttl = if *kind == StatusKind::Error { 12 } else { 6 };
-            if at.elapsed() > Duration::from_secs(ttl) {
-                self.status = None;
-            }
+        // A note or a confirmation lasts `NOTE_TTL` (or until the next key);
+        // a warning or an error stays until a new message replaces it.
+        let expired = matches!(
+            &self.status,
+            Some((_, StatusKind::Info | StatusKind::Ok, at)) if at.elapsed() > NOTE_TTL
+        );
+        if expired {
+            self.status = None;
         }
+        let ran = self.run_due_queries() || expired;
+        if self.reload_lua_catalog() {
+            return true;
+        }
+        self.mcp_pool
+            .reap(Duration::from_secs(self.project.config.mcp.idle_timeout_s));
         // Skip missed intervals while a request is running. Each watched tab
         // can continue in the background; dialogs pause automatic sends.
         let now = Instant::now();
@@ -779,10 +862,10 @@ impl App {
         }
         // The keymap editor ends a recording after a pause.
         if let Some(Overlay::Keymap(e)) = &mut self.overlay {
-            return e.capture_due();
+            return e.capture_due() || ran;
         }
         if self.overlay.is_some() {
-            return false;
+            return ran;
         }
         let due: Vec<usize> = self
             .tabs
@@ -820,7 +903,50 @@ impl App {
             }
             changed = true;
         }
-        changed
+        changed || ran
+    }
+
+    /// Runs the jq bar text whose typing pause ended. Returns whether one ran.
+    fn run_due_queries(&mut self) -> bool {
+        let now = Instant::now();
+        let mut ran = false;
+        for tab in &mut self.tabs {
+            if let Some(r) = tab.response.as_mut() {
+                ran |= r.run_due_query(now);
+            }
+        }
+        ran
+    }
+
+    /// Whether a jq bar text waits for its typing pause to end.
+    pub fn query_due(&self) -> bool {
+        self.tabs.iter().any(|t| {
+            t.response
+                .as_ref()
+                .and_then(|r| r.query.as_ref())
+                .is_some_and(|q| q.due.is_some())
+        })
+    }
+
+    /// Reloads the Lua catalog of the names scope when a catalog file was
+    /// added, removed or written. It looks at most every 2 seconds. Returns
+    /// whether it reloaded.
+    fn reload_lua_catalog(&mut self) -> bool {
+        if self.lua_stamp.1.elapsed() < Duration::from_secs(2) {
+            return false;
+        }
+        let stamp = sendito_store::lua_lib::stamp(&self.project.envs.lua_dirs);
+        let old = std::mem::replace(&mut self.lua_stamp, (stamp, Instant::now())).0;
+        if stamp == old {
+            return false;
+        }
+        let (catalog, errors) = runner::catalog(&self.project.envs);
+        self.names.set_catalog(catalog);
+        match errors.first() {
+            Some(e) => self.set_status(format!("Lua catalog: {e}"), StatusKind::Warn),
+            None => self.set_status("Lua catalog reloaded", StatusKind::Info),
+        }
+        true
     }
 
     /// Starts or stops re-sending the active request every `secs` seconds

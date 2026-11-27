@@ -34,6 +34,8 @@ pub struct RequestEntry {
     pub rel: String,
     /// `GET`, `POST`, ..., or `GRPC`.
     pub badge: String,
+    /// The request's `description`, read with the badge (empty: none).
+    pub description: String,
 }
 
 impl Folder {
@@ -191,6 +193,7 @@ pub fn validate_rel(rel: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct Collection {
     pub root: PathBuf,
     pub ignore: Vec<String>,
@@ -246,8 +249,8 @@ impl Collection {
             .unwrap_or_else(|| "collection".into());
         let mut files: Vec<(String, PathBuf)> = Vec::new();
         let mut root = self.scan_dir(&self.root, String::new(), name, &mut files)?;
-        let badges = read_badges(&files);
-        fill_badges(&mut root, &badges);
+        let heads = read_heads(&files);
+        fill_heads(&mut root, &heads);
         prune(&mut root, true);
         Ok(root)
     }
@@ -305,6 +308,7 @@ impl Collection {
                     name: name_of(&fname).to_string(),
                     rel: child_rel,
                     badge: String::new(),
+                    description: String::new(),
                 });
             } else {
                 has_other_files = true;
@@ -419,17 +423,34 @@ impl Collection {
 
     /// Renames a folder or request in place. Returns the new relative path.
     pub fn rename(&self, rel: &str, new_name: &str) -> Result<String> {
-        if Self::is_request_rel(rel) {
-            validate_request_name(new_name)?;
-        } else {
-            validate_folder_name(new_name)?;
+        self.relocate(rel, parent_rel(rel), new_name)
+    }
+
+    /// Moves a node to the folder `new_parent` ("" is the root) with the
+    /// name `new_name` (without `.toml`) in one step: when the target is
+    /// taken or a name is not valid, nothing changes. Folders above the
+    /// target that are missing are created. Returns the new relative path.
+    pub fn relocate(&self, rel: &str, new_parent: &str, new_name: &str) -> Result<String> {
+        let is_request = Self::is_request_rel(rel);
+        if new_name != name_of(rel) {
+            if is_request {
+                validate_request_name(new_name)?;
+            } else {
+                validate_folder_name(new_name)?;
+            }
         }
-        let fname = if Self::is_request_rel(rel) {
+        validate_rel(new_parent)?;
+        if !is_request && (new_parent == rel || new_parent.starts_with(&format!("{rel}/"))) {
+            return Err(StoreError::Invalid(
+                "cannot move a folder into itself".into(),
+            ));
+        }
+        let fname = if is_request {
             format!("{new_name}.{EXT}")
         } else {
             new_name.to_string()
         };
-        let new_rel = join_rel(parent_rel(rel), &fname);
+        let new_rel = join_rel(new_parent, &fname);
         if new_rel == rel {
             return Ok(new_rel);
         }
@@ -437,6 +458,9 @@ impl Collection {
         // Case-only renames on case-insensitive file systems refer to the same file.
         if to.exists() && !rel.eq_ignore_ascii_case(&new_rel) {
             return Err(StoreError::Exists(to));
+        }
+        if let Some(dir) = to.parent() {
+            fs::create_dir_all(dir).map_err(|e| StoreError::io(dir, e))?;
         }
         fs::rename(&from, &to).map_err(|e| StoreError::io(&from, e))?;
         self.carry_examples(rel, &new_rel, false)?;
@@ -463,26 +487,7 @@ impl Collection {
 
     /// Moves a node into another folder ("" is the root).
     pub fn move_to(&self, rel: &str, new_parent: &str) -> Result<String> {
-        validate_rel(new_parent)?;
-        let base = rel.rsplit('/').next().unwrap_or(rel);
-        if !Self::is_request_rel(rel)
-            && (new_parent == rel || new_parent.starts_with(&format!("{rel}/")))
-        {
-            return Err(StoreError::Invalid(
-                "cannot move a folder into itself".into(),
-            ));
-        }
-        let new_rel = join_rel(new_parent, base);
-        if new_rel == rel {
-            return Ok(new_rel);
-        }
-        let (from, to) = (self.abs(rel), self.abs(&new_rel));
-        if to.exists() {
-            return Err(StoreError::Exists(to));
-        }
-        fs::rename(&from, &to).map_err(|e| StoreError::io(&from, e))?;
-        self.carry_examples(rel, &new_rel, false)?;
-        Ok(new_rel)
+        self.relocate(rel, new_parent, name_of(rel))
     }
 
     /// Copies a node next to itself as "<name> copy", "<name> copy 2", ...
@@ -585,8 +590,15 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Reads badges for many files, spreading the work over a few threads.
-fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String, Option<String>> {
+/// What the scan reads from the top-level keys of a request file.
+struct Head {
+    /// `None`: the file is not a request.
+    badge: Option<String>,
+    description: String,
+}
+
+/// Reads the heads of many files, spreading the work over a few threads.
+fn read_heads(files: &[(String, PathBuf)]) -> std::collections::HashMap<String, Head> {
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
@@ -600,10 +612,12 @@ fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String,
                 s.spawn(move || {
                     part.iter()
                         .map(|(rel, p)| {
-                            let badge = read_head(p)
-                                .ok()
-                                .and_then(|t| request_file::sniff_badge(&t));
-                            (rel.clone(), badge)
+                            let text = read_head(p).unwrap_or_default();
+                            let head = Head {
+                                badge: request_file::sniff_badge(&text),
+                                description: request_file::sniff_description(&text),
+                            };
+                            (rel.clone(), head)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -623,9 +637,11 @@ fn read_badges(files: &[(String, PathBuf)]) -> std::collections::HashMap<String,
 fn read_head(p: &Path) -> std::io::Result<String> {
     use std::io::BufRead;
     let mut head = String::new();
+    let mut text_lines = request_file::TextLines::default();
     for line in std::io::BufReader::new(fs::File::open(p)?).lines() {
         let line = line?;
-        if line.trim_start().starts_with('[') {
+        // A line of a multi-line string (`[a](b)` in a description) is text.
+        if !text_lines.in_text(&line) && line.trim_start().starts_with('[') {
             break;
         }
         head.push_str(&line);
@@ -634,16 +650,22 @@ fn read_head(p: &Path) -> std::io::Result<String> {
     Ok(head)
 }
 
-fn fill_badges(f: &mut Folder, badges: &std::collections::HashMap<String, Option<String>>) {
-    f.requests.retain_mut(|r| match badges.get(&r.rel) {
-        Some(Some(b)) => {
+/// Gives each request its badge and description; a file that is not a
+/// request leaves the tree.
+fn fill_heads(f: &mut Folder, heads: &std::collections::HashMap<String, Head>) {
+    f.requests.retain_mut(|r| match heads.get(&r.rel) {
+        Some(Head {
+            badge: Some(b),
+            description,
+        }) => {
             r.badge = b.clone();
+            r.description = description.clone();
             true
         }
         _ => false,
     });
     for c in &mut f.folders {
-        fill_badges(c, badges);
+        fill_heads(c, heads);
     }
 }
 
@@ -703,6 +725,24 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 mod tests {
     use super::*;
     use sendito_core::model::*;
+
+    #[test]
+    fn the_scan_reads_each_description_with_the_badge() {
+        let (_d, c) = coll();
+        fs::write(
+            c.root.join("a.toml"),
+            "kind = \"http\"\ndescription = '''\n[a](b)\n'''\nmethod = \"post\"\n[[headers]]\nname = \"X\"\nvalue = \"1\"\n",
+        )
+        .unwrap();
+        fs::write(c.root.join("b.toml"), "kind = \"grpc\"\n").unwrap();
+        let tree = c.scan().unwrap();
+        let a = tree.find_request("a.toml").unwrap();
+        assert_eq!(
+            (a.badge.as_str(), a.description.as_str()),
+            ("POST", "[a](b)\n")
+        );
+        assert_eq!(tree.find_request("b.toml").unwrap().description, "");
+    }
 
     fn coll() -> (tempfile::TempDir, Collection) {
         let d = tempfile::tempdir().unwrap();

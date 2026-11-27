@@ -85,6 +85,7 @@ impl App {
             WsUpdate::Done {
                 scripts,
                 scope_errors,
+                hint,
             } => {
                 t.running = None;
                 let text = messages_text(&scripts, &scope_errors, &[]);
@@ -93,12 +94,25 @@ impl App {
                 }
                 updates = scripts.updates();
                 let fails = scripts.failed_asserts();
-                let result = if resp.summary.status.is_empty() {
-                    "session finished".to_string()
-                } else {
-                    format!("session finished: {}", resp.summary.status)
-                };
                 let ok = resp.summary.ok;
+                // The cause of a failure: in the log, in the body of a session
+                // that failed before any event, and in the status line.
+                let result = match &hint {
+                    Some(h) if !ok => {
+                        resp.messages.doc.append_text(&format!("fix: {}\n", h.fix));
+                        if resp.ws_events.is_empty()
+                            && let Some(e) = &resp.summary.error
+                        {
+                            resp.set_body_wrapped(format!(
+                                "Session failed:\n\n{e}\n\nFix: {}\n",
+                                h.fix
+                            ));
+                        }
+                        format!("session failed: {}", h.short)
+                    }
+                    _ if resp.summary.status.is_empty() => "session finished".to_string(),
+                    _ => format!("session finished: {}", resp.summary.status),
+                };
                 status = Some(if scripts.asserts.is_empty() {
                     (
                         result,
@@ -143,27 +157,33 @@ impl App {
                 result,
                 then,
                 secrets_ok,
+                accepted,
             } => {
                 let (scope, errors, failed) = *result;
-                // A secret that did not load (no keychain entry, no
-                // secrets.toml value) passed the names check: check the
-                // loaded values before `{{name}}` (or a lower layer's value)
-                // goes out. "Send anyway" for undefined names does not cover it.
-                if !secrets_ok && !failed.is_empty() {
+                // Check the loaded values before `{{name}}` (or a lower
+                // layer's value) goes out: a secret that did not load (no
+                // keychain entry, no secrets.toml value), or a function that
+                // the names check could not run (a secret argument, a Lua
+                // function), passed the names check. "Send anyway" for
+                // undefined names covers only the names it listed.
+                if !secrets_ok {
                     let (tab, req) = then.request();
-                    let un = runner::unresolved_send(
+                    let mut un = runner::unresolved_send(
                         &req,
                         &scope,
                         &failed,
                         &self.project.config.mcp.servers,
                     );
+                    un.retain(|u| !accepted.contains(u));
                     if !un.is_empty() {
-                        self.secrets_missing(tab, &un, &errors);
+                        self.not_resolved(tab, &un, &errors, &scope, !failed.is_empty());
                         return;
                     }
                 }
                 self.start_with_scope(scope, errors, then);
             }
+            AppMsg::Run { tab, event } => self.on_run(tab, *event),
+            AppMsg::RunDone { tab } => self.on_run_done(tab),
             AppMsg::Http { tab, outcome } => self.on_http(tab, *outcome),
             AppMsg::Grpc { tab, update } => self.on_grpc(tab, update),
             AppMsg::Ws { tab, update } => self.on_ws(tab, update),
@@ -287,31 +307,33 @@ impl App {
                 });
                 if active {
                     match result {
-                        Ok(tools) => {
+                        Ok(catalog) => {
                             if let Some(t) = self.tab_mut() {
-                                t.mcp_tools = tools;
+                                t.mcp = catalog;
                                 t.mcp_tools_server = server.clone();
                                 t.mcp_tools_error = None;
                             }
                             if self.complete.is_some() {
                                 self.refresh_complete();
                             } else if open_picker {
-                                let empty = self.tab().is_some_and(|t| t.mcp_tools.is_empty());
-                                if empty {
-                                    self.set_status("the server has no tools", StatusKind::Info);
+                                let items =
+                                    self.tab().map(|t| mcp_items(&t.mcp)).unwrap_or_default();
+                                if items.is_empty() {
+                                    self.set_status(
+                                        "the server has no tools, resources or prompts",
+                                        StatusKind::Info,
+                                    );
                                 } else if let Some(t) = self.tab() {
-                                    let items: Vec<_> =
-                                        t.mcp_tools.iter().map(|t| t.name.clone()).collect();
-                                    let details: Vec<_> = t
-                                        .mcp_tools
-                                        .iter()
-                                        .map(|tool| tool.description.clone().unwrap_or_default())
-                                        .collect();
-                                    let current =
-                                        items.iter().position(|name| *name == t.ed.mcp_tool.text());
+                                    let current = items.iter().position(|(op, target, _)| {
+                                        *op == t.ed.mcp_op && *target == t.ed.mcp_tool.text()
+                                    });
+                                    let (names, details) = items
+                                        .into_iter()
+                                        .map(|(_, target, detail)| (target, detail))
+                                        .unzip();
                                     self.overlay = Some(Overlay::Picker(Picker::new(
-                                        "Choose an MCP tool",
-                                        items,
+                                        "Choose an MCP tool, resource or prompt",
+                                        names,
                                         details,
                                         PickAction::McpTool,
                                         current,
@@ -494,36 +516,16 @@ impl App {
                 .as_ref()
                 .map(|r| r.started.elapsed().as_secs_f64() * 1000.0);
             t.running = None;
-            let mut resp = Response::new();
+            let watch = t.watch.as_mut().map(|w| {
+                match &o.response {
+                    Ok(r) => w.record(r.status < 400, r.timing.total.as_secs_f64() * 1000.0),
+                    Err(_) => w.record(false, elapsed_ms.unwrap_or(0.0)),
+                }
+                watch_text(&w.samples)
+            });
+            let mut resp = http_response(&mut o, watch.as_deref());
             match &o.response {
                 Ok(r) => {
-                    resp.summary = Summary {
-                        status: format!("{} {}", r.status, r.reason),
-                        code: Some(r.status),
-                        ok: r.status < 400,
-                        time_ms: Some(r.timing.total.as_secs_f64() * 1000.0),
-                        size: Some(o.body_size),
-                        decoded: r
-                            .decoded
-                            .as_ref()
-                            .map(|d| format!("{} {}", d.encoding, human_size(d.raw_len))),
-                        error: None,
-                    };
-                    resp.set_body(std::mem::take(&mut o.doc));
-                    resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, &o)));
-                    resp.http_head = Some(crate::tab::HttpHead {
-                        status: r.status,
-                        reason: r.reason.clone(),
-                        headers: r.headers.clone(),
-                    });
-                    let mut timing = timing_text(r, o.body_size);
-                    if let Some(w) = &mut t.watch {
-                        w.record(r.status < 400, r.timing.total.as_secs_f64() * 1000.0);
-                        if !w.samples.is_empty() {
-                            timing.push_str(&watch_text(&w.samples));
-                        }
-                    }
-                    resp.timing = crate::tab::wrapped(Doc::text(&timing));
                     let fails = o.scripts.failed_asserts();
                     if !o.scripts.asserts.is_empty() {
                         status = Some(if fails == 0 {
@@ -549,41 +551,25 @@ impl App {
                     }
                 }
                 Err(e) => {
-                    if let Some(w) = &mut t.watch {
-                        w.record(false, elapsed_ms.unwrap_or(0.0));
-                        resp.timing = crate::tab::wrapped(Doc::text(&watch_text(&w.samples)));
-                    }
-                    resp.summary = Summary {
-                        status: "Error".into(),
-                        error: Some(e.clone()),
-                        ..Default::default()
-                    };
-                    resp.set_body_wrapped(format!(
-                        "Request failed: {}\n\nDetails:\n{e}\n",
-                        explain_error(e)
-                    ));
-                    resp.headers = crate::tab::wrapped(Doc::text(&request_headers_text(&o)));
-                    // The reason is in the response pane; the status line names the
-                    // outcome only (it would be cut short anyway).
+                    // The status line names the cause in a few words; the
+                    // fix is in the response pane.
+                    let short = o.hint.as_ref().map_or(short_error(e), |h| h.short);
                     status = Some((
-                        format!("{} · details in the response pane", short_error(e)),
+                        format!("{short} · details in the response pane"),
                         StatusKind::Error,
                     ));
                 }
             }
-            if !o.scripts.asserts.is_empty() {
-                let pass = o.scripts.asserts.iter().filter(|a| a.pass).count();
-                let total = o.scripts.asserts.len();
-                resp.results_badge = Some(format!(
-                    "{pass}/{total} {}",
-                    if pass == total { "✓" } else { "✗" }
+            // A `401`, a `403` or a `407` that a setting causes: the fix is a
+            // note in Messages.
+            if o.response.is_ok()
+                && let Some(h) = &o.hint
+            {
+                status = Some((
+                    format!("{} · details in Messages", h.short),
+                    StatusKind::Error,
                 ));
             }
-            resp.messages = crate::tab::wrapped(Doc::text(&messages_text(
-                &o.scripts,
-                &o.scope_errors,
-                &o.resolved.notes,
-            )));
             if t.watch.is_some()
                 && o.response.is_ok()
                 && let Some(old) = &t.response
@@ -689,6 +675,7 @@ impl App {
             GrpcUpdate::Done {
                 scripts,
                 scope_errors,
+                hint,
             } => {
                 t.running = None;
                 let text = messages_text(&scripts, &scope_errors, &[]);
@@ -697,13 +684,25 @@ impl App {
                 }
                 updates = scripts.updates();
                 let fails = scripts.failed_asserts();
-                // Replaces the "stream open" note: the call is over.
-                let result = if resp.summary.status.is_empty() {
-                    "request finished".to_string()
-                } else {
-                    format!("request finished: {}", resp.summary.status)
-                };
                 let ok = resp.summary.ok;
+                // The cause of a failure: in the log, in the body of a call
+                // that failed before any event, and in the status line.
+                let result = match &hint {
+                    Some(h) if !ok => {
+                        resp.messages.doc.append_text(&format!("fix: {}\n", h.fix));
+                        if resp.grpc_events.is_empty()
+                            && let Some(e) = &resp.summary.error
+                        {
+                            resp.set_body_wrapped(format!(
+                                "Call failed:\n\n{e}\n\nFix: {}\n",
+                                h.fix
+                            ));
+                        }
+                        format!("request failed: {}", h.short)
+                    }
+                    _ if resp.summary.status.is_empty() => "request finished".to_string(),
+                    _ => format!("request finished: {}", resp.summary.status),
+                };
                 status = Some(if scripts.asserts.is_empty() {
                     (
                         result,
@@ -766,6 +765,7 @@ impl App {
                 scripts,
                 scope_errors,
                 needs_login,
+                hint,
             } => {
                 if needs_login {
                     login_offer = Some(t.ed.mcp_server.text());
@@ -816,7 +816,15 @@ impl App {
                 if let Some(body) = result {
                     resp.set_body(Doc::from_bytes(body, Some("application/json")));
                 } else if let Some(e) = &error {
-                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n"));
+                    // The cause of a configuration problem: in the body and in the log.
+                    let fix = hint
+                        .as_ref()
+                        .map(|h| {
+                            resp.messages.doc.append_text(&format!("fix: {}\n", h.fix));
+                            format!("\nFix: {}\n", h.fix)
+                        })
+                        .unwrap_or_default();
+                    resp.set_body_wrapped(format!("Call failed:\n\n{e}\n{fix}"));
                 }
                 let text = messages_text(&scripts, &scope_errors, &[]);
                 if !text.trim().is_empty() {
@@ -825,7 +833,11 @@ impl App {
                 updates = scripts.updates();
                 let fails = scripts.failed_asserts();
                 let result_line = if let Some(e) = &error {
-                    format!("call failed: {e}")
+                    // The status line names the cause in a few words.
+                    match &hint {
+                        Some(h) => format!("call failed: {}", h.short),
+                        None => format!("call failed: {e}"),
+                    }
                 } else if is_error {
                     "tool reported an error (isError)".to_string()
                 } else {
@@ -871,4 +883,117 @@ impl App {
             self.offer_mcp_login(tab_id, &server, McpAfterLogin::Send);
         }
     }
+}
+
+/// The response pane of an HTTP exchange; the body moves out of `o`.
+/// `watch` is the watch line added to the timing.
+pub(super) fn http_response(o: &mut HttpOutcome, watch: Option<&str>) -> Response {
+    let mut resp = Response::new();
+    match &o.response {
+        Ok(r) => {
+            resp.summary = Summary {
+                status: format!("{} {}", r.status, r.reason),
+                code: Some(r.status),
+                ok: r.status < 400,
+                time_ms: Some(r.timing.total.as_secs_f64() * 1000.0),
+                size: Some(o.body_size),
+                decoded: r
+                    .decoded
+                    .as_ref()
+                    .map(|d| format!("{} {}", d.encoding, human_size(d.raw_len))),
+                error: None,
+            };
+            resp.set_body(std::mem::take(&mut o.doc));
+            resp.headers = crate::tab::wrapped(Doc::text(&headers_text(r, o)));
+            resp.http_head = Some(crate::tab::HttpHead {
+                status: r.status,
+                reason: r.reason.clone(),
+                headers: r.headers.clone(),
+            });
+            let mut timing = timing_text(r, o.body_size);
+            timing.push_str(watch.unwrap_or_default());
+            resp.timing = crate::tab::wrapped(Doc::text(&timing));
+        }
+        Err(e) => {
+            if let Some(w) = watch {
+                resp.timing = crate::tab::wrapped(Doc::text(w));
+            }
+            resp.summary = Summary {
+                status: "Error".into(),
+                error: Some(e.clone()),
+                ..Default::default()
+            };
+            let fix = o
+                .hint
+                .as_ref()
+                .map(|h| format!("\nFix: {}\n", h.fix))
+                .unwrap_or_default();
+            resp.set_body_wrapped(format!(
+                "Request failed: {}\n\nDetails:\n{e}\n{fix}",
+                explain_error(e)
+            ));
+            resp.headers = crate::tab::wrapped(Doc::text(&request_headers_text(o)));
+        }
+    }
+    // A response with a configuration problem (a `401` after an OAuth
+    // token) keeps its body: the fix is a note.
+    if o.response.is_ok()
+        && let Some(h) = &o.hint
+    {
+        o.resolved.notes.push(format!("Fix: {}", h.fix));
+    }
+    if !o.scripts.asserts.is_empty() {
+        let pass = o.scripts.asserts.iter().filter(|a| a.pass).count();
+        let total = o.scripts.asserts.len();
+        resp.results_badge = Some(format!(
+            "{pass}/{total} {}",
+            if pass == total { "✓" } else { "✗" }
+        ));
+    }
+    resp.messages = crate::tab::wrapped(Doc::text(&messages_text(
+        &o.scripts,
+        &o.scope_errors,
+        &o.resolved.notes,
+    )));
+    resp
+}
+
+/// The picker rows of a server's catalog, in this order: tools, resources,
+/// resource templates and prompts. Each row is the operation, the target
+/// (tool name, URI or prompt name) and the detail text.
+pub(super) fn mcp_items(c: &sendito_pipeline::mcp::Catalog) -> Vec<(McpOp, String, String)> {
+    let with = |kind: &str, text: Option<&str>| match text {
+        Some(t) if !t.is_empty() => format!("{kind} · {t}"),
+        _ => kind.to_string(),
+    };
+    let mut v: Vec<(McpOp, String, String)> = Vec::new();
+    v.extend(c.tools.iter().map(|t| {
+        (
+            McpOp::Tool,
+            t.name.clone(),
+            with("tool", t.description.as_deref()),
+        )
+    }));
+    v.extend(c.resources.iter().map(|r| {
+        (
+            McpOp::Resource,
+            r.uri.clone(),
+            with("resource", Some(&r.name)),
+        )
+    }));
+    v.extend(c.templates.iter().map(|r| {
+        (
+            McpOp::Resource,
+            r.uri.clone(),
+            with("resource template", Some(&r.name)),
+        )
+    }));
+    v.extend(c.prompts.iter().map(|p| {
+        (
+            McpOp::Prompt,
+            p.name.clone(),
+            with("prompt", p.description.as_deref()),
+        )
+    }));
+    v
 }

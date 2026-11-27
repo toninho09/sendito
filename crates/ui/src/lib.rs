@@ -3,6 +3,7 @@
 pub mod app;
 pub mod complete;
 pub mod draw;
+pub mod external;
 pub use sendito_widgets::{editor, form, icons, list};
 pub mod filter;
 pub mod keymap;
@@ -56,22 +57,46 @@ struct TermGuard;
 
 impl TermGuard {
     fn enter(mouse: bool) -> io::Result<Self> {
-        enable_raw_mode()?;
-        let mut out = io::stdout();
-        execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
-        if mouse {
-            execute!(out, EnableMouseCapture)?;
-        }
-        // Keep the window title to restore it on exit (xterm title stack).
-        let _ = out.write_all(b"\x1b[22;0t");
-        let _ = out.flush();
-        // Terminals without the kitty keyboard protocol ignore this.
-        let _ = execute!(
-            out,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
+        enter_terminal(mouse)?;
         Ok(Self)
     }
+}
+
+/// Raw mode, the alternate screen, paste and (with `mouse`) mouse capture:
+/// what the UI needs from the terminal.
+fn enter_terminal(mouse: bool) -> io::Result<()> {
+    enable_raw_mode()?;
+    let mut out = io::stdout();
+    execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
+    if mouse {
+        execute!(out, EnableMouseCapture)?;
+    }
+    // Keep the window title to restore it on exit (xterm title stack).
+    let _ = out.write_all(b"\x1b[22;0t");
+    let _ = out.flush();
+    // Terminals without the kitty keyboard protocol ignore this.
+    let _ = execute!(
+        out,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
+    Ok(())
+}
+
+/// Runs a program outside the UI: leaves the terminal, runs it, enters the
+/// terminal again and hands the result to the app.
+fn run_external(
+    app: &mut App,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    job: external::External,
+    mouse: bool,
+) -> io::Result<()> {
+    leave_terminal(&mut io::stdout());
+    let _ = disable_raw_mode();
+    let result = external::run(&job);
+    enter_terminal(mouse)?;
+    terminal.clear()?;
+    app.finish_external(result);
+    Ok(())
 }
 
 fn leave_terminal(out: &mut impl Write) {
@@ -135,11 +160,56 @@ impl Drop for PanicGuard {
     }
 }
 
+/// Copies `text` to the terminal clipboard (OSC 52) and to the local
+/// clipboard: some terminals (iTerm2 by default, Terminal.app) ignore OSC 52.
+fn copy_out(text: &str) {
+    write_osc52(text);
+    copy_native(text);
+}
+
 fn write_osc52(text: &str) {
     let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
     let mut out = io::stdout();
     let _ = write!(out, "\x1b]52;c;{b64}\x07");
     let _ = out.flush();
+}
+
+/// The program, with its arguments, that writes the local clipboard on
+/// `os` (`std::env::consts::OS`). `set` tells if an environment variable
+/// has a value. `None` when no program is known.
+fn native_copier(os: &str, set: impl Fn(&str) -> bool) -> Option<&'static [&'static str]> {
+    match os {
+        "macos" => Some(&["pbcopy"]),
+        _ if set("WAYLAND_DISPLAY") => Some(&["wl-copy"]),
+        _ if set("DISPLAY") => Some(&["xclip", "-selection", "clipboard"]),
+        _ => None,
+    }
+}
+
+/// Writes `text` to the local clipboard program. A thread runs it, so a
+/// slow program does not stop the UI; a missing program is ignored.
+fn copy_native(text: &str) {
+    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
+    let Some(cmd) = native_copier(std::env::consts::OS, set) else {
+        return;
+    };
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        use std::process::{Command, Stdio};
+        let child = Command::new(cmd[0])
+            .args(&cmd[1..])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else {
+            return;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+    });
 }
 
 /// Runs the interactive UI until the user quits.
@@ -229,11 +299,8 @@ fn event_loop(
             if let Some(l) = log {
                 let _ = writeln!(l, "frame {}", t0.elapsed().as_micros());
             }
-            for text in app.osc52.drain(..) {
-                write_osc52(&text);
-            }
             if let Some(t) = app.clipboard.pending.take() {
-                write_osc52(&t);
+                copy_out(&t);
             }
             dirty = false;
             if opts.exit_after_first_frame {
@@ -246,8 +313,17 @@ fn event_loop(
         if app.quit {
             return Ok(());
         }
+        if let Some(job) = app.external.take() {
+            run_external(app, terminal, job, mouse)?;
+            // The terminal forgot the cursor shape and the title.
+            shape = None;
+            title.clear();
+            dirty = true;
+            continue;
+        }
         let busy = app.is_busy();
-        let timeout = if busy {
+        // A waiting jq filter needs a short poll to run on time.
+        let timeout = if busy || app.query_due() {
             Duration::from_millis(40)
         } else {
             Duration::from_millis(250)
@@ -397,6 +473,22 @@ pub mod bench {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_copier_follows_the_system_and_the_display() {
+        let none = |_: &str| false;
+        let wayland = |k: &str| k == "WAYLAND_DISPLAY";
+        let x11 = |k: &str| k == "DISPLAY";
+        assert_eq!(native_copier("macos", none), Some(&["pbcopy"][..]));
+        assert_eq!(native_copier("linux", wayland), Some(&["wl-copy"][..]));
+        assert_eq!(
+            native_copier("linux", x11),
+            Some(&["xclip", "-selection", "clipboard"][..])
+        );
+        // A console or an SSH session without a display has no clipboard.
+        assert_eq!(native_copier("linux", none), None);
+        assert_eq!(native_copier("windows", none), None);
+    }
 
     #[test]
     fn leave_terminal_restores_the_screen() {

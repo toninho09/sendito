@@ -14,6 +14,17 @@ pub(crate) struct Cli {
     pub(crate) path: Option<PathBuf>,
     #[command(subcommand)]
     pub(crate) cmd: Option<Cmd>,
+    /// Write a debug log: errors, warnings, panics and one line per send
+    /// (no bodies, no secret values). Default FILE:
+    /// `~/.local/state/sendito/sendito-<time>.log`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "FILE",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub(crate) debug: Option<Option<PathBuf>>,
     /// Exit after drawing the first frame (startup benchmark).
     #[arg(long, hide = true)]
     pub(crate) exit_after_first_frame: bool,
@@ -62,9 +73,33 @@ pub(crate) enum Cmd {
         /// Stop at the first failed or errored request (folder runs only).
         #[arg(long)]
         fail_fast: bool,
-        /// Folder report format: `text` (stderr lines) or `json` (stdout).
+        /// Folder report on stdout: `text` (stderr lines only), `json`,
+        /// `junit`, `tap` or `html`.
         #[arg(long, value_enum, default_value_t = RunReport::Text)]
         report: RunReport,
+        /// Also write a folder report to a file: `FORMAT=PATH`, for example
+        /// `junit=results.xml`. Repeat it for several formats.
+        #[arg(long = "report-file", value_name = "FORMAT=PATH", value_parser = parse_report_file)]
+        report_files: Vec<ReportFile>,
+        /// Send a request again up to N times after an error or a failed
+        /// assertion. Replaces each request's `[options] retry`.
+        #[arg(long, value_name = "N")]
+        retry: Option<u32>,
+        /// Run the folder N times in a row (folder runs only).
+        #[arg(long, value_name = "N", default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        repeat: u32,
+        /// Wait this many milliseconds between two requests (folder runs only).
+        #[arg(long = "delay", value_name = "MS", default_value_t = 0)]
+        delay_ms: u64,
+        /// The value of a `$prompt` or `$select`: `LABEL=VALUE`. Repeat it
+        /// for several labels. Without it, a terminal asks; else the
+        /// placeholder is unresolved.
+        #[arg(long = "prompt", value_name = "LABEL=VALUE", value_parser = parse_prompt)]
+        prompts: Vec<(String, String)>,
+        /// Run once per row of this data file: CSV with the variable names
+        /// in the first line, or a JSON array of objects (`.json`).
+        #[arg(long, value_name = "FILE")]
+        data: Option<PathBuf>,
     },
     /// Print a request as a curl command (secret variables stay as placeholders).
     Curl {
@@ -85,10 +120,70 @@ pub(crate) enum Cmd {
         #[arg(long)]
         include_secrets: bool,
     },
+    /// Print code that sends an HTTP request with another tool: python
+    /// (requests), fetch (Node.js), go (net/http), httpie or wget. Secret
+    /// variables stay as {{placeholders}}.
+    Code {
+        request: PathBuf,
+        /// The tool: python, fetch, go, httpie or wget.
+        #[arg(long, short, value_parser = parse_lang)]
+        lang: sendito_import::codegen::Lang,
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Include secret values in the output.
+        #[arg(long)]
+        include_secrets: bool,
+    },
+    /// Print a HAR 1.2 document (no responses) of a request, or of every HTTP
+    /// request in a folder (`.` = current folder). Secret variables stay as
+    /// {{placeholders}}.
+    Har {
+        /// Request file, or a folder to export recursively.
+        request: PathBuf,
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Include secret values in the output.
+        #[arg(long)]
+        include_secrets: bool,
+    },
     /// Sign in or out of a named HTTP OAuth identity.
     Auth {
         #[command(subcommand)]
         cmd: AuthCmd,
+    },
+    /// Serve the collection to an AI agent: an MCP server on stdin/stdout.
+    ///
+    /// The agent can list and read requests, send them, send a request given
+    /// as TOML, and create, move or delete request files. The agent sees the
+    /// names of secret variables, not their values, and a secret the server
+    /// echoes back is masked. This masking prevents accidents; it does not
+    /// stop an agent that wants a secret: a request the agent writes can send
+    /// it to any host. Use --allow-env or --no-send to limit what it can use.
+    Serve {
+        /// Collection directory (default: the nearest `.sendito/` above the
+        /// current directory).
+        path: Option<PathBuf>,
+        /// The environment when a call names none.
+        #[arg(long, short)]
+        env: Option<String>,
+        /// The only environments the agent can see and send with (separated
+        /// by commas, or the flag given again). Default: every environment.
+        #[arg(long, value_delimiter = ',', value_name = "NAMES")]
+        allow_env: Vec<String>,
+        /// Offer only the tools that do not change files. The tools that
+        /// send requests stay (see --no-send).
+        #[arg(long)]
+        read_only: bool,
+        /// Offer no tool that sends a request (run_request, run_folder,
+        /// send_request).
+        #[arg(long)]
+        no_send: bool,
+        /// Do not record the sends in the history.
+        #[arg(long)]
+        no_history: bool,
+        /// Do not read or write the cookie jar.
+        #[arg(long)]
+        no_cookies: bool,
     },
     /// Sign an HTTP MCP server in (OAuth) or out.
     Mcp {
@@ -101,20 +196,71 @@ pub(crate) enum Cmd {
         cmd: ThemeCmd,
     },
     /// Import a Postman, Insomnia or Bruno collection, an OpenAPI / Swagger
-    /// document (JSON or YAML) or a `.http` file.
+    /// document (JSON or YAML), a `.http` file or a HAR file.
     Import {
-        /// JSON export file, or a Bruno collection directory.
+        /// JSON export or HAR file, or a Bruno collection directory.
         file: PathBuf,
         /// Folder (relative to the collection) to import into.
         #[arg(long, default_value = "")]
         into: String,
     },
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
+    Completions { shell: clap_complete::Shell },
+    /// Print the manual page (roff) to stdout.
+    #[command(hide = true)]
+    Man,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
 pub(crate) enum RunReport {
     Text,
     Json,
+    Junit,
+    Tap,
+    Html,
+}
+
+/// A `--report-file FORMAT=PATH` value.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct ReportFile {
+    pub(crate) format: RunReport,
+    pub(crate) path: PathBuf,
+}
+
+fn parse_lang(s: &str) -> Result<sendito_import::codegen::Lang, String> {
+    sendito_import::codegen::Lang::parse(s).ok_or_else(|| {
+        format!(
+            "unknown language {s:?} ({})",
+            sendito_import::codegen::Lang::names()
+        )
+    })
+}
+
+fn parse_prompt(s: &str) -> Result<(String, String), String> {
+    let (label, value) = s
+        .split_once('=')
+        .ok_or("expected LABEL=VALUE, for example OTP=123456")?;
+    if label.trim().is_empty() {
+        return Err("the LABEL before = is empty".into());
+    }
+    Ok((label.trim().to_string(), value.to_string()))
+}
+
+fn parse_report_file(s: &str) -> Result<ReportFile, String> {
+    let (format, path) = s
+        .split_once('=')
+        .ok_or("expected FORMAT=PATH, for example junit=results.xml")?;
+    let format = RunReport::from_str(format, true)
+        .ok()
+        .filter(|f| *f != RunReport::Text)
+        .ok_or_else(|| format!("unknown report format {format:?} (json, junit, tap, html)"))?;
+    if path.is_empty() {
+        return Err("the PATH after = is empty".into());
+    }
+    Ok(ReportFile {
+        format,
+        path: PathBuf::from(path),
+    })
 }
 
 /// The `sendito run` flags, shared by the one-request and folder paths.
@@ -127,6 +273,14 @@ pub(crate) struct RunFlags {
     pub(crate) no_cookies: bool,
     pub(crate) fail_fast: bool,
     pub(crate) report: RunReport,
+    pub(crate) report_files: Vec<ReportFile>,
+    pub(crate) retry: Option<u32>,
+    pub(crate) repeat: u32,
+    pub(crate) delay_ms: u64,
+    /// `--prompt LABEL=VALUE` answers.
+    pub(crate) prompts: Vec<(String, String)>,
+    /// `--data FILE`: one run per row.
+    pub(crate) data: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]

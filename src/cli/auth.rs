@@ -16,7 +16,7 @@ pub(crate) async fn http_auth(cmd: AuthCmd) -> ExitCode {
     if let Some(e) = env.as_deref()
         && !project.envs.list().iter().any(|v| v == e)
     {
-        eprintln!("sendito: environment not found");
+        fail!("environment not found");
         return ExitCode::from(3);
     }
     let account = runner::oauth_token_account(&project.name, env.as_deref(), &name);
@@ -28,24 +28,24 @@ pub(crate) async fn http_auth(cmd: AuthCmd) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("sendito: {e}");
+                fail!("{e}");
                 ExitCode::from(2)
             }
         };
     }
     let Some(identity) = project.config.oauth.get(&name) else {
-        eprintln!("sendito: OAuth identity {name:?} is not defined in [oauth]");
+        fail!("OAuth identity {name:?} is not defined in [oauth]");
         return ExitCode::from(3);
     };
     let (scope, errors) = runner::build_scope(&project.envs, env.as_deref(), &Default::default());
     if !errors.is_empty() {
-        eprintln!("sendito: cannot resolve environment secrets");
+        fail!("cannot resolve environment secrets");
         return ExitCode::from(2);
     }
     let settings = match runner::oauth_settings(identity, &scope, project.oauth_network()) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("sendito: {e}");
+            fail!("{e}");
             return ExitCode::from(3);
         }
     };
@@ -72,19 +72,17 @@ pub(crate) async fn http_auth(cmd: AuthCmd) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(_) => {
-                eprintln!("sendito: cannot store OAuth tokens in the keychain");
+                fail!("cannot store OAuth tokens in the keychain");
                 ExitCode::from(2)
             }
         },
         // The token endpoint's error code says what is wrong with them.
         Err(e) if !identity.grant.interactive() => {
-            eprintln!("sendito: the token request failed: {e}");
+            fail!("the token request failed: {e}");
             ExitCode::from(2)
         }
         Err(_) => {
-            eprintln!(
-                "sendito: HTTP OAuth login failed; check the endpoints and authorization response"
-            );
+            fail!("HTTP OAuth login failed; check the endpoints and authorization response");
             ExitCode::from(2)
         }
     }
@@ -97,7 +95,7 @@ pub(crate) async fn mcp(cmd: McpCmd) -> ExitCode {
     };
     let project = Project::open(&root, runner::default_keychain());
     for w in &project.warnings {
-        eprintln!("warning: {w}");
+        warn!("{w}");
     }
     let info = runner::McpRunInfo::of(&project);
     match cmd {
@@ -107,7 +105,7 @@ pub(crate) async fn mcp(cmd: McpCmd) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("sendito: {e}");
+                fail!("{e}");
                 ExitCode::from(2)
             }
         },
@@ -115,13 +113,13 @@ pub(crate) async fn mcp(cmd: McpCmd) -> ExitCode {
             if let Some(e) = env.as_deref()
                 && !project.envs.list().iter().any(|v| v == e)
             {
-                eprintln!("sendito: environment not found");
+                fail!("environment not found");
                 return ExitCode::from(3);
             }
             let (scope, errors) =
                 runner::build_scope(&project.envs, env.as_deref(), &Default::default());
             if !errors.is_empty() {
-                eprintln!("sendito: cannot resolve environment secrets");
+                fail!("cannot resolve environment secrets");
                 return ExitCode::from(2);
             }
             let note = |n: String| eprintln!("{n}");
@@ -131,7 +129,7 @@ pub(crate) async fn mcp(cmd: McpCmd) -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("sendito: {e}");
+                    fail!("{e}");
                     ExitCode::from(2)
                 }
             }

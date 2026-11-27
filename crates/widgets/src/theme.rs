@@ -1,7 +1,9 @@
 //! Color themes. Built in: `auto`, `dusk` (dark), `daylight` (light), `ember`
-//! (warm dark), `linen` (warm light), `contrast` and `ansi`; users add their own
-//! as TOML files (see `docs/THEMES.md`). `NO_COLOR` switches to a monochrome
-//! theme that uses only text attributes.
+//! (warm dark), `linen` (warm light), `contrast`, `ansi`, themes after popular
+//! IDE themes (`dracula`, `nord`, `github-light`...) and solid-color themes
+//! (`turbo`, `phosphor`, `bauhaus`...). The color tables are in `palettes`.
+//! Users add their own as TOML files (see `docs/THEMES.md`). `NO_COLOR`
+//! switches to a monochrome theme that uses only text attributes.
 //!
 //! A theme is a list of color tokens. The *base* tokens are given by every
 //! built-in theme; the *derived* ones (surfaces, shadow, gutter, timing phases)
@@ -12,9 +14,47 @@ use std::sync::Arc;
 
 use ratatui::style::{Color, Modifier, Style};
 
+mod palettes;
+use palettes::*;
+
 /// Built-in theme names, in the order Settings cycles through them.
 pub const BUILTIN: &[&str] = &[
-    "auto", "dusk", "daylight", "ember", "linen", "contrast", "ansi",
+    "auto",
+    "dusk",
+    "daylight",
+    "ember",
+    "linen",
+    "contrast",
+    "ansi",
+    // After IDE themes, dark.
+    "dracula",
+    "monokai",
+    "nord",
+    "gruvbox",
+    "one-dark",
+    "catppuccin",
+    "tokyo-night",
+    "rose-pine",
+    "night-owl",
+    "kanagawa",
+    "everforest",
+    "github-dark",
+    "solarized-dark",
+    // After IDE themes, light.
+    "solarized-light",
+    "gruvbox-light",
+    "catppuccin-latte",
+    "github-light",
+    "one-light",
+    // Solid colors.
+    "turbo",
+    "phosphor",
+    "amber",
+    "bauhaus",
+    "crimson",
+    "abyss",
+    "grove",
+    "grape",
 ];
 
 macro_rules! theme_struct {
@@ -163,223 +203,53 @@ pub const fn h(v: u32) -> Color {
     Color::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
-type Table = &'static [(&'static str, Color)];
-
-const DUSK: Table = &[
-    ("bg", h(0x1b1e28)),
-    ("fg", h(0xd8dce6)),
-    ("dim", h(0xa0a8bd)),
-    ("accent", h(0x86acff)),
-    ("border", h(0x454b5e)),
-    ("border_focus", h(0x86acff)),
-    ("sel_bg", h(0x2e3a5e)),
-    ("sel_fg", h(0xffffff)),
-    ("bar_bg", h(0x242836)),
-    ("ok", h(0x9ece6a)),
-    ("warn", h(0xe0af68)),
-    ("err", h(0xff8ba0)),
-    ("info", h(0x7dcfff)),
-    ("get", h(0x9ece6a)),
-    ("post", h(0xe0af68)),
-    ("put", h(0x86acff)),
-    ("patch", h(0xbb9af7)),
-    ("delete", h(0xff8ba0)),
-    ("other", h(0x7dcfff)),
-    ("grpc", h(0x2ac3de)),
-    ("json_key", h(0x86acff)),
-    ("json_str", h(0x9ece6a)),
-    ("json_num", h(0xff9e64)),
-    ("json_lit", h(0xbb9af7)),
-    ("var_ok", h(0x2ac3de)),
-    ("var_missing", h(0xff8ba0)),
-    ("search_bg", h(0x6b5a1e)),
-    ("surface", h(0x1b1e28)),
-    ("overlay_bg", h(0x222634)),
-];
-
-/// Every foreground color has at least 4.5:1 contrast on the background,
-/// the bar and the selection (WCAG AA).
-const DAYLIGHT: Table = &[
-    ("bg", h(0xfafaf7)),
-    ("fg", h(0x2b2f3a)),
-    ("dim", h(0x3e434e)),
-    ("accent", h(0x295bd0)),
-    ("border", h(0x7d8494)),
-    ("border_focus", h(0x295bd0)),
-    ("sel_bg", h(0xd6e2ff)),
-    ("sel_fg", h(0x101420)),
-    ("bar_bg", h(0xeceef2)),
-    ("ok", h(0x29702c)),
-    ("warn", h(0x905500)),
-    ("err", h(0xbe2626)),
-    ("info", h(0x006a98)),
-    ("get", h(0x29702c)),
-    ("post", h(0x905500)),
-    ("put", h(0x295bd0)),
-    ("patch", h(0x7b3fc4)),
-    ("delete", h(0xbe2626)),
-    ("other", h(0x006a98)),
-    ("grpc", h(0x006d78)),
-    ("json_key", h(0x295bd0)),
-    ("json_str", h(0x29702c)),
-    ("json_num", h(0xa44600)),
-    ("json_lit", h(0x7b3fc4)),
-    ("var_ok", h(0x006d78)),
-    ("var_missing", h(0xbe2626)),
-    ("search_bg", h(0xffe58f)),
-    ("overlay_bg", h(0xffffff)),
-];
-
-/// Warm dark: charcoal with amber and coral.
-const EMBER: Table = &[
-    ("bg", h(0x1f1a17)),
-    ("fg", h(0xe8dccf)),
-    ("dim", h(0xb0a191)),
-    ("accent", h(0xf0a35e)),
-    ("border", h(0x473c34)),
-    ("border_focus", h(0xf0a35e)),
-    ("sel_bg", h(0x3a2d24)),
-    ("sel_fg", h(0xfff6ec)),
-    ("bar_bg", h(0x2a231f)),
-    ("ok", h(0xa9c77a)),
-    ("warn", h(0xe9b44c)),
-    ("err", h(0xf2837b)),
-    ("info", h(0x7fc4c9)),
-    ("get", h(0xa9c77a)),
-    ("post", h(0xe9b44c)),
-    ("put", h(0x8fb4e8)),
-    ("patch", h(0xd29be0)),
-    ("delete", h(0xf2837b)),
-    ("other", h(0x7fc4c9)),
-    ("grpc", h(0x6fd0c0)),
-    ("json_key", h(0x8fb4e8)),
-    ("json_str", h(0xa9c77a)),
-    ("json_num", h(0xf29e6d)),
-    ("json_lit", h(0xd29be0)),
-    ("var_ok", h(0x6fd0c0)),
-    ("var_missing", h(0xf2837b)),
-    ("search_bg", h(0x6b4a1c)),
-    ("overlay_bg", h(0x29221e)),
-];
-
-/// Warm light: paper with ink blue and teal.
-const LINEN: Table = &[
-    ("bg", h(0xf6f1e7)),
-    ("fg", h(0x2e2a24)),
-    ("dim", h(0x4f493f)),
-    ("accent", h(0x2c5a8c)),
-    ("border", h(0xa89d8b)),
-    ("border_focus", h(0x2c5a8c)),
-    ("sel_bg", h(0xe5dcc8)),
-    ("sel_fg", h(0x1d1a15)),
-    ("bar_bg", h(0xece5d6)),
-    ("ok", h(0x35601f)),
-    ("warn", h(0x7a4a00)),
-    ("err", h(0xa3321f)),
-    ("info", h(0x1a5a68)),
-    ("get", h(0x35601f)),
-    ("post", h(0x7a4a00)),
-    ("put", h(0x2c5a8c)),
-    ("patch", h(0x73398a)),
-    ("delete", h(0xa3321f)),
-    ("other", h(0x1a5a68)),
-    ("grpc", h(0x0f5c56)),
-    ("json_key", h(0x2c5a8c)),
-    ("json_str", h(0x35601f)),
-    ("json_num", h(0x8a3f0c)),
-    ("json_lit", h(0x73398a)),
-    ("var_ok", h(0x0f5c56)),
-    ("var_missing", h(0xa3321f)),
-    ("search_bg", h(0xf5d77a)),
-    ("overlay_bg", h(0xfbf8f2)),
-];
-
-const CONTRAST: Table = &[
-    ("bg", h(0x000000)),
-    ("fg", h(0xffffff)),
-    ("dim", h(0xc0c0c0)),
-    ("accent", h(0xffd700)),
-    ("border", h(0xb0b0b0)),
-    ("border_focus", h(0xffd700)),
-    ("sel_bg", h(0xffd700)),
-    ("sel_fg", h(0x000000)),
-    ("bar_bg", h(0x202020)),
-    ("ok", h(0x5fff5f)),
-    ("warn", h(0xffd700)),
-    ("err", h(0xff5f5f)),
-    ("info", h(0x5fd7ff)),
-    ("get", h(0x5fff5f)),
-    ("post", h(0xffd700)),
-    ("put", h(0x5fd7ff)),
-    ("patch", h(0xff87ff)),
-    ("delete", h(0xff5f5f)),
-    ("other", h(0xffffff)),
-    ("grpc", h(0x5fffff)),
-    ("json_key", h(0x5fd7ff)),
-    ("json_str", h(0x5fff5f)),
-    ("json_num", h(0xffaf5f)),
-    ("json_lit", h(0xff87ff)),
-    ("var_ok", h(0x5fffff)),
-    ("var_missing", h(0xff5f5f)),
-    ("search_bg", h(0x875f00)),
-    ("surface_alt", h(0x161616)),
-    ("keycap_bg", h(0x2a2a2a)),
-];
-
-/// The terminal's own 16-color palette.
-const ANSI: Table = &[
-    ("bg", Color::Reset),
-    ("fg", Color::Reset),
-    ("dim", Color::DarkGray),
-    ("accent", Color::Blue),
-    ("border", Color::DarkGray),
-    ("border_focus", Color::Blue),
-    ("sel_bg", Color::Blue),
-    ("sel_fg", Color::White),
-    ("bar_bg", Color::Reset),
-    ("ok", Color::Green),
-    ("warn", Color::Yellow),
-    ("err", Color::Red),
-    ("info", Color::Cyan),
-    ("get", Color::Green),
-    ("post", Color::Yellow),
-    ("put", Color::Blue),
-    ("patch", Color::Magenta),
-    ("delete", Color::Red),
-    ("other", Color::Gray),
-    ("grpc", Color::Cyan),
-    ("json_key", Color::Blue),
-    ("json_str", Color::Green),
-    ("json_num", Color::Yellow),
-    ("json_lit", Color::Magenta),
-    ("var_ok", Color::Cyan),
-    ("var_missing", Color::Red),
-    ("search_bg", Color::Yellow),
-];
-
 /// A theme before derived tokens are filled in: its explicit colors, in
 /// order (later entries win).
 #[derive(Debug, Clone)]
 pub struct Spec {
     pub name: String,
-    pub light: bool,
     pub heavy_focus: bool,
     pub colors: Vec<(String, Color)>,
 }
 
 pub fn builtin_spec(name: &str) -> Option<Spec> {
-    let (table, light, heavy) = match name {
-        "dusk" => (DUSK, false, false),
-        "daylight" => (DAYLIGHT, true, false),
-        "ember" => (EMBER, false, false),
-        "linen" => (LINEN, true, false),
-        "contrast" => (CONTRAST, false, true),
-        "ansi" => (ANSI, false, false),
+    let (table, heavy) = match name {
+        "dusk" => (DUSK, false),
+        "daylight" => (DAYLIGHT, false),
+        "ember" => (EMBER, false),
+        "linen" => (LINEN, false),
+        "contrast" => (CONTRAST, true),
+        "ansi" => (ANSI, false),
+        "dracula" => (DRACULA, false),
+        "monokai" => (MONOKAI, false),
+        "nord" => (NORD, false),
+        "gruvbox" => (GRUVBOX, false),
+        "one-dark" => (ONE_DARK, false),
+        "catppuccin" => (CATPPUCCIN, false),
+        "tokyo-night" => (TOKYO_NIGHT, false),
+        "rose-pine" => (ROSE_PINE, false),
+        "night-owl" => (NIGHT_OWL, false),
+        "kanagawa" => (KANAGAWA, false),
+        "everforest" => (EVERFOREST, false),
+        "github-dark" => (GITHUB_DARK, false),
+        "solarized-dark" => (SOLARIZED_DARK, false),
+        "solarized-light" => (SOLARIZED_LIGHT, false),
+        "gruvbox-light" => (GRUVBOX_LIGHT, false),
+        "catppuccin-latte" => (CATPPUCCIN_LATTE, false),
+        "github-light" => (GITHUB_LIGHT, false),
+        "one-light" => (ONE_LIGHT, false),
+        "turbo" => (TURBO, true),
+        "phosphor" => (PHOSPHOR, true),
+        "amber" => (AMBER, true),
+        "bauhaus" => (BAUHAUS, true),
+        "crimson" => (CRIMSON, true),
+        "abyss" => (ABYSS, true),
+        "grove" => (GROVE, true),
+        "grape" => (GRAPE, true),
         _ => return None,
     };
     Some(Spec {
         name: name.to_string(),
-        light,
         heavy_focus: heavy,
         colors: table.iter().map(|(k, c)| (k.to_string(), *c)).collect(),
     })
@@ -394,7 +264,6 @@ pub fn builtin_or_auto(name: &str) -> Spec {
     let base = auto_base();
     builtin_spec(base).unwrap_or_else(|| Spec {
         name: base.into(),
-        light: false,
         heavy_focus: false,
         colors: Vec::new(),
     })
@@ -404,7 +273,6 @@ impl Spec {
     /// The finished theme in full color.
     pub fn build(&self) -> Theme {
         let mut t = Theme::blank(&self.name);
-        t.light = self.light;
         t.heavy_focus = self.heavy_focus;
         let mut set = BTreeSet::new();
         for (k, c) in &self.colors {
@@ -413,9 +281,8 @@ impl Spec {
                 set.insert(k.as_str());
             }
         }
-        if let Some(l) = luminance(t.bg) {
-            t.light = l > 0.5;
-        }
+        // Named terminal colors (the ansi theme) count as dark.
+        t.light = luminance(t.bg).is_some_and(|l| l > 0.5);
         t.derive(&set);
         t
     }
@@ -640,6 +507,19 @@ impl Theme {
                 .bg(self.keycap_bg)
                 .add_modifier(Modifier::BOLD)
         }
+    }
+
+    /// The colors that show the theme at a glance (Settings, the theme list).
+    pub fn swatch(&self) -> [Color; 7] {
+        [
+            self.accent,
+            self.ok,
+            self.warn,
+            self.err,
+            self.info,
+            self.patch,
+            self.grpc,
+        ]
     }
 
     pub fn method_color(&self, m: &str) -> Color {
@@ -959,7 +839,7 @@ mod tests {
 
     #[test]
     fn every_builtin_gives_the_base_tokens() {
-        for n in ["dusk", "daylight", "ember", "linen", "contrast", "ansi"] {
+        for n in BUILTIN.iter().filter(|n| **n != "auto") {
             let s = builtin_spec(n).unwrap();
             for (k, _) in &TOKENS[..BASE_TOKENS] {
                 assert!(s.colors.iter().any(|(c, _)| c == k), "{n}: {k}");
@@ -987,15 +867,12 @@ mod tests {
     #[test]
     fn text_contrast() {
         let r = |a, b| contrast(a, b).unwrap_or(21.0);
-        for t in [
-            Theme::dusk(),
-            Theme::daylight(),
-            Theme::ember(),
-            Theme::linen(),
-            Theme::contrast(),
-        ] {
-            // The contrast theme's selection is a solid yellow: text on it
-            // switches to sel_fg (see `on_selection`).
+        // ansi has no RGB values to measure.
+        for n in BUILTIN.iter().filter(|n| !matches!(**n, "auto" | "ansi")) {
+            let t = builtin_spec(n).unwrap().build();
+            // A theme with heavy focus has a solid selection (the contrast
+            // and solid-color themes): text on it switches to sel_fg (see
+            // `on_selection`).
             let notes: Vec<String> = contrast_notes(&t)
                 .into_iter()
                 .filter(|n| !(t.heavy_focus && n.contains("on sel_bg")))

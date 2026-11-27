@@ -9,6 +9,7 @@ J ?= 4
 TT ?= 2
 P :=
 F :=
+T :=
 OUT ?= target/critic-bundles  # destination of make bundles
 
 .DEFAULT_GOAL := help
@@ -47,8 +48,8 @@ deny: ## cargo deny (licenses/advisories), one-line summary
 
 ci: fmt-check lint deny test ## All gates: fmt + clippy + deny + tests
 
-test: ## Full suite, one summary line (P=<package> for one crate, F=<name> filters)
-	@bash scripts/quiet.sh test cargo test -j $(J) -q $(if $(P),-p $(P),--workspace) $(if $(F),$(F) )-- --test-threads=$(TT)
+test: ## Full suite, one summary line (P=<package> for one crate, T=<file> for one tests/ file, F=<name> filters)
+	@bash scripts/quiet.sh test cargo test -j $(J) -q $(if $(P),-p $(P),$(if $(T),,--workspace)) $(if $(T),--test $(T) )$(if $(F),$(F) )-- --test-threads=$(TT)
 	@if [ -n "$(F)" ] && ! awk '/^test result:/ { ran += $$4 + $$8 } END { exit !(ran > 0) }' target/test.log; then \
 	  echo "make test: no test matched F=$(F)" >&2; exit 1; fi
 
@@ -75,7 +76,9 @@ keymap: ## Regenerate KEYMAP.md and report whether it changed
 	@tmp=$$(mktemp) && cargo run -q -- --print-keymap > "$$tmp" && mv "$$tmp" KEYMAP.md || { rm -f "$$tmp"; exit 1; }
 	@git diff --quiet -- KEYMAP.md && echo "KEYMAP.md: unchanged" || echo "KEYMAP.md: CHANGED — review the diff"
 
-snap: ## Accept the insta snapshots (sendito-ui)
+snap: ## Accept the insta snapshots (sendito-ui); deletes the .snap.new files of failed runs
+	@# A failed `make test` leaves .snap.new files; INSTA_UPDATE=always writes .snap only.
+	@find crates/ui/tests/snapshots -name '*.snap.new' -delete
 	@bash scripts/quiet.sh snap env INSTA_UPDATE=always cargo test -j $(J) -q -p sendito-ui --test snapshots
 	@git status --short crates/ui/tests/snapshots
 

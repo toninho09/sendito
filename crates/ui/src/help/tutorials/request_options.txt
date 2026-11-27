@@ -1,0 +1,27 @@
+Set a timeout, follow or stop redirects, skip the TLS check, or use a proxy.
+
+── The Options tab ──
+Every request kind has an Options tab. An empty field uses the default of
+the settings. The table lists each field with the request kinds that have
+it. A field with more than one row has a different meaning for each kind.
+{options}
+To change a field, move the focus to it. Press Enter or Space for On and
+Off. For a choice, press Left or Right, or Enter to open its list. In a time
+field, type the value: 500 ms, 5 s, 1 min (a bare number is ms).
+
+── The defaults for all requests ──
+  1.  Press {key:settings}. Choose Global (all collections) or Project (this collection) at the top.
+  2.  The group Timeouts sets each timeout: HTTP request timeout, gRPC deadline, WebSocket handshake timeout, SSE opening timeout, MQTT timeout, MCP call timeout.
+  3.  The group HTTP sets the Largest response body, the Cookie jar and the Proxy.
+  4.  The change applies at once.
+
+── Proxy ──
+  •  Type the URL of the proxy: http://, https://, socks5:// and more. The user and the password can be in the URL.
+  •  Type env to read HTTPS_PROXY, HTTP_PROXY, ALL_PROXY and NO_PROXY from your shell when Sendito sends.
+  •  HTTP requests and MCP servers over HTTP use the proxy. gRPC does not use it.
+
+── TLS ──
+  •  CA certificates (PEM): the certificates of a private CA. They replace the certificates of the system.
+  •  Client certificate (PEM) and Client key (PEM): a client certificate for mutual TLS. Set both.
+  •  The paths are relative to the collection folder. A path that starts with ~/ is in your home folder.
+  •  HTTP, gRPC and MCP over HTTP use these files, and only for an https connection.

@@ -8,14 +8,12 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Instant;
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{Event, McpError, Wire};
+use crate::{Event, McpError, Sink, Wire};
 
 /// The longest JSON-RPC line read from stdout; a longer one ends the session.
 const MAX_LINE: u64 = 100 * 1024 * 1024;
@@ -28,8 +26,7 @@ pub(crate) fn spawn(
     command: &str,
     args: &[String],
     env: &[(String, String)],
-    events: UnboundedSender<Event>,
-    start: Instant,
+    sink: Sink,
 ) -> Result<Box<dyn Wire>, McpError> {
     let mut cmd = Command::new(command);
     cmd.args(args)
@@ -45,7 +42,7 @@ pub(crate) fn spawn(
     let stdin = child.stdin.take().ok_or_else(|| pipe("stdin"))?;
     let stdout = child.stdout.take().ok_or_else(|| pipe("stdout"))?;
     if let Some(stderr) = child.stderr.take() {
-        let tx = events.clone();
+        let tx = sink.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
             let mut buf = Vec::new();
@@ -59,10 +56,7 @@ pub(crate) fn spawn(
                     Ok(0) | Err(_) => break,
                     Ok(_) => {
                         let line = String::from_utf8_lossy(&buf).trim_end().to_string();
-                        let _ = tx.send(Event::Log {
-                            line,
-                            at: start.elapsed(),
-                        });
+                        tx.emit(|at| Event::Log { line, at });
                     }
                 }
             }
@@ -71,8 +65,7 @@ pub(crate) fn spawn(
     Ok(Box::new(StdioConn {
         reader: BufReader::new(stdout),
         writer: Some(stdin),
-        events,
-        start,
+        sink,
         child: Some(child),
     }))
 }
@@ -86,8 +79,7 @@ struct StdioConn {
     /// `None` once closed, when the connection is dropped.
     writer: Option<ChildStdin>,
     /// Receives stdout lines that are not JSON-RPC, as logs.
-    events: UnboundedSender<Event>,
-    start: Instant,
+    sink: Sink,
     /// Held so the child is stopped when the session ends.
     child: Option<Child>,
 }
@@ -161,9 +153,9 @@ impl Wire for StdioConn {
                     // Servers that print to stdout (against the spec) do not
                     // break the session: the line is shown as a log.
                     Err(_) => {
-                        let _ = self.events.send(Event::Log {
+                        self.sink.emit(|at| Event::Log {
                             line: format!("stdout: {t}"),
-                            at: self.start.elapsed(),
+                            at,
                         });
                     }
                 }

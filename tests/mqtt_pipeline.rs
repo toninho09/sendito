@@ -12,19 +12,15 @@ mod tests {
     fn context(root: &std::path::Path) -> RunCtx {
         RunCtx {
             root: root.into(),
-            send: Default::default(),
-            history: Some((root.join("history.jsonl"), 100)),
+            history: Some(sendito_pipeline::runner::HistorySink {
+                path: root.join("history.jsonl"),
+                max_entries: 100,
+                max_body: 1024 * 1024,
+            }),
             name: "sensor".into(),
             path: Some("sensor.toml".into()),
-            env: None,
-            schemas: Default::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
-            sse_timeout_ms: 30_000,
-            mqtt_timeout_ms: 30_000,
             mask_echoed_secrets: true,
-            cookie_jar: false,
-            oauth: None,
+            ..Default::default()
         }
     }
 
@@ -244,7 +240,7 @@ mod tests {
         }];
         let (_, reason, error, scripts) = done(&run(&ctx, &req, Scope::new(), |_, _| {}).await);
         assert_eq!(reason, "error");
-        assert!(error.unwrap().contains("Connection refused"));
+        assert!(error.unwrap().contains("CONNACK refused: NotAuthorized"));
         assert!(
             scripts.asserts.is_empty(),
             "no CONNACK accepted: no scripts"

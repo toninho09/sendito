@@ -1,0 +1,18 @@
+kind = "websocket"
+url = "{{ws_url}}/graphql"
+
+[graphql]
+query = "subscription Ticks($who: String) { tick(who: $who) }"
+variables = '''
+{"who":"{{greeting}}"}
+'''
+operation_name = "Ticks"
+init_payload = '''
+{"user":"{{user}}"}
+'''
+
+[[scripts.assert]]
+from = "jsonpath"
+expr = "$.data.tick"
+op = "eq"
+value = "2"

@@ -11,12 +11,13 @@ expression: screen
 │   Finish sending on a client/bidi stream (half-close)          Ctrl+W d                                    ┃
 │   Re-send the active request on an interval (watch)            Ctrl+W m                                    ┃
 │   Save the request to its file (asks for a name if new)        Ctrl+S, Ctrl+W s                            ┃
-│   Quit Sendito                                                 Ctrl+W q, Ctrl+Q                            ┃
+│   Quit Sendito                                                 Ctrl+W q, Ctrl+Q                            │
 │   Open a new unsaved HTTP request tab                          Ctrl+N, Ctrl+W t                            │
 │   Open a new unsaved gRPC request tab                          Ctrl+W g                                    │
 │   Open a new unsaved SSE request tab                           Ctrl+W E                                    │
 │   Open a new unsaved MQTT request tab                          Ctrl+W M                                    │
 │   Open a new unsaved WebSocket request tab                     Ctrl+W y                                    │
+│   Open a new unsaved MCP request tab                           Ctrl+W a                                    │
 │   Close the current tab                                        Ctrl+W c                                    │
 │   Next open request tab                                        Ctrl+W n, Ctrl+PageDown                     │
 │   Previous open request tab                                    Ctrl+W p, Ctrl+PageUp                       │
@@ -32,7 +33,6 @@ expression: screen
 │   Jump to tab 1 of the focused pane                            Alt+1                                       │
 │   Jump to tab 2 of the focused pane                            Alt+2                                       │
 │   Jump to tab 3 of the focused pane                            Alt+3                                       │
-│   Jump to tab 4 of the focused pane                            Alt+4                                       │
 │                                                                                                            │
 │ Enter records new keys, Ctrl+A adds one, Del restores the default. Tab: all: both editing modes.           │
 │                                                                                                            │

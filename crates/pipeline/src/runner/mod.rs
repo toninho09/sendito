@@ -23,6 +23,7 @@ use sendito_store::env::{COLLECTION_ENV, Envs, Keychain, MemoryKeychain, OsKeych
 use sendito_store::history::{self, HistoryEntry};
 use tokio::sync::mpsc;
 
+use crate::diagnose;
 use crate::doc::Doc;
 
 #[derive(Debug, Clone, Default)]
@@ -94,7 +95,7 @@ pub(crate) struct PrePhase<T> {
 /// The pre-request phase of a send: the `pre` rows, then the Lua pre
 /// scripts. Both set variables in `scope`; the scripts can also change the
 /// request. On a script error the request is the one given.
-pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
+fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
     let mut wrapped = req.clone().wrap();
     let mut results = ScriptResults {
         pre: script::run_pre(&wrapped.scripts().pre, scope),
@@ -114,6 +115,31 @@ pub(crate) fn pre_phase<T: Kind>(req: &T, scope: &mut Scope) -> PrePhase<T> {
         results,
         error,
     }
+}
+
+/// The start of every send, for every request kind: the one place for the
+/// work that all kinds do before they resolve the request. First the
+/// `$response` values (a dependency can be sent), then the pre-request phase
+/// ([`pre_phase`]). The results list what the dependencies set first.
+pub(crate) async fn prepare<T: Kind>(ctx: &RunCtx, req: &T, scope: &mut Scope) -> PrePhase<T> {
+    let deps = match deps::deps_phase(ctx, &req.clone().wrap(), scope).await {
+        Ok(r) => r,
+        Err(e) => {
+            return PrePhase {
+                req: req.clone(),
+                results: ScriptResults::default(),
+                error: Some(e),
+            };
+        }
+    };
+    let mut p = pre_phase(req, scope);
+    let mut pre = deps.pre;
+    pre.append(&mut p.results.pre);
+    p.results.pre = pre;
+    let mut logs = deps.logs;
+    logs.append(&mut p.results.logs);
+    p.results.logs = logs;
+    p
 }
 
 /// The response phase of a send: the extracts, the assertions, then the Lua
@@ -170,11 +196,34 @@ fn taint_set(scope: &mut Scope, name: &str, value: &mut VarValue, taint: &[Strin
     }
 }
 
+/// Where a send records its history entry, and how much it keeps.
+#[derive(Debug, Clone)]
+pub struct HistorySink {
+    /// `.sendito/history.jsonl`.
+    pub path: PathBuf,
+    /// `[history] max_entries`.
+    pub max_entries: usize,
+    /// `[history] max_body_kb` in bytes: the largest HTTP response body kept
+    /// (0 = no response file).
+    pub max_body: usize,
+}
+
+impl HistorySink {
+    /// The sink of a project, `None` when history is off.
+    pub fn of(root: &Path, config: &Config) -> Option<Self> {
+        config.history.enabled.then(|| Self {
+            path: history::history_path(root),
+            max_entries: config.history.max_entries,
+            max_body: config.history.max_body_kb.saturating_mul(1024),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct RunCtx {
     pub root: PathBuf,
     pub send: SendOptions,
-    pub history: Option<(PathBuf, usize)>,
+    pub history: Option<HistorySink>,
     pub name: String,
     pub path: Option<String>,
     pub env: Option<String>,
@@ -188,10 +237,108 @@ pub struct RunCtx {
     /// Mask secret values the server echoes back (the TUI); `sendito run`
     /// writes the body unchanged.
     pub mask_echoed_secrets: bool,
+    /// A file that a request reads (a body, a multipart part, a JWT key, a
+    /// `.proto` file) must be in the collection and not hidden (`sendito
+    /// serve`). See [`confined`].
+    pub confine_files: bool,
     /// `[http] cookie_jar` config default; the request's `[options] cookies`
     /// overrides it.
     pub cookie_jar: bool,
     pub oauth: Option<OAuthRunInfo>,
+    /// The last responses `$response` reads; [`RunCtx::of`] takes the
+    /// project's, so every send of the session shares it.
+    pub responses: ResponseCache,
+    /// The `$response` dependencies being sent, outermost first (paths): a
+    /// request already in the list is a cycle.
+    pub deps: Vec<String>,
+    /// `$response` may read the history; a data row of a folder run reads
+    /// only the responses of its own sends.
+    pub read_history: bool,
+}
+
+impl Default for RunCtx {
+    /// A context with the default config: no collection root, no history, no
+    /// environment and no OAuth. Tests set only the fields they need.
+    fn default() -> Self {
+        let c = Config::default();
+        Self {
+            root: PathBuf::new(),
+            send: SendOptions::default(),
+            history: None,
+            name: String::new(),
+            path: None,
+            env: None,
+            schemas: SchemaCache::default(),
+            grpc_deadline_ms: c.grpc.deadline_ms,
+            ws_timeout_ms: c.websocket.timeout_ms,
+            sse_timeout_ms: c.sse.timeout_ms,
+            mqtt_timeout_ms: c.mqtt.timeout_ms,
+            mask_echoed_secrets: false,
+            confine_files: false,
+            cookie_jar: c.http.cookie_jar,
+            oauth: None,
+            responses: ResponseCache::default(),
+            deps: Vec::new(),
+            read_history: true,
+        }
+    }
+}
+
+impl RunCtx {
+    /// The context of a send of the request `name` (saved at `path`) in
+    /// `project`: its config, its history and its OAuth identities. The
+    /// caller sets the environment and what differs (the UI masks echoed
+    /// secrets; `sendito run` can turn history and cookies off).
+    pub fn of(project: &Project, name: String, path: Option<String>) -> Self {
+        let c = &project.config;
+        Self {
+            root: project.root.clone(),
+            send: project.send_options(),
+            history: HistorySink::of(&project.root, c),
+            name,
+            path,
+            grpc_deadline_ms: c.grpc.deadline_ms,
+            ws_timeout_ms: c.websocket.timeout_ms,
+            sse_timeout_ms: c.sse.timeout_ms,
+            mqtt_timeout_ms: c.mqtt.timeout_ms,
+            cookie_jar: c.http.cookie_jar,
+            oauth: Some(OAuthRunInfo::of(project)),
+            responses: project.responses.clone(),
+            ..Self::default()
+        }
+    }
+
+    /// With [`RunCtx::confine_files`], refuses each path that [`confined`]
+    /// refuses.
+    pub fn check_files<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Result<(), String> {
+        if self.confine_files {
+            paths.into_iter().try_for_each(|p| confined(&self.root, p))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// `path` is a file or a directory in the collection at `root`, and no part
+/// of it below `root` starts with '.' (`.sendito/` holds the secrets). The
+/// check follows symbolic links, so a link cannot lead out of the collection.
+pub fn confined(root: &Path, path: &Path) -> Result<(), String> {
+    let refused = || {
+        format!(
+            "{}: sendito serve reads only the files of the collection (not hidden ones), and this is not one",
+            path.display()
+        )
+    };
+    let root = std::fs::canonicalize(root).map_err(|_| refused())?;
+    let full = std::fs::canonicalize(path).map_err(|_| refused())?;
+    let rel = full.strip_prefix(&root).map_err(|_| refused())?;
+    if rel
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err(refused());
+    }
+    Ok(())
 }
 
 /// Commands to a running request: gRPC calls and WebSocket sessions share
@@ -215,7 +362,9 @@ pub use sendito_mcp::Event as McpEvent;
 /// are masked like other secrets.
 pub(super) const SIGNED_LAYER: &str = "signed";
 
+mod deps;
 mod graphql;
+mod graphql_ws;
 mod grpc;
 mod http;
 mod mcp;
@@ -226,6 +375,7 @@ mod record;
 mod scope;
 mod sse;
 mod ws;
+pub use deps::{Cached, ResponseCache};
 pub use graphql::*;
 pub use grpc::*;
 pub use http::*;
@@ -241,6 +391,25 @@ pub use ws::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_send_check_keeps_the_lua_catalog_and_gives_the_reason() {
+        let (catalog, _) = lua_script::LuaCatalog::new(vec![LuaScript {
+            origin: "lua/t.lua".into(),
+            code: "function ok() return 'x' end function boom() error('bad') end".into(),
+        }]);
+        let mut scope = Scope::new().with_layer(COLLECTION_ENV, BTreeMap::new());
+        scope.set_catalog(Arc::new(catalog));
+        let req = Request::Http(HttpRequest {
+            url: "https://h/{{ $lua.ok() }}/{{ $lua.boom() }}".into(),
+            ..Default::default()
+        });
+        // `without` (a failed name) rebuilds the scope: the catalog stays.
+        let un = unresolved_loaded(&req, &scope, &["other".into()]);
+        assert_eq!(un, ["$lua.boom()"]);
+        let list = unresolved_list(&un, &scope);
+        assert_eq!(list, "{{$lua.boom()}} (lua/t.lua script:1: bad)");
+    }
 
     #[test]
     fn a_failed_secret_is_unresolved_even_with_a_lower_value() {
@@ -315,19 +484,10 @@ mod tests {
         };
         let ctx = RunCtx {
             root: std::env::temp_dir(),
-            send: SendOptions::default(),
-            history: None,
-            name: String::new(),
-            path: None,
-            env: None,
-            schemas: SchemaCache::default(),
-            grpc_deadline_ms: 0,
-            ws_timeout_ms: 0,
             sse_timeout_ms: 0,
             mqtt_timeout_ms: 0,
             mask_echoed_secrets: true,
-            cookie_jar: false,
-            oauth: None,
+            ..Default::default()
         };
         let o = exec_http(&ctx, &req, secret_scope(), vec![]).await;
         assert!(o.response.is_err());

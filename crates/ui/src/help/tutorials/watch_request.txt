@@ -1,0 +1,16 @@
+Send the same HTTP request again and again, for example while you repair
+a server.
+
+── Steps ──
+  1.  Send the request one time with {key:send}, to see that it works.
+  2.  Press {key:watch}. Sendito sends the request again every few seconds. The status line shows the watch and its interval.
+  3.  Read the response pane after each send. The Timing tab shows a small chart of the times.
+  4.  Press {key:watch} again or {key:cancel} to stop the watch.
+
+Result: each send shows in the response pane. The history does not change.
+
+── Good to know ──
+  •  The command :watch 2 starts the watch with an interval of 2 seconds.
+  •  Without a number, the interval is the setting Watch interval (5 seconds by default).
+  •  The watch stops when you close the tab, when you change the environment, or when a variable is undefined.
+  •  The watch is for HTTP requests. For gRPC, MCP and the streams, send the request again yourself.

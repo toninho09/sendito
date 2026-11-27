@@ -1,0 +1,19 @@
+Call a gRPC method.
+
+── Steps ──
+  1.  Press {key:new_grpc_request}. A gRPC tab opens.
+  2.  Type the target, for example localhost:50051. Use https:// or grpcs:// for TLS.
+  3.  Sendito reads the schema from the server (reflection). For .proto files, open the Options tab and set Schema source to Proto files.
+  4.  Move the focus to the method and press Enter. Choose the method (Service/Method) and press Enter.
+  5.  Open the Message tab and write the message as JSON. {key:complete} shows the fields of the message. The command :template writes all the fields for you.
+  6.  To add metadata, open the Metadata tab and add a row.
+  7.  Press {key:send}.
+
+Result: the Body tab shows the response. The Log tab shows each message
+and the final status.
+
+── Streams ──
+  •  For a client or a bidi stream, each {key:send} sends one more message.
+  •  {key:end_stream} tells the server that you sent all the messages.
+  •  {key:cancel} stops the call.
+  •  The command :reload reads the schema again after a change on the server.

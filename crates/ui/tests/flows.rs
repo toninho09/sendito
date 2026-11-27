@@ -604,6 +604,7 @@ fn flow_history_wheel_scrolls_freely() {
             duration_ms: 1,
             size: 1,
             error: None,
+            response: None,
         })
         .collect();
     h.key("f7");
@@ -757,6 +758,78 @@ fn flow_lua_pre_script() {
     assert!(sc.contains("  hi"), "{sc}");
 }
 
+/// The response tab bar: Left and Right switch the tab and Enter opens it,
+/// before the viewer bindings see the keys; the hint row says so.
+#[test]
+fn flow_response_tab_bar_keys() {
+    use sendito_ui::app::Focus;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    h.app.focus = Focus::RespTabs;
+    let labels: Vec<String> = h.app.hints().into_iter().map(|(_, l)| l).collect();
+    assert!(labels.iter().any(|l| l == "switch tab"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "fold"), "{labels:?}");
+    let tab = |h: &Harness| h.app.tab().must().resp_tab;
+    h.key("right");
+    assert_eq!(tab(&h), 1);
+    h.key("left");
+    assert_eq!(tab(&h), 0);
+    h.key("enter");
+    assert_eq!(h.app.focus, Focus::RespBody);
+}
+
+/// A note leaves the footer after its time; a warning stays until a new
+/// message replaces it.
+#[test]
+fn flow_status_note_expires_warning_stays() {
+    use sendito_ui::app::StatusKind;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let old = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(30))
+        .must();
+    h.app.status = Some(("check the url".into(), StatusKind::Warn, old));
+    h.app.tick();
+    assert!(h.app.status.is_some());
+    h.app.status = Some(("saved".into(), StatusKind::Ok, old));
+    h.app.tick();
+    assert!(h.app.status.is_none());
+}
+
+/// `:debug FILE` turns the debug log on: an error status and a dialog that
+/// stops a send go to the file. `:debug` turns it off. The log is global to
+/// the process, so the test checks only its own lines.
+#[test]
+fn flow_debug_command_logs_errors() {
+    use sendito_ui::app::StatusKind;
+    let dir = tempfile::tempdir().must();
+    let log = dir.path().join("debug.log");
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.app.run_command(&format!("debug {}", log.display()));
+    let (msg, kind, _) = h.app.status.clone().must();
+    assert_eq!(msg, format!("debug log on: {}", log.display()));
+    assert_eq!(kind, StatusKind::Info);
+    h.app.run_command("watch abc");
+    h.app.run_command("env staging");
+    open(&mut h, "get order");
+    h.key("f5");
+    assert!(h.screen().contains("Undefined variables"));
+    h.key("esc");
+    h.app.run_command("debug");
+    let (msg, _, _) = h.app.status.clone().must();
+    assert_eq!(msg, format!("debug log off: {}", log.display()));
+    let text = std::fs::read_to_string(&log).must();
+    assert!(text.contains(" ERROR usage: :watch [seconds]"), "{text}");
+    assert!(
+        text.contains(" WARN not sent: Undefined variables: {{order_id}} not defined"),
+        "{text}"
+    );
+}
+
 #[test]
 fn flow_response_jq_filter() {
     let s = servers();
@@ -818,6 +891,35 @@ fn flow_response_jq_filter() {
         assert!(!sc.contains("jq ▸"), "{sc}");
         assert!(sc.contains("\"method\""), "{sc}");
     }
+    // Ctrl+R shows the body without the filter while the text is typed;
+    // Enter turns the filter on again.
+    h.key("j");
+    h.type_text(".method");
+    h.key("ctrl+r");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("filter off"), "{sc}");
+        assert!(sc.contains("\"target\""), "{sc}");
+    }
+    h.key("enter");
+    {
+        let sc = h.screen();
+        assert!(!sc.contains("filter off"), "{sc}");
+        assert!(sc.contains("\"POST\""), "{sc}");
+        assert!(!sc.contains("\"target\""), "{sc}");
+    }
+    // Esc also ends the bypass and goes back to the kept filter.
+    h.key("j");
+    h.key("ctrl+r");
+    assert!(h.screen().contains("\"target\""));
+    h.key("esc");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
+        assert!(!sc.contains("\"target\""), "{sc}");
+    }
+    h.key("j");
+    h.key("ctrl+a backspace enter");
     // Up walks the expressions used before.
     h.key("j");
     h.key("up");
@@ -833,6 +935,47 @@ fn flow_response_jq_filter() {
     let sc = h.screen();
     assert!(!sc.contains("jq ▸"), "{sc}");
     assert!(sc.contains("\"method\""), "{sc}");
+}
+
+/// A terminal paste into the query bar is text: the filter (or the search)
+/// follows it, it goes in at the cursor and a newline folds to a space.
+#[test]
+fn flow_response_jq_paste() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    open(&mut h, "create user");
+    h.key("f5");
+    h.wait_idle(10);
+    h.key("ctrl+w j");
+    h.key("j");
+    h.paste(".method");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method"), "{sc}");
+        assert!(sc.contains("1 result"), "{sc}");
+        assert!(sc.contains("\"POST\""), "{sc}");
+    }
+    // At the cursor: Ctrl+A selects the text, the paste replaces it. The
+    // trailing newline folds to a space and the filter still runs.
+    h.key("ctrl+a");
+    h.paste(".method | ascii_downcase\n");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("jq ▸ .method | ascii_downcase"), "{sc}");
+        assert!(sc.contains("1 result"), "{sc}");
+        assert!(sc.contains("\"post\""), "{sc}");
+    }
+    // Esc: nothing was kept with Enter, so the bar closes.
+    h.key("esc");
+    assert!(!h.screen().contains("jq ▸"));
+    // The find bar takes a paste too.
+    h.key("/");
+    h.paste("server-session-1");
+    {
+        let sc = h.screen();
+        assert!(sc.contains("find ▸ server-session-1"), "{sc}");
+        assert!(sc.contains("match 1/1"), "{sc}");
+    }
 }
 
 #[test]
@@ -1162,6 +1305,44 @@ fn flow_curl_paste_and_export() {
     assert!(!sc.contains("s3cr3t-token"));
 }
 
+/// Enter on a history entry opens the request and the response kept with
+/// it, its echoed secret masked.
+#[test]
+fn flow_history_shows_the_kept_response() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "list users");
+    h.key("f5");
+    h.wait_idle(10);
+    s.http.take();
+    h.key("f7");
+    for _ in 0..200 {
+        if h.app.history.as_ref().is_some_and(|v| !v.is_empty()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.pump();
+    }
+    h.key("enter");
+    // Nothing is sent: the response comes from the history file.
+    assert!(s.http.take().is_empty());
+    let t = &h.app.tabs[h.app.active];
+    assert!(
+        matches!(
+            t.response.as_ref().and_then(|r| r.stored.as_ref()),
+            Some(sendito_ui::tab::Stored::History(_))
+        ),
+        "{}",
+        h.screen()
+    );
+    let sc = h.screen();
+    assert!(sc.contains("history: ") && sc.contains("200 OK"), "{sc}");
+    assert!(
+        sc.contains("Bearer ••••••") && !sc.contains("s3cr3t-token"),
+        "{sc}"
+    );
+}
+
 #[test]
 fn flow_history_resend() {
     let s = servers();
@@ -1314,7 +1495,7 @@ fn flow_untouched_palette_highlights_a_harmless_first_row() {
     h.key("enter");
     assert!(matches!(
         h.app.overlay,
-        Some(sendito_ui::overlay::Overlay::Help { .. })
+        Some(sendito_ui::overlay::Overlay::Help(_))
     ));
     h.key("esc");
     assert!(h.app.overlay.is_none());
@@ -1356,7 +1537,10 @@ fn flow_env_editor_edits_the_dotenv_path() {
     let s = servers();
     let mut h = harness(&s, 100, 30);
     let dotenv = |h: &Harness| match &h.app.overlay {
-        Some(Overlay::Env(e)) => (e.dotenv.text(), e.on_dotenv),
+        Some(Overlay::Env(e)) => (
+            e.dotenv.text(),
+            e.focus == sendito_ui::overlay::EnvFocus::Dotenv,
+        ),
         _ => panic!("the env editor is not open"),
     };
     // The editor opens on the active environment.
@@ -1615,31 +1799,68 @@ fn flow_themes_and_style() {
 }
 
 #[test]
-fn flow_help_two_columns() {
+fn flow_help_sections() {
     use sendito_ui::overlay::Overlay;
-    let cursor = |h: &Harness| match &h.app.overlay {
-        Some(Overlay::Help { viewer, .. }) => viewer.cursor_line(),
-        _ => usize::MAX,
+    let open = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Help(help)) => help.sections[help.sel].name,
+        _ => "",
     };
-    // One column: the line is below the first page.
-    let mut h = Harness::new(120, 40);
-    h.key("f1");
-    assert!(h.find("Move down").is_none());
-    // Wide: the right column continues the left one, and a click there
-    // selects the line it shows.
+    // F1 opens "Start here"; Tab opens the next section, Shift+Tab the
+    // previous one, and both wrap at the ends.
     let mut h = Harness::new(200, 60);
     h.key("f1");
-    let (x, y) = h.find("Move down").must();
-    assert!(x > 100, "{x}");
+    assert_eq!(open(&h), "Start here");
+    assert!(h.find("(type to search this section)").is_some());
+    h.key("tab");
+    assert_eq!(open(&h), "How it works");
+    h.key("shift+tab shift+tab");
+    assert_eq!(open(&h), "Lua catalog");
+    h.key("tab");
+    assert_eq!(open(&h), "Start here");
+    // A group heading is not a section: a click on it changes nothing.
+    let (x, y) = h.find("Tutorials").must();
     h.click(x, y);
-    let wide = cursor(&h);
-    assert_ne!(wide, usize::MAX);
-    assert!(wide > 40, "{wide}");
-    let line = h.screen().lines().nth(y as usize).unwrap_or("").to_string();
-    assert!(line.contains("Move down"));
-    // PgDn moves by both columns at once.
-    h.key("pagedown");
-    assert!(cursor(&h) > wide);
+    assert_eq!(open(&h), "Start here");
+    // A tutorial shows the keys of the keymap, not the placeholders.
+    let (x, y) = h.find("First request").must();
+    h.click(x, y);
+    assert_eq!(open(&h), "First request");
+    assert!(h.find("{key:").is_none());
+    // The search applies to the open section and follows it.
+    assert!(h.find("$base64(text)").is_none());
+    h.type_text("$base64");
+    assert!(h.find("no match for \"$base64\"").is_some());
+    // A click on a sidebar row opens its section.
+    let (x, y) = h.find("Template functions").must();
+    h.click(x, y);
+    assert_eq!(open(&h), "Template functions");
+    assert!(h.find("$base64(text)").is_some(), "the search follows");
+    // One column at any width: the dialog stops at the longest row.
+    let screen = h.screen();
+    let title = screen.lines().find(|l| l.contains("Help (Tab")).must();
+    let rule = title.split("Esc closes)").nth(1).must();
+    let dashes = rule.chars().take_while(|c| *c == '─').count();
+    assert!(dashes < 120, "{dashes}");
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    // `:help <section>` opens the help at the section that matches: its
+    // name first, else its text; then the search box holds the word.
+    h.app.run_command(":help grpc");
+    assert_eq!(open(&h), "gRPC call");
+    h.key("esc");
+    h.app.run_command(":help xpath");
+    assert_eq!(open(&h), "Scripts tab");
+    let filter = match &h.app.overlay {
+        Some(Overlay::Help(help)) => help.filter.text(),
+        _ => String::new(),
+    };
+    assert_eq!(filter, "xpath");
+    assert!(h.find("xpath").is_some());
+    h.key("esc");
+    h.app.run_command(":help no such section");
+    assert!(h.app.overlay.is_none());
+    let status = h.app.status.as_ref().map(|s| s.0.as_str());
+    assert_eq!(status, Some("no help section matches \"no such section\""));
 }
 
 #[test]
@@ -1734,6 +1955,55 @@ fn flow_grpc_message_completion() {
     assert_eq!(call.messages, vec!["{\"text\":\"hi\"}".to_string()]);
 }
 
+/// Ctrl+W O asks the event loop for $EDITOR on a multi-line text; the edited
+/// text replaces it. A one-line field and a missing response are refused.
+#[test]
+fn flow_external_editor_and_pager() {
+    use sendito_ui::external::External;
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "echo unary");
+    h.app.tabs[h.app.active]
+        .ed
+        .message
+        .set_text("{\"text\": \"a\"}");
+    h.app.focus = sendito_ui::app::Focus::ReqBody;
+    h.app.tabs[h.app.active].field = 0;
+    h.key("ctrl+w O");
+    assert_eq!(
+        h.app.external.take(),
+        Some(External::Edit {
+            text: "{\"text\": \"a\"}".into(),
+            ext: "json"
+        })
+    );
+    h.app
+        .finish_external(Ok(Some("{\"text\": \"from vi\"}\n".into())));
+    let t = &h.app.tabs[h.app.active];
+    assert_eq!(t.ed.message.text(), "{\"text\": \"from vi\"}\n");
+    assert!(t.dirty());
+    assert!(h.screen().contains("text from the editor"));
+    // An editor that fails leaves the text as it is.
+    h.app
+        .finish_external(Err("vi exited with exit status: 1".into()));
+    assert!(h.screen().contains("vi exited"));
+    assert_eq!(
+        h.app.tabs[h.app.active].ed.message.text(),
+        "{\"text\": \"from vi\"}\n"
+    );
+    // The target is one line.
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("ctrl+w O");
+    assert!(h.app.external.is_none());
+    assert!(h.screen().contains("this field is one line"));
+    // No response yet: nothing for the pager.
+    h.key("ctrl+p");
+    h.type_text(":pager");
+    h.key("enter");
+    assert!(h.app.external.is_none());
+    assert!(h.screen().contains("no response to show"), "{}", h.screen());
+}
+
 /// Completing inside an existing key replaces the whole key and keeps its
 /// value, so the JSON stays valid.
 #[test]
@@ -1809,16 +2079,16 @@ fn flow_mcp_completion() {
     h.key("f2");
     h.key("enter");
     assert_eq!(h.app.tabs[h.app.active].ed.mcp_server.text(), "echo");
-    // The tool field pulls the tool list in the background, then filters it.
+    // The target field pulls the tool list in the background, then filters it.
     h.app.focus = sendito_ui::app::Focus::ReqBody;
-    h.app.tabs[h.app.active].field = 1;
+    h.app.tabs[h.app.active].field = 2;
     h.type_text("ad");
     let start = std::time::Instant::now();
     while h.app.complete.as_ref().is_none_or(|c| c.items.is_empty()) {
         assert!(
             start.elapsed() < std::time::Duration::from_secs(10),
             "tool list did not arrive; tools={:?}",
-            h.app.tabs[h.app.active].mcp_tools.len()
+            h.app.tabs[h.app.active].mcp.tools.len()
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.pump();
@@ -1904,7 +2174,8 @@ fn flow_completion_fetches_schema() {
     let c = h.app.complete.as_ref().must();
     assert!(c.loading.is_none());
     assert!(c.items.iter().any(|i| i.name == "text"));
-    assert!(h.screen().contains("insert"), "the hint row describes it");
+    let sc = h.screen();
+    assert!(sc.contains("insert"), "the hint row describes it\n{sc}");
 }
 
 /// A schema that fails to load is reported in the popup and status, and is not
@@ -1973,7 +2244,7 @@ fn flow_completion_tools_failure() {
         t.refresh_model();
     }
     h.app.focus = sendito_ui::app::Focus::ReqBody;
-    h.app.tabs[h.app.active].field = 1;
+    h.app.tabs[h.app.active].field = 2;
     h.type_text("a");
     assert_eq!(h.app.complete.as_ref().must().loading, Some("tools"));
     let start = std::time::Instant::now();
@@ -2540,8 +2811,8 @@ fn flow_prompt_dropdown_option_takes_the_mouse() {
     }
 }
 
-/// A settings row click selects it; the value chip changes it, so a click on
-/// the row no longer rewrites the config.
+/// A settings row click selects it; the value chip changes it (the Theme
+/// chip opens the list), so a click on the row does not rewrite the config.
 #[test]
 fn flow_settings_click_selects_and_the_value_changes() {
     use sendito_ui::app::{Hit, OverlayHit};
@@ -2568,7 +2839,14 @@ fn flow_settings_click_selects_and_the_value_changes() {
         .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Value(0))))
         .map(|(r, _)| *r)
         .must();
+    // The Theme value opens the list of themes, as Space does.
     h.click(value.x + 1, value.y);
+    assert!(matches!(
+        &h.app.overlay,
+        Some(sendito_ui::overlay::Overlay::Picker(p)) if p.title == "Theme"
+    ));
+    h.key("down");
+    h.key("enter");
     assert_ne!(theme(&h), before, "the value chip changes the setting");
 }
 
@@ -3445,6 +3723,245 @@ fn flow_theme_picker_applies_the_theme() {
     h.type_text("daylight");
     h.key("enter");
     assert_eq!(h.app.project.config.ui.theme, "daylight");
+    // The selection shows at once and is not saved; Esc brings back the
+    // saved theme.
+    h.app.run_command("theme");
+    h.key("down");
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert_eq!(h.app.project.config.ui.theme, "daylight");
+    h.key("esc");
+    assert!(h.app.overlay.is_none());
+    assert_eq!(&*h.app.theme.name, "daylight");
+    // A click outside closes it as Esc does.
+    h.app.run_command("theme");
+    h.key("down");
+    h.click(0, 0);
+    assert!(h.app.overlay.is_none());
+    assert_eq!(&*h.app.theme.name, "daylight");
+    // The kind of a theme is a detail; typing it filters the list.
+    assert_eq!(h.app.themes.kind("bauhaus"), "light · solid selection");
+    assert_eq!(h.app.themes.kind("dracula"), "dark");
+    h.app.run_command("theme");
+    h.type_text("solid");
+    match &h.app.overlay {
+        Some(Overlay::Picker(p)) => {
+            let names: Vec<&str> = p.visible().iter().map(|i| p.items[*i].as_str()).collect();
+            assert!(names.contains(&"turbo") && names.contains(&"contrast"));
+            assert!(!names.contains(&"dracula"));
+        }
+        _ => panic!("the theme picker closed"),
+    }
+    h.key("esc");
+    // Settings: Space opens the list and Esc returns to Settings; Enter in
+    // the list saves the theme and returns too.
+    h.app.open_settings(sendito_ui::overlay::SettingId::Theme);
+    h.key("space");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme"));
+    h.key("esc");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Settings(_))));
+    h.key("enter");
+    h.type_text("nord");
+    h.key("enter");
+    assert!(matches!(&h.app.overlay, Some(Overlay::Settings(_))));
+    assert_eq!(h.app.project.config.ui.theme, "nord");
+    // ← → still step through the themes.
+    h.key("right");
+    assert_eq!(h.app.project.config.ui.theme, "gruvbox");
+}
+
+/// The `theme` of an environment shows while it is active, and the top bar
+/// shows that environment as a solid chip. `:theme` lasts until the next
+/// switch; a theme that does not exist falls back to `[ui] theme`.
+#[test]
+fn flow_environment_theme() {
+    use sendito_ui::app::StatusKind;
+    let mut h = harness(&servers(), 120, 40);
+    let staging = h.dir.path().join(".sendito/environments/staging.toml");
+    let vars = std::fs::read_to_string(&staging).must();
+    std::fs::write(&staging, format!("theme = \"Ember\"\n{vars}")).must();
+    assert!(h.app.env_theme.is_none());
+    h.draw();
+    let (x, y) = h.find("local ▾").must();
+    let plain = h.term.backend().buffer()[(x, y)].clone();
+    assert_ne!(plain.bg, h.app.theme.env_color("local"));
+    // The environment's theme and the solid chip.
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert_eq!(h.app.env_theme.as_deref(), Some("ember"));
+    h.draw();
+    let (x, y) = h.find("staging ▾").must();
+    let chip = h.term.backend().buffer()[(x, y)].clone();
+    assert_eq!(chip.bg, h.app.theme.env_color("staging"));
+    // :theme shows its theme until the environment changes.
+    h.app.run_command("theme daylight");
+    assert_eq!(&*h.app.theme.name, "daylight");
+    h.app.set_env(Some("local".into()));
+    assert_eq!(&*h.app.theme.name, "daylight");
+    assert!(h.app.env_theme.is_none());
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A restart on that environment starts with its theme.
+    h.reopen();
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A theme that does not exist: the [ui] theme and a warning.
+    std::fs::write(&staging, format!("theme = \"nope\"\n{vars}")).must();
+    h.app.set_env(Some("local".into()));
+    h.app.set_env(Some("staging".into()));
+    assert_eq!(&*h.app.theme.name, "daylight");
+    assert!(h.app.env_theme.is_none());
+    let (msg, kind, _) = h.app.status.as_ref().must();
+    assert_eq!(*kind, StatusKind::Warn);
+    assert!(msg.contains("no theme named \"nope\""), "{msg}");
+}
+
+/// The Theme line of the environment editor is a choice row, as in
+/// Settings: ← → change the theme and show it while the line has the
+/// focus, Space lists the themes and shows the selection, Esc keeps the
+/// line, Enter takes the selection, and a save writes the key and applies
+/// the theme of the active environment.
+#[test]
+fn flow_env_editor_sets_the_theme() {
+    use sendito_ui::overlay::{EnvFocus, Overlay};
+    let mut h = harness(&servers(), 120, 40);
+    let shown = h.app.theme.name.clone();
+    let line = |h: &Harness| match &h.app.overlay {
+        Some(Overlay::Env(e)) => (e.theme.clone(), e.focus, e.dirty),
+        _ => panic!("the env editor is not open"),
+    };
+    let names = h.app.themes.names();
+    let total = names.len() + 1;
+    h.key("ctrl+w V");
+    let screen = h.screen();
+    assert!(
+        screen.contains(&format!("‹ (base theme) › (1 of {total})")),
+        "{screen}"
+    );
+    // Up from the table: the .env file line, then the Theme line.
+    h.key("up up");
+    assert_eq!(line(&h), (None, EnvFocus::Theme, false));
+    // ← → step through the themes, after "(base theme)", and the screen
+    // shows each one.
+    h.key("right");
+    assert_eq!(h.app.theme.name, h.app.themes.theme(&names[0]).name);
+    assert_eq!(line(&h), (Some(names[0].clone()), EnvFocus::Theme, true));
+    assert!(
+        h.screen()
+            .contains(&format!("‹ {} › (2 of {total})", names[0]))
+    );
+    h.key("left");
+    assert_eq!(line(&h).0, None);
+    assert_eq!(h.app.theme.name, shown);
+    h.key("left");
+    assert_eq!(line(&h).0, names.last().cloned());
+    assert_eq!(
+        h.app.theme.name,
+        h.app.themes.theme(&names[names.len() - 1]).name
+    );
+    // The theme in use comes back when the line loses the focus.
+    h.key("down");
+    assert_eq!(h.app.theme.name, shown);
+    h.key("up right");
+    // Space lists the themes; the selection shows at once and Esc keeps
+    // the line.
+    h.key("space");
+    assert!(
+        matches!(&h.app.overlay, Some(Overlay::Picker(p)) if p.title == "Theme of the environment")
+    );
+    h.type_text("ember");
+    assert_eq!(&*h.app.theme.name, "ember");
+    h.key("esc");
+    assert_eq!(h.app.theme.name, shown);
+    assert_eq!(line(&h).0, None);
+    // Enter takes the selection; the theme shows after the save.
+    h.key("enter");
+    h.type_text("ember");
+    h.key("enter");
+    assert_eq!(line(&h), (Some("ember".to_string()), EnvFocus::Theme, true));
+    assert_eq!(&*h.app.theme.name, "ember");
+    assert!(h.screen().contains("✓ dark"));
+    h.key("ctrl+s");
+    let p = h.dir.path().join(".sendito/environments/local.toml");
+    let after = std::fs::read_to_string(&p).must();
+    assert!(after.starts_with("theme = \"ember\"\n"), "{after}");
+    assert_eq!(&*h.app.theme.name, "ember");
+    // A click on the value lists the themes too.
+    let (x, y) = h.find("‹ ember ›").must();
+    h.click(x, y);
+    assert!(matches!(&h.app.overlay, Some(Overlay::Picker(_))));
+    h.key("esc");
+    // A name in the file that no theme has says so.
+    let text = std::fs::read_to_string(&p).must();
+    std::fs::write(&p, text.replace("ember", "nope")).must();
+    h.app.overlay = None;
+    h.key("ctrl+w V");
+    assert!(h.screen().contains("no theme has this name"));
+    // The collection variables have no Theme line.
+    h.key("ctrl+pageup");
+    h.key("up up");
+    assert_eq!(line(&h).1, EnvFocus::Dotenv);
+}
+
+/// Each row of the theme list ends with that theme's colors on its own
+/// background.
+#[test]
+fn flow_theme_picker_rows_show_the_colors() {
+    use sendito_ui::app::{Hit, OverlayHit};
+    let mut h = harness(&servers(), 120, 40);
+    h.app.run_command("theme");
+    h.type_text("bauhaus");
+    h.draw();
+    let row = h
+        .app
+        .hits
+        .iter()
+        .rev()
+        .find(|(_, hit)| matches!(hit, Hit::Overlay(OverlayHit::Item(0))))
+        .map(|(r, _)| *r)
+        .must();
+    let t = h.app.themes.theme("bauhaus");
+    let sw = t.swatch();
+    // The swatch, a cell of background on each side, then a margin.
+    let first = row.x + row.width - sw.len() as u16 - 2;
+    let buf = h.term.backend().buffer().clone();
+    assert_eq!(buf[(first - 1, row.y)].bg, t.bg);
+    for (i, c) in sw.iter().enumerate() {
+        let cell = &buf[(first + i as u16, row.y)];
+        assert_eq!(cell.symbol(), "█");
+        assert_eq!((cell.fg, cell.bg), (*c, t.bg));
+    }
+    assert_eq!(buf[(first + sw.len() as u16, row.y)].bg, t.bg);
+}
+
+/// `:theme <text>` lists the matching themes in the palette.
+#[test]
+fn flow_palette_lists_themes() {
+    use sendito_ui::overlay::{Overlay, PaletteItem};
+    let mut h = harness(&servers(), 120, 40);
+    h.key("ctrl+p");
+    h.type_text(":theme latte");
+    match &h.app.overlay {
+        Some(Overlay::Palette(p)) => {
+            let v = p.visible();
+            assert_eq!(v.len(), 1);
+            assert_eq!(
+                p.items[v[0]].0,
+                PaletteItem::Theme("catppuccin-latte".into())
+            );
+        }
+        _ => panic!("the palette closed"),
+    }
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "catppuccin-latte");
+    // Without a ':' the themes are found by name too.
+    h.key("ctrl+p");
+    h.type_text("theme: monokai");
+    h.key("enter");
+    assert_eq!(h.app.project.config.ui.theme, "monokai");
+    // `:theme reload` matches no theme name and still runs.
+    h.key("ctrl+p");
+    h.type_text(":theme reload");
+    h.key("enter");
+    assert!(h.screen().contains("themes reloaded"));
 }
 
 #[test]
@@ -3801,6 +4318,29 @@ fn flow_new_request_previews_the_file() {
 
 /// The import dialog says what the text would import, and Tab completes
 /// a path.
+/// A dialog key changed in the keymap applies in the dialog and shows in its
+/// hints; the old key does nothing there.
+#[test]
+fn flow_dialog_key_follows_the_keymap() {
+    use sendito_store::config::KeySpec;
+    use sendito_ui::keymap::Keymap;
+    use std::collections::BTreeMap;
+    let mut h = harness(&servers(), 120, 40);
+    let cfg = BTreeMap::from([(
+        "all".to_string(),
+        BTreeMap::from([("dialog_confirm".to_string(), KeySpec::One("f6".into()))]),
+    )]);
+    h.app.keymap = Keymap::defaults().with_overrides(&cfg).0;
+    h.key("ctrl+w i");
+    h.type_text("curl https://example.test/a");
+    let hints: Vec<String> = h.app.hints().into_iter().map(|(k, _)| k).collect();
+    assert_eq!(hints.first().map(String::as_str), Some("F6"), "{hints:?}");
+    h.key("ctrl+s");
+    assert!(h.app.overlay.is_some(), "the old key imported");
+    h.key("f6");
+    assert!(h.app.overlay.is_none(), "the new key did not import");
+}
+
 #[test]
 fn flow_import_preview_and_completion() {
     use sendito_ui::overlay::Overlay;
@@ -3840,5 +4380,337 @@ fn flow_import_preview_and_completion() {
         h.screen().contains("✗ no file or directory"),
         "{}",
         h.screen()
+    );
+}
+
+/// A Lua function that fails with the loaded values stops the send with the
+/// reason; the names check counts it as defined.
+#[test]
+fn flow_lua_function_that_fails_asks_before_sending() {
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+        common::write(
+            d,
+            ".sendito/lua/util.lua",
+            "function boom() error('no order') end\n",
+        );
+        common::write(
+            d,
+            "boom.toml",
+            "kind = \"http\"\nmethod = \"GET\"\nurl = \"http://127.0.0.1:9/{{ $lua.boom() }}\"\n",
+        );
+    });
+    open(&mut h, "boom");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    h.key("f5");
+    let sc = h.wait_for("Functions not resolved", 10);
+    assert!(sc.contains("no order"), "{sc}");
+}
+
+/// `$prompt` and `$select` ask their values before the send, one dialog per
+/// label; the request goes out with the answers, and the next send suggests
+/// the last value that is not a secret.
+#[test]
+fn flow_prompt_and_select_ask_before_sending() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    let url = format!(
+        "{}/p/{{{{ $prompt('Order ID') }}}}/{{{{ $select('Mode', 'sandbox', 'live') }}}}?k={{{{ $prompt('Key', 'secret') }}}}",
+        s.http.url()
+    );
+    common::write(
+        h.dir.path(),
+        "ask.toml",
+        &format!("kind = \"http\"\nmethod = \"GET\"\nurl = \"{url}\"\n"),
+    );
+    h.app.rescan();
+    open(&mut h, "ask");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    h.key("f5");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Value to send (1 of 3)") && sc.contains("Order ID"),
+        "{sc}"
+    );
+    h.type_text("42");
+    h.key("enter");
+    assert!(
+        h.screen().contains("Mode: value to send (2 of 3)"),
+        "{}",
+        h.screen()
+    );
+    h.key("down");
+    h.key("enter");
+    let sc = h.screen();
+    assert!(
+        sc.contains("Value to send (3 of 3)") && sc.contains("Key"),
+        "{sc}"
+    );
+    h.type_text("s3cret");
+    assert!(!h.screen().contains("s3cret"), "{}", h.screen());
+    h.key("enter");
+    h.wait_for("200", 10);
+    let got = s.http.last().must();
+    assert_eq!(got.target(), "/p/42/live?k=s3cret");
+    // The next send suggests the values that are not secrets.
+    h.key("f5");
+    match &h.app.overlay {
+        Some(sendito_ui::overlay::Overlay::Prompt(p)) => assert_eq!(p.input.text(), "42"),
+        _ => panic!("no prompt: {}", h.screen()),
+    }
+    assert_eq!(
+        h.app
+            .session()
+            .prompt_values
+            .get("Mode")
+            .map(String::as_str),
+        Some("live")
+    );
+    assert!(!h.app.session().prompt_values.contains_key("Key"));
+}
+
+/// `$response` in the TUI: the first send sends the dependency first; the
+/// next send uses the response of the session; the Results say so.
+#[test]
+fn flow_response_sends_the_dependency_once() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        "Auth/login.toml",
+        "kind = \"http\"\nmethod = \"POST\"\nurl = \"{{base_url}}/login\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "needs-login.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/use?t={{ $response('Auth/login', '$.target') }}\"\n",
+    );
+    h.app.rescan();
+    open(&mut h, "needs-login");
+    assert!(!h.screen().contains("undefined"), "{}", h.screen());
+    let targets =
+        |s: &Servers| -> Vec<String> { s.http.take().iter().map(|c| c.target()).collect() };
+    h.key("f5");
+    h.wait_for("200", 10);
+    assert_eq!(targets(&s), ["/login", "/use?t=/login"]);
+    let logs = |h: &Harness| {
+        h.app
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .map(|r| String::from_utf8_lossy(r.messages.doc.bytes()).into_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        logs(&h).contains("dependency Auth/login: sent (200 OK"),
+        "{}",
+        logs(&h)
+    );
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(targets(&s), ["/use?t=/login"]);
+    assert!(
+        logs(&h).contains("the response of this session"),
+        "{}",
+        logs(&h)
+    );
+}
+
+/// The run tab: `:run F --data users.csv` sends the folder once per row with
+/// its own runtime values, Up chooses a row, a `$prompt` request is an error
+/// row, F5 runs again, and the session does not keep the tab.
+#[test]
+fn flow_run_tab_runs_a_folder_once_per_row() {
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    common::write(
+        h.dir.path(),
+        "F/1-a.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/{{user}}\"\n\n[[scripts.extract]]\nvar = \"got\"\nfrom = \"jsonpath\"\nexpr = \"$.target\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "F/2-b.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/b{{got}}\"\n",
+    );
+    common::write(
+        h.dir.path(),
+        "F/3-c.toml",
+        "kind = \"http\"\nurl = \"{{base_url}}/c?otp={{ $prompt('OTP') }}\"\n",
+    );
+    common::write(h.dir.path(), "users.csv", "user\nana\nbob\n");
+    h.app.rescan();
+    let targets =
+        |s: &Servers| -> Vec<String> { s.http.take().iter().map(|c| c.target()).collect() };
+    h.app.run_command("run F --data users.csv");
+    h.wait_idle(10);
+    assert_eq!(targets(&s), ["/ana", "/b/ana", "/bob", "/b/bob"]);
+    let screen = h.wait_for("F/2-b.toml[2]", 5);
+    assert!(
+        screen.contains("4 passed, 0 failed, 2 error(s)"),
+        "{screen}"
+    );
+    let view = |h: &Harness| {
+        let v = h.app.tab().and_then(|t| t.run.as_ref()).unwrap();
+        (v.rows.len(), v.sel)
+    };
+    // The selection followed the last row: the `$prompt` error.
+    assert_eq!(view(&h), (6, 5));
+    let body = |h: &Harness| {
+        h.app
+            .tab()
+            .and_then(|t| t.response.as_ref())
+            .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+            .unwrap_or_default()
+    };
+    assert!(body(&h).contains("a run tab cannot ask"), "{}", body(&h));
+    h.key("up");
+    assert_eq!(view(&h), (6, 4));
+    assert!(body(&h).contains("/b/bob"), "{}", body(&h));
+    // The footer names the keys of a run tab, not those of a request.
+    let labels: Vec<String> = h.app.hints().into_iter().map(|(_, l)| l).collect();
+    for l in ["run again", "choose row", "show response"] {
+        assert!(labels.iter().any(|x| x == l), "{l}: {labels:?}");
+    }
+    assert!(
+        !labels.iter().any(|x| x == "save" || x == "edit"),
+        "{labels:?}"
+    );
+    // The run has its own runtime values.
+    assert!(!h.app.runtime.contains_key("got"));
+    assert!(h.app.session().tabs.is_empty());
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(targets(&s).len(), 4);
+}
+
+/// The target picker lists resources and prompts; a resource pick sets the
+/// operation; the second send uses the kept session; `:mcp restart` closes it.
+#[test]
+fn flow_mcp_resource_pick_and_kept_session() {
+    let rt = tokio::runtime::Runtime::new().must();
+    let echo = rt.block_on(sendito_testkit::mcp_echo::start()).must();
+    let mut h = Harness::with(120, 40, |d| {
+        common::demo_collection(d, "http://127.0.0.1:9", "127.0.0.1:9");
+    });
+    h.app.run_command("newmcp");
+    h.app.focus = sendito_ui::app::Focus::Bar(1);
+    h.type_text(&format!("{}/mcp", echo.url()));
+    h.draw();
+    h.app.focus = sendito_ui::app::Focus::Bar(0);
+    h.key("enter");
+    let screen = h.wait_for("Choose an MCP tool, resource or prompt", 10);
+    assert!(screen.contains("prompt · Says hello"), "{screen}");
+    h.type_text("readme");
+    h.key("enter");
+    let ed = &h.app.tabs[h.app.active].ed;
+    assert_eq!(ed.mcp_op, sendito_core::McpOp::Resource);
+    assert_eq!(ed.mcp_tool.text(), "echo://readme");
+    let count = |method: &str| {
+        echo.captured()
+            .iter()
+            .filter(|c| c.method_of_body() == method)
+            .count()
+    };
+    let opened = count("initialize");
+    h.key("f5");
+    h.wait_idle(10);
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(count("resources/read"), 2);
+    assert_eq!(count("initialize"), opened + 1);
+    let body = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+        .unwrap_or_default();
+    assert!(body.contains("resource echo://readme"), "{body}");
+    h.app.run_command("mcp restart");
+    h.key("f5");
+    h.wait_idle(10);
+    assert_eq!(count("initialize"), opened + 2);
+}
+
+/// A WebSocket tab in GraphQL mode: the request has `[graphql]` and no
+/// messages, and the session subscribes and ends when the server completes.
+#[test]
+fn flow_ws_graphql_mode_subscribes() {
+    use sendito_ui::tab::Field;
+    let s = servers();
+    let mut h = harness(&s, 120, 40);
+    h.app.run_command("newws");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.url.set_text(&s.ws.url("/graphql"));
+        t.ed.set_choice(Field::WsMode, 1);
+        t.ed.body_text.set_text("subscription { tick }");
+        t.refresh_model();
+        let sendito_core::Request::Ws(w) = &t.model else {
+            panic!("not websocket")
+        };
+        assert_eq!(w.messages, "[]");
+        assert_eq!(
+            w.graphql.as_ref().map(|g| g.query.as_str()),
+            Some("subscription { tick }")
+        );
+        assert!(t.fields().contains(&Field::GraphqlSection) || t.req_tab != 1);
+    }
+    h.key("f5");
+    h.wait_idle(10);
+    let frames: Vec<String> =
+        s.ws.take()
+            .iter()
+            .flat_map(|c| c.frames.clone())
+            .filter(|(out, _, _)| !out)
+            .map(|(_, _, p)| String::from_utf8_lossy(&p).into_owned())
+            .collect();
+    assert!(frames[0].contains("connection_init"), "{frames:?}");
+    assert!(frames[1].contains(r#""type":"subscribe""#), "{frames:?}");
+    let summary = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| r.summary.status.clone());
+    assert!(
+        summary.unwrap_or_default().contains("1000"),
+        "{:?}",
+        h.screen()
+    );
+}
+
+/// A refused connection: the status line names the cause in a few words and
+/// the response pane has the fix.
+#[test]
+fn flow_http_failure_hint() {
+    let s = servers();
+    let mut h = harness(&s, 110, 32);
+    open(&mut h, "list users");
+    {
+        let t = &mut h.app.tabs[h.app.active];
+        t.ed.url.set_text("http://127.0.0.1:9/users");
+        t.refresh_model();
+    }
+    h.key("f5");
+    h.wait_idle(10);
+    // The footer cuts the message to half of its free room: read the full
+    // text from the app.
+    let sc = h.wait_for("✗ connection refused", 5);
+    let status = h.app.status.as_ref().map(|s| s.0.as_str());
+    assert_eq!(
+        status,
+        Some("connection refused · details in the response pane"),
+        "{sc}"
+    );
+    let body = h
+        .app
+        .tab()
+        .and_then(|t| t.response.as_ref())
+        .map(|r| String::from_utf8_lossy(r.body.doc.bytes()).into_owned())
+        .unwrap_or_default();
+    assert!(
+        body.contains(
+            "Fix: Nothing listens at 127.0.0.1:9. Check the port and the URL variables of the local environment."
+        ),
+        "{body}"
     );
 }

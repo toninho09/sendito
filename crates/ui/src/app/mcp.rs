@@ -243,13 +243,14 @@ impl App {
         self.mcp_discovery = Some((job, task));
     }
 
-    /// Lists the tools of `server` (a `[mcp.servers]` name or a URL, with
+    /// Lists the tools, resources and prompts of `server` (a `[mcp.servers]`
+    /// name or a URL, with
     /// `{{variables}}`) in the active scope. The error says whether the
     /// server needs a sign-in.
     fn tool_list(
         &self,
         server: String,
-    ) -> impl std::future::Future<Output = Result<Vec<sendito_pipeline::mcp::Tool>, (String, bool)>>
+    ) -> impl std::future::Future<Output = Result<sendito_pipeline::mcp::Catalog, (String, bool)>>
     + Send
     + 'static {
         let info = runner::McpRunInfo::of(&self.project);
@@ -271,7 +272,7 @@ impl App {
                 timeout: std::time::Duration::from_millis(info.timeout_ms.max(1)),
             };
             let (events, _rx) = mpsc::unbounded_channel();
-            sendito_pipeline::mcp::list_tools(&transport, &opts, events)
+            sendito_pipeline::mcp::list_catalog(&transport, &opts, events)
                 .await
                 .map_err(|e| {
                     let needs_login = matches!(e, sendito_pipeline::mcp::McpError::NeedsLogin(_));
@@ -291,7 +292,7 @@ impl App {
         let server = name.to_string();
         self.rt.spawn(async move {
             let result = match list.await {
-                Ok(tools) => Ok(tools.len()),
+                Ok(catalog) => Ok(catalog.tools.len()),
                 Err((e, true)) => Err(format!("{e} (sign in: :mcp login {server})")),
                 Err((e, false)) => Err(e),
             };

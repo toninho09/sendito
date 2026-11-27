@@ -8,6 +8,9 @@ use crate::units::format_ms;
 pub fn setting_note(id: SettingId) -> &'static str {
     match id {
         SettingId::HistoryMax => "History keeps this many entries; the oldest go first.",
+        SettingId::HistoryBody => {
+            "History keeps the first this many KB of each HTTP response body. 0 keeps no response."
+        }
         SettingId::WatchInterval => {
             "The :watch command re-sends the active request every this many seconds."
         }
@@ -31,6 +34,9 @@ pub fn setting_note(id: SettingId) -> &'static str {
         }
         SettingId::McpTimeout => {
             "How long an MCP call (handshake included) may take when the request sets none, e.g. 30 s."
+        }
+        SettingId::McpIdle => {
+            "A server session stays open between calls and closes after this many idle seconds; 0 = a new session per call."
         }
         SettingId::McpServers => {
             "The servers of [mcp.servers] in the file chosen above, as Ctrl+W S shows them."
@@ -93,7 +99,11 @@ impl App {
             SettingId::CookieJar => on(c.http.cookie_jar),
             SettingId::Hints => c.ui.hints.clone(),
             SettingId::WatchInterval => format!("{raw} s"),
+            SettingId::McpIdle if raw == "0" => "none".into(),
+            SettingId::McpIdle => format!("{raw} s"),
             SettingId::MaxBody => format!("{raw} MB"),
+            SettingId::HistoryBody if raw == "0" => "none".into(),
+            SettingId::HistoryBody => format!("{raw} KB"),
             SettingId::GrpcDeadline | SettingId::WsTimeout | SettingId::MqttTimeout
                 if raw == "0 ms" =>
             {
@@ -132,6 +142,7 @@ impl App {
         let opt = |v: &Option<String>| v.clone().unwrap_or_default();
         match id {
             SettingId::HistoryMax => c.history.max_entries.to_string(),
+            SettingId::HistoryBody => c.history.max_body_kb.to_string(),
             SettingId::WatchInterval => c.ui.watch_interval_s.to_string(),
             SettingId::StreamKept => c.ui.stream_messages_kept.to_string(),
             SettingId::HttpTimeout => format_ms(c.http.timeout_ms),
@@ -140,6 +151,7 @@ impl App {
             SettingId::SseTimeout => format_ms(c.sse.timeout_ms),
             SettingId::MqttTimeout => format_ms(c.mqtt.timeout_ms),
             SettingId::McpTimeout => format_ms(c.mcp.timeout_ms),
+            SettingId::McpIdle => c.mcp.idle_timeout_s.to_string(),
             SettingId::MaxBody => c.http.max_body_mb.to_string(),
             SettingId::Proxy => opt(&c.http.proxy),
             SettingId::TlsCa => opt(&c.http.tls.ca),
@@ -261,6 +273,7 @@ impl App {
         let c = &mut self.project.config;
         match id {
             SettingId::HistoryMax => c.history.max_entries = num as usize,
+            SettingId::HistoryBody => c.history.max_body_kb = num as usize,
             SettingId::WatchInterval => c.ui.watch_interval_s = num,
             SettingId::StreamKept => c.ui.stream_messages_kept = num as usize,
             SettingId::HttpTimeout => c.http.timeout_ms = num,
@@ -269,6 +282,10 @@ impl App {
             SettingId::SseTimeout => c.sse.timeout_ms = num,
             SettingId::MqttTimeout => c.mqtt.timeout_ms = num,
             SettingId::McpTimeout => c.mcp.timeout_ms = num,
+            SettingId::McpIdle => {
+                c.mcp.idle_timeout_s = num;
+                self.mcp_pool.clear();
+            }
             SettingId::MaxBody => c.http.max_body_mb = num,
             SettingId::Proxy => c.http.proxy = s,
             SettingId::TlsCa => c.http.tls.ca = s,
@@ -309,11 +326,87 @@ impl App {
         Ok(())
     }
 
-    /// Switches to theme `name` (not saved to the config).
+    /// Switches to theme `name` (not saved to the config). It stays until
+    /// the environment changes.
     pub fn apply_theme(&mut self, name: &str) {
         self.project.config.ui.theme = name.to_string();
+        self.use_theme(name);
+    }
+
+    /// Draws with theme `name` from now on: a picker's Esc comes back to it.
+    fn use_theme(&mut self, name: &str) {
+        self.theme_name = name.to_string();
+        self.show_theme(name);
+    }
+
+    /// Draws with the `theme` of the active environment, else with
+    /// `[ui] theme` (at the start and after a change of environment).
+    /// Returns a warning when the environment names a theme that does not
+    /// exist.
+    pub(super) fn apply_env_theme(&mut self) -> Option<String> {
+        let env = self.active_env.clone();
+        let wanted = env
+            .as_deref()
+            .and_then(|e| self.project.envs.load(e).ok())
+            .and_then(|e| e.theme);
+        let names = self.themes.names();
+        self.env_theme = wanted
+            .as_ref()
+            .and_then(|t| names.iter().find(|n| n.eq_ignore_ascii_case(t)).cloned());
+        let base = self.project.config.ui.theme.clone();
+        let name = self.env_theme.clone().unwrap_or_else(|| base.clone());
+        self.use_theme(&name);
+        match (env, wanted, &self.env_theme) {
+            (Some(env), Some(t), None) => Some(format!(
+                "environment {env}: no theme named \"{t}\"; using {base}"
+            )),
+            _ => None,
+        }
+    }
+
+    /// Draws with theme `name` and leaves the config as it is (the theme
+    /// picker's preview).
+    pub(super) fn show_theme(&mut self, name: &str) {
         if !no_color() {
             self.theme = self.themes.theme(name);
+        }
+    }
+
+    /// While the Theme line of the environment editor has the focus, the
+    /// screen shows its theme, as ← → on the Theme row of Settings do. When
+    /// the line loses the focus, the theme in use comes back. A theme
+    /// picker shows its own selection meanwhile.
+    pub(super) fn preview_env_theme(&mut self) {
+        let want = match &self.overlay {
+            Some(Overlay::Env(e)) if e.focus == EnvFocus::Theme && e.has_theme() => Some(
+                e.theme
+                    .clone()
+                    .unwrap_or_else(|| self.project.config.ui.theme.clone()),
+            ),
+            // The picker draws its selection; when it closes, the line
+            // shows its theme again.
+            Some(Overlay::Picker(p)) if p.action.is_theme() => {
+                self.env_preview = None;
+                return;
+            }
+            _ => None,
+        };
+        if want == self.env_preview {
+            return;
+        }
+        let name = want.clone().unwrap_or_else(|| self.theme_name.clone());
+        self.show_theme(&name);
+        self.env_preview = want;
+    }
+
+    /// Shows the selection of an open theme picker.
+    pub(super) fn preview_picked_theme(&mut self) {
+        let name = match &self.overlay {
+            Some(Overlay::Picker(p)) => p.theme_preview(&self.project.config.ui.theme),
+            _ => None,
+        };
+        if let Some(n) = name {
+            self.show_theme(&n);
         }
     }
 
@@ -321,9 +414,10 @@ impl App {
     pub fn reload_themes(&mut self) {
         let (files, warnings) = sendito_store::themes::discover(&self.project.theme_dirs);
         self.themes = crate::theme::Registry::from_files(files, warnings);
-        let name = self.project.config.ui.theme.clone();
-        self.apply_theme(&name);
+        let env_warning = self.apply_env_theme();
+        let name = self.theme_name.clone();
         let mut problems: Vec<String> = self.themes.warnings.clone();
+        problems.extend(env_warning);
         problems.extend(self.themes.notes(&name).iter().cloned());
         let n = self.themes.names().len() - crate::theme::BUILTIN.len();
         if problems.is_empty() {
@@ -339,19 +433,10 @@ impl App {
         }
     }
 
-    /// `:theme [name|reload]`.
+    /// `:theme <name|reload>` (`:theme` alone opens the picker).
     pub(super) fn theme_command(&mut self, arg: &str) {
         let names = self.themes.names();
-        if arg.is_empty() {
-            self.set_status(
-                format!(
-                    "theme: {} (available: {})",
-                    self.project.config.ui.theme,
-                    names.join(", ")
-                ),
-                StatusKind::Info,
-            );
-        } else if arg == "reload" {
+        if arg == "reload" {
             self.reload_themes();
         } else if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(arg)).cloned() {
             self.apply_theme(&n);
@@ -366,7 +451,7 @@ impl App {
             }
         } else {
             self.set_status(
-                format!("no theme named \"{arg}\" (available: {})", names.join(", ")),
+                format!("no theme named \"{arg}\" (:theme lists them)"),
                 StatusKind::Error,
             );
         }
@@ -378,8 +463,18 @@ impl App {
         let id = SETTINGS[i].0;
         if id.typed() {
             v.start_edit(self.setting_raw(id));
+        } else if id.lists() {
+            self.open_setting_list(id);
         } else {
             self.change_setting(id, 1);
+        }
+    }
+
+    /// Opens the list of a setting whose `lists()` is true; it returns to
+    /// Settings when it closes.
+    pub(super) fn open_setting_list(&mut self, id: SettingId) {
+        if id == SettingId::Theme {
+            self.open_theme_picker(true);
         }
     }
 

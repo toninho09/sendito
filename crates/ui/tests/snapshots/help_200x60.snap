@@ -2,60 +2,60 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-╭─ Help — keys and actions (Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the keys)                                                                                                                              line 1/253 · ↑↓ PgUp PgDn   ┃
-│                                                                                                                                                                                              ┃
-│ All keys, including any you changed in the config.                                           │   Ctrl+W -                     Give the response more height                                  ┃
-│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                   │   Ctrl+Space                   Show completion suggestions at the cursor                      ┃
-│                                                                                              │                                                                                               ┃
-│ ── Global ──                                                                                 │ ── Sidebar tree ──                                                                            ┃
-│   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                     │   Enter                        Open the selected request / toggle the folder                  ┃
-│   Ctrl+W x                     Cancel the running request or stream                          │   Right                        Expand folder                                                  ┃
-│   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)           │   Left                         Collapse folder or go to parent                                ┃
-│   Ctrl+W m                     Re-send the active request on an interval (watch)             │   n                            New request in the selected folder                             ┃
-│   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)         │   N                            New folder in the selected folder                              ┃
-│   Ctrl+W q, Ctrl+Q             Quit Sendito                                                  │   r, F2                        Rename the selected item                                       ┃
-│   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                           │   s                            Edit the settings of the selected folder (headers, auth,       ┃
-│   Ctrl+W g                     Open a new unsaved gRPC request tab                           │                                variables and scripts its requests inherit)                    ┃
-│   Ctrl+W y                     Open a new unsaved WebSocket request tab                      │   d                            Duplicate the selected item                                    ┃
-│   Ctrl+W E                     Open a new unsaved SSE request tab                            │   Delete, x                    Delete the selected item (asks first)                          ┃
-│   Ctrl+W M                     Open a new unsaved MQTT request tab                           │   m                            Move the selected item to another folder                       ┃
-│   Ctrl+W c                     Close the current tab                                         │   /                            Filter the tree by name                                        ┃
-│   Ctrl+W n, Ctrl+PageDown      Next open request tab                                         │   f                            Add or remove the request from the favorites                   ┃
-│   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                     │   Up                           Move up                                                        ┃
-│   Ctrl+W P                     Pin or unpin the current tab (pinned tabs stay first)         │   Down                         Move down                                                      │
-│   Ctrl+W F                     Add or remove the request from the favorites                  │   PageUp                       Page up                                                        │
-│   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                    │   PageDown                     Page down                                                      │
-│   Ctrl+W j, Ctrl+W Down        Focus the pane below                                          │   Home                         Go to the first line                                           │
-│   Ctrl+W k, Ctrl+W Up          Focus the pane above                                          │   End                          Go to the last line                                            │
-│   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                   │                                                                                               │
-│   Tab, Ctrl+W w                Move focus to the next field or pane                          │ ── Text editing (conventional mode) ──                                                        │
-│   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                      │   Ctrl+Z                       Undo                                                           │
-│   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)          │   Ctrl+Y                       Redo                                                           │
-│   Ctrl+W [                     Previous tab of the focused pane                              │   Ctrl+A                       Select all text                                                │
-│   Alt+1                        Jump to tab 1 of the focused pane                             │   Ctrl+C                       Copy selection (whole field if nothing selected)               │
-│   Alt+2                        Jump to tab 2 of the focused pane                             │   Ctrl+X                       Cut selection                                                  │
-│   Alt+3                        Jump to tab 3 of the focused pane                             │   Ctrl+V                       Paste                                                          │
-│   Alt+4                        Jump to tab 4 of the focused pane                             │                                                                                               │
-│   Alt+5                        Jump to tab 5 of the focused pane                             │ ── Params / headers / form tables ──                                                          │
-│   Alt+6                        Jump to tab 6 of the focused pane                             │   Enter                        Edit the next cell (name → value → next row)                   │
-│   Ctrl+P                       Open the command palette                                      │   Ctrl+T                       Enable or disable the row                                      │
-│   F1, Ctrl+W ?                 Show all keys and actions                                     │   Ctrl+D                       Delete the row                                                 │
-│   Ctrl+W ,                     Open settings                                                 │                                                                                               │
-│   F4, Ctrl+W v                 Choose the active environment                                 │ ── Response viewer ──                                                                         │
-│   Ctrl+W V                     Edit environments and their variables                         │   Up                           Move up                                                        │
-│   Ctrl+W S                     Edit the MCP servers in the config file chosen in Settings    │   Down                         Move down                                                      │
-│   F7, Ctrl+W r                 Show request history in the sidebar (toggle)                  │   PageUp                       Page up                                                        │
-│   Ctrl+B, Ctrl+W b             Show or hide the sidebar                                      │   PageDown                     Page down                                                      │
-│   Ctrl+W i                     Import a collection or a curl command                         │   Home, Ctrl+Home              Go to the first line                                           │
-│   Ctrl+W u                     Copy the request as curl (secrets stay {{placeholders}})      │   End, Ctrl+End                Go to the last line                                            │
-│   Ctrl+W f                     Pretty-print the JSON body / message                          │   Left                         Scroll left                                                    │
-│   Ctrl+W K                     Move the plain value of the focused credential field into an  │   Right                        Scroll right                                                   │
-│                                environment secret                                            │   p                            Body view: pretty (formatted and highlighted)                  │
-│   Ctrl+W *                     Show or hide credentials typed as plain text (with Hide       │   r                            Body view: raw text                                            │
-│                                plain secrets on)                                             │   x                            Body view: hex dump                                            │
-│   Ctrl+W z                     Maximize or restore the focused pane                          │   /, Ctrl+F                    Search in the response                                         │
-│   Ctrl+W >                     Widen the sidebar                                             │   j                            Filter the response body with a jq expression                  │
-│   Ctrl+W <                     Narrow the sidebar                                            │   f                            Filter the body to the JSON value at the cursor                │
-│   Ctrl+W +                     Give the request editor more height                           │   Y                            Copy the jq path of the JSON value at the cursor               │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Help (Tab: next section, Esc closes) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Guide                     │ Search ▍  (type to search this section)                                                               line 1/60 · ↑↓ PgUp PgDn   ┃
+│▌  Start here              │                                                                                                                                  ┃
+│   How it works            │ Welcome to Sendito. This help explains how the app works and shows the                                                           ┃
+│ Tutorials                 │ steps for the most common tasks.                                                                                                 ┃
+│   First request           │                                                                                                                                  ┃
+│   Body types              │ Sendito sends requests and shows their responses: HTTP, gRPC, WebSocket,                                                         ┃
+│   GraphQL request         │ SSE, MQTT and MCP tools. Each request is a text file in a folder (the                                                            ┃
+│   Save and organize       │ collection). You can edit the files in any editor and keep them in git.                                                          ┃
+│   Docs and examples       │                                                                                                                                  ┃
+│   Environments            │ ── Use this help ──                                                                                                              ┃
+│   Secrets and auth        │   •  Press Tab or Shift+Tab to open the next or the previous section, or click a name in the list on the left.                   ┃
+│   Chain requests          │   •  Type a word to search the open section. Press Enter for the next match.                                                     ┃
+│   Read a response         │   •  Press Esc or F1 to close the help.                                                                                          ┃
+│   Watch a request         │   •  The command :help <word> opens the section whose name has the word, else the section whose text has the word the most       ┃
+│   History and cookies     │      times, for example :help grpc or :help xpath. When the open text has the word, the search box holds it.                     ┃
+│   Import and export       │   •  The help shows your keys. When you change a key, the help shows the new key.                                                ┃
+│   gRPC call               │                                                                                                                                  ┃
+│   Streams (WS, SSE, MQTT) │ The list on the left has four groups:                                                                                            ┃
+│   MCP tools               │   Guide          How the screen and the requests work.                                                                           ┃
+│   Request options         │   Tutorials      Steps for the most common tasks. Start with "First request".                                                    ┃
+│   Run a folder            │   Keys           All the keys, the marks on the screen and the commands.                                                         ┃
+│   Customize               │   Functions      The functions, the dynamic values and the script rows that a request can use.                                   ┃
+│ Keys                      │                                                                                                                                  ┃
+│   All keys                │ ── The screen ──                                                                                                                 ┃
+│   Global                  │   Top bar        The open request tabs, the active environment and the help key.                                                 ┃
+│   Sidebar tree            │   Sidebar        The request tree of the collection, or the history.                                                             ┃
+│   Text editing            │   URL card       The method (or the protocol), the address and the Send button.                                                  ┃
+│   Tables                  │   Request pane   The parts of the request, in tabs (Params, Headers, Body, Auth, Scripts, Options, Docs).                        ┃
+│   Response                │   Response pane  The response, in tabs (Body, Headers, Timing, Results).                                                         ┃
+│   Query (jq)              │   Footer         The state on the left. On the right, the keys for the part that has the focus.                                  ┃
+│   Dialogs                 │                                                                                                                                  ┃
+│   Fixed keys              │ ── The start screen ──                                                                                                           ┃
+│   Symbols                 │ When no tab is open, the start screen shows the collection, the keys to                                                          ┃
+│   Commands                │ begin, the favorites and the most recent requests. Click a request in it,                                                        ┃
+│ Functions                 │ or press Ctrl+N, to begin.                                                                                                       ┃
+│   Template functions      │                                                                                                                                  ┃
+│   Dynamic values          │ ── Move around ──                                                                                                                ┃
+│   Send-time values        │   •  Press Tab to move the focus to the next field or pane. Press Shift+Tab to move it back.                                     ┃
+│   Scripts tab             │   •  Press Ctrl+W, then a direction: Ctrl+W h, Ctrl+W j, Ctrl+W k or Ctrl+W l go to the pane in that direction.                  ┃
+│   Lua scripts             │   •  Press Ctrl+W and stop: a menu shows all the keys that can come next.                                                        ┃
+│   Lua catalog             │   •  Press Ctrl+W ] to open the next tab of the focused pane (for example, Params to Headers).                                   ┃
+│                           │   •  Press Ctrl+W z to make the focused pane full size. Press it again to restore it.                                            ┃
+│                           │   •  Click a pane, a tab, a row or a button to use it. The wheel scrolls the pane under the pointer.                             ┃
+│                           │                                                                                                                                  ┃
+│                           │ ── The keys to know first ──                                                                                                     ┃
+│                           │   •  Ctrl+N: open a new HTTP request.                                                                                            ┃
+│                           │   •  Ctrl+Enter: send the request.                                                                                               ┃
+│                           │   •  Ctrl+W x: stop the request that runs.                                                                                       │
+│                           │   •  Ctrl+S: save the request to a file.                                                                                         │
+│                           │   •  Ctrl+P: open the command palette. Type a part of an action name, or ":" and a command.                                      │
+│                           │   •  F4: choose the environment.                                                                                                 │
+│                           │   •  Ctrl+W ,: open the settings.                                                                                                │
+│                           │   •  Ctrl+W q: quit Sendito.                                                                                                     │
+│                           │                                                                                                                                  │
+│                           │ The footer always shows the keys for the part that has the focus. When you                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

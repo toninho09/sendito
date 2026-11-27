@@ -1,7 +1,9 @@
 //! Import from Postman Collection v2.1 and curl; export to curl.
 
 pub mod bruno;
+pub mod codegen;
 pub mod curl;
+pub mod har;
 pub mod http_file;
 pub mod insomnia;
 pub mod openapi;
@@ -12,6 +14,7 @@ use sendito_store::collection::{
     Collection, join_rel, validate_folder_name, validate_name, validate_request_name,
 };
 use sendito_store::env::{COLLECTION_ENV, EnvVar, Envs, VarSource};
+use std::path::Path;
 
 /// An imported tree, not yet written to disk.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -69,6 +72,7 @@ pub enum ImportFormat {
     OpenApi,
     Swagger,
     HttpFile,
+    Har,
 }
 
 impl ImportFormat {
@@ -80,6 +84,7 @@ impl ImportFormat {
             Self::OpenApi => "OpenAPI",
             Self::Swagger => "Swagger",
             Self::HttpFile => ".http file",
+            Self::Har => "HAR",
         }
     }
 }
@@ -100,6 +105,9 @@ pub fn import_json(text: &str) -> Result<(ImportFormat, ImportResult), String> {
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
     if openapi::is_openapi(&value) {
         return import_openapi(&value);
+    }
+    if har::is_har(&value) {
+        return har::import(text).map(|r| (ImportFormat::Har, r));
     }
     if value.get("__export_format").is_some() {
         insomnia::import(text).map(|result| (ImportFormat::Insomnia, result))
@@ -233,6 +241,89 @@ pub(crate) fn preserve_export_templates(
             .join("&");
         resolved.body = ResolvedBody::Bytes(body.into_bytes());
     }
+}
+
+/// The request and scope an export renders: with `include_secrets` false,
+/// secret variables stay `{{placeholders}}` and the scope is empty.
+pub(crate) fn export_source(
+    req: &sendito_core::HttpRequest,
+    scope: &sendito_core::Scope,
+    include_secrets: bool,
+) -> (sendito_core::HttpRequest, sendito_core::Scope) {
+    if include_secrets {
+        return (req.clone(), scope.clone());
+    }
+    let template = match sendito_core::resolve::mask_request(&Request::Http(req.clone()), scope) {
+        Request::Http(h) => h,
+        _ => req.clone(),
+    };
+    (template, sendito_core::Scope::new())
+}
+
+/// A request ready for an export that writes the auth its own way (curl,
+/// code): Basic, Digest and AWS credentials stay in `src.auth`, the OAuth
+/// and JWT tokens and the AWS session token are headers of `resolved`.
+pub(crate) struct Prepared {
+    pub(crate) src: sendito_core::HttpRequest,
+    pub(crate) scope: sendito_core::Scope,
+    pub(crate) resolved: sendito_core::resolve::ResolvedHttp,
+    /// The request sets its own `Authorization` header: the auth is not added.
+    pub(crate) own_authorization: bool,
+}
+
+impl Prepared {
+    /// `text` rendered with the export scope.
+    pub(crate) fn render(&self, text: &str) -> String {
+        self.scope.render(text).text
+    }
+}
+
+/// Resolves `req` for an export; `Err` is the reason a body cannot be sent.
+pub(crate) fn prepare(
+    req: &sendito_core::HttpRequest,
+    scope: &sendito_core::Scope,
+    include_secrets: bool,
+    base_dir: &Path,
+) -> Result<Prepared, String> {
+    use sendito_core::model::Auth;
+    use sendito_core::resolve::ResolvedBody;
+    let (src, sc) = export_source(req, scope, include_secrets);
+    let mut no_auth = src.clone();
+    no_auth.auth = match &src.auth {
+        Auth::Basic { .. } | Auth::OAuth { .. } => Auth::None,
+        other => other.clone(),
+    };
+    let mut r = sendito_core::resolve::resolve_http(&no_auth, &sc, base_dir);
+    preserve_export_templates(&no_auth, &sc, &mut r);
+    if let ResolvedBody::Invalid(message) = &r.body {
+        return Err(message.clone());
+    }
+    let own_authorization = r
+        .headers
+        .iter()
+        .any(|(n, _)| n.eq_ignore_ascii_case("authorization"));
+    if !own_authorization {
+        match &src.auth {
+            Auth::OAuth { name } => r.headers.push((
+                "Authorization".into(),
+                format!("Bearer {}", oauth_placeholder(&sc.render(name).text)),
+            )),
+            // Signed when Sendito sends: a JWT has no value until then.
+            Auth::Jwt { .. } => r
+                .headers
+                .push(("Authorization".into(), format!("Bearer {JWT_PLACEHOLDER}"))),
+            Auth::AwsSigV4 { session_token, .. } if !session_token.is_empty() => r
+                .headers
+                .push(("X-Amz-Security-Token".into(), sc.render(session_token).text)),
+            _ => {}
+        }
+    }
+    Ok(Prepared {
+        src,
+        scope: sc,
+        resolved: r,
+        own_authorization,
+    })
 }
 
 /// Placeholder for a JWT in exports: Sendito signs it when it sends.

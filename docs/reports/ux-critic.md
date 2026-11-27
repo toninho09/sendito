@@ -56,9 +56,10 @@ decline is recorded below with its reason. The settled decisions are in the bund
 2. An unsaved new tab keeps a stable name ("untitled", "untitled 2").
 3. History rows show method, status, name, the URL path, time, and the environment
    when the sidebar is wide enough.
-4. The command palette highlights its first row, "Show all keys".
+4. The command palette highlights its first row, the help ("Open the help: guide,
+   tutorials, keys and functions").
 5. `n` in the tree creates the file at once; Ctrl+N opens a scratch tab with no file.
-6. The hint row lists keys by priority; "F1 all keys" is always shown.
+6. The hint row lists keys by priority; "F1 help" is always shown.
 7. The gRPC message log is the "Log" tab for every call kind.
 8. The status line's "last request:" describes the last request sent; other actions
    report in the message area on the right.
@@ -81,9 +82,9 @@ review of the screenshots, without new critic rounds. What changed:
 | Status "env │ last request: … │ ms │ B" (decisions 8 and 10) | Segments without "│"; the environment only in the top bar; the last request only while the Response pane is hidden; messages in a chip with an icon |
 | Start screen = a list of keys | Wordmark, collection summary, Start and Recent |
 | `[x]` | `[✓]` |
-| Hint row and status line on two rows | One footer row: status segments on the left, key hints on the right with short key names (`^S`, `⏎`); a note replaces the hints for 10 s; `[ui] hints` = `full` / `short` / `off` (decision 6 holds: "F1 all keys" always shows) |
+| Hint row and status line on two rows | One footer row: status segments on the left, key hints on the right with short key names (`^S`, `⏎`); a note replaces the hints for 10 s; `[ui] hints` = `full` / `short` / `off` (decision 6 holds: "F1 help" always shows) |
 | `Ctrl+W` pending: a fixed hint line | A which-key box at the bottom right, built from the keymap, grouped; a click runs the entry |
-| Help in one column | Two columns on screens 180 columns wide or more |
+| Help in one column | One column with a sidebar of sections in groups: Guide (F1 opens "Start here"), Tutorials, Keys (all keys, each keymap context, fixed keys, symbols, commands), Functions; `Tab` / `Shift+Tab` open the next / previous section; a group name is not a section; the search applies to the open section |
 | Kept | Decisions 1–5, 6, 7 and 9 |
 
 ## Fixed in the last triaged rounds (13–18)

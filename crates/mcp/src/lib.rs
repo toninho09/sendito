@@ -1,13 +1,16 @@
 //! Minimal MCP (Model Context Protocol) client: JSON-RPC 2.0 over stdio or
-//! streamable HTTP, speaking only what the protocol needs to call tools.
+//! streamable HTTP, speaking what the protocol needs to call tools, read
+//! resources and get prompts.
 //!
 //! Every entry point opens a session (spawn/connect, `initialize`,
-//! `notifications/initialized`), does its work and drops the connection; the
-//! whole call runs under one timeout. Each message sent and received is
+//! `notifications/initialized`), does its work and drops the connection,
+//! unless a [`Pool`] keeps the session for the next call; the whole call
+//! runs under one timeout. Each message sent and received is
 //! reported as an [`Event`] so the caller can show the conversation.
 
 pub mod http;
 pub mod oauth;
+mod pool;
 pub mod protocol;
 pub mod stdio;
 
@@ -20,6 +23,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub use oauth::RefreshingProvider;
+pub use pool::Pool;
 
 pub use protocol::PROTOCOL_VERSION;
 
@@ -218,11 +222,76 @@ pub(crate) trait Wire: Send {
     -> Pin<Box<dyn Future<Output = Result<Value, McpError>> + Send + 'a>>;
 }
 
-struct Session {
+/// Where a session reports its events, and the time they count from. A
+/// pooled session points it at the channel of each call.
+#[derive(Clone)]
+pub(crate) struct Sink(Arc<std::sync::Mutex<(UnboundedSender<Event>, Instant)>>);
+
+impl Sink {
+    pub(crate) fn new(events: UnboundedSender<Event>, start: Instant) -> Self {
+        Self(Arc::new(std::sync::Mutex::new((events, start))))
+    }
+
+    /// Sends the event that `make` builds from the elapsed time.
+    pub(crate) fn emit(&self, make: impl FnOnce(Duration) -> Event) {
+        if let Ok(g) = self.0.lock() {
+            let _ = g.0.send(make(g.1.elapsed()));
+        }
+    }
+
+    fn retarget(&self, events: UnboundedSender<Event>, start: Instant) {
+        if let Ok(mut g) = self.0.lock() {
+            *g = (events, start);
+        }
+    }
+}
+
+/// What a request asks of the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Op {
+    /// `tools/call` with this tool name.
+    Tool(String),
+    /// `resources/read` of this URI.
+    Resource(String),
+    /// `prompts/get` of this prompt name.
+    Prompt(String),
+}
+
+/// A resource from `resources/list`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resource {
+    pub uri: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// A prompt from `prompts/list`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prompt {
+    pub name: String,
+    pub description: Option<String>,
+    /// The argument names; `true` when the argument is required.
+    pub arguments: Vec<(String, bool)>,
+}
+
+/// What a server offers: its tools, its resources (with the URI templates)
+/// and its prompts. A server that does not declare `resources` or `prompts`
+/// in its capabilities is not asked for them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Catalog {
+    pub tools: Vec<Tool>,
+    pub resources: Vec<Resource>,
+    /// `resources/templates/list`: URI templates as written (`file:///{path}`).
+    pub templates: Vec<Resource>,
+    pub prompts: Vec<Prompt>,
+}
+
+pub(crate) struct Session {
     wire: Box<dyn Wire>,
-    events: UnboundedSender<Event>,
-    start: Instant,
+    sink: Sink,
     next_id: u64,
+    /// The `capabilities` of the `initialize` result.
+    capabilities: Value,
 }
 
 impl Session {
@@ -230,19 +299,21 @@ impl Session {
     fn mock(wire: Box<dyn Wire>, events: UnboundedSender<Event>) -> Self {
         Self {
             wire,
-            events,
-            start: Instant::now(),
+            sink: Sink::new(events, Instant::now()),
             next_id: 1,
+            capabilities: json!({ "tools": {} }),
         }
     }
-    async fn open(
+
+    pub(crate) async fn open(
         transport: &Transport,
         events: UnboundedSender<Event>,
         start: Instant,
     ) -> Result<Self, McpError> {
+        let sink = Sink::new(events, start);
         let wire = match transport {
             Transport::Stdio { command, args, env } => {
-                stdio::spawn(command, args, env, events.clone(), start)?
+                stdio::spawn(command, args, env, sink.clone())?
             }
             Transport::Http {
                 url,
@@ -262,12 +333,17 @@ impl Session {
         };
         let mut s = Self {
             wire,
-            events,
-            start,
+            sink,
             next_id: 1,
+            capabilities: Value::Null,
         };
         s.initialize().await?;
         Ok(s)
+    }
+
+    /// Points the events of the next call at `events`, with times from `start`.
+    pub(crate) fn retarget(&self, events: UnboundedSender<Event>, start: Instant) {
+        self.sink.retarget(events, start);
     }
 
     async fn initialize(&mut self) -> Result<(), McpError> {
@@ -285,31 +361,33 @@ impl Session {
             ));
         }
         self.wire.set_protocol_version(version);
+        self.capabilities = result.get("capabilities").cloned().unwrap_or(Value::Null);
         let note = protocol::notification("notifications/initialized");
         let text = compact(&note)?;
-        self.emit(Event::Sent {
-            json: text.clone(),
-            at: self.start.elapsed(),
+        self.sent(&text);
+        self.wire.send(&text).await
+    }
+
+    fn sent(&self, text: &str) {
+        self.sink.emit(|at| Event::Sent {
+            json: text.to_string(),
+            at,
             wall: SystemTime::now(),
         });
-        self.wire.send(&text).await
     }
 
     /// Sends a request and reads messages until the response with its `id`
     /// arrives; notifications in between are reported and skipped.
     async fn exchange(&mut self, id: u64, method: &str, params: Value) -> Result<Value, McpError> {
         let text = compact(&protocol::request(id, method, params))?;
-        self.emit(Event::Sent {
-            json: text.clone(),
-            at: self.start.elapsed(),
-            wall: SystemTime::now(),
-        });
+        self.sent(&text);
         self.wire.send(&text).await?;
         loop {
             let v = self.wire.recv().await?;
-            self.emit(Event::Received {
-                json: compact(&v)?,
-                at: self.start.elapsed(),
+            let json = compact(&v)?;
+            self.sink.emit(|at| Event::Received {
+                json,
+                at,
                 wall: SystemTime::now(),
             });
             if protocol::is_response_to(&v, id) {
@@ -334,8 +412,10 @@ impl Session {
         id
     }
 
-    async fn list(&mut self) -> Result<Vec<Tool>, McpError> {
-        let mut tools: Vec<Tool> = Vec::new();
+    /// Every item of a paged list (`tools/list`, `resources/list`, …):
+    /// the `key` array of each page, following `nextCursor`.
+    async fn list_paged(&mut self, method: &str, key: &str) -> Result<Vec<Value>, McpError> {
+        let mut items = Vec::new();
         let mut cursor: Option<String> = None;
         // Pagination safety cap: a server that always answers a cursor stops
         // the call instead of looping forever.
@@ -345,34 +425,87 @@ impl Session {
                 None => json!({}),
             };
             let id = self.take_id();
-            let result = self.exchange(id, "tools/list", params).await?;
-            if let Some(list) = result.get("tools").and_then(Value::as_array) {
-                for t in list {
-                    tools.push(Tool {
-                        name: t
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        description: t
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        input_schema: t.get("inputSchema").cloned().unwrap_or(json!({})),
-                    });
-                }
+            let result = self.exchange(id, method, params).await?;
+            if let Some(list) = result.get(key).and_then(Value::as_array) {
+                items.extend(list.iter().cloned());
             }
             cursor = result
                 .get("nextCursor")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             if cursor.is_none() {
-                return Ok(tools);
+                return Ok(items);
             }
         }
         Err(McpError::Message(
             "the server keeps sending list cursors".into(),
         ))
+    }
+
+    async fn list(&mut self) -> Result<Vec<Tool>, McpError> {
+        let items = self.list_paged("tools/list", "tools").await?;
+        Ok(items
+            .iter()
+            .map(|t| Tool {
+                name: text_of(t, "name"),
+                description: t
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                input_schema: t.get("inputSchema").cloned().unwrap_or(json!({})),
+            })
+            .collect())
+    }
+
+    async fn catalog(&mut self) -> Result<Catalog, McpError> {
+        let mut c = Catalog {
+            tools: self.list().await?,
+            ..Default::default()
+        };
+        let has = |cap: &str| self.capabilities.get(cap).is_some();
+        let (resources, prompts) = (has("resources"), has("prompts"));
+        let resource = |v: &Value, uri_key: &str| Resource {
+            uri: text_of(v, uri_key),
+            name: text_of(v, "name"),
+            description: v
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        };
+        if resources {
+            let items = self.list_paged("resources/list", "resources").await?;
+            c.resources = items.iter().map(|v| resource(v, "uri")).collect();
+            let items = self
+                .list_paged("resources/templates/list", "resourceTemplates")
+                .await?;
+            c.templates = items.iter().map(|v| resource(v, "uriTemplate")).collect();
+        }
+        if prompts {
+            let items = self.list_paged("prompts/list", "prompts").await?;
+            c.prompts = items
+                .iter()
+                .map(|p| Prompt {
+                    name: text_of(p, "name"),
+                    description: p
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    arguments: p
+                        .get("arguments")
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| {
+                                    let required = x.get("required").and_then(Value::as_bool);
+                                    (text_of(x, "name"), required.unwrap_or(false))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect();
+        }
+        Ok(c)
     }
 
     async fn call(&mut self, tool: &str, arguments: Value) -> Result<ToolResult, McpError> {
@@ -394,16 +527,46 @@ impl Session {
         })
     }
 
-    fn emit(&self, e: Event) {
-        let _ = self.events.send(e);
+    /// Does `op`. A resource or a prompt result has `is_error` false; its
+    /// `content` is the `contents` (resource) or `messages` (prompt) array.
+    pub(crate) async fn perform(
+        &mut self,
+        op: &Op,
+        arguments: &Value,
+    ) -> Result<ToolResult, McpError> {
+        let (method, params, items) = match op {
+            Op::Tool(name) => return self.call(name, arguments.clone()).await,
+            Op::Resource(uri) => ("resources/read", json!({ "uri": uri }), "contents"),
+            Op::Prompt(name) if arguments.is_null() => {
+                ("prompts/get", json!({ "name": name }), "messages")
+            }
+            Op::Prompt(name) => (
+                "prompts/get",
+                json!({ "name": name, "arguments": arguments }),
+                "messages",
+            ),
+        };
+        let id = self.take_id();
+        let result = self.exchange(id, method, params).await?;
+        Ok(ToolResult {
+            is_error: false,
+            content: result.get(items).cloned().unwrap_or(json!([])),
+            structured: None,
+            raw: result,
+        })
     }
 
     fn note(&self, line: String) {
-        self.emit(Event::Log {
-            line,
-            at: self.start.elapsed(),
-        });
+        self.sink.emit(|at| Event::Log { line, at });
     }
+}
+
+/// The string at `key` of `v`, or `""`.
+fn text_of(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn compact(v: &Value) -> Result<String, McpError> {
@@ -425,6 +588,48 @@ pub async fn list_tools(
     .await
 }
 
+/// Connects, handshakes and lists the server's tools, resources and prompts.
+pub async fn list_catalog(
+    transport: &Transport,
+    opts: &Options,
+    events: UnboundedSender<Event>,
+) -> Result<Catalog, McpError> {
+    run(
+        transport,
+        opts,
+        events,
+        |mut s| async move { s.catalog().await },
+    )
+    .await
+}
+
+/// Does `op` on the server: in a session of `pool` under `key` when there is
+/// a pool, else in a new session. `arguments_json` is the request file's JSON
+/// text (tool and prompt arguments; ignored for a resource); an empty string
+/// sends no `arguments` field.
+pub async fn perform(
+    transport: &Transport,
+    op: &Op,
+    arguments_json: &str,
+    opts: &Options,
+    events: UnboundedSender<Event>,
+    pool: Option<(&Pool, &str)>,
+) -> Result<ToolResult, McpError> {
+    let arguments = match op {
+        Op::Resource(_) => Value::Null,
+        _ => parse_arguments(arguments_json)?,
+    };
+    if let Some((pool, key)) = pool {
+        return pool
+            .perform(key, transport, op, &arguments, opts, events)
+            .await;
+    }
+    run(transport, opts, events, |mut s| async move {
+        s.perform(op, &arguments).await
+    })
+    .await
+}
+
 /// Connects, handshakes and calls one tool. `arguments_json` is the request
 /// file's JSON text; an empty string sends no `arguments` field.
 pub async fn call_tool(
@@ -434,10 +639,14 @@ pub async fn call_tool(
     opts: &Options,
     events: UnboundedSender<Event>,
 ) -> Result<ToolResult, McpError> {
-    let arguments = parse_arguments(arguments_json)?;
-    run(transport, opts, events, |mut s| async move {
-        s.call(tool, arguments).await
-    })
+    perform(
+        transport,
+        &Op::Tool(tool.to_string()),
+        arguments_json,
+        opts,
+        events,
+        None,
+    )
     .await
 }
 
@@ -451,6 +660,30 @@ fn parse_arguments(text: &str) -> Result<Value, McpError> {
         return Err(McpError::Arguments("it must be a JSON object".into()));
     }
     Ok(v)
+}
+
+/// Sends the `Finished` event of a call that started at `start`.
+pub(crate) fn finish<T>(
+    events: &UnboundedSender<Event>,
+    start: Instant,
+    opts: &Options,
+    outcome: Result<Result<T, McpError>, tokio::time::error::Elapsed>,
+) -> Result<T, McpError> {
+    let (ok, message, result) = match outcome {
+        Ok(Ok(v)) => (true, String::new(), Ok(v)),
+        Ok(Err(e)) => (false, e.to_string(), Err(e)),
+        Err(_) => (
+            false,
+            format!("timeout after {:?}", opts.timeout),
+            Err(McpError::Timeout(opts.timeout)),
+        ),
+    };
+    let _ = events.send(Event::Finished {
+        ok,
+        message,
+        at: start.elapsed(),
+    });
+    result
 }
 
 /// Runs one session under the whole-call timeout and closes it with a
@@ -471,32 +704,7 @@ where
         f(s).await
     };
     let outcome = tokio::time::timeout(opts.timeout, work).await;
-    match outcome {
-        Ok(Ok(v)) => {
-            let _ = events.send(Event::Finished {
-                ok: true,
-                message: String::new(),
-                at: start.elapsed(),
-            });
-            Ok(v)
-        }
-        Ok(Err(e)) => {
-            let _ = events.send(Event::Finished {
-                ok: false,
-                message: e.to_string(),
-                at: start.elapsed(),
-            });
-            Err(e)
-        }
-        Err(_) => {
-            let _ = events.send(Event::Finished {
-                ok: false,
-                message: format!("timeout after {:?}", opts.timeout),
-                at: start.elapsed(),
-            });
-            Err(McpError::Timeout(opts.timeout))
-        }
-    }
+    finish(&events, start, opts, outcome)
 }
 
 #[cfg(test)]
@@ -582,6 +790,8 @@ mod tests {
         notify_first: bool,
         /// Answer `initialize` with this protocol version.
         version: Option<&'static str>,
+        /// Declare `resources` and `prompts` and answer their methods.
+        catalog: bool,
     }
 
     async fn write_line(
@@ -636,9 +846,33 @@ mod tests {
                         json!({
                             "protocolVersion":
                                 opts.version.unwrap_or(protocol::PROTOCOL_VERSION),
-                            "capabilities": { "tools": {} },
+                            "capabilities": if opts.catalog {
+                                json!({ "tools": {}, "resources": {}, "prompts": {} })
+                            } else {
+                                json!({ "tools": {} })
+                            },
                             "serverInfo": { "name": "mock", "version": "1" }
                         }),
+                    ),
+                    "resources/list" if opts.catalog => response(
+                        &id,
+                        json!({ "resources": [ { "uri": "mem://a", "name": "a" } ] }),
+                    ),
+                    "resources/templates/list" if opts.catalog => response(
+                        &id,
+                        json!({ "resourceTemplates": [ { "uriTemplate": "mem://{x}", "name": "x" } ] }),
+                    ),
+                    "prompts/list" if opts.catalog => response(
+                        &id,
+                        json!({ "prompts": [ { "name": "hi", "arguments": [ { "name": "who", "required": true } ] } ] }),
+                    ),
+                    "resources/read" => response(
+                        &id,
+                        json!({ "contents": [ { "uri": v["params"]["uri"], "text": "body" } ] }),
+                    ),
+                    "prompts/get" => response(
+                        &id,
+                        json!({ "messages": [ { "role": "user", "content": { "type": "text", "text": v["params"]["arguments"]["who"] } } ] }),
                     ),
                     "tools/list" => {
                         if page < opts.pages {
@@ -839,6 +1073,61 @@ mod tests {
         assert_eq!(lines.len(), 5);
         assert!(lines[3].contains("\"cursor\":\"c1\""));
         assert!(lines[4].contains("\"cursor\":\"c2\""));
+    }
+
+    #[tokio::test]
+    async fn catalog_asks_only_for_declared_capabilities() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (wire, seen) = mock_server(MockOpts::default());
+        let mut s = Session::mock(wire, tx.clone());
+        s.capabilities = Value::Null;
+        s.initialize().await.unwrap_or_else(|e| panic!("{e}"));
+        let c = s.catalog().await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.tools.len(), 2);
+        assert!(c.resources.is_empty() && c.prompts.is_empty());
+        assert_eq!(lines_of(&seen).len(), 3);
+
+        let (wire, _seen) = mock_server(MockOpts {
+            catalog: true,
+            ..MockOpts::default()
+        });
+        let mut s = Session::mock(wire, tx);
+        s.initialize().await.unwrap_or_else(|e| panic!("{e}"));
+        let c = s.catalog().await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.resources[0].uri, "mem://a");
+        assert_eq!(c.templates[0].uri, "mem://{x}");
+        assert_eq!(c.prompts[0].arguments, [("who".to_string(), true)]);
+    }
+
+    #[tokio::test]
+    async fn resources_and_prompts_are_read() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (wire, seen) = mock_server(MockOpts::default());
+        let mut s = Session::mock(wire, tx);
+        s.initialize().await.unwrap_or_else(|e| panic!("{e}"));
+        let r = s
+            .perform(&Op::Resource("mem://a".into()), &Value::Null)
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.content[0]["text"], "body");
+        let p = s
+            .perform(&Op::Prompt("hi".into()), &json!({"who": "ana"}))
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(p.content[0]["content"]["text"], "ana");
+        let lines = lines_of(&seen);
+        assert!(
+            lines[2].contains(r#""method":"resources/read","params":{"uri":"mem://a"}"#),
+            "{}",
+            lines[2]
+        );
+        assert!(
+            lines[3].contains(
+                r#""method":"prompts/get","params":{"name":"hi","arguments":{"who":"ana"}}"#
+            ),
+            "{}",
+            lines[3]
+        );
     }
 
     #[tokio::test]

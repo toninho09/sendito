@@ -15,6 +15,7 @@ use sendito_store::config::{
 use crate::app::{App, StatusKind};
 use crate::editor::{Outcome, TextEditor};
 use crate::form::{ColKind, Column, Table, TableOutcome};
+use crate::keymap::Action;
 use crate::overlay::{Confirm, ConfirmAction, MCP_AUTHS, MCP_KINDS, Overlay, split_command_line};
 use crate::tab::plain_secret;
 
@@ -897,22 +898,18 @@ impl RecordEditor {
     }
 }
 
-/// What the form's buttons are, in order.
-pub fn buttons(kind: RecordKind) -> &'static [&'static str] {
-    match kind {
-        RecordKind::Mcp => &[
-            "Save (Ctrl+S)",
-            "New (Ctrl+N)",
-            "Test (Ctrl+T)",
-            "Close (Esc)",
-        ],
-        RecordKind::OAuth => &[
-            "Save (Ctrl+S)",
-            "New (Ctrl+N)",
-            "Sign in (Ctrl+L)",
-            "Close (Esc)",
-        ],
-    }
+/// What the form's buttons are, in order, with the key of each from `key`.
+pub fn buttons(kind: RecordKind, key: impl Fn(Action) -> String) -> Vec<String> {
+    let (third, action) = match kind {
+        RecordKind::Mcp => ("Test", Action::DialogTest),
+        RecordKind::OAuth => ("Sign in", Action::DialogSignIn),
+    };
+    vec![
+        format!("Save ({})", key(Action::DialogConfirm)),
+        format!("New ({})", key(Action::DialogNew)),
+        format!("{third} ({})", key(action)),
+        "Close (Esc)".into(),
+    ]
 }
 
 impl App {
@@ -1087,6 +1084,7 @@ impl App {
     /// Keys of a record editor; false closes it.
     pub(crate) fn records_key(&mut self, e: &mut RecordEditor, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let act = self.dialog_action(&key);
         if key.code == KeyCode::Esc {
             if e.pane == Pane::Form {
                 e.pane = Pane::List;
@@ -1105,40 +1103,39 @@ impl App {
             }
             return false;
         }
-        if ctrl {
-            match key.code {
-                KeyCode::Char('s') => {
-                    self.save_records(e);
-                    return true;
-                }
-                KeyCode::Char('n') => {
-                    e.add();
-                    return true;
-                }
-                KeyCode::Char('t') if e.kind == RecordKind::Mcp => {
-                    self.test_mcp_server(e);
-                    return true;
-                }
-                KeyCode::Char('l') if e.kind == RecordKind::OAuth => {
-                    return !self.sign_in_identity(e);
-                }
-                _ => {}
+        match act {
+            Some(Action::DialogConfirm) => {
+                self.save_records(e);
+                return true;
             }
+            Some(Action::DialogNew) => {
+                e.add();
+                return true;
+            }
+            Some(Action::DialogTest) if e.kind == RecordKind::Mcp => {
+                self.test_mcp_server(e);
+                return true;
+            }
+            Some(Action::DialogSignIn) if e.kind == RecordKind::OAuth => {
+                return !self.sign_in_identity(e);
+            }
+            _ => {}
         }
+        let delete = act == Some(Action::DialogDelete);
         match e.pane {
-            Pane::List => self.records_list_key(e, key, ctrl),
-            Pane::Form => self.records_form_key(e, key, ctrl),
+            Pane::List => self.records_list_key(e, key, ctrl, delete),
+            Pane::Form => self.records_form_key(e, key, delete),
         }
         true
     }
 
-    fn records_list_key(&mut self, e: &mut RecordEditor, key: KeyEvent, ctrl: bool) {
+    fn records_list_key(&mut self, e: &mut RecordEditor, key: KeyEvent, ctrl: bool, delete: bool) {
         match key.code {
+            _ if delete => self.delete_record(e),
             KeyCode::Up | KeyCode::Char('k') if !ctrl => e.sel = e.sel.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') if !ctrl => e.sel = (e.sel + 1).min(e.records.len()),
             KeyCode::Enter | KeyCode::Right | KeyCode::Tab if e.sel >= e.records.len() => e.add(),
             KeyCode::Enter | KeyCode::Right | KeyCode::Tab => e.enter_form(),
-            KeyCode::Char('d') if ctrl => self.delete_record(e),
             KeyCode::Delete => self.delete_record(e),
             _ => {}
         }
@@ -1152,17 +1149,18 @@ impl App {
             e.sel = e.sel.min(e.records.len().saturating_sub(1));
             e.dirty = true;
             e.note = Some(format!(
-                "deleted {}; Ctrl+S writes the file",
+                "deleted {}; {} writes the file",
                 if name.is_empty() {
                     "the new entry"
                 } else {
                     &name
-                }
+                },
+                self.dialog_key(Action::DialogConfirm)
             ));
         }
     }
 
-    fn records_form_key(&mut self, e: &mut RecordEditor, key: KeyEvent, ctrl: bool) {
+    fn records_form_key(&mut self, e: &mut RecordEditor, key: KeyEvent, delete: bool) {
         let shift_tab = key.code == KeyCode::BackTab
             || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT));
         if shift_tab {
@@ -1212,7 +1210,7 @@ impl App {
                 _ => {}
             },
             Input::Table(t) => {
-                if ctrl && key.code == KeyCode::Char('d') {
+                if delete {
                     changed = t.delete_row();
                 } else if key.code == KeyCode::Enter {
                     t.next_cell();
@@ -1258,7 +1256,10 @@ impl App {
             return;
         }
         if e.dirty {
-            e.error = Some("save (Ctrl+S) first: the test uses the saved server".into());
+            e.error = Some(format!(
+                "save ({}) first: the test uses the saved server",
+                self.dialog_key(Action::DialogConfirm)
+            ));
             return;
         }
         e.error = None;
@@ -1284,7 +1285,10 @@ impl App {
             return false;
         }
         if e.dirty {
-            e.error = Some("save (Ctrl+S) first: the sign-in uses the saved identity".into());
+            e.error = Some(format!(
+                "save ({}) first: the sign-in uses the saved identity",
+                self.dialog_key(Action::DialogConfirm)
+            ));
             return false;
         }
         let name = r.name();
@@ -1296,6 +1300,19 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The help line of a field names no key: keys change in the keymap,
+    /// and the buttons and the hint row show the keys that are set.
+    #[test]
+    fn field_help_names_no_key() {
+        for r in [Record::mcp("a", None), Record::oauth("a", None)] {
+            for f in &r.fields {
+                for key in ["Ctrl+", "Alt+", "F2", "F5", "Enter", "Esc"] {
+                    assert!(!f.help.contains(key), "{}: {}", f.id, f.help);
+                }
+            }
+        }
+    }
 
     #[test]
     fn mcp_fields_follow_the_kind_and_the_auth() {

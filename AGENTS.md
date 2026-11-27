@@ -53,7 +53,7 @@ lists everything a change type touches, and its "Test and tooling map" the tests
   (`crates/core/src/model.rs`). The parser reads it once in
   `crates/store/src/request_file.rs::common`. Do not add it to each kind.
 * Logic that every protocol runs goes in `crates/pipeline/src/runner/mod.rs`
-  (`pre_phase`, `response_phase`), not in each runner module.
+  (`prepare`, `response_phase`), not in each runner module.
 * In tests and importers, build a request with `..Default::default()` and set
   only the fields that the code needs. Then a new field does not break them.
 
@@ -115,15 +115,17 @@ make build                    # cargo build -j 4
 make check    [P=package]     # type-check only: the fastest "does it compile"
 make fmt                      # cargo fmt --all
 make lint     [P=package]     # clippy on all targets, -D warnings
-make test     [P=package] [F=name]   # the workspace suite, one crate or one test name
+make test     [P=package] [T=file] [F=name]   # the workspace suite, one crate, one tests/ file or one test name
 make deny                     # cargo deny check
 make docs                     # the documentation still matches the code
 make ci                       # fmt-check + lint + deny + test
 ```
 
 `P` is a cargo package (`sendito-core`, `sendito-ui`, `sendito` for the binary)
-and narrows `check`, `lint` and `test` to it. `F` is a test-name filter; `make
-test` fails when no test matches it. Others, when a task calls for them:
+and narrows `check`, `lint` and `test` to it. `T` is an integration test file
+without `.rs` (`make test T=serve` runs `tests/serve.rs`; add `P` for a file
+of another crate). `F` is a test-name filter: it matches the test names, not
+the file names. `make test` fails when no test matches it. Others, when a task calls for them:
 `make run ARGS="req.http"`, `make servers` (the echo servers), `make cov` (line
 coverage, 80 % gate), `make bench`, `make bundles` (the reviewer bundles of
 `docs/PLAN.md`), `make site` (the documentation site in `book/`, published to
@@ -146,6 +148,9 @@ one. Do not run a check after each edit.
 3. When the change is ready, run `make fmt` and `make ci`. On a warm build the
    gate takes about a minute; a cold one takes longer, so allow the timeout.
 4. Regenerate whatever your change made stale (next table) and read its diff.
+5. In the final report, suggest the improvements that you found and that no
+   document lists, above all the ones that make a future implementation or a
+   refactor easier. Do not add them to the change: the owner decides.
 
 ## Generated files
 

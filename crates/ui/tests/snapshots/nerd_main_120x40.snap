@@ -2,7 +2,7 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-  sendito   GET list users     +                                                              local ▾   F1  all keys
+  sendito   GET list users     +                                                                  local ▾   F1  help
 ╭  Requests   History ─────╮╭ HTTP ──────────────────────────────────────────────────────────────────────────────────╮
 │▸  Orders/                 ││  GET    ▾  ▍{{base_url}}/users                                              Send  ^⏎  │
 │▾  Users/                  │╰────────────────────────────────────────────────────────────────────────────────────────╯

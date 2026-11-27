@@ -1,0 +1,32 @@
+Send a body in another format: form fields, files, or text of any format.
+
+── Choose the type ──
+  1.  Open the Body tab of an HTTP request.
+  2.  Press Left or Right on the type chip to change it: None, JSON, Raw, Form, Multipart, File or GraphQL. Enter opens the list of the types.
+  3.  The line on the right shows the Content-Type that Sendito sends, for example "→ application/json (auto)".
+  4.  A Content-Type row in the Headers tab replaces the automatic value. Multipart always sends its own Content-Type, with its boundary.
+
+── Form ──
+  1.  Choose Form.
+  2.  Add a row for each field: the Name and the Value.
+  3.  Press {key:send}. Sendito sends application/x-www-form-urlencoded, as a browser does for a form.
+
+── Multipart ──
+  1.  Choose Multipart.
+  2.  Add a row for each part. In the Kind cell, press Space to choose text or file.
+  3.  For a file, type its path: relative to the collection folder, or with ~ for your home folder. Sendito sets the name and the content type of the part from the file name.
+  4.  {key:table:toggle_row} turns a part off. Sendito does not send a part that is off.
+
+── File ──
+  1.  Choose File.
+  2.  Type the path of the file. Sendito sends its bytes as they are.
+  3.  Set the Content-Type field. Empty sends application/octet-stream.
+
+── Raw ──
+  •  Choose Raw for text in any format: XML, plain text, a format of your own.
+  •  Set the Content-Type field. Empty sends no Content-Type.
+
+── Good to know ──
+  •  For the type GraphQL, see the tutorial "GraphQL request".
+  •  Press {key:external_edit} to write a long body in your own editor. See "Customize".
+  •  {key:format_body} formats the JSON body.

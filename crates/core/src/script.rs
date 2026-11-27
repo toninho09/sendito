@@ -87,6 +87,18 @@ pub fn value_text(v: &Value) -> String {
     }
 }
 
+/// The JSONPath `expr` on a JSON body, as an extract reads it: one match as
+/// its text, several as a JSON array, none as `None`.
+pub fn json_path_value(body: &[u8], expr: &str) -> Result<Option<String>, String> {
+    let view = ResponseView {
+        status: 0,
+        headers: &[],
+        body,
+        timing: &[],
+    };
+    read(Source::Body, expr, &view, &Parsed::default())
+}
+
 fn read(
     source: Source,
     expr: &str,
@@ -190,7 +202,7 @@ pub(crate) fn digest(algo: &str, bytes: &[u8]) -> Result<String, String> {
     })
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

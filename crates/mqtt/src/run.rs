@@ -155,7 +155,7 @@ impl Driver {
     async fn poll(&mut self) -> Result<In, String> {
         match self {
             Driver::V4(inner) => {
-                let event = inner.1.poll().await.map_err(|e| e.to_string())?;
+                let event = inner.1.poll().await.map_err(v4_error)?;
                 Ok(match event {
                     rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(ack)) => In::ConnAck {
                         session_present: ack.session_present,
@@ -187,7 +187,7 @@ impl Driver {
                 })
             }
             Driver::V5(inner) => {
-                let event = inner.1.poll().await.map_err(|e| e.to_string())?;
+                let event = inner.1.poll().await.map_err(v5_error)?;
                 Ok(match event {
                     rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::ConnAck(
                         ack,
@@ -227,6 +227,25 @@ impl Driver {
                 })
             }
         }
+    }
+}
+
+/// The text of a connection error. A CONNACK refusal keeps its code in a
+/// stable form, so the pipeline can name the cause:
+/// `CONNACK refused: BadUserNamePassword`.
+fn v4_error(e: rumqttc::ConnectionError) -> String {
+    match e {
+        rumqttc::ConnectionError::ConnectionRefused(code) => format!("CONNACK refused: {code:?}"),
+        e => e.to_string(),
+    }
+}
+
+fn v5_error(e: rumqttc::v5::ConnectionError) -> String {
+    match e {
+        rumqttc::v5::ConnectionError::ConnectionRefused(code) => {
+            format!("CONNACK refused: {code:?}")
+        }
+        e => e.to_string(),
     }
 }
 

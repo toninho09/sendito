@@ -1,0 +1,4 @@
+kind = "mcp"
+server = "echo"
+op = "resource"
+uri = "echo://readme"

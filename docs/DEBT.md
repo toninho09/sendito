@@ -77,8 +77,8 @@ allows `accept` as a transport header.
 * The Lua scripts use `mlua` with Lua 5.4 built from source (`vendored`): a
   build needs a C compiler for the target.
 * Folder runs (`sendito run <folder>`) are sequential and share one variable
-  scope in tree order; there is no parallelism, no per-request retry and no
-  JUnit/TAP writer (the JSON report is the machine format). A request that
+  scope in tree order; there is no parallelism. Retries run only in
+  `sendito run`, not in the UI. A request that
   fails does not stop the run unless `--fail-fast` is given, and a request with
   unresolved variables is reported as an error and skipped.
 * Postman import covers v2.1 collections; OAuth 2 auth and a JWT private key are
@@ -91,12 +91,29 @@ allows `accept` as a transport header.
   makes a request body from an example or the schema (arrays stay empty). A
   `.http` import reads the `< file` path as relative to the collection, not to
   the `.http` file (reported), and keeps multipart bodies as raw text.
+* HAR import keeps the URL as recorded and makes no query rows, imports a
+  form body as raw text and a multipart body as raw text (a HAR file does not
+  hold the file parts). HAR export has no responses and leaves Digest and AWS
+  Signature V4 out.
 * gRPC supports unary and the three streaming kinds over plaintext or TLS; there is
   no gRPC-Web.
-* MCP supports tools only; resources and prompts are not implemented. Each list
-  or call opens a separate session. The legacy HTTP+SSE transport and the
-  server-initiated Streamable HTTP GET stream are not supported. Image and other
-  non-text tool content is shown as JSON, not decoded into a media viewer.
+* MCP calls tools, reads resources and gets prompts. A resource URI template
+  is not expanded: the picker puts it in the request as written, and you edit
+  it. Resource subscriptions, completion (`completion/complete`), sampling and
+  roots are not implemented. The legacy HTTP+SSE transport and the
+  server-initiated Streamable HTTP GET stream are not supported. Image and
+  other non-text content (a resource `blob` too) is shown as JSON, not decoded
+  into a media viewer. A kept session is closed only when it is idle, on an
+  environment change, on `:mcp restart` or at exit: a server whose
+  configuration changed keeps its old session until then, unless the change
+  alters its command, URL or headers.
+* `sendito serve` speaks MCP on stdio only: there is no Streamable HTTP
+  listener. It sends no `notifications/progress` while a call runs, and a
+  WebSocket, SSE or MQTT request runs to its own end (`deadline_ms`,
+  `max_events`, the peer's close) or to a cancel: the agent cannot send frames
+  into a session. It speaks the protocol versions with the `initialize`
+  handshake (up to `2025-11-25`); the stateless `2026-07-28` revision, which
+  removed the handshake, is not supported.
 * An MCP `arguments` value that is not a JSON object is kept as file text and only
   rejected when the call is sent (so a half-typed object can be saved and
   reopened); the editor shows `✓ JSON` / `✗ JSON` while typing.
@@ -166,6 +183,15 @@ allows `accept` as a transport header.
   timeout before the first frame, and terminals that do not answer (or multiplexers
   that swallow the reply) must not delay start-up. Set `theme` explicitly meanwhile.
 
+## `$response` limits
+
+`$response` reads the body of an HTTP request with a JSONPath: a header, a
+cookie or the response of another request kind is not available. A history
+entry keeps the first `[history] max_body_kb` of the body: a longer JSON body
+read from the history does not parse, so the JSONPath finds nothing (use the
+`if_older` or `always` policy). The responses of the session live in memory
+only, by environment and request path.
+
 ## SSE transport limits
 
 SSE does not reconnect or send Last-Event-ID. Retry values are informational.
@@ -175,10 +201,13 @@ match an SSE opening-only timeout. SSE has no watch mode or saved response examp
 
 ## GraphQL body limits
 
-GraphQL currently sends operations through HTTP POST or the method in the file.
-Query completion uses a heuristic parser, not a GraphQL AST. Subscriptions, GET transport,
-persisted queries, SDL files, a schema tab and schema-based variable validation
-are not implemented.
+GraphQL sends operations through HTTP POST or the method in the file, and
+subscriptions through a WebSocket request with `[graphql]` (one operation per
+session, `graphql-transport-ws` or the legacy `graphql-ws`). Query completion
+uses a heuristic parser, not a GraphQL AST. GET transport, persisted queries,
+SDL files, a schema tab, schema-based variable validation, several operations
+in one WebSocket session and subscriptions over SSE (`graphql-sse`) are not
+implemented.
 
 ## MQTT limits
 
@@ -198,4 +227,4 @@ the 0.102 verifier is never used. `deny.toml` ignores those advisories until
 
 * `docs/PLAN.md` is the original specification and verification plan; it states a
   minimum terminal size of 120×40 and the 40-case corpus, which has since grown to
-  54 HTTP, 15 gRPC, 12 WebSocket and 5 MCP cases.
+  54 HTTP, 15 gRPC, 14 WebSocket and 7 MCP cases.

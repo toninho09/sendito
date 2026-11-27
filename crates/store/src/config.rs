@@ -52,8 +52,8 @@ impl KeySpec {
 pub struct UiConfig {
     /// Vim-style modal editing and navigation.
     pub vim_mode: bool,
-    /// A built-in theme (`auto`, `dusk`, `daylight`, `ember`, `linen`,
-    /// `contrast`, `ansi`) or a user theme from a `themes/` directory.
+    /// A built-in theme (`auto`, `dusk`, `daylight`... see `docs/THEMES.md`)
+    /// or a user theme from a `themes/` directory.
     pub theme: String,
     /// `unicode` (works with any font) or `nerd` (Nerd Font icons).
     pub icons: String,
@@ -67,8 +67,8 @@ pub struct UiConfig {
     /// Default watch interval, in seconds (`:watch` re-sends the active
     /// request on this interval until stopped).
     pub watch_interval_s: u64,
-    /// Key hints in the footer: `full` (as many as fit), `short` (the three
-    /// most used) or `off` (only the menu and help keys).
+    /// Key hints in the footer: `full` (as many as fit, the default),
+    /// `short` (the three most used) or `off` (only the menu and help keys).
     pub hints: String,
     /// Messages a gRPC or WebSocket stream keeps in the response; the oldest
     /// go first. The counts and sizes still cover every message.
@@ -89,7 +89,7 @@ impl Default for UiConfig {
             confirm_quit: true,
             sticky_folders: true,
             watch_interval_s: 5,
-            hints: "short".into(),
+            hints: "full".into(),
             stream_messages_kept: 10_000,
             hide_plain_secrets: false,
         }
@@ -265,6 +265,9 @@ impl OAuthGrant {
 pub struct McpConfig {
     /// Default call timeout when a request sets none (handshake included).
     pub timeout_ms: u64,
+    /// The interface keeps a server session open between calls and closes
+    /// it after this many seconds without a call (0 = a session per call).
+    pub idle_timeout_s: u64,
     pub servers: BTreeMap<String, McpServer>,
 }
 
@@ -272,6 +275,7 @@ impl Default for McpConfig {
     fn default() -> Self {
         Self {
             timeout_ms: 30_000,
+            idle_timeout_s: 300,
             servers: BTreeMap::new(),
         }
     }
@@ -357,6 +361,8 @@ pub enum McpServerAuth {
 pub struct HistoryConfig {
     pub enabled: bool,
     pub max_entries: usize,
+    /// The largest HTTP response body kept with an entry, in KB (0 = none).
+    pub max_body_kb: usize,
 }
 
 impl Default for HistoryConfig {
@@ -364,6 +370,7 @@ impl Default for HistoryConfig {
         Self {
             enabled: true,
             max_entries: 10_000,
+            max_body_kb: 1024,
         }
     }
 }

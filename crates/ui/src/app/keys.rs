@@ -13,11 +13,12 @@ impl App {
             Event::Resize(w, h) => self.size = (w, h),
             _ => {}
         }
+        self.preview_env_theme();
     }
 
     pub fn on_paste(&mut self, s: &str) {
         // A path pasted in the `.env` file line: one line, then the status.
-        if matches!(&self.overlay, Some(Overlay::Env(e)) if e.on_dotenv)
+        if matches!(&self.overlay, Some(Overlay::Env(e)) if e.focus == EnvFocus::Dotenv)
             && let Some(Overlay::Env(mut e)) = self.overlay.take()
         {
             e.dotenv
@@ -31,7 +32,10 @@ impl App {
             match ov {
                 Overlay::Import(i) => i.input.insert_str(s),
                 Overlay::Prompt(p) => p.input.insert_str(s),
-                Overlay::Picker(p) => p.filter.insert_str(s),
+                Overlay::Picker(p) => {
+                    p.filter.insert_str(s);
+                    p.sel = 0;
+                }
                 Overlay::Palette(p) => {
                     p.input.insert_str(s);
                     p.sel = 0;
@@ -46,6 +50,7 @@ impl App {
                 Overlay::Keymap(e) => e.filter.insert_str(s),
                 _ => {}
             }
+            self.preview_picked_theme();
             return;
         }
         // A pasted curl command in the URL bar becomes a request.
@@ -67,6 +72,7 @@ impl App {
                 }
                 self.changed();
             }
+            Focus::RespQuery => self.query_paste(s),
             _ => {}
         }
     }
@@ -123,6 +129,7 @@ impl App {
                 vec![Ctx::Tree, Ctx::Global]
             }
             Focus::RespBody | Focus::RespTabs => vec![Ctx::Response, Ctx::Global],
+            Focus::RespQuery => vec![Ctx::Query, Ctx::Global],
             Focus::ReqBody if is_table => vec![Ctx::Table, Ctx::Global],
             _ => vec![Ctx::Global],
         }
@@ -176,19 +183,13 @@ impl App {
         if self.complete.is_some() && self.complete_key(key) {
             return;
         }
+        if self.tab().is_some_and(|t| t.run.is_some()) && self.run_key(key) {
+            return;
+        }
         let chord = Chord::from_event(&key);
         // The query bar closes with a new response or on another tab.
         if self.focus == Focus::RespQuery && !self.query_shown() {
             self.focus = Focus::RespBody;
-        }
-        // The query bar keeps Tab (completion) and Up/Down (history).
-        if self.focus == Focus::RespQuery
-            && self.pending.is_empty()
-            && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
-            && key.modifiers.is_empty()
-        {
-            self.query_key(key);
-            return;
         }
         // Tab inside a multi-line editor indents (unless in vim normal mode).
         if chord == Chord::new(KeyCode::Tab, KeyModifiers::NONE)
@@ -204,6 +205,19 @@ impl App {
                 return;
             }
         }
+        // The response tab bar takes its own keys before the viewer bindings
+        // (scroll, fold and cursor) see them.
+        if self.focus == Focus::RespTabs
+            && self.pending.is_empty()
+            && key.modifiers.is_empty()
+            && matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Down
+            )
+        {
+            self.forward_to_widget(key);
+            return;
+        }
         // Vim command mode.
         if self.vim
             && self.pending.is_empty()
@@ -218,8 +232,8 @@ impl App {
         seq.push(chord);
         let ctxs = self.contexts();
         // Text widgets get plain keys first; only global bindings apply there.
-        let text_focus =
-            matches!(self.focus, Focus::Filter | Focus::RespQuery) || self.focused_text().is_some();
+        // The query bar has its own context before the global one.
+        let text_focus = self.focus == Focus::Filter || self.focused_text().is_some();
         let ctxs: Vec<Ctx> = if text_focus { vec![Ctx::Global] } else { ctxs };
         // In vim normal mode inside tables, `dd` deletes rows like lines.
         match self.keymap.lookup(&ctxs, self.vim, &seq) {
@@ -305,20 +319,6 @@ impl App {
         let Some(kind) = self.tab().map(|t| t.ed.kind) else {
             return;
         };
-        if kind == Kind::Mcp && key.code == KeyCode::F(2) {
-            // F2 on the server input lists the configured servers (a direct
-            // URL needs none); on the tool chip it discovers the tools.
-            if part == 1
-                && self
-                    .tab()
-                    .is_some_and(|t| t.ed.mcp_server.text().is_empty())
-            {
-                self.open_mcp_server_picker();
-            } else {
-                self.load_mcp_tools(true);
-            }
-            return;
-        }
         let vim = self.vim;
         // Part 1 is the endpoint input of every kind; the gRPC method and MCP
         // tool chips (part 0) are editable inline.
@@ -395,23 +395,6 @@ impl App {
             self.focus = Focus::ReqTabs;
             return;
         };
-        if key.code == KeyCode::F(2) {
-            match field {
-                Field::McpServer => {
-                    self.open_mcp_server_picker();
-                    return;
-                }
-                Field::McpTool => {
-                    self.load_mcp_tools(true);
-                    return;
-                }
-                Field::AuthOAuthName => {
-                    self.open_oauth_identity_picker();
-                    return;
-                }
-                _ => {}
-            }
-        }
         if field == Field::DocsPreview {
             self.docs_preview_key(key);
             return;

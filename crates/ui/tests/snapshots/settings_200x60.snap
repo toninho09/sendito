@@ -7,9 +7,9 @@ expression: screen
 │  ▍  type to filter settings                                            │
 │                                                                        │
 │  Appearance                                                            │
-│    Theme                                  ███████  ‹ auto › (1 of 7)   │
+│    Theme                                 ███████  ‹ auto › (1 of 33)   │
 │    Icons                                                 ‹ unicode ›   │
-│    Key hints                                               ‹ short ›   │
+│    Key hints                                                ‹ full ›   │
 │    Hide plain secrets                                        ‹ Off ›   │
 │  Editing                                                               │
 │    Vim mode                                                  ‹ Off ›   │
@@ -22,6 +22,7 @@ expression: screen
 │    Confirm quit with unsaved changes                          ‹ On ›   │
 │    Record history                                             ‹ On ›   │
 │    History entries kept                                    ‹ 10000 ›   │
+│    History response body                                 ‹ 1024 KB ›   │
 │    Watch interval                                            ‹ 5 s ›   │
 │    Stream messages kept                                    ‹ 10000 ›   │
 │  Timeouts                                                              │
@@ -31,6 +32,7 @@ expression: screen
 │    SSE opening timeout                                      ‹ 30 s ›   │
 │    MQTT timeout                                             ‹ 30 s ›   │
 │    MCP call timeout                                         ‹ 30 s ›   │
+│    MCP session idle time                                   ‹ 300 s ›   │
 │  MCP                                                                   │
 │    MCP servers                                         ‹ 0 servers ›   │
 │  HTTP                                                                  │
@@ -49,7 +51,7 @@ expression: screen
 │ ────────────────────────────────────────────────────────────────────── │
 │  Colors: auto follows the terminal; ansi uses your terminal palette;   │
 │  contrast is high-contrast. Add your own in themes/ (sendito theme     │
-│  Theme: auto / dusk / daylight / ember / linen / contrast / ansi  (←…  │
+│  Theme: ← → change, Space lists all 33 with a live preview             │
 │  Changes apply at once and are saved to                                │
 │  ~/.config/sendito/config.toml                                         │
 ╰────────────────────────────────────────────────────────────────────────╯

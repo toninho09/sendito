@@ -7,8 +7,8 @@ expression: screen
 │ Redirects      [✓] On  follow 3xx responses (up to 10)                                 │
 │ Verify TLS     [✓] On  turn off for self-signed certificates                           │
 │ Cookie jar     Config default ▾                                                        │
-│                                                                                        │
-│                                                                                        │
+│ Retries        none                                                                    │
+│ Retry wait     default · 1 s                                                           │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

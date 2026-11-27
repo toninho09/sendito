@@ -15,6 +15,7 @@ pub const GITIGNORE_ENTRIES: &[&str] = &[
     ".sendito/cookies.lock",
     ".sendito/session.toml",
     ".sendito/history.jsonl",
+    ".sendito/history/",
 ];
 
 /// Finds the nearest directory at or above `start` that contains `.sendito/`.
@@ -117,11 +118,11 @@ mod tests {
         fs::write(d.path().join(".gitignore"), "target").unwrap();
         let r = init(d.path()).unwrap();
         assert_eq!(r.created.len(), 3);
-        assert_eq!(r.gitignore_added.len(), 5);
+        assert_eq!(r.gitignore_added.len(), 6);
         let gi = fs::read_to_string(d.path().join(".gitignore")).unwrap();
         assert_eq!(
             gi,
-            "target\n.sendito/secrets.toml\n.sendito/cookies.toml\n.sendito/cookies.lock\n.sendito/session.toml\n.sendito/history.jsonl\n"
+            "target\n.sendito/secrets.toml\n.sendito/cookies.toml\n.sendito/cookies.lock\n.sendito/session.toml\n.sendito/history.jsonl\n.sendito/history/\n"
         );
         let r2 = init(d.path()).unwrap();
         assert_eq!(r2, InitReport::default());

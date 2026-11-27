@@ -4,8 +4,8 @@ expression: screen
 ---
 ╭─ Tool  Args 1  Scripts  Options  Docs ─────────────────────────────────────────────────╮
 │ Server         example                                                                 │
-│ Tool           search                                                                  │
-│                                                                                        │
+│ Operation      tool ▾  call a tool, read a resource or get a prompt                    │
+│ Target         search                                                                  │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

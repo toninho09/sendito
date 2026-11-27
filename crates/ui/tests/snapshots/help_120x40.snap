@@ -2,40 +2,40 @@
 source: crates/ui/tests/snapshots.rs
 expression: screen
 ---
-╭─ Help — keys and actions (Esc closes) ─────────────────────────────────────────────────────────────────────╮
-│ Search ▍  (type to filter the keys)                                            line 1/253 · ↑↓ PgUp PgDn   ┃
-│                                                                                                            ┃
-│ All keys, including any you changed in the config.                                                         ┃
-│ Current mode: conventional (switch in Settings, Ctrl+W ,).                                                 ┃
-│                                                                                                            │
-│ ── Global ──                                                                                               │
-│   Ctrl+Enter, F5, Ctrl+W e     Send the request (or start the gRPC call)                                   │
-│   Ctrl+W x                     Cancel the running request or stream                                        │
-│   Ctrl+W d                     Finish sending on a client/bidi stream (half-close)                         │
-│   Ctrl+W m                     Re-send the active request on an interval (watch)                           │
-│   Ctrl+S, Ctrl+W s             Save the request to its file (asks for a name if new)                       │
-│   Ctrl+W q, Ctrl+Q             Quit Sendito                                                                │
-│   Ctrl+N, Ctrl+W t             Open a new unsaved HTTP request tab                                         │
-│   Ctrl+W g                     Open a new unsaved gRPC request tab                                         │
-│   Ctrl+W y                     Open a new unsaved WebSocket request tab                                    │
-│   Ctrl+W E                     Open a new unsaved SSE request tab                                          │
-│   Ctrl+W M                     Open a new unsaved MQTT request tab                                         │
-│   Ctrl+W c                     Close the current tab                                                       │
-│   Ctrl+W n, Ctrl+PageDown      Next open request tab                                                       │
-│   Ctrl+W p, Ctrl+PageUp        Previous open request tab                                                   │
-│   Ctrl+W P                     Pin or unpin the current tab (pinned tabs stay first)                       │
-│   Ctrl+W F                     Add or remove the request from the favorites                                │
-│   Ctrl+W h, Ctrl+W Left        Focus the pane to the left                                                  │
-│   Ctrl+W j, Ctrl+W Down        Focus the pane below                                                        │
-│   Ctrl+W k, Ctrl+W Up          Focus the pane above                                                        │
-│   Ctrl+W l, Ctrl+W Right       Focus the pane to the right                                                 │
-│   Tab, Ctrl+W w                Move focus to the next field or pane                                        │
-│   Shift+Tab, Ctrl+W W          Move focus to the previous field or pane                                    │
-│   Ctrl+W ]                     Next tab of the focused pane (e.g. Params → Headers)                        │
-│   Ctrl+W [                     Previous tab of the focused pane                                            │
-│   Alt+1                        Jump to tab 1 of the focused pane                                           │
-│   Alt+2                        Jump to tab 2 of the focused pane                                           │
-│   Alt+3                        Jump to tab 3 of the focused pane                                           │
-│   Alt+4                        Jump to tab 4 of the focused pane                                           │
-│   Alt+5                        Jump to tab 5 of the focused pane                                           │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Help (Tab: next section, Esc closes) ───────────────────────────────────────────────────────────────────────╮
+│ Guide                     │ Search ▍  (type to search this section)               line 1/60 · ↑↓ PgUp PgDn   ┃
+│▌  Start here              │                                                                                  ┃
+│   How it works            │ Welcome to Sendito. This help explains how the app works and shows the           ┃
+│ Tutorials                 │ steps for the most common tasks.                                                 ┃
+│   First request           │                                                                                  ┃
+│   Body types              │ Sendito sends requests and shows their responses: HTTP, gRPC, WebSocket,         ┃
+│   GraphQL request         │ SSE, MQTT and MCP tools. Each request is a text file in a folder (the            ┃
+│   Save and organize       │ collection). You can edit the files in any editor and keep them in git.          ┃
+│   Docs and examples       │                                                                                  ┃
+│   Environments            │ ── Use this help ──                                                              ┃
+│   Secrets and auth        │   •  Press Tab or Shift+Tab to open the next or the previous section, or click   ┃
+│   Chain requests          │      a name in the list on the left.                                             ┃
+│   Read a response         │   •  Type a word to search the open section. Press Enter for the next match.     ┃
+│   Watch a request         │   •  Press Esc or F1 to close the help.                                          ┃
+│   History and cookies     │   •  The command :help <word> opens the section whose name has the word, else    ┃
+│   Import and export       │      the section whose text has the word the most times, for example :help grpc  │
+│   gRPC call               │      or :help xpath. When the open text has the word, the search box holds it.   │
+│   Streams (WS, SSE, MQTT) │   •  The help shows your keys. When you change a key, the help shows the new     │
+│   MCP tools               │      key.                                                                        │
+│   Request options         │                                                                                  │
+│   Run a folder            │ The list on the left has four groups:                                            │
+│   Customize               │   Guide          How the screen and the requests work.                           │
+│ Keys                      │   Tutorials      Steps for the most common tasks. Start with "First request".    │
+│   All keys                │   Keys           All the keys, the marks on the screen and the commands.         │
+│   Global                  │   Functions      The functions, the dynamic values and the script rows that a    │
+│   Sidebar tree            │                  request can use.                                                │
+│   Text editing            │                                                                                  │
+│   Tables                  │ ── The screen ──                                                                 │
+│   Response                │   Top bar        The open request tabs, the active environment and the help key. │
+│   Query (jq)              │   Sidebar        The request tree of the collection, or the history.             │
+│   Dialogs                 │   URL card       The method (or the protocol), the address and the Send button.  │
+│   Fixed keys              │   Request pane   The parts of the request, in tabs (Params, Headers, Body,       │
+│   Symbols                 │                  Auth, Scripts, Options, Docs).                                  │
+│   Commands                │   Response pane  The response, in tabs (Body, Headers, Timing, Results).         │
+│ Functions                 │   Footer         The state on the left. On the right, the keys for the part      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

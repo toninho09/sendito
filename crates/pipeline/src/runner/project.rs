@@ -3,6 +3,7 @@
 use super::*;
 
 /// An opened collection with its settings.
+#[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
     pub coll: Collection,
@@ -16,6 +17,8 @@ pub struct Project {
     pub theme_dirs: Vec<PathBuf>,
     /// `[http] tls` with paths resolved against the collection root.
     pub tls: sendito_http::TlsMaterial,
+    /// The last HTTP responses of this session, for `$response`.
+    pub responses: super::ResponseCache,
 }
 
 /// The keychain to use: `SENDITO_KEYCHAIN=memory` selects an in-memory one (tests, demos).
@@ -46,6 +49,7 @@ impl Project {
             theme_dirs: sendito_store::themes::dirs(global.as_deref(), root),
             global_config: global,
             tls: sendito_http::TlsMaterial::default(),
+            responses: Default::default(),
         };
         let problems = p.apply_config();
         p.warnings.extend(problems);
@@ -81,11 +85,9 @@ impl Project {
                 .unwrap_or_else(|| "collection".into())
         });
         self.coll = Collection::new(&root, self.config.collection.ignore.clone());
-        self.envs = Arc::new(Envs::new(
-            &root,
-            self.name.clone(),
-            self.envs.keychain.clone(),
-        ));
+        let mut envs = Envs::new(&root, self.name.clone(), self.envs.keychain.clone());
+        envs.lua_dirs = sendito_store::lua_lib::dirs(self.global_config.as_deref(), &root);
+        self.envs = Arc::new(envs);
         problems
     }
 

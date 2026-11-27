@@ -5,7 +5,7 @@ accept: application/json, text/event-stream
 host: 127.0.0.1:<port>
 content-length: 156
 
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"sendito","version":"0.3.0"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"sendito","version":"0.4.0"}}}
 ### request 2
 POST /mcp?paginate=1 HTTP/1.1
 content-type: application/json

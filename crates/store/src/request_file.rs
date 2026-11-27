@@ -30,6 +30,8 @@ struct RawOptions {
     tls: Option<bool>,
     deadline_ms: Option<u64>,
     max_events: Option<u64>,
+    retry: Option<u32>,
+    retry_interval_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -299,7 +301,10 @@ struct RawRequest {
     message: Option<String>,
     messages: Option<String>,
     server: Option<String>,
+    op: Option<String>,
     tool: Option<String>,
+    uri: Option<String>,
+    prompt: Option<String>,
     arguments: Option<String>,
     #[serde(default)]
     subprotocols: Vec<String>,
@@ -327,6 +332,21 @@ struct RawRequest {
     #[serde(default)]
     publish: Vec<RawMessage>,
     last_will: Option<RawMessage>,
+    graphql: Option<RawWsGraphql>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWsGraphql {
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    variables: String,
+    #[serde(default)]
+    operation_name: String,
+    protocol: Option<String>,
+    #[serde(default)]
+    init_payload: String,
 }
 
 pub(crate) fn kvs(v: Vec<RawKv>) -> Vec<KeyValue> {
@@ -501,6 +521,8 @@ fn common(r: &mut RawRequest) -> Result<RequestCommon, String> {
     Ok(RequestCommon {
         scripts: scripts(std::mem::take(&mut r.scripts))?,
         description: r.description.take().unwrap_or_default(),
+        retry: r.options.retry.unwrap_or(0),
+        retry_interval_ms: r.options.retry_interval_ms,
     })
 }
 
@@ -569,15 +591,42 @@ pub fn parse(text: &str) -> Result<Request, String> {
             // object is a valid draft and saving must never produce a file the
             // app cannot reopen. `sendito-mcp` rejects a non-object at send time.
             let arguments = r.arguments.unwrap_or_else(|| "{}".into());
+            let op = match r.op.as_deref() {
+                None => McpOp::Tool,
+                Some(o) => McpOp::parse(o).ok_or_else(|| {
+                    format!("unknown MCP op {o:?} (expected \"tool\", \"resource\" or \"prompt\")")
+                })?,
+            };
             Ok(Request::Mcp(McpRequest {
                 server: r.server.unwrap_or_default(),
+                op,
                 tool: r.tool.unwrap_or_default(),
+                uri: r.uri.unwrap_or_default(),
+                prompt: r.prompt.unwrap_or_default(),
                 arguments,
                 timeout_ms: r.options.timeout_ms,
                 common,
             }))
         }
+        "websocket" if r.graphql.is_some() && r.messages.is_some() => Err(
+            "a WebSocket request with [graphql] sends the GraphQL protocol: remove `messages`".into(),
+        ),
         "websocket" => Ok(Request::Ws(WebSocketRequest {
+            graphql: match r.graphql {
+                None => None,
+                Some(g) => Some(WsGraphql {
+                    query: g.query,
+                    variables: g.variables,
+                    operation_name: g.operation_name,
+                    protocol: match g.protocol.as_deref() {
+                        None => WsGraphqlProtocol::TransportWs,
+                        Some(p) => WsGraphqlProtocol::parse(p).ok_or_else(|| {
+                            format!("unknown GraphQL protocol {p:?} (expected \"graphql-transport-ws\" or \"graphql-ws\")")
+                        })?,
+                    },
+                    init_payload: g.init_payload,
+                }),
+            },
             url: r.url.unwrap_or_default(),
             headers: kvs(r.headers),
             subprotocols: r.subprotocols,
@@ -747,6 +796,22 @@ pub(crate) fn write_scripts(w: &mut Writer, s: &Scripts) {
 }
 
 /// Serializes a request in canonical form.
+/// Writes `[options]` when the kind has options of its own (`own`, written
+/// by `kind`) or the request sets a retry; the retry keys come last.
+fn write_options(w: &mut Writer, own: bool, c: &RequestCommon, kind: impl FnOnce(&mut Writer)) {
+    if !own && c.retry == 0 && c.retry_interval_ms.is_none() {
+        return;
+    }
+    w.table("options");
+    kind(w);
+    if c.retry != 0 {
+        w.int("retry", u64::from(c.retry));
+    }
+    if let Some(ms) = c.retry_interval_ms {
+        w.int("retry_interval_ms", ms);
+    }
+}
+
 pub fn to_toml(req: &Request) -> String {
     let mut w = Writer::new();
     match req {
@@ -756,9 +821,11 @@ pub fn to_toml(req: &Request) -> String {
             w.str("url", &h.url);
             write_description(&mut w, req.description());
             let o = &h.options;
-            if o.timeout_ms.is_some() || !o.follow_redirects || !o.verify_tls || o.cookies.is_some()
-            {
-                w.table("options");
+            let own = o.timeout_ms.is_some()
+                || !o.follow_redirects
+                || !o.verify_tls
+                || o.cookies.is_some();
+            write_options(&mut w, own, &h.common, |w| {
                 if let Some(t) = o.timeout_ms {
                     w.int("timeout_ms", t);
                 }
@@ -771,7 +838,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(c) = o.cookies {
                     w.bool("cookies", c);
                 }
-            }
+            });
             write_kvs(&mut w, "params", &h.params);
             write_kvs(&mut w, "headers", &h.headers);
             write_auth(&mut w, &h.auth);
@@ -849,8 +916,8 @@ pub fn to_toml(req: &Request) -> String {
             w.str("method", &g.method);
             w.str("message", &g.message);
             write_description(&mut w, req.description());
-            if g.tls || !g.verify_tls || g.deadline_ms.is_some() {
-                w.table("options");
+            let own = g.tls || !g.verify_tls || g.deadline_ms.is_some();
+            write_options(&mut w, own, &g.common, |w| {
                 if g.tls {
                     w.bool("tls", true);
                 }
@@ -860,7 +927,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(d) = g.deadline_ms {
                     w.int("deadline_ms", d);
                 }
-            }
+            });
             if let SchemaSource::Files {
                 files,
                 import_paths,
@@ -878,15 +945,27 @@ pub fn to_toml(req: &Request) -> String {
         Request::Mcp(m) => {
             w.str("kind", "mcp");
             w.str("server", &m.server);
-            w.str("tool", &m.tool);
-            if m.arguments != "{}" {
+            // The default op is left out; only the fields of the op are written.
+            match m.op {
+                McpOp::Tool => w.str("tool", &m.tool),
+                McpOp::Resource => {
+                    w.str("op", "resource");
+                    w.str("uri", &m.uri);
+                }
+                McpOp::Prompt => {
+                    w.str("op", "prompt");
+                    w.str("prompt", &m.prompt);
+                }
+            }
+            if m.op != McpOp::Resource && m.arguments != "{}" {
                 w.str("arguments", &m.arguments);
             }
             write_description(&mut w, req.description());
-            if let Some(t) = m.timeout_ms {
-                w.table("options");
-                w.int("timeout_ms", t);
-            }
+            write_options(&mut w, m.timeout_ms.is_some(), &m.common, |w| {
+                if let Some(t) = m.timeout_ms {
+                    w.int("timeout_ms", t);
+                }
+            });
             write_scripts(&mut w, &m.common.scripts);
         }
         Request::Sse(s) => {
@@ -894,8 +973,7 @@ pub fn to_toml(req: &Request) -> String {
             w.str("url", &s.url);
             write_description(&mut w, req.description());
             let o = &s.options;
-            if o != &SseOptions::default() {
-                w.table("options");
+            write_options(&mut w, o != &SseOptions::default(), &s.common, |w| {
                 if let Some(v) = o.timeout_ms {
                     w.int("timeout_ms", v);
                 }
@@ -914,7 +992,7 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(v) = o.cookies {
                     w.bool("cookies", v);
                 }
-            }
+            });
             write_kvs(&mut w, "params", &s.params);
             write_kvs(&mut w, "headers", &s.headers);
             write_auth(&mut w, &s.auth);
@@ -943,8 +1021,7 @@ pub fn to_toml(req: &Request) -> String {
             }
             write_description(&mut w, req.description());
             let o = &m.options;
-            if o != &MqttOptions::default() {
-                w.table("options");
+            write_options(&mut w, o != &MqttOptions::default(), &m.common, |w| {
                 if let Some(v) = o.timeout_ms {
                     w.int("timeout_ms", v);
                 }
@@ -954,7 +1031,7 @@ pub fn to_toml(req: &Request) -> String {
                 if !o.verify_tls {
                     w.bool("verify_tls", false);
                 }
-            }
+            });
             for sub in &m.subscriptions {
                 w.array_table("subscriptions");
                 w.str("topic", &sub.topic);
@@ -982,18 +1059,17 @@ pub fn to_toml(req: &Request) -> String {
             if !wq.subprotocols.is_empty() {
                 w.str_array("subprotocols", &wq.subprotocols);
             }
-            if wq.messages != "[]" {
+            if wq.messages != "[]" && wq.graphql.is_none() {
                 w.str("messages", &wq.messages);
             }
             write_description(&mut w, req.description());
             let o = &wq.options;
-            if o.timeout_ms.is_some()
+            let own = o.timeout_ms.is_some()
                 || o.deadline_ms.is_some()
                 || !o.verify_tls
                 || o.tls
-                || o.cookies.is_some()
-            {
-                w.table("options");
+                || o.cookies.is_some();
+            write_options(&mut w, own, &wq.common, |w| {
                 if let Some(t) = o.timeout_ms {
                     w.int("timeout_ms", t);
                 }
@@ -1009,9 +1085,25 @@ pub fn to_toml(req: &Request) -> String {
                 if let Some(c) = o.cookies {
                     w.bool("cookies", c);
                 }
-            }
+            });
             write_kvs(&mut w, "headers", &wq.headers);
             write_auth(&mut w, &wq.auth);
+            if let Some(g) = &wq.graphql {
+                w.table("graphql");
+                w.str("query", &g.query);
+                if !g.variables.is_empty() {
+                    w.str("variables", &g.variables);
+                }
+                if !g.operation_name.is_empty() {
+                    w.str("operation_name", &g.operation_name);
+                }
+                if g.protocol != WsGraphqlProtocol::TransportWs {
+                    w.str("protocol", g.protocol.as_str());
+                }
+                if !g.init_payload.is_empty() {
+                    w.str("init_payload", &g.init_payload);
+                }
+            }
             write_scripts(&mut w, &wq.common.scripts);
         }
     }
@@ -1026,30 +1118,56 @@ fn write_description(w: &mut Writer, text: &str) {
     }
 }
 
+/// Reads a TOML file line by line and knows which lines are inside a
+/// multi-line string (`'''` or `"""`): those lines (a description, for
+/// example) are text, not keys or table headers.
+#[derive(Default)]
+pub struct TextLines {
+    /// The closing quotes of the multi-line string the reader is in.
+    open: Option<&'static str>,
+}
+
+impl TextLines {
+    /// `line` opens, continues or closes a multi-line string.
+    pub fn in_text(&mut self, line: &str) -> bool {
+        if let Some(d) = self.open {
+            if line.contains(d) {
+                self.open = None;
+            }
+            return true;
+        }
+        self.open = ["'''", "\"\"\""]
+            .into_iter()
+            .find(|d| line.matches(d).count() == 1);
+        self.open.is_some()
+    }
+}
+
+/// The `description` of a request from the top-level keys of its file
+/// (see [`write_description`]); empty when it has none or they do not parse.
+pub fn sniff_description(head: &str) -> String {
+    if !head.contains("description") {
+        return String::new();
+    }
+    head.parse::<toml::Table>()
+        .ok()
+        .and_then(|t| t.get("description")?.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// Cheap sniff of `kind`/`method` from the top of a request file (for tree badges
 /// without a full parse). Returns `None` when the file is not a request.
 pub fn sniff_badge(text: &str) -> Option<String> {
     let mut kind = None;
     let mut method = None;
-    // The closing quotes of the multi-line string the scan is in: its lines
-    // (a description, for example) are text, not keys.
-    let mut open: Option<&str> = None;
+    let mut text_lines = TextLines::default();
     for line in text.lines() {
-        if let Some(d) = open {
-            if line.contains(d) {
-                open = None;
-            }
+        if text_lines.in_text(line) {
             continue;
         }
         let l = line.trim();
         if l.starts_with('[') {
             break;
-        }
-        open = ["'''", "\"\"\""]
-            .into_iter()
-            .find(|d| l.matches(d).count() == 1);
-        if open.is_some() {
-            continue;
         }
         if !l.contains("kind") && !l.contains("method") {
             continue;
@@ -1324,6 +1442,7 @@ mod tests {
                 description: "Creates an *issue*.".into(),
                 ..Default::default()
             },
+            ..McpRequest::default()
         });
         let t = to_toml(&m);
         assert_eq!(parse(&t).ok(), Some(m.clone()));
@@ -1333,6 +1452,32 @@ mod tests {
         let text = to_toml(&d);
         assert_eq!(text, "kind = \"mcp\"\nserver = \"\"\ntool = \"\"\n");
         assert_eq!(parse(&text).ok(), Some(d));
+        // A resource and a prompt write their op and their own field only.
+        let r = Request::Mcp(McpRequest {
+            server: "docs".into(),
+            op: McpOp::Resource,
+            uri: "file:///{{name}}".into(),
+            ..McpRequest::default()
+        });
+        let text = to_toml(&r);
+        assert_eq!(
+            text,
+            "kind = \"mcp\"\nserver = \"docs\"\nop = \"resource\"\nuri = \"file:///{{name}}\"\n"
+        );
+        assert_eq!(parse(&text).ok(), Some(r));
+        let p = Request::Mcp(McpRequest {
+            server: "docs".into(),
+            op: McpOp::Prompt,
+            prompt: "hello".into(),
+            arguments: "{\"who\":\"ana\"}".into(),
+            ..McpRequest::default()
+        });
+        assert_eq!(parse(&to_toml(&p)).ok(), Some(p));
+        assert!(
+            parse("kind = \"mcp\"\nop = \"call\"\n")
+                .unwrap_err()
+                .contains("unknown MCP op")
+        );
         // Empty arguments omit the wire property and must survive save/load.
         for arguments in ["", "  ", " {} "] {
             let request = Request::Mcp(McpRequest {
@@ -1374,6 +1519,7 @@ mod tests {
                     ..Scripts::default()
                 },
                 description: "- one\n- two\nmethod = 'post'\n".into(),
+                ..Default::default()
             },
             ..McpRequest::default()
         });
@@ -1444,7 +1590,7 @@ mod tests {
                 tls: true,
                 cookies: Some(false),
             },
-            common: RequestCommon::default(),
+            ..Default::default()
         });
         let t = to_toml(&w);
         assert_eq!(parse(&t).ok(), Some(w.clone()));
@@ -1460,6 +1606,31 @@ mod tests {
             });
             assert_eq!(parse(&to_toml(&request)).ok(), Some(request));
         }
+        // A GraphQL session writes [graphql] and no messages.
+        let g = Request::Ws(WebSocketRequest {
+            url: "wss://h/graphql".into(),
+            graphql: Some(WsGraphql {
+                query: "subscription { tick }".into(),
+                variables: "{\"n\":1}".into(),
+                operation_name: "T".into(),
+                protocol: WsGraphqlProtocol::Legacy,
+                init_payload: "{\"token\":\"{{t}}\"}".into(),
+            }),
+            ..WebSocketRequest::default()
+        });
+        let t = to_toml(&g);
+        assert!(
+            t.contains("[graphql]\nquery = \"subscription { tick }\"\n"),
+            "{t}"
+        );
+        assert!(t.contains("protocol = \"graphql-ws\"\n"), "{t}");
+        assert!(!t.contains("messages"), "{t}");
+        assert_eq!(parse(&t).ok(), Some(g));
+        let both =
+            "kind = \"websocket\"\nurl = \"ws://h\"\nmessages = \"[]\"\n[graphql]\nquery = \"x\"\n";
+        assert!(parse(both).unwrap_err().contains("remove `messages`"));
+        let bad = "kind = \"websocket\"\nurl = \"ws://h\"\n[graphql]\nquery = \"x\"\nprotocol = \"apollo\"\n";
+        assert!(parse(bad).unwrap_err().contains("unknown GraphQL protocol"));
     }
 
     #[test]
@@ -1588,5 +1759,13 @@ op = "exists"
             Some("POST".into())
         );
         assert_eq!(sniff_badge("kind = \"grpc\"   \n"), Some("GRPC".into()));
+    }
+
+    #[test]
+    fn the_description_is_sniffed_from_the_top_level_keys() {
+        let head = "kind = \"http\"\ndescription = '''\n# Users\n[a](b)\n'''\n";
+        assert_eq!(sniff_description(head), "# Users\n[a](b)\n");
+        assert_eq!(sniff_description("kind = \"http\"\n"), "");
+        assert_eq!(sniff_description("description = '''\nnot closed\n"), "");
     }
 }

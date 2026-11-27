@@ -7,14 +7,13 @@ use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::*;
-use crate::editor::TextEditor;
 use crate::overlay::*;
 use crate::theme::Theme;
-use crate::viewer::{ViewMode, Viewer};
+use crate::viewer::ViewMode;
 
 use super::dialog;
 use super::dialog::{buttons, inset, popup, shell, shell_at};
-use super::editor::{self, EditorDialog, EditorHits, Head};
+use super::editor::{self, EditorDialog, EditorHits, Head, HeadInput};
 use super::kit::*;
 
 mod dialogs;
@@ -71,9 +70,7 @@ pub(super) fn draw_overlay(
     };
     match &mut ov {
         Overlay::Palette(p) => draw_palette(app, buf, frame, &is_def, p, &mut cursor),
-        Overlay::Help { viewer, filter } => {
-            draw_help(app, buf, frame, &is_def, viewer, filter, &mut cursor)
-        }
+        Overlay::Help(h) => draw_help(app, buf, frame, &is_def, h, &mut cursor),
         Overlay::Settings(v) => draw_settings(app, buf, frame, v, &mut cursor),
         Overlay::Confirm(c) => draw_confirm(app, buf, frame, c),
         Overlay::Prompt(p) => draw_prompt(app, buf, frame, &is_def, p, &mut cursor),

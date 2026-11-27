@@ -7,8 +7,8 @@ expression: screen
 │ Use TLS        [ ] Off  or prefix the target with https://                             │
 │ Verify TLS     [✓] On  turn off for self-signed certificates                           │
 │ Deadline       default · no limit (Settings)                                           │
-│                                                                                        │
-│                                                                                        │
+│ Retries        none                                                                    │
+│ Retry wait     default · 1 s                                                           │
 │                                                                                        │
 │                                                                                        │
 │                                                                                        │

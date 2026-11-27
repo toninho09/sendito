@@ -1,0 +1,68 @@
+This section explains the parts of Sendito and how they work together.
+
+── Collection ──
+A collection is a folder that has a .sendito/ folder in it. Sendito opens
+the nearest collection above the folder where you start it. To make a new
+collection, run "sendito init" in a folder.
+
+  Request file   One request is one .toml file. The file name is the request name. The kind line tells the protocol: http, grpc, websocket, sse, mqtt or mcp.
+  Folder         A folder of the collection is a folder on the disk. Its folder.toml holds the settings that its requests inherit.
+  .sendito/      config.toml (settings), collection.toml, environments/*.toml and lua/. You can keep these files in git.
+  Local files    secrets.toml, cookies.toml, session.toml and the history. They stay on your computer: "sendito init" adds them to .gitignore.
+
+── Tabs ──
+Each open request has a tab in the top bar. A tab that has changes that are
+not saved shows ●. A new tab from {key:new_request} has no file until you
+save it. Sendito keeps the open tabs when you quit and opens them again.
+
+── Folder settings ──
+A folder can set headers, auth, variables and scripts for all the requests
+in it. Select a folder in the tree and press {key:tree_folder_settings}. A
+request uses the settings of its folders, from the top folder down. A value
+that the request sets wins.
+
+── Variables and environments ──
+Write {{name}} in a field to use a variable. Sendito puts the value in its
+place when it sends the request. A value comes from (the last one wins):
+  1.  the collection variables (_collection in the environment editor);
+  2.  the active environment ({key:select_env} changes it);
+  3.  the folder variables, from the top folder down;
+  4.  the values that a script set during this session.
+An undefined variable shows in red, and the URL card shows "→ undefined".
+The send asks before it sends a request with an undefined variable.
+
+── Secrets ──
+A secret is a variable that Sendito does not show and does not put in a
+file that you share. Its value is in .sendito/secrets.toml (not in git) or
+in the keychain of the system. The screen and the history show ••••••. The
+"Secrets and auth" tutorial shows how to make one.
+
+── What a send does ──
+  1.  Sendito reads the request with its folder settings.
+  2.  It asks for the $prompt and $select values, and sends the requests that a $response call needs.
+  3.  It runs the pre-request scripts. They can set variables.
+  4.  It puts the variable values and the function results in the fields.
+  5.  It sends the request. Only the parts that the request sets go on the wire, plus the few headers that FORMAT.md lists.
+  6.  It shows the response, then runs the extracts, the assertions and the post scripts.
+  7.  It adds the request and the response to the history (secrets masked).
+
+── The response ──
+  Body           The response body: pretty (formatted), raw or hex. You can search it, fold it and filter it with jq.
+  Headers        The response headers and the request headers that Sendito sent.
+  Timing         The time of each step: DNS, connect, TLS, first byte and download.
+  Results        The result of each assertion. The tab name shows the count, for example "Results 2/3 ✗".
+  Log            For streams (gRPC, WebSocket, SSE, MQTT, MCP): each message that was sent or received, with its time.
+When a send fails because of a setting, the response pane shows the cause
+and a "Fix:" line with the setting to change.
+
+── History, cookies and session ──
+The history keeps each request that you send. Press {key:history} to show
+it in the sidebar. The cookie jar keeps the cookies of the responses and
+sends them again, as a browser does. The session keeps the open tabs, the
+active environment, the favorites and the values that scripts set.
+
+── Without the screen ──
+The same collection works from the command line. "sendito run <folder>"
+sends all the requests of a folder and returns an error code when an
+assertion fails, for CI. "sendito serve" gives the collection to an AI agent
+as MCP tools. Run "sendito --help" for all the commands.

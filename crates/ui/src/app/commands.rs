@@ -80,6 +80,18 @@ impl App {
                     | Action::NextCell
                     | Action::FocusNext
                     | Action::FocusPrev
+                    | Action::JqComplete
+                    | Action::JqHistoryPrev
+                    | Action::JqHistoryNext
+                    | Action::JqBypass
+                    | Action::DialogConfirm
+                    | Action::DialogNew
+                    | Action::DialogDelete
+                    | Action::DialogPrevEnv
+                    | Action::DialogNextEnv
+                    | Action::DialogBrowse
+                    | Action::DialogTest
+                    | Action::DialogSignIn
             ) {
                 continue;
             }
@@ -111,6 +123,13 @@ impl App {
                 String::new(),
             ));
         }
+        for name in self.themes.names() {
+            items.push((
+                PaletteItem::Theme(name.clone()),
+                format!("Theme: {name}"),
+                self.themes.kind(&name),
+            ));
+        }
         for (id, label) in SETTINGS {
             items.push((
                 PaletteItem::Setting(*id),
@@ -136,11 +155,35 @@ impl App {
     }
 
     pub fn open_help(&mut self) {
+        self.open_help_at("");
+    }
+
+    /// Opens the help at the section that matches `query` (`:help grpc`):
+    /// its name first, else its text. An empty query opens the first
+    /// section. When the text of the section has the query, the search of
+    /// the section starts with it. With no match, the help stays closed and
+    /// the status says so.
+    pub(super) fn open_help_at(&mut self, query: &str) {
         self.clear_transient_status();
-        self.overlay = Some(Overlay::Help {
-            viewer: crate::tab::wrapped(Doc::text(&help_text(&self.keymap, self.vim))),
-            filter: TextEditor::single("").with_placeholder("(type to filter the keys)"),
-        });
+        let sections = super::help::help_sections(&self.keymap, self.vim);
+        let Some(i) = super::help::find_section(&sections, query) else {
+            self.set_status(
+                format!("no help section matches \"{query}\""),
+                StatusKind::Error,
+            );
+            return;
+        };
+        let word = query.trim();
+        let in_text = sections[i]
+            .text
+            .to_lowercase()
+            .contains(&word.to_lowercase());
+        let mut help = Help::new(sections);
+        if in_text {
+            help.filter.set_text(word);
+        }
+        help.select(i);
+        self.overlay = Some(Overlay::Help(help));
     }
 
     // ----- palette commands ---------------------------------------------
@@ -351,17 +394,17 @@ impl App {
         )));
     }
 
-    /// Lists the themes; choosing one applies and saves it.
-    pub(super) fn open_theme_picker(&mut self) {
+    /// Lists the themes with what kind each is; the selection is shown
+    /// at once, and choosing one applies and saves it.
+    pub(super) fn open_theme_picker(&mut self, settings: bool) {
         let items = self.themes.names();
-        let cur = items
-            .iter()
-            .position(|n| *n == self.project.config.ui.theme);
+        let details = items.iter().map(|n| self.themes.kind(n)).collect();
+        let cur = items.iter().position(|n| *n == self.theme_name);
         self.overlay = Some(Overlay::Picker(Picker::new(
             "Theme",
             items,
-            vec![],
-            PickAction::Theme,
+            details,
+            PickAction::Theme { settings },
             cur,
         )));
     }
@@ -403,6 +446,29 @@ impl App {
         )));
     }
 
+    /// `:debug [file]`: turns the debug log on (in `file`, else the default
+    /// file) or, with no file while it is on, off.
+    fn debug_command(&mut self, arg: &str) {
+        use sendito_store::debug_log;
+        if arg.is_empty()
+            && let Some(path) = debug_log::stop()
+        {
+            self.set_status(
+                format!("debug log off: {}", path.display()),
+                StatusKind::Info,
+            );
+            return;
+        }
+        let file = (!arg.is_empty()).then(|| std::path::PathBuf::from(arg));
+        match debug_log::start(file) {
+            Ok(path) => self.set_status(
+                format!("debug log on: {}", path.display()),
+                StatusKind::Info,
+            ),
+            Err(e) => self.set_status(format!("cannot open debug log: {e}"), StatusKind::Error),
+        }
+    }
+
     pub fn run_command(&mut self, cmd: &str) {
         let cmd = cmd.trim().trim_start_matches(':');
         let (word, arg) = cmd
@@ -428,6 +494,7 @@ impl App {
                 }
             }
             "end" => self.end_stream(),
+            "debug" => self.debug_command(arg),
             "env" => {
                 let list = self.project.envs.list();
                 let prefixed: Vec<&String> = list.iter().filter(|e| e.starts_with(arg)).collect();
@@ -449,7 +516,7 @@ impl App {
             }
             "envs" => self.open_env_editor(),
             "newenv" => self.prompt_new_env(),
-            "theme" if arg.is_empty() => self.open_theme_picker(),
+            "theme" if arg.is_empty() => self.open_theme_picker(false),
             "theme" => self.theme_command(arg),
             "w" | "write" | "save" => self.save(),
             "saveas" => {
@@ -478,6 +545,14 @@ impl App {
             "mcpservers" => self.open_mcp_server_picker(),
             "mcpadd" => self.prompt_mcp_add(arg),
             "mcptools" => self.load_mcp_tools(true),
+            "mcp" if arg == "restart" => {
+                let n = self.mcp_pool.len();
+                self.mcp_pool.clear();
+                self.set_status(
+                    format!("closed {n} MCP session(s); the next call opens a new one"),
+                    StatusKind::Ok,
+                );
+            }
             "mcpedit" if arg.is_empty() => self.open_mcp_editor(),
             "mcpedit" => {
                 if let Err(e) = self.open_mcp_server_editor(arg) {
@@ -508,6 +583,7 @@ impl App {
                 }
             }
             "folder" => self.folder_settings_of_active(),
+            "run" => self.run_folder_command(arg),
             "saveexample" => self.save_example(arg),
             "examples" => self.examples_command(arg),
             "rescan" => {
@@ -525,6 +601,8 @@ impl App {
             "curl!" => self.export_curl(true),
             "httpfile" => self.export_http_file(false),
             "httpfile!" => self.export_http_file(true),
+            "code" => self.export_code(arg, false),
+            "code!" => self.export_code(arg, true),
             "history" => self.toggle_history(),
             "cookies" => self.cookies_command(arg),
             "clearhistory" => {
@@ -537,6 +615,8 @@ impl App {
                 }))
             }
             "format" => self.format_body(),
+            "edit" => self.edit_externally(),
+            "pager" => self.open_pager(),
             "jq" => {
                 if arg.is_empty() {
                     self.open_filter();
@@ -554,7 +634,7 @@ impl App {
             "settings" => self.open_settings(SettingId::Theme),
             "oauth" => self.open_oauth_editor(),
             "keymap" => self.open_keymap_editor(),
-            "help" | "h" => self.open_help(),
+            "help" | "h" => self.open_help_at(arg),
             "report" => match self.last_report.clone() {
                 Some((title, text)) => self.show_report(&title, &text),
                 None => self.set_status("no report yet in this session", StatusKind::Info),

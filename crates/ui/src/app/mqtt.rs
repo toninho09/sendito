@@ -139,23 +139,35 @@ impl App {
                 error,
                 scripts,
                 scope_errors,
+                hint,
             } => {
                 t.running = None;
                 response.stream.closed_at = Some(duration);
                 response.summary.ok =
                     error.is_none() && reason != "cancelled" && scripts.failed_asserts() == 0;
-                response.summary.status = format!("{messages} messages · {reason}");
                 response.summary.error = error.clone();
                 response.summary.time_ms = Some(duration.as_secs_f64() * 1000.0);
-                if let Some(e) = &error
-                    && response.mqtt_messages.is_empty()
-                {
-                    response.set_body_wrapped(format!("Session failed:\n\n{e}\n"));
-                }
+                // A configuration problem: the cause in the status line, the
+                // fix in the log and in the body.
+                let fix = match (&hint, &error) {
+                    (Some(h), Some(e)) => {
+                        if response.mqtt_messages.is_empty() {
+                            response.set_body_wrapped(format!(
+                                "Session failed:\n\n{e}\n\nFix: {}\n",
+                                h.fix
+                            ));
+                        }
+                        Some(h)
+                    }
+                    _ => None,
+                };
+                let short = fix.map(|h| format!(" · {}", h.short)).unwrap_or_default();
+                response.summary.status = format!("{messages} messages · {reason}{short}");
+                let fix = fix.map(|h| format!("fix: {}\n", h.fix)).unwrap_or_default();
                 log(
                     response,
                     format!(
-                        "{reason}\n{}\n{}",
+                        "{reason}\n{}\n{fix}{}",
                         error.unwrap_or_default(),
                         messages_text(&scripts, &scope_errors, &[])
                     ),

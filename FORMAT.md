@@ -12,11 +12,13 @@ my-api/
 │   ├── environments/
 │   │   ├── local.toml            # selectable environments (versioned)
 │   │   └── staging.toml
+│   ├── lua/                      # Lua function catalog, *.lua (versioned)
 │   ├── secrets.toml              # local secret values      (gitignored)
 │   ├── cookies.toml              # per-environment cookie jar (gitignored)
 │   ├── cookies.lock              # cookie jar lock (gitignored)
 │   ├── session.toml              # open tabs, drafts, layout (gitignored)
-│   └── history.jsonl             # sent requests, masked    (gitignored)
+│   ├── history.jsonl             # sent requests, masked    (gitignored)
+│   └── history/                  # HTTP responses of history entries, masked (gitignored)
 ├── folder.toml                   # optional: settings every request inherits
 ├── Users/
 │   ├── folder.toml               # optional: settings the requests of Users inherit
@@ -50,6 +52,22 @@ description of the collection. It is never sent on the wire, a request does
 not inherit the description of its folders, and the curl and `.http` exports
 leave it out. Sendito writes it after the request's top-level keys
 (`kind`, `method`, `url`, …) and before its first table.
+
+## Retry
+
+Every request kind can set two keys in its `[options]` table. Only
+`sendito run` reads them; a send in the UI goes once.
+
+```toml
+[options]
+retry = 2                  # send again up to 2 times after an error or a failed assertion
+retry_interval_ms = 500    # the wait before each retry; default 1000
+```
+
+A retry starts from the same variables as the first attempt. The variables
+that a request extracts and the result in the report come from the last
+attempt. `sendito run --retry N` replaces `retry` for every request of the run.
+Sendito writes the two keys last in `[options]`, and only when they are set.
 
 ## Canonical form
 
@@ -91,6 +109,156 @@ Unresolved placeholders are highlighted in red in the editor. Sending a request
 with unresolved placeholders asks for confirmation; if you confirm they are sent
 literally. `sendito run` refuses unless `--allow-unresolved` is given.
 
+### Functions
+
+A placeholder may call a function: `{{ $name(argument, ...) }}`. An argument
+is a `'literal'` (it ends at the next `'`; there is no escape), a number (`8`,
+`-1`), a variable name (`user_id`, `$uuid`, `$processEnv.NAME`) or another
+call. The call stays on one line and calls nest up to 8 levels.
+
+```toml
+message = '''
+{
+  "id": "{{ $uuidBytes(user_id) }}",
+  "request_id": "{{ $uuidBytes($uuid) }}",
+  "fixed": "{{ $uuidBytes('1b4e28ba-2fa1-11d2-883f-0016d3cca427') }}",
+  "digest": "{{ $hexBytes($sha256(payload)) }}"
+}
+'''
+```
+
+Bytes come out as standard base64, the JSON form of a protobuf `bytes` field.
+A function that reads bytes takes standard or URL-safe base64, with or without
+padding. Times come out in RFC 3339, UTC. `{{ $uuidBytes($uuid) }}` uses the
+same UUID as `{{$uuid}}` in the same send. The in-app help (F1, `Tab`) lists the same
+functions with their arguments.
+
+| Function | Value |
+|---|---|
+| `$uuidBytes(uuid)` | the 16 bytes of a UUID, base64; hyphens are optional, any case |
+| `$uuidFromBytes(base64)` | the UUID text of 16 bytes (lowercase, with hyphens) |
+| `$uuidV5(namespace, name)` | the name-based UUID v5: `namespace` is a UUID, `name` the text |
+| `$uuidV7()` | a time-ordered UUID v7; random |
+| `$ulid()` | a ULID (26 Crockford base32 characters); random |
+| `$hexBytes(hex)` | the bytes of an even number of hex digits, base64 |
+| `$bytesHex(base64)` | the bytes in lowercase hex |
+| `$base64(text)` | standard base64 of the UTF-8 text |
+| `$base64Url(text)` | URL-safe base64 of the UTF-8 text, no padding |
+| `$base64Decode(base64)` | the decoded text; the bytes must be UTF-8 |
+| `$hex(text)` | lowercase hex of the UTF-8 text |
+| `$urlEncode(text)` | the text percent-encoded as a query component |
+| `$md5(text)`, `$sha1(text)`, `$sha256(text)`, `$sha512(text)` | the lowercase hex digest |
+| `$hmacSha256(key, text)`, `$hmacSha256Base64(key, text)` | the HMAC-SHA256 of the text, in lowercase hex or in base64 |
+| `$timeAdd(time, duration)` | an RFC 3339 time plus a duration such as `90s`, `1h30m` or `-2d` (units `ms`, `s`, `m`, `h`, `d`) |
+| `$isoFromUnix(seconds)`, `$unixFromIso(time)` | Unix seconds to an RFC 3339 time, and back |
+| `$upper(text)`, `$lower(text)`, `$trim(text)` | the text in upper case, in lower case, without the spaces at the ends |
+| `$len(text)` | the length of the UTF-8 text in bytes |
+| `$jsonEscape(text)` | the text as it is written inside a JSON string, without the quotes |
+| `$jsonString(text)` | the text as a JSON string, with the quotes |
+| `$replace(text, from, to)` | the text with every `from` replaced by `to` |
+| `$substr(text, start, length)` | `length` characters from character `start` (0 is the first) |
+| `$padLeft(text, length, char)` | the text with `char` added on the left up to `length` characters |
+| `$default(name, fallback)` | the first argument, or the fallback when the first does not resolve |
+| `$randomInt(min, max)` | a random integer from `min` to `max`, both included; random |
+| `$randomHex(length)`, `$randomString(length)` | random lowercase hex digits, or random ASCII letters and digits; random |
+
+A random function gives one value per call text for the whole send: two
+`{{$randomHex(8)}}` in a request are the same value, and the history shows it.
+`{{$randomHex(8)}}` and `{{$randomHex(16)}}` are different calls. A count or
+a length is at most 1 MiB.
+
+An unknown function, a wrong number of arguments, an unresolved argument or a
+bad value (`$uuidBytes('abc')`) leaves the placeholder unresolved. The
+confirmation before a send and the refusal of `sendito run` give the reason
+after the placeholder, for example `{{ $uuidBytes('abc') }} ("abc" is not a
+UUID)`; a secret in the reason is masked.
+
+The editor and the first check of a send know the variable names, not the
+secret values. They do not run a call with a secret argument or a Lua call:
+such a call counts as defined. After the values load, the send runs the calls
+and asks before it sends a call that fails ("Functions not resolved"), with
+the reason. The value of
+a call is a secret when an argument is a secret. Masking finds a secret as
+sent, JSON-escaped or percent-encoded, not in a base64 or hex form.
+
+`{{ $lua.name(argument, ...) }}` calls a function of your Lua catalog, with
+the same argument rules; see "Lua function catalog".
+
+### Values asked at send time
+
+Two calls get their value from the user when the request is sent. Every
+argument is a `'literal'`.
+
+| Call | Value |
+|---|---|
+| `$prompt('Label')` | the text typed for `Label` |
+| `$prompt('Label', 'secret')` | the same, typed without echo; the value is a secret |
+| `$select('Label', 'a', 'b', ...)` | the option chosen for `Label` |
+
+```toml
+url = "{{base_url}}/orders/{{ $prompt('Order ID') }}?mode={{ $select('Mode', 'sandbox', 'live') }}"
+
+[[headers]]
+name = "X-OTP"
+value = "{{ $prompt('OTP', 'secret') }}"
+```
+
+* The label is the question: every call with the same label gets one value
+  per send. A call can be in any field, in a variable value the request uses
+  and in a pre-request row.
+* **TUI**: the send asks one question per label, one dialog after the other,
+  then sends. Esc cancels the send. The dialog suggests the last value of a
+  label that is not a secret; `.sendito/session.toml` keeps it
+  (`prompt_values`). A watch asks once and uses the answers for every repeat.
+* **`sendito run`**: `--prompt 'Label=value'` answers (repeat it for several
+  labels). A label with no flag asks on the terminal (a `$select` lists its
+  options by number). With no terminal (CI), the request is not sent: exit
+  code 3, and the message names the `--prompt` flag to add. A folder run asks
+  each label once. A value that is not an option of its `$select` is refused.
+* The request file and the history keep the call, not the value.
+
+### Values from another response
+
+`$response('Folder/request', '$.json.path')` gives a value from the body of
+the last response of another saved HTTP request: the path is relative to the
+collection root, without `.toml`, and the JSONPath reads the body as an
+extract does (one match as its text, several as a JSON array). Every argument
+is a `'literal'`.
+
+```toml
+[auth]
+type = "bearer"
+token = "{{ $response('Auth/login', '$.token') }}"
+```
+
+A third argument is the policy: when the request is sent first.
+
+| Policy | The dependency is sent |
+|---|---|
+| `if_missing` (default) | when no response is kept |
+| `if_older:<seconds>` | when no response is kept or the kept one is older |
+| `always` | before every send |
+| `never` | never: with no kept response, the send stops |
+
+* The kept response is the last response of the request in the same
+  environment: first one of this session (the TUI, or one `sendito run`),
+  then the newest history entry that kept a response (`[history]
+  max_body_kb`).
+* A dependency is sent with its own folders and the environment, the
+  collection variables and the runtime variables of the send; the folder
+  variables of the request that depends on it do not apply. Its scripts run,
+  and the variables they set go to the runtime variables. The history records
+  it as a send.
+* The value is always a secret: it is masked on screen, in the history and in
+  the exports.
+* The send stops with the reason when the request does not exist or is not
+  HTTP, when the dependencies form a cycle or nest deeper than 8, when the
+  dependency has unresolved variables or uses `$prompt` / `$select`, when it
+  fails, or when the JSONPath has no match.
+* The Results tab (gRPC: Log) and `sendito run` (a `log:` line) say where each
+  value came from: `dependency Auth/login: sent (200 OK, 120 ms)`, the
+  response of this session, or the history entry with its time.
+
 ## HTTP request
 
 ```toml
@@ -106,6 +274,8 @@ timeout_ms = 5000               # default: [http] timeout_ms from config (30000)
 follow_redirects = false        # default true (up to 10 hops)
 verify_tls = false              # default true
 cookies = true                  # optional: defaults to [http] cookie_jar (false)
+retry = 2                       # optional, every kind: see Retry
+retry_interval_ms = 500
 
 [[params]]                      # query parameters, appended to the URL
 name = "q"
@@ -153,6 +323,7 @@ secret = true                   # mask the value in the UI and history
 [[scripts.assert]]              # after the response: check a value
 from = "status"                 # a source of "Script sources" below
 op = "eq"                       # eq ne contains not_contains exists not_exists lt le gt ge matches
+                                # (the Scripts tab shows == != contains !contains exists !exists < <= > >= matches)
 value = "200"                   # omitted for exists / not_exists; may use {{variables}}
 
 [scripts.lua]                   # Lua code; see "Lua scripts" below
@@ -254,11 +425,63 @@ editor highlights it as undefined, because the editor does not run scripts.
 The exports (`sendito curl`, `sendito http`, `:curl`, `:httpfile`) do not run
 scripts either.
 
+### Lua function catalog
+
+The `*.lua` files in `.sendito/lua/` of the collection (versioned) and in
+`lua/` next to the global `config.toml` (`~/.config/sendito/lua/`) are a
+catalog of your Lua functions. A file defines global functions; a `local`
+function stays private to its file.
+
+```lua
+-- .sendito/lua/orders.lua
+function order_id(prefix, n)
+  return string.format("%s-%05d", prefix, tonumber(n))
+end
+```
+
+The global files load first, then the collection's; each directory in name
+order. A file that loads later replaces a function with the same name, so the
+collection's function wins. A file runs when it loads: it must only define
+functions. A file that cannot be read, that has an error, or that changes a
+Sendito name (`vars`, `render`, `print`, `hash`, `base64_encode`,
+`base64_decode`, `json_parse`, `json_stringify`, `request`, `response`,
+`test`) is left out with a warning (the status line, or `warning:` on the
+command line).
+
+**In scripts**, every phase runs the catalog files before its scripts, so the
+functions are globals of the `pre` and `post` scripts and have all their
+members. An error in a catalog file stops a `pre` phase with the file named,
+for example `lua/orders.lua script:3: ...`; in a `post` phase it is a failed
+test. A request without Lua scripts does not run the catalog.
+
+**In templates**, `{{ $lua.order_id('order', 42) }}` calls the function with
+the arguments as strings and gives `order-00042`. The return value becomes text
+as in `vars.set`: a number as Lua writes it, a table as JSON. The function has
+the libraries and the functions of the scripts except these: `vars.get`,
+`vars.has` and `render` read the variables, `print` writes nothing, and
+`vars.set`, `vars.set_secret`, `request`, `response` and `test` do not exist.
+A `render` that leaves a placeholder unresolved is an error.
+
+- `nil`, an error or an unknown function leaves the placeholder unresolved.
+- The value is a secret when an argument is a secret or when the function read
+  a secret with `vars.get` or `render`.
+- A call gives one value per call text for the whole send, as a random
+  function does (`math.random` exists).
+- The calls of one send share one Lua state: the catalog files run once, before
+  `vars` exists, and a global that a function sets is visible to the next call
+  of the same send. Each call starts a new instruction budget.
+- The editor shows a function that the catalog does not define as undefined.
+  It does not run the function (see "Functions"). It reads the catalog again
+  at most 2 seconds after a file in a catalog directory changes, and the status
+  line says "Lua catalog reloaded" or names the file that failed.
+
 ### What goes on the wire
 
 Sendito sends exactly what the request defines, plus what HTTP framing requires.
 The `pre` Lua scripts are part of the request: what they set or remove counts
-as defined by the file. In detail:
+as defined by the file. A `$response` call can send the request it names
+first, exactly as that file defines it ("Values from another response"). In
+detail:
 
 * **Method and URL**: the method is upper-cased. The URL is used as written
   (characters that are not allowed in a URL, such as spaces or non-ASCII, are
@@ -645,6 +868,30 @@ value = "true"
 * In the UI, Send on an open session pushes the message editor's content as one
   frame; `Ctrl+W d` starts the close handshake and `Ctrl+W x` aborts it.
 
+### GraphQL subscriptions
+
+A `[graphql]` table makes the session run one GraphQL operation (usually a
+subscription) over the GraphQL protocol instead of sending `messages`. A file
+with both `[graphql]` and `messages` is refused.
+
+```toml
+kind = "websocket"
+url = "wss://{{host}}/graphql"
+
+[graphql]
+query = "subscription OnTick($n: Int) { tick(n: $n) }"
+variables = '''{"n": 3}'''        # optional JSON object
+operation_name = "OnTick"         # optional
+protocol = "graphql-transport-ws" # the default; "graphql-ws" is the legacy
+                                  # subscriptions-transport-ws protocol
+init_payload = '''{"token": "{{token}}"}'''  # optional connection_init payload
+```
+
+All the text fields hold `{{placeholders}}`. The scripts read the payload of
+the last result (`next`, legacy `data`) as the body: `$.data.tick`. The status
+is the close code. `:graphqlschema` asks the HTTP equivalent of the URL
+(`wss://` → `https://`) for the schema, with the request's headers and auth.
+
 ### What goes on the wire
 
 The handshake is one HTTP/1.1 request: `GET <path> HTTP/1.1` with `Host`,
@@ -671,9 +918,27 @@ proxy is itself reached over TLS, verified against `[http.tls] ca` when set and
 the platform roots otherwise. `socks*` proxies and `proxy = "env"` are refused
 for WebSocket sessions (`docs/DEBT.md`).
 
+A `[graphql]` session offers its protocol first in `Sec-WebSocket-Protocol`
+(`graphql-transport-ws` or `graphql-ws`), then the request's `subprotocols`.
+After the handshake it sends compact JSON text frames, with the keys in this
+order:
+
+1. `{"type":"connection_init"}`, with `"payload"` when `init_payload` is set.
+2. After the server's `connection_ack`: `{"id":"1","type":"subscribe","payload":
+   {"query":…,"variables":…,"operationName":…}}` (legacy: `"type":"start"`).
+   `variables` and `operationName` are left out when they are empty. The
+   server must answer `connection_init` within the handshake timeout.
+3. `{"type":"pong"}` for each server `ping`; a legacy `ka` gets no answer.
+4. The client closes with 1000 after the server's `complete` for id `1`, or
+   after an `error` (the session then fails with the error payload). Cancel and
+   `Ctrl+W d` send `{"id":"1","type":"complete"}` (legacy: `"type":"stop"`)
+   before the close. Without a controller (`sendito run`) the session waits
+   for `complete` or the deadline.
+
 ## MCP request
 
-An MCP request calls one tool on a server configured in `[mcp.servers]`:
+An MCP request calls one tool, reads one resource or gets one prompt on a
+server configured in `[mcp.servers]`:
 
 ```toml
 kind = "mcp"
@@ -693,6 +958,27 @@ op = "eq"
 value = "true"
 ```
 
+`op` chooses what the request does: `tool` (the default, left out of the file)
+calls `tool`; `resource` reads the resource `uri`; `prompt` gets the prompt
+`prompt` with `arguments`. Only the field of the op is written:
+
+```toml
+kind = "mcp"
+server = "docs"
+op = "resource"
+uri = "file:///{{name}}"
+```
+
+```toml
+kind = "mcp"
+server = "docs"
+op = "prompt"
+prompt = "summarize"
+arguments = '''
+{"topic":"{{topic}}"}
+'''
+```
+
 `arguments` is JSON text and must be an object or empty. When omitted it defaults
 to `{}`; an explicitly empty string omits the `arguments` property on the wire.
 The text is stored and read as written (a half-typed object is a valid file) and
@@ -702,18 +988,30 @@ with the active scope. `server` is either a name from `[mcp.servers]` or a
 auth; variables may hold the whole URL). Authentication is configured on the
 server, not on the request. The timeout covers the entire session; it defaults
 to `[mcp] timeout_ms`
-(30000 ms). Scripts see the full tool result as JSON; status is 0 for success or
-1 for `isError: true`.
+(30000 ms). Scripts see the full result as JSON (the tool result, the
+`resources/read` result with its `contents`, or the `prompts/get` result with
+its `messages`); status is 0 for success or 1 for a tool's `isError: true`.
 
 ### What goes on the wire
 
-Each list or call opens a separate session. Sendito sends compact JSON-RPC 2.0:
+A single request and each list open a separate session. A folder run of
+`sendito run` keeps one session per server for the run, and the interface
+keeps one per server and environment until it is idle for `[mcp]
+idle_timeout_s` seconds (default 300; 0 opens a session per call), the
+environment changes, `:mcp restart` runs or the app quits. A kept session
+skips `initialize` and continues the IDs; when it fails on the transport, a
+new session sends the call once more. Sendito sends compact JSON-RPC 2.0:
 `initialize` (ID 1, proposed protocol version `2025-06-18`, empty capabilities
-and client name/version), `notifications/initialized` (no ID), then `tools/list`
-or `tools/call` (ID 2). List pagination sends additional requests with increasing
-IDs and the returned cursor. Tool arguments are parsed and serialized as JSON,
-not sent byte-for-byte as written. The client recognizes `2024-11-05`,
-`2025-03-26` and `2025-06-18`; other versions produce a warning.
+and client name/version), `notifications/initialized` (no ID), then
+`tools/list`, `tools/call`, `resources/read` (`{"uri": …}`) or `prompts/get`
+(`{"name": …, "arguments": …}`, without `arguments` when the text is empty)
+(ID 2). The interface's list asks `resources/list`,
+`resources/templates/list` and `prompts/list` too, only when the server
+declares `resources` or `prompts` in its capabilities. List pagination sends
+additional requests with increasing IDs and the returned cursor. Tool and
+prompt arguments are parsed and serialized as JSON, not sent byte-for-byte as
+written. The client recognizes `2024-11-05`,
+`2025-03-26`, `2025-06-18` and `2025-11-25`; other versions produce a warning.
 
 * **stdio:** one UTF-8 JSON object and newline per message on the child process's
   stdin/stdout. The child inherits the process environment with configured `env`
@@ -729,8 +1027,8 @@ not sent byte-for-byte as written. The client recognizes `2024-11-05`,
   resource URL require HTTPS except for loopback HTTP. Authorization, token
   exchange and refresh send the MCP server URL as the `resource` parameter.
 
-The client supports tools only; it does not consume a server-initiated GET stream
-or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
+The client calls tools, reads resources and gets prompts; it does not consume
+a server-initiated GET stream or the legacy HTTP+SSE transport. See `docs/DEBT.md` for current limits.
 
 ## Folder settings
 
@@ -819,6 +1117,7 @@ whose name has `token`, `secret`, `key` or `session` are saved as `••••�
 
 ```toml
 dotenv = ".env.dev"                                   # optional: the .env file of dotenv variables
+theme = "crimson"                                     # optional: the color theme while this environment is active
 
 [variables]
 base_url = "http://localhost:8080"                    # plain: stored in this file
@@ -844,7 +1143,13 @@ The top-level `dotenv` key sets the path of the `.env` file for the `dotenv`
 variables of that file (the ".env file" line of the environment editor).
 Without it, the path is `.env` at the collection root.
 A relative path starts at the collection root, and `~/` is expanded.
-`collection.toml` takes the same key for the collection variables. The file
+`collection.toml` takes the same key for the collection variables.
+
+The top-level `theme` key names the color theme (a built-in theme or one of
+yours) that the app shows while the environment is active; without it, the
+app shows `[ui] theme`. A name that no theme has falls back to `[ui] theme`
+with a warning. `collection.toml` cannot have a `theme`. The key changes only
+the screen, never the request. The file
 uses the usual `.env` syntax: `KEY=value` lines, `#` comments, an optional
 `export`, single or double quotes, and `${VAR}` substitution (from the earlier
 lines, then from the process environment). Sendito does not load the file into
@@ -894,8 +1199,8 @@ ignore = ["target", "node_modules", "vendor", "dist", "build"]
 
 [ui]
 vim_mode = false
-theme = "auto"           # auto | dusk | daylight | ember | linen | contrast | ansi,
-                         # or a theme file of yours (docs/THEMES.md)
+theme = "auto"           # a built-in theme (auto, dusk, daylight, dracula, nord...;
+                         # `sendito theme list`) or a theme file of yours (docs/THEMES.md)
 icons = "unicode"        # unicode | nerd (Nerd Font icons)
 sidebar = "left"         # left | right
 sticky_folders = true    # pin the folders of the top tree row while scrolling
@@ -903,7 +1208,7 @@ mouse = true
 confirm_quit = true
 watch_interval_s = 5     # :watch re-sends the active request this often
 stream_messages_kept = 10000  # messages a gRPC/WebSocket stream keeps; oldest go first
-hints = "short"          # footer key hints: full | short | off
+hints = "full"           # footer key hints: full | short | off
 hide_plain_secrets = false  # show •••••• for a credential typed as plain text
                          # in a request field (Ctrl+W * shows it)
 
@@ -953,6 +1258,8 @@ timeout_ms = 30000       # wait for CONNACK when a request sets none (0 = no lim
 
 [mcp]
 timeout_ms = 30000
+idle_timeout_s = 300     # the interface closes a kept server session after
+                         # this many idle seconds (0 = a session per call)
 
 [mcp.servers.local]
 command = "my-mcp-server"
@@ -971,6 +1278,7 @@ token = "{{token}}"
 [history]
 enabled = true
 max_entries = 10000
+max_body_kb = 1024       # HTTP response body kept per entry; 0 keeps no response
 
 [keymap.all]             # see KEYMAP.md
 send = ["f9", "ctrl+w e"]
@@ -1036,7 +1344,7 @@ format and every color token are in [docs/THEMES.md](docs/THEMES.md).
 
 ## Local state files
 
-Both files are written owner-only (`0600` on Unix): a draft or a stored request
+These files are written owner-only (`0600` on Unix): a draft or a stored request
 can hold a token typed into it.
 
 * `session.toml` — open tabs (path, or the unsaved request as a draft in request
@@ -1052,7 +1360,8 @@ can hold a token typed into it.
   {"ts":"2026-11-21T10:15:30Z","name":"list users","path":"Users/list users.toml",
    "env":"local","badge":"GET","target":"http://localhost:8080/users",
    "template":"{{base_url}}/users",
-   "request":"kind = \"http\"\n...","status":200,"duration_ms":14,"size":291}
+   "request":"kind = \"http\"\n...","status":200,"duration_ms":14,"size":291,
+   "response":"1764150000123-4242-1"}
   ```
 
   `target` is the URL (gRPC: target/service/method) as it was sent, with secret
@@ -1060,4 +1369,13 @@ can hold a token typed into it.
   written, in this file format, with its `{{variables}}` unsubstituted:
   opening or resending an entry resolves it again with the active environment,
   and saving it to the tree keeps the variables. Secret values are never
-  written. Response bodies are not stored. The file is trimmed to `max_entries` (newest kept).
+  written. The file is trimmed to `max_entries` (newest kept).
+* `history/<response>.toml` — the response of an HTTP history entry, named by
+  the entry's `response` key, in the format of a [saved example](#saved-examples)
+  (a body that is not UTF-8 goes to `<response>.bin`). The secrets of the
+  request that the server sends back are masked, as are the credential
+  headers (`Set-Cookie`, `Authorization`, …). The body is cut at
+  `[history] max_body_kb` (`0` keeps no response); an entry whose `size` is
+  larger than the body was cut. A trim of `history.jsonl` deletes the
+  response files of the entries it drops, and clearing the history deletes
+  the directory. Other request kinds keep no response.

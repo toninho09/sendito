@@ -9,7 +9,7 @@ pub mod env_editor;
 mod mcp_editor;
 mod palette;
 mod settings;
-pub use env_editor::EnvEditor;
+pub use env_editor::{BASE_THEME, EnvEditor, EnvFocus};
 pub use mcp_editor::*;
 pub use palette::*;
 pub use settings::*;
@@ -84,6 +84,8 @@ pub enum PromptAction {
     /// The name of the secret that takes the plain value of this field of
     /// the active tab.
     MoveToSecret(crate::tab::Field),
+    /// The value of a `$prompt` for the send that asks it.
+    SendValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +98,12 @@ pub enum PickAction {
     MoveTo(String),
     Choice(crate::tab::Field),
     RequestKind,
-    Theme,
+    /// Moving the selection shows the theme (not saved); Enter applies and
+    /// saves it, Esc goes back to the saved one. `settings`: the picker
+    /// was opened from Settings and returns there when it closes.
+    Theme {
+        settings: bool,
+    },
     /// The cookie jar: item i is cookie i + 1; the last item clears all.
     Cookie,
     /// Sign in to (or out of) an OAuth identity or an MCP server.
@@ -115,6 +122,19 @@ pub enum PickAction {
         dir: std::path::PathBuf,
         dotenv: bool,
     },
+    /// The value of a `$select` for the send that asks it.
+    SendValue,
+    /// The theme of the environment editor parked behind the picker. Item
+    /// 0 is [`env_editor::BASE_THEME`]. Moving the selection shows the
+    /// theme; Enter puts it on the Theme line, Esc keeps the line.
+    EnvTheme,
+}
+
+impl PickAction {
+    /// Whether the items are themes that the selection shows at once.
+    pub fn is_theme(&self) -> bool {
+        matches!(self, PickAction::Theme { .. } | PickAction::EnvTheme)
+    }
 }
 
 pub struct Prompt {
@@ -216,6 +236,18 @@ impl Picker {
     pub fn selected(&self) -> Option<usize> {
         self.visible().get(self.sel).copied()
     }
+
+    /// The theme to show while a theme picker is open: its selection, or
+    /// `base` for [`env_editor::BASE_THEME`].
+    pub fn theme_preview(&self, base: &str) -> Option<String> {
+        if !self.action.is_theme() {
+            return None;
+        }
+        self.selected().map(|i| match self.items[i].as_str() {
+            env_editor::BASE_THEME => base.to_string(),
+            item => item.to_string(),
+        })
+    }
 }
 
 /// Subsequence match: all query characters appear in order.
@@ -278,9 +310,60 @@ impl Import {
     }
 }
 
+/// One section of the help: the sidebar group it is under, its sidebar
+/// name and its text.
+pub struct HelpSection {
+    pub group: &'static str,
+    pub name: &'static str,
+    pub text: String,
+}
+
+/// The help (F1): a sidebar of sections in groups and the text of the open
+/// one. The search applies to the open section; `Tab` opens the next section.
+pub struct Help {
+    pub viewer: Viewer,
+    pub filter: TextEditor,
+    /// The sections in sidebar order; a group heading shows where `group`
+    /// changes.
+    pub sections: Vec<HelpSection>,
+    /// The open section, as an index into `sections`.
+    pub sel: usize,
+}
+
+impl Help {
+    pub fn new(sections: Vec<HelpSection>) -> Self {
+        let mut help = Self {
+            viewer: Viewer::empty(),
+            filter: TextEditor::single("").with_placeholder("(type to search this section)"),
+            sections,
+            sel: 0,
+        };
+        help.select(0);
+        help
+    }
+
+    /// Opens section `i`. The search stays and applies to the new text.
+    pub fn select(&mut self, i: usize) {
+        let Some(section) = self.sections.get(i) else {
+            return;
+        };
+        self.sel = i;
+        self.viewer = crate::tab::wrapped(crate::viewer::Doc::text(&section.text));
+        self.viewer.search(&self.filter.text());
+    }
+
+    /// Opens the section `d` rows away, wrapping at the ends.
+    pub fn step(&mut self, d: isize) {
+        let n = self.sections.len() as isize;
+        if n > 0 {
+            self.select((self.sel as isize + d).rem_euclid(n) as usize);
+        }
+    }
+}
+
 pub enum Overlay {
     Palette(Palette),
-    Help { viewer: Viewer, filter: TextEditor },
+    Help(Help),
     Settings(SettingsView),
     Confirm(Confirm),
     Prompt(Prompt),
@@ -419,7 +502,7 @@ mod tests {
     fn commands_match_without_colon() {
         let mut items: Vec<(PaletteItem, String, String)> = vec![(
             PaletteItem::Action(crate::keymap::Action::Help),
-            "Show all keys and actions".into(),
+            "Open the help: guide, tutorials, keys and functions".into(),
             "F1".into(),
         )];
         items.extend(

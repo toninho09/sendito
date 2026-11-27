@@ -85,7 +85,7 @@ impl App {
             if let Some(ov) = &mut self.overlay {
                 match ov {
                     Overlay::Report(r) => r.viewer.scroll_by(d),
-                    Overlay::Help { viewer, .. } => viewer.scroll_by(d),
+                    Overlay::Help(h) => h.viewer.scroll_by(d),
                     Overlay::Picker(p) => {
                         let n = p.visible().len();
                         p.sel = crate::list::step(p.sel, d.signum(), n);
@@ -113,6 +113,7 @@ impl App {
                     _ => {}
                 }
             }
+            self.preview_picked_theme();
             return;
         }
         if inside(self.areas.sidebar) {
@@ -527,7 +528,7 @@ impl App {
                 return;
             }
             (Overlay::Picker(p), OverlayHit::Outside)
-                if matches!(p.action, PickAction::EnvFile { .. }) =>
+                if matches!(p.action, PickAction::EnvFile { .. }) || p.action.is_theme() =>
             {
                 self.overlay = Some(ov);
                 self.overlay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -681,11 +682,18 @@ impl App {
                 }
             }
             (Overlay::Env(e), OverlayHit::EnvDotenv) => {
-                e.on_dotenv = true;
+                e.focus = EnvFocus::Dotenv;
                 e.dotenv.click(x.saturating_sub(rect.x), 0, false);
             }
+            // A click on the value lists the themes, as in Settings.
+            (Overlay::Env(e), OverlayHit::EnvTheme) => {
+                e.focus = EnvFocus::Theme;
+                let ed = std::mem::take(e);
+                self.open_env_theme_picker(ed);
+                return;
+            }
             (Overlay::Env(e), OverlayHit::EnvCell { row, col }) => {
-                e.on_dotenv = false;
+                e.focus = EnvFocus::Table;
                 e.table.select(row, col);
                 if e.table.editing_text() {
                     e.table.ensure_row();
@@ -755,7 +763,6 @@ impl App {
             }
             (Overlay::Report(r), OverlayHit::Button(0)) => {
                 self.clipboard.set(r.copy_text.clone(), false);
-                self.osc52.push(r.copy_text.clone());
                 r.copied = true;
                 self.set_status("copied (sent to the terminal clipboard)", StatusKind::Ok);
             }
@@ -765,11 +772,12 @@ impl App {
                 }
                 keep = false;
             }
-            (Overlay::Help { filter, .. }, OverlayHit::Input) => {
-                filter.click(x.saturating_sub(rect.x), 0, false);
+            (Overlay::Help(h), OverlayHit::Input) => {
+                h.filter.click(x.saturating_sub(rect.x), 0, false);
             }
-            // The right column of a two-column Help continues the left one.
-            (Overlay::Help { viewer, .. }, OverlayHit::Item(off)) => viewer
+            (Overlay::Help(h), OverlayHit::Choice(i)) => h.select(i),
+            (Overlay::Help(h), OverlayHit::Item(off)) => h
+                .viewer
                 .click((y.saturating_sub(rect.y) as usize + off).min(u16::MAX as usize) as u16),
             _ => {
                 let _ = double;

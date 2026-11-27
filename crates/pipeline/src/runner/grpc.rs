@@ -46,7 +46,8 @@ pub async fn load_schema(
             if !metadata
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-                && let Some(token) = jwt_token(root, resolved.signed.as_ref())
+                // The runner checked the key file (`confine_files`) before.
+                && let Some(token) = jwt_token(root, false, resolved.signed.as_ref())
                     .await
                     .map_err(|e| e.to_string())?
             {
@@ -99,6 +100,8 @@ pub enum GrpcUpdate {
     Done {
         scripts: ScriptResults,
         scope_errors: Vec<String>,
+        /// The configuration problem behind the error or the status.
+        hint: Option<diagnose::Hint>,
     },
 }
 
@@ -156,12 +159,17 @@ pub async fn exec_grpc(
         req,
         mut results,
         error: pre_error,
-    } = pre_phase(req, &mut scope);
+    } = prepare(ctx, req, &mut scope).await;
     let req = &req;
     let mut resolved = resolve_grpc(req, &scope);
     if resolved.deadline_ms.is_none() && ctx.grpc_deadline_ms > 0 {
         resolved.deadline_ms = Some(ctx.grpc_deadline_ms);
     }
+    let cx = diagnose::Context {
+        grpc_deadline_ms: resolved.deadline_ms,
+        verify_tls: Some(resolved.verify_tls),
+        ..diagnose::Context::of(ctx)
+    };
     let template = Request::Grpc(req.clone());
     let target = match mask_request(&template, &scope) {
         Request::Grpc(g) => format!(
@@ -186,10 +194,11 @@ pub async fn exec_grpc(
             Some(msg.clone()),
         );
         append_history(ctx, &entry);
-        let _ = updates.send(GrpcUpdate::Error(msg));
+        let _ = updates.send(GrpcUpdate::Error(msg.clone()));
         let _ = updates.send(GrpcUpdate::Done {
             scripts: results,
             scope_errors: scope_errors.clone(),
+            hint: diagnose::grpc_message(&msg, &cx),
         });
     };
     if let Some(e) = pre_error {
@@ -205,7 +214,7 @@ pub async fn exec_grpc(
         );
     }
     // A JWT is signed now; the token is masked like the other secrets.
-    match jwt_token(&ctx.root, resolved.signed.as_ref()).await {
+    match jwt_token(&ctx.root, ctx.confine_files, resolved.signed.as_ref()).await {
         Ok(Some(token)) => {
             scope.set(SIGNED_LAYER, "jwt", VarValue::secret(token.clone()));
             resolved
@@ -217,6 +226,20 @@ pub async fn exec_grpc(
     }
     if resolved.service.is_empty() || resolved.method.is_empty() {
         return fail("choose a service and method first".into(), results);
+    }
+    if let SchemaSource::Files {
+        files,
+        import_paths,
+    } = &req.schema
+    {
+        let paths: Vec<PathBuf> = files
+            .iter()
+            .chain(import_paths)
+            .map(|p| sendito_store::env::expand(&ctx.root, p))
+            .collect();
+        if let Err(e) = ctx.check_files(paths.iter().map(PathBuf::as_path)) {
+            return fail(e, results);
+        }
     }
     // Loading the schema and connecting are bounded by the [http] timeout,
     // so a server that never answers reflection cannot hang the run; Cancel
@@ -279,12 +302,18 @@ pub async fn exec_grpc(
     let secrets = scope.secret_values();
     let mut call = sendito_grpc::start_call(channel, &method, metadata, deadline, msgs);
     let mut summary = GrpcSummary::new();
+    let mut hint = None;
     let mut control_open = true;
     loop {
         tokio::select! {
             ev = call.events.recv() => {
                 let Some(ev) = ev else { break };
-                let done = matches!(ev, Event::Finished { .. });
+                let done = if let Event::Finished { code, message, .. } = &ev {
+                    hint = diagnose::grpc(*code, message, &cx);
+                    true
+                } else {
+                    false
+                };
                 summary.add(&ev);
                 let ev = if ctx.mask_echoed_secrets { scrub_event(ev, &secrets) } else { ev };
                 let _ = updates.send(GrpcUpdate::Event(ev));
@@ -338,9 +367,10 @@ pub async fn exec_grpc(
         None
     };
     let entry = history_entry(ctx, &template, target, Some(code as i64), total, size, err);
-    write_history(ctx, &entry).await;
+    write_history(ctx, &entry, None).await;
     let _ = updates.send(GrpcUpdate::Done {
         scripts: results,
         scope_errors,
+        hint,
     });
 }

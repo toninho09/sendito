@@ -115,7 +115,7 @@ impl App {
             return;
         }
         if let Request::Mcp(m) = &req
-            && (m.server.trim().is_empty() || m.tool.trim().is_empty())
+            && (m.server.trim().is_empty() || m.target().trim().is_empty())
         {
             self.focus = Focus::ReqTabs;
             self.set_status(
@@ -124,8 +124,10 @@ impl App {
             );
             return;
         }
+        // The names the user accepts with "Send anyway"; the check with the
+        // loaded values does not ask about them again.
+        let un = runner::unresolved(&req, &names);
         if !confirmed {
-            let un = runner::unresolved(&req, &names);
             let empty = !sendito_core::template::empty_placeholders(
                 &sendito_store::request_file::to_toml(&req),
             )
@@ -137,11 +139,7 @@ impl App {
                     .unwrap_or_else(|| "no environment".into());
                 let mut message = String::new();
                 if !un.is_empty() {
-                    let list = un
-                        .iter()
-                        .map(|u| format!("{{{{{u}}}}}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let list = runner::unresolved_list(&un, &names);
                     message.push_str(&format!(
                         "{list} not defined in the collection variables or \"{env}\". "
                     ));
@@ -163,19 +161,23 @@ impl App {
                     buttons.push("Define".into());
                 }
                 buttons.push("Cancel".into());
-                self.overlay = Some(Overlay::Confirm(Confirm {
+                self.confirm_send(Confirm {
                     title: "Undefined variables".into(),
                     message,
                     sel: buttons.len() - 1,
                     buttons,
                     action: ConfirmAction::SendAnyway {
-                        missing: un.into_iter().collect(),
+                        missing: un.to_vec(),
                     },
-                }));
+                });
                 return;
             }
         }
         let id = tab.id;
+        let Some(kept) = self.asked_values(id, &req, &names, from_watch) else {
+            return;
+        };
+        let tab = &mut self.tabs[self.active];
         let name = tab.name.clone();
         let edited = tab.path.is_some() && tab.dirty();
         // A watch repeat keeps the last response on screen until the new
@@ -241,10 +243,14 @@ impl App {
             },
         };
         let secrets_ok = std::mem::take(&mut self.secrets_ok);
+        let accepted = un;
         let task = self.rt.spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
                 let mut out = runner::build_scope_checked(&envs, active.as_deref(), &runtime);
                 runner::add_folder_vars(&mut out.0, &chain);
+                for (text, value) in kept {
+                    out.0.keep(&text, value);
+                }
                 out
             })
             .await
@@ -253,6 +259,7 @@ impl App {
                 result: Box::new(result),
                 then,
                 secrets_ok,
+                accepted,
             });
         });
         let tab = &mut self.tabs[self.active];
@@ -269,9 +276,18 @@ impl App {
         }
     }
 
-    /// Stops a send whose secrets did not load, and asks before sending
-    /// the placeholders as typed (a watch stops: it would repeat this).
-    pub(super) fn secrets_missing(&mut self, tab: u64, un: &[String], errors: &[String]) {
+    /// Stops a send that the loaded values leave unresolved, and asks before
+    /// sending the placeholders as typed (a watch stops: it would repeat
+    /// this). `secrets` tells that a secret did not load; otherwise a
+    /// function failed with the loaded values.
+    pub(super) fn not_resolved(
+        &mut self,
+        tab: u64,
+        un: &[String],
+        errors: &[String],
+        scope: &Scope,
+        secrets: bool,
+    ) {
         let active = self.tab().is_some_and(|t| t.id == tab);
         if let Some(t) = self.tab_by_id(tab) {
             t.running = None;
@@ -283,11 +299,7 @@ impl App {
                 t.response = None;
             }
         }
-        let list = un
-            .iter()
-            .map(|u| format!("{{{{{u}}}}}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let list = runner::unresolved_list(un, scope);
         // Another tab, or a dialog the user is working in (which must not
         // be replaced): the status line says it instead.
         if !active || self.overlay.is_some() {
@@ -297,43 +309,50 @@ impl App {
             );
             return;
         }
-        self.overlay = Some(Overlay::Confirm(Confirm {
-            title: "Secrets not loaded".into(),
-            message: format!(
-                "{list}: a secret did not load, or the environment file cannot be read so \
-                 its values cannot be checked ({}). Send anyway sends the request as it \
-                 resolves now: as typed, braces included, or with a value from another layer.",
-                errors.join("; ")
-            ),
+        let (title, message) = if secrets {
+            (
+                "Secrets not loaded",
+                format!(
+                    "{list}: a secret did not load, or the environment file cannot be read so \
+                     its values cannot be checked ({}). Send anyway sends the request as it \
+                     resolves now: as typed, braces included, or with a value from another layer.",
+                    errors.join("; ")
+                ),
+            )
+        } else {
+            (
+                "Functions not resolved",
+                format!(
+                    "{list}: a function does not resolve with the loaded values. Send anyway \
+                     sends it as typed, braces included."
+                ),
+            )
+        };
+        self.confirm_send(Confirm {
+            title: title.into(),
+            message,
             buttons: vec!["Send anyway".into(), "Cancel".into()],
             sel: 1,
             action: ConfirmAction::SendMissingSecrets,
-        }));
+        });
+    }
+
+    /// Opens a dialog that stops a send until the user answers, and writes
+    /// its title and message to the debug log.
+    fn confirm_send(&mut self, confirm: Confirm) {
+        sendito_store::debug_log::log(
+            "WARN",
+            &format!("not sent: {}: {}", confirm.title, confirm.message),
+        );
+        self.overlay = Some(Overlay::Confirm(confirm));
     }
 
     pub(super) fn run_ctx(&self, name: String, path: Option<String>) -> RunCtx {
         RunCtx {
-            root: self.project.root.clone(),
-            send: self.project.send_options(),
-            history: if self.project.config.history.enabled {
-                Some((
-                    sendito_store::history::history_path(&self.project.root),
-                    self.project.config.history.max_entries,
-                ))
-            } else {
-                None
-            },
-            name,
-            path,
             env: self.active_env.clone(),
             schemas: self.schemas.clone(),
-            grpc_deadline_ms: self.project.config.grpc.deadline_ms,
-            ws_timeout_ms: self.project.config.websocket.timeout_ms,
-            sse_timeout_ms: self.project.config.sse.timeout_ms,
-            mqtt_timeout_ms: self.project.config.mqtt.timeout_ms,
             mask_echoed_secrets: true,
-            cookie_jar: self.project.config.http.cookie_jar,
-            oauth: Some(runner::OAuthRunInfo::of(&self.project)),
+            ..RunCtx::of(&self.project, name, path)
         }
     }
 
@@ -504,7 +523,10 @@ impl App {
                     return;
                 }
                 let ctx = self.run_ctx(name, path);
-                let info = runner::McpRunInfo::of(&self.project);
+                let mut info = runner::McpRunInfo::of(&self.project);
+                if self.project.config.mcp.idle_timeout_s > 0 {
+                    info.pool = Some(self.mcp_pool.clone());
+                }
                 let (utx, mut urx) = mpsc::unbounded_channel::<runner::McpUpdate>();
                 let fwd = tx.clone();
                 let task = self.rt.spawn(async move {
