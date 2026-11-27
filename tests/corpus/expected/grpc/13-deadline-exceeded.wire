@@ -3,7 +3,7 @@ metadata received:
   grpc-timeout: 150000u
   te: trailers
   content-type: application/grpc
-  user-agent: sendito/0.3.0 tonic/0.14.9
+  user-agent: sendito/0.4.0 tonic/0.14.9
 messages received: 1
   json: {"delay_ms":1000,"text":"slow"}
   protobuf (base64): CgRzbG93yALoBw==

@@ -4352,7 +4352,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sendito"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -4378,7 +4378,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -4397,7 +4397,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-grpc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "http",
@@ -4420,7 +4420,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-http"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -4451,7 +4451,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-import"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "mime_guess",
@@ -4467,7 +4467,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4484,7 +4484,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-mqtt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rumqttc",
  "rustls",
@@ -4497,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-pipeline"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "csv",
@@ -4519,7 +4519,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cookie_store",
  "dotenvy",
@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-testkit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4564,7 +4564,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-ui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "crossterm",
@@ -4588,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-widgets"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossterm",
  "pulldown-cmark",
@@ -4599,7 +4599,7 @@ dependencies = [
 
 [[package]]
 name = "sendito-ws"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
